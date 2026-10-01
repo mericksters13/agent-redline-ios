@@ -1,0 +1,198 @@
+#if AGENTIC_DEBUGGING && canImport(UIKit)
+import Darwin
+import UIKit
+
+/// Reads the app's accessibility tree, the closest thing iOS has to a DOM: roles,
+/// labels, identifiers and frames for SwiftUI and UIKit alike.
+///
+/// The walk and the automation switch follow AnnotateKit's approach
+/// (https://github.com/Connected-Mate/AnnotateKit, MIT).
+@MainActor
+enum AccessibilityTree {
+    private static var automationEnabled = false
+
+    /// SwiftUI builds its accessibility tree only when an assistive client is
+    /// connected. Turn on the automation mode UI testing uses so the tree exists
+    /// when we read it. Debug builds only.
+    static func enableAutomation() {
+        guard !automationEnabled else { return }
+        automationEnabled = true
+        guard let handle = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW),
+              let symbol = dlsym(handle, "AXSSetAutomationEnabled") ?? dlsym(handle, "_AXSSetAutomationEnabled")
+        else { return }
+        typealias Setter = @convention(c) (Int32) -> Void
+        unsafeBitCast(symbol, to: Setter.self)(1)
+    }
+
+    /// Every element and named group visible in `windows`, in screen points.
+    static func elements(in windows: [UIWindow], screenBounds: CGRect) -> [ElementSnapshot] {
+        var result: [ElementSnapshot] = []
+        var visited = Set<ObjectIdentifier>()
+
+        func append(_ object: NSObject, isContainer: Bool) {
+            var frame = object.accessibilityFrame
+            if frame.isEmpty, let view = object as? UIView, let window = view.window {
+                frame = view.convert(view.bounds, to: window.screen.coordinateSpace)
+            }
+            frame = frame.intersection(screenBounds)
+            guard !frame.isNull, !frame.isEmpty else { return }
+            result.append(ElementSnapshot(
+                role: role(of: object, isContainer: isContainer),
+                label: object.accessibilityLabel?.nonEmpty,
+                value: object.accessibilityValue?.nonEmpty,
+                identifier: identifier(of: object),
+                className: String(describing: type(of: object)),
+                isContainer: isContainer,
+                frame: frame
+            ))
+        }
+
+        func visit(_ object: NSObject, depth: Int) {
+            guard depth < 80, visited.insert(ObjectIdentifier(object)).inserted else { return }
+            if let view = object as? UIView, view.isHidden || view.alpha < 0.01 { return }
+
+            if object.isAccessibilityElement {
+                append(object, isContainer: false)
+            } else if identifier(of: object) != nil || object.accessibilityLabel?.nonEmpty != nil {
+                // Named groups let the note box step up from a leaf to its card or section.
+                append(object, isContainer: true)
+            }
+
+            if let children = object.accessibilityElements {
+                for case let child as NSObject in children { visit(child, depth: depth + 1) }
+            } else {
+                // SwiftUI hosting views expose their tree through the container methods.
+                let count = object.accessibilityElementCount()
+                if count > 0, count != NSNotFound {
+                    for index in 0..<min(count, 500) {
+                        if let child = object.accessibilityElement(at: index) as? NSObject {
+                            visit(child, depth: depth + 1)
+                        }
+                    }
+                }
+            }
+            if let view = object as? UIView {
+                for subview in view.subviews { visit(subview, depth: depth + 1) }
+            }
+        }
+
+        for window in windows { visit(visibleRoot(of: window), depth: 0) }
+        return result
+    }
+
+    /// The screen the user is looking at, by navigation title and view controller.
+    static func screen(of window: UIWindow?) -> ScreenInfo {
+        guard let window else { return ScreenInfo() }
+        let controller = topController(from: window.rootViewController)
+        let title = navigationBarTitle(in: window)
+            ?? controller?.navigationItem.title?.nonEmpty
+            ?? controller?.title?.nonEmpty
+        let typeName = controller.map { String(describing: type(of: $0)).split(separator: "<").first.map(String.init) ?? "" }
+        return ScreenInfo(title: title, viewController: typeName?.nonEmpty)
+    }
+
+    /// A picture of the app's windows, without the debugger's own window.
+    static func screenshot(of windows: [UIWindow], bounds: CGRect) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2
+        format.opaque = true
+        return UIGraphicsImageRenderer(bounds: bounds, format: format).image { _ in
+            for window in windows {
+                window.drawHierarchy(in: window.frame, afterScreenUpdates: false)
+            }
+        }
+    }
+
+    /// The screenshot with one element outlined.
+    static func outlining(_ rect: CGRect, in image: UIImage) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = image.scale
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
+            image.draw(at: .zero)
+            UIColor.systemBlue.setStroke()
+            let path = UIBezierPath(roundedRect: rect.insetBy(dx: -3, dy: -3), cornerRadius: 6)
+            path.lineWidth = 3
+            path.stroke()
+        }
+    }
+
+    // MARK: - Helpers
+
+    /// A presented sheet or full-screen cover hides what's under it, so only its
+    /// view is read when one is up.
+    private static func visibleRoot(of window: UIWindow) -> UIView {
+        var controller = window.rootViewController
+        while let presented = controller?.presentedViewController, !presented.isBeingDismissed {
+            controller = presented
+        }
+        if let controller, controller !== window.rootViewController, let view = controller.viewIfLoaded {
+            return view
+        }
+        return window
+    }
+
+    private static func role(of object: NSObject, isContainer: Bool) -> String {
+        if object is UISearchBar { return "Search field" }
+        if object is UITextField || object is UITextView { return "Text field" }
+        if object is UISwitch { return "Toggle" }
+        let traits = object.accessibilityTraits
+        if traits.contains(.searchField) { return "Search field" }
+        if traits.contains(.keyboardKey) { return "Key" }
+        if traits.contains(.toggleButton) { return "Toggle" }
+        if traits.contains(.button) { return "Button" }
+        if traits.contains(.link) { return "Link" }
+        if traits.contains(.adjustable) { return "Adjustable" }
+        if traits.contains(.tabBar) { return "Tab bar" }
+        if traits.contains(.header) { return "Header" }
+        if traits.contains(.image) { return "Image" }
+        if traits.contains(.staticText) { return "Text" }
+        return isContainer ? "Group" : "Element"
+    }
+
+    /// SwiftUI's accessibility nodes answer `accessibilityIdentifier` without
+    /// declaring the protocol, so ask by selector as well.
+    private static func identifier(of object: NSObject) -> String? {
+        if let identifier = (object as? UIAccessibilityIdentification)?.accessibilityIdentifier?.nonEmpty {
+            return identifier
+        }
+        let selector = NSSelectorFromString("accessibilityIdentifier")
+        guard object.responds(to: selector),
+              let value = object.perform(selector)?.takeUnretainedValue() as? String
+        else { return nil }
+        return value.nonEmpty
+    }
+
+    private static func topController(from controller: UIViewController?) -> UIViewController? {
+        guard let controller else { return nil }
+        if let presented = controller.presentedViewController, !presented.isBeingDismissed {
+            return topController(from: presented)
+        }
+        if let navigation = controller as? UINavigationController {
+            return navigation.visibleViewController.map { $0 === navigation ? navigation : topController(from: $0) ?? $0 }
+        }
+        if let tabs = controller as? UITabBarController {
+            return topController(from: tabs.selectedViewController) ?? tabs
+        }
+        // SwiftUI hosts its navigation and tab controllers as children.
+        for child in controller.children.reversed() where child.viewIfLoaded?.window != nil {
+            if child is UINavigationController || child is UITabBarController || !child.children.isEmpty,
+               let found = topController(from: child) {
+                return found
+            }
+        }
+        return controller
+    }
+
+    private static func navigationBarTitle(in view: UIView) -> String? {
+        if let bar = view as? UINavigationBar, !bar.isHidden, bar.alpha > 0.01, bar.window != nil,
+           let title = bar.topItem?.title?.nonEmpty {
+            return title
+        }
+        for subview in view.subviews where !subview.isHidden {
+            if let title = navigationBarTitle(in: subview) { return title }
+        }
+        return nil
+    }
+}
+#endif
