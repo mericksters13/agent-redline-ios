@@ -36,7 +36,7 @@ struct OverlayView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if session.mode != .idle {
+            if session.mode != .idle && session.mode != .viewer {
                 touchSurface
                 ForEach(session.markers) { marker in
                     savedNoteMarker(number: marker.number, frame: marker.frame)
@@ -62,6 +62,11 @@ struct OverlayView: View {
                 island
                     .offset(x: (width - islandWidth) / 2, y: islandTop)
                     .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            if session.mode == .viewer {
+                NoteViewer(session: session)
+                    .transition(.opacity)
             }
 
             if session.mode == .idle {
@@ -97,7 +102,7 @@ struct OverlayView: View {
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture { session.toggleTray() }
-        case .noting, .idle:
+        case .noting, .idle, .viewer:
             Color.clear.contentShape(Rectangle())
         }
     }
@@ -147,21 +152,12 @@ struct OverlayView: View {
         let y = max(frame.minY - badge / 2, islandBottom + 4)
         return ZStack(alignment: .topLeading) {
             outline(frame, weight: 1)
-            numberBadge(number, size: badge)
+            NumberBadge(number: number, size: badge)
                 .offset(x: x, y: y)
         }
         .allowsHitTesting(false)
         .accessibilityElement()
         .accessibilityLabel("Note \(number)")
-    }
-
-    private func numberBadge(_ number: Int, size: CGFloat) -> some View {
-        Text("\(number)")
-            .font(.caption.weight(.bold).monospacedDigit())
-            .foregroundStyle(Color.black)
-            .frame(minWidth: size, minHeight: size)
-            .background(Color.white, in: Circle())
-            .overlay(Circle().strokeBorder(Color.black, lineWidth: 1.5))
     }
 
     private func shortName(of element: ElementSnapshot) -> String? {
@@ -240,12 +236,12 @@ struct OverlayView: View {
     private var noteCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                numberBadge(session.slipNumber, size: 26)
+                NumberBadge(number: session.nextNumber, size: 26)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(session.noteElement.flatMap(shortName(of:)) ?? "Unnamed element")
+                    Text(session.selected.flatMap(shortName(of:)) ?? "Unnamed element")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Mono.text)
-                    Text(session.noteElement?.role ?? "Element")
+                    Text(session.selected?.role ?? "Element")
                         .font(.caption)
                         .foregroundStyle(Mono.secondary)
                 }
@@ -276,7 +272,7 @@ struct OverlayView: View {
                     .contentShape(Rectangle())
                 Spacer()
                 Button { session.saveNote() } label: {
-                    Text(session.editingID == nil ? "Add note" : "Save")
+                    Text("Add note")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.black)
                         .padding(.horizontal, 18)
@@ -357,7 +353,7 @@ struct OverlayView: View {
         HStack(alignment: .top, spacing: 12) {
             thumbnail(for: annotation)
                 .overlay(alignment: .topLeading) {
-                    numberBadge(number, size: 20).offset(x: -6, y: -6)
+                    NumberBadge(number: number, size: 20).offset(x: -6, y: -6)
                 }
             VStack(alignment: .leading, spacing: 2) {
                 Text(shortName(of: annotation.element) ?? annotation.element.role)
@@ -387,8 +383,9 @@ struct OverlayView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .onTapGesture { session.edit(annotation) }
-        .accessibilityAction(named: "Edit note") { session.edit(annotation) }
+        .onTapGesture { session.openViewer(annotation) }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens the screenshot and note")
     }
 
     @ViewBuilder
@@ -438,7 +435,7 @@ struct OverlayView: View {
             .overlay(Circle().strokeBorder(Mono.hairline, lineWidth: 1))
             .overlay(alignment: .topTrailing) {
                 if count > 0 {
-                    numberBadge(count, size: 20).offset(x: 4, y: -4)
+                    NumberBadge(number: count, size: 20).offset(x: 4, y: -4)
                 }
             }
             .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
@@ -473,6 +470,21 @@ struct OverlayView: View {
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setButtonFrame($0) }
             .onDisappear { session.setButtonFrame(nil) }
             .position(center)
+    }
+}
+
+/// A white number in a circle: a note's place in the list.
+struct NumberBadge: View {
+    let number: Int
+    let size: CGFloat
+
+    var body: some View {
+        Text("\(number)")
+            .font(.caption.weight(.bold).monospacedDigit())
+            .foregroundStyle(Color.black)
+            .frame(minWidth: size, minHeight: size)
+            .background(Color.white, in: Circle())
+            .overlay(Circle().strokeBorder(Color.black, lineWidth: 1.5))
     }
 }
 #endif

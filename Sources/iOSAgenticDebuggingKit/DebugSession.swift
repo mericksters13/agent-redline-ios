@@ -11,7 +11,7 @@ final class DebugSession {
     static let shared = DebugSession()
 
     enum Mode {
-        case idle, picking, noting, tray
+        case idle, picking, noting, tray, viewer
     }
 
     struct Marker: Identifiable {
@@ -28,7 +28,8 @@ final class DebugSession {
     /// Numbered markers for annotations already made on the current screen.
     private(set) var markers: [Marker] = []
     var noteText = ""
-    private(set) var editingID: UUID?
+    /// The note showing in the full-screen viewer.
+    private(set) var viewerID: UUID?
     private(set) var toast: String?
     private(set) var screenSize = CGSize.zero
     private(set) var safeAreaInsets = UIEdgeInsets.zero
@@ -52,21 +53,8 @@ final class DebugSession {
 
     var screenTitle: String { screen.title ?? "This screen" }
 
-    /// The element the note slip is about: the one picked, or the one being edited.
-    var noteElement: ElementSnapshot? {
-        if let editingID, let annotation = annotations.first(where: { $0.id == editingID }) {
-            return annotation.element
-        }
-        return selected
-    }
-
-    /// The balloon number the note slip shows.
-    var slipNumber: Int {
-        if let editingID, let index = annotations.firstIndex(where: { $0.id == editingID }) {
-            return index + 1
-        }
-        return annotations.count + 1
-    }
+    /// The number the note being written will get.
+    var nextNumber: Int { annotations.count + 1 }
 
     @ObservationIgnored private var window: OverlayWindow?
     @ObservationIgnored private var elements: [ElementSnapshot] = []
@@ -75,6 +63,8 @@ final class DebugSession {
     @ObservationIgnored private var trayReturnMode = Mode.idle
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var thumbnails: [UUID: UIImage] = [:]
+    /// Full-size screenshots for the viewer, kept for the few notes around the one showing.
+    @ObservationIgnored private var fullScreenshots: [UUID: UIImage] = [:]
     /// True while a finger is down in pick mode.
     @ObservationIgnored private var touchIsDown = false
     @ObservationIgnored private let store = ReportStore.standard
@@ -107,8 +97,18 @@ final class DebugSession {
         // Launch arguments for checking layouts on a device without touching it:
         // -AgenticDebuggingPickOnLaunch YES opens pick mode, -AgenticDebuggingPickPoint "0.5,0.8"
         // then picks the element at that fraction of the screen, and
-        // -AgenticDebuggingNoteText "..." fills in the note.
+        // -AgenticDebuggingNoteText "..." fills in the note. -AgenticDebuggingOpenViewer YES
+        // opens the viewer on the first saved note.
         let defaults = UserDefaults.standard
+        if defaults.bool(forKey: "AgenticDebuggingOpenViewer") {
+            Task {
+                try? await Task.sleep(for: .seconds(1))
+                enterPicking()
+                try? await Task.sleep(for: .milliseconds(300))
+                toggleTray()
+                if let first = annotations.first { openViewer(first) }
+            }
+        }
         if defaults.bool(forKey: "AgenticDebuggingPickOnLaunch") {
             Task {
                 try? await Task.sleep(for: .seconds(1))
@@ -168,7 +168,6 @@ final class DebugSession {
         touchIsDown = false
         guard selected != nil else { return }
         noteText = ""
-        editingID = nil
         beginNoting()
     }
 
@@ -184,12 +183,6 @@ final class DebugSession {
 
     func saveNote() {
         let note = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let editingID, let index = annotations.firstIndex(where: { $0.id == editingID }) {
-            annotations[index].note = note
-            persist()
-            endNoting(returningTo: .tray)
-            return
-        }
         guard let element = selected, let screenshot else { return }
         let id = UUID()
         let fileName = "\(id.uuidString).png"
@@ -216,26 +209,71 @@ final class DebugSession {
     }
 
     func cancelNote() {
-        let returnMode: Mode = editingID == nil ? .picking : .tray
         levels = []
-        endNoting(returningTo: returnMode)
-    }
-
-    func edit(_ annotation: Annotation) {
-        guard mode == .tray else { return }
-        editingID = annotation.id
-        noteText = annotation.note
-        levels = []
-        beginNoting()
+        endNoting(returningTo: .picking)
     }
 
     func delete(_ annotation: Annotation) {
-        annotations.removeAll { $0.id == annotation.id }
+        guard let index = annotations.firstIndex(where: { $0.id == annotation.id }) else { return }
+        annotations.remove(at: index)
         thumbnails[annotation.id] = nil
+        fullScreenshots[annotation.id] = nil
         store.deleteScreenshot(named: annotation.screenshot)
         persist()
         refreshMarkers()
-        if annotations.isEmpty, mode == .tray { setMode(trayReturnMode) }
+        if mode == .viewer {
+            // Show the next note, or the one before when the last was deleted.
+            if annotations.isEmpty {
+                closeViewer()
+            } else {
+                viewerID = annotations[min(index, annotations.count - 1)].id
+            }
+        } else if annotations.isEmpty, mode == .tray {
+            setMode(trayReturnMode)
+        }
+    }
+
+    // MARK: - Viewer
+
+    /// Opens the full-screen viewer on a note from the notes list.
+    func openViewer(_ annotation: Annotation) {
+        guard mode == .tray else { return }
+        viewerID = annotation.id
+        appKeyWindow = appWindows().first(where: \.isKeyWindow)
+        setMode(.viewer)
+        // The viewer edits notes in place, so it needs the keyboard.
+        window?.makeKey()
+    }
+
+    func showInViewer(_ id: UUID) {
+        guard annotations.contains(where: { $0.id == id }) else { return }
+        viewerID = id
+    }
+
+    func closeViewer() {
+        viewerID = nil
+        fullScreenshots = [:]
+        setMode(annotations.isEmpty ? trayReturnMode : .tray)
+        appKeyWindow?.makeKey()
+        appKeyWindow = nil
+    }
+
+    func updateNote(_ id: UUID, to text: String) {
+        let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return }
+        annotations[index].note = note
+        persist()
+    }
+
+    /// The note's whole screenshot, with its element outlined.
+    func fullScreenshot(for annotation: Annotation) -> UIImage? {
+        if let cached = fullScreenshots[annotation.id] { return cached }
+        let url = store.draftDirectory.appending(path: annotation.screenshot)
+        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
+        // Keep only a few; a long session can collect many full-screen images.
+        if fullScreenshots.count >= 5 { fullScreenshots.removeAll() }
+        fullScreenshots[annotation.id] = image
+        return image
     }
 
     // MARK: - Tray and send
@@ -248,7 +286,7 @@ final class DebugSession {
             guard !annotations.isEmpty else { return }
             trayReturnMode = mode
             setMode(.tray)
-        case .noting:
+        case .noting, .viewer:
             break
         }
     }
@@ -294,7 +332,7 @@ final class DebugSession {
     func noteCardTop(height: CGFloat, reservedHeight: CGFloat) -> CGFloat {
         let keyboard = awaitingKeyboard ? screenSize.height - expectedKeyboardHeight : keyboardTop
         return NoteCardPlacement.top(
-            element: editingID == nil ? selected?.frame : nil,
+            element: selected?.frame,
             height: height,
             reservedHeight: reservedHeight,
             top: safeAreaTop,
@@ -388,7 +426,6 @@ final class DebugSession {
 
     private func endNoting(returningTo next: Mode) {
         noteText = ""
-        editingID = nil
         awaitingKeyboard = false
         setMode(next)
         appKeyWindow?.makeKey()
