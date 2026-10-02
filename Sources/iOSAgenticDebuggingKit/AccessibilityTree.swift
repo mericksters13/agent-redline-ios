@@ -114,7 +114,8 @@ enum AccessibilityTree {
         format.opaque = true
         return UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
             image.draw(at: .zero)
-            UIColor.systemBlue.setStroke()
+            // The drafting orange the overlay uses for callouts.
+            UIColor(red: 1, green: 90 / 255, blue: 31 / 255, alpha: 1).setStroke()
             let path = UIBezierPath(roundedRect: rect.insetBy(dx: -3, dy: -3), cornerRadius: 6)
             path.lineWidth = 3
             path.stroke()

@@ -33,8 +33,12 @@ final class DebugSession {
     private(set) var screenSize = CGSize.zero
     private(set) var safeAreaInsets = UIEdgeInsets.zero
     private(set) var keyboardTop = CGFloat.infinity
+    /// Corner radius of the physical display, so the sheet border can follow it.
+    private(set) var displayCornerRadius: CGFloat = 44
     /// Center of the floating button, in screen points. Nil until the window has a size.
     private(set) var buttonCenter: CGPoint?
+    /// The screen being picked on.
+    private(set) var screen = ScreenInfo()
 
     var safeAreaTop: CGFloat { safeAreaInsets.top }
 
@@ -45,21 +49,31 @@ final class DebugSession {
     var canStepUp: Bool { levelIndex + 1 < levels.count }
     var canStepDown: Bool { levelIndex > 0 }
 
-    /// The chip in the note box: the selected element, or the one being edited.
-    var noteTitle: String {
+    var screenTitle: String { screen.title ?? "This screen" }
+
+    /// The element the note slip is about: the one picked, or the one being edited.
+    var noteElement: ElementSnapshot? {
         if let editingID, let annotation = annotations.first(where: { $0.id == editingID }) {
-            return annotation.element.displayName
+            return annotation.element
         }
-        return selected?.displayName ?? ""
+        return selected
+    }
+
+    /// The balloon number the note slip shows.
+    var slipNumber: Int {
+        if let editingID, let index = annotations.firstIndex(where: { $0.id == editingID }) {
+            return index + 1
+        }
+        return annotations.count + 1
     }
 
     @ObservationIgnored private var window: OverlayWindow?
     @ObservationIgnored private var elements: [ElementSnapshot] = []
-    @ObservationIgnored private var screen = ScreenInfo()
     @ObservationIgnored private var screenshot: UIImage?
     @ObservationIgnored private var appKeyWindow: UIWindow?
     @ObservationIgnored private var trayReturnMode = Mode.idle
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    @ObservationIgnored private var thumbnails: [UUID: UIImage] = [:]
     @ObservationIgnored private let store = ReportStore.standard
     @ObservationIgnored private let selectionFeedback = UISelectionFeedbackGenerator()
     @ObservationIgnored private let logger = Logger(subsystem: "iOSAgenticDebuggingKit", category: "session")
@@ -80,6 +94,7 @@ final class DebugSession {
         window.rootViewController = host
         window.onLayout = { [weak self] window in
             self?.updateLayout(size: window.bounds.size, insets: window.safeAreaInsets)
+            self?.displayCornerRadius = Self.cornerRadius(of: window.screen)
         }
         window.isHidden = false
         self.window = window
@@ -195,6 +210,7 @@ final class DebugSession {
 
     func delete(_ annotation: Annotation) {
         annotations.removeAll { $0.id == annotation.id }
+        thumbnails[annotation.id] = nil
         store.deleteScreenshot(named: annotation.screenshot)
         persist()
         refreshMarkers()
@@ -223,6 +239,7 @@ final class DebugSession {
             logger.notice("Report saved at \(folder.path, privacy: .public)")
             let count = annotations.count
             annotations = []
+            thumbnails = [:]
             levels = []
             markers = []
             elements = []
@@ -233,6 +250,21 @@ final class DebugSession {
             logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
             show(toast: "Couldn't save the report")
         }
+    }
+
+    /// A close crop of the annotation's screenshot around its element, for the notes list.
+    func thumbnail(for annotation: Annotation) -> UIImage? {
+        if let cached = thumbnails[annotation.id] { return cached }
+        let url = store.draftDirectory.appending(path: annotation.screenshot)
+        guard let image = UIImage(contentsOfFile: url.path), let cgImage = image.cgImage, screenSize.width > 0 else { return nil }
+        let scale = CGFloat(cgImage.width) / screenSize.width
+        let area = annotation.element.frame.insetBy(dx: -24, dy: -24)
+        let crop = CGRect(x: area.minX * scale, y: area.minY * scale, width: area.width * scale, height: area.height * scale)
+            .intersection(CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        guard !crop.isEmpty, let cropped = cgImage.cropping(to: crop) else { return nil }
+        let thumbnail = UIImage(cgImage: cropped)
+        thumbnails[annotation.id] = thumbnail
+        return thumbnail
     }
 
     /// The top of the note box: under the element if it fits above the keyboard,
@@ -301,6 +333,16 @@ final class DebugSession {
     }
 
     // MARK: - Private
+
+    /// The display's rounded-corner radius. UIKit has no public API for it, so
+    /// ask the screen privately and fall back to a typical Face ID iPhone value.
+    private static func cornerRadius(of screen: UIScreen) -> CGFloat {
+        let key = "_displayCornerRadius"
+        guard screen.responds(to: NSSelectorFromString(key)),
+              let value = screen.value(forKey: key) as? CGFloat, value > 0
+        else { return 44 }
+        return value
+    }
 
     private func setMode(_ newMode: Mode) {
         mode = newMode
