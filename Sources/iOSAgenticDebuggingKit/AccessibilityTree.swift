@@ -80,6 +80,24 @@ enum AccessibilityTree {
         return result
     }
 
+    /// Stops any scroll view that is still moving, at a valid resting offset.
+    static func stopScrolling(in windows: [UIWindow]) {
+        func visit(_ view: UIView) {
+            if let scrollView = view as? UIScrollView, scrollView.isDecelerating || scrollView.isDragging {
+                let inset = scrollView.adjustedContentInset
+                let offset = scrollView.contentOffset
+                let maxX = max(-inset.left, scrollView.contentSize.width - scrollView.bounds.width + inset.right)
+                let maxY = max(-inset.top, scrollView.contentSize.height - scrollView.bounds.height + inset.bottom)
+                scrollView.setContentOffset(CGPoint(
+                    x: min(max(offset.x, -inset.left), maxX),
+                    y: min(max(offset.y, -inset.top), maxY)
+                ), animated: false)
+            }
+            for subview in view.subviews { visit(subview) }
+        }
+        for window in windows { visit(window) }
+    }
+
     /// The screen the user is looking at: the navigation bar title, else the
     /// topmost header on screen (custom headers such as a large "Today"), else the
     /// selected tab, plus the view controller type.

@@ -75,6 +75,8 @@ final class DebugSession {
     @ObservationIgnored private var trayReturnMode = Mode.idle
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var thumbnails: [UUID: UIImage] = [:]
+    /// True while a finger is down in pick mode.
+    @ObservationIgnored private var touchIsDown = false
     @ObservationIgnored private let store = ReportStore.standard
     @ObservationIgnored private let selectionFeedback = UISelectionFeedbackGenerator()
     @ObservationIgnored private let logger = Logger(subsystem: "iOSAgenticDebuggingKit", category: "session")
@@ -123,15 +125,17 @@ final class DebugSession {
     // MARK: - Pick mode
 
     func enterPicking() {
-        guard mode == .idle, let window else { return }
-        let appWindows = self.appWindows()
-        elements = AccessibilityTree.elements(in: appWindows, screenBounds: window.bounds)
-        screen = AccessibilityTree.screen(of: appWindows.first(where: \.isKeyWindow) ?? appWindows.last, elements: elements)
-        screenshot = AccessibilityTree.screenshot(of: appWindows, bounds: window.bounds)
+        guard mode == .idle, window != nil else { return }
+        // A list still gliding from a scroll would keep moving after the screen is
+        // read, leaving every outline behind. Stop it, let it settle, then read.
+        AccessibilityTree.stopScrolling(in: appWindows())
         levels = []
-        refreshMarkers()
         setMode(.picking)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Task {
+            try? await Task.sleep(for: .milliseconds(60))
+            if mode == .picking { readScreen() }
+        }
     }
 
     func exitPicking() {
@@ -145,6 +149,12 @@ final class DebugSession {
 
     func hover(at point: CGPoint) {
         guard mode == .picking else { return }
+        if !touchIsDown {
+            // Each new touch reads the screen again, so positions, saved-note markers
+            // and the report screenshot match what is on screen right now.
+            touchIsDown = true
+            readScreen()
+        }
         let found = ElementSelection.levels(at: point, in: elements, screenSize: screenSize)
         if found.first != levels.first, found.first != nil {
             selectionFeedback.selectionChanged()
@@ -155,6 +165,7 @@ final class DebugSession {
 
     func finishHover(at point: CGPoint) {
         hover(at: point)
+        touchIsDown = false
         guard selected != nil else { return }
         noteText = ""
         editingID = nil
@@ -382,6 +393,16 @@ final class DebugSession {
         setMode(next)
         appKeyWindow?.makeKey()
         appKeyWindow = nil
+    }
+
+    /// Reads every element's position, the screen's name and a screenshot, all at the same moment.
+    private func readScreen() {
+        guard let window else { return }
+        let appWindows = self.appWindows()
+        elements = AccessibilityTree.elements(in: appWindows, screenBounds: window.bounds)
+        screen = AccessibilityTree.screen(of: appWindows.first(where: \.isKeyWindow) ?? appWindows.last, elements: elements)
+        screenshot = AccessibilityTree.screenshot(of: appWindows, bounds: window.bounds)
+        refreshMarkers()
     }
 
     private func persist() {
