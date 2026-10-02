@@ -33,7 +33,9 @@ Used mid-test, one-handed, on a physical iPhone, on top of whatever app is being
 
 ## Brand Commitments
 
-- It has its own persona: minimal, but not plain, and not iOS's default system blue.
+- Black and white minimalism that looks system-level, in the family of the Dynamic Island and system overlays. No custom brand palette.
+- No blue anywhere. Other colors only where they carry meaning, such as red for delete.
+- No decorative metaphors, uppercase label rows, or invented ornament.
 - It must read as a tool on top of the app, never as part of the app being tested.
 - It must cover as little of the app as possible, since the app's UI is what is being reported on.
 

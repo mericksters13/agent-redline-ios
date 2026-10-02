@@ -33,8 +33,6 @@ final class DebugSession {
     private(set) var screenSize = CGSize.zero
     private(set) var safeAreaInsets = UIEdgeInsets.zero
     private(set) var keyboardTop = CGFloat.infinity
-    /// Corner radius of the physical display, so the sheet border can follow it.
-    private(set) var displayCornerRadius: CGFloat = 44
     /// Center of the floating button, in screen points. Nil until the window has a size.
     private(set) var buttonCenter: CGPoint?
     /// The screen being picked on.
@@ -94,7 +92,6 @@ final class DebugSession {
         window.rootViewController = host
         window.onLayout = { [weak self] window in
             self?.updateLayout(size: window.bounds.size, insets: window.safeAreaInsets)
-            self?.displayCornerRadius = Self.cornerRadius(of: window.screen)
         }
         window.isHidden = false
         self.window = window
@@ -333,16 +330,6 @@ final class DebugSession {
     }
 
     // MARK: - Private
-
-    /// The display's rounded-corner radius. UIKit has no public API for it, so
-    /// ask the screen privately and fall back to a typical Face ID iPhone value.
-    private static func cornerRadius(of screen: UIScreen) -> CGFloat {
-        let key = "_displayCornerRadius"
-        guard screen.responds(to: NSSelectorFromString(key)),
-              let value = screen.value(forKey: key) as? CGFloat, value > 0
-        else { return 44 }
-        return value
-    }
 
     private func setMode(_ newMode: Mode) {
         mode = newMode
