@@ -3,8 +3,8 @@ import os
 import SwiftUI
 import UIKit
 
-/// Owns the debugger for the life of the app: the overlay window, the knock
-/// monitor, pick mode and the draft of annotations.
+/// Owns the debugger for the life of the app: the overlay window, the floating
+/// button, pick mode and the draft of annotations.
 @MainActor
 @Observable
 final class DebugSession {
@@ -30,10 +30,13 @@ final class DebugSession {
     var noteText = ""
     private(set) var editingID: UUID?
     private(set) var toast: String?
-    private(set) var readout: String?
     private(set) var screenSize = CGSize.zero
-    private(set) var safeAreaTop: CGFloat = 0
+    private(set) var safeAreaInsets = UIEdgeInsets.zero
     private(set) var keyboardTop = CGFloat.infinity
+    /// Center of the floating button, in screen points. Nil until the window has a size.
+    private(set) var buttonCenter: CGPoint?
+
+    var safeAreaTop: CGFloat { safeAreaInsets.top }
 
     var selected: ElementSnapshot? {
         levels.indices.contains(levelIndex) ? levels[levelIndex] : nil
@@ -54,7 +57,6 @@ final class DebugSession {
     @ObservationIgnored private var elements: [ElementSnapshot] = []
     @ObservationIgnored private var screen = ScreenInfo()
     @ObservationIgnored private var screenshot: UIImage?
-    @ObservationIgnored private var knockMonitor: KnockMonitor?
     @ObservationIgnored private var appKeyWindow: UIWindow?
     @ObservationIgnored private var trayReturnMode = Mode.idle
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
@@ -77,17 +79,13 @@ final class DebugSession {
         host.view.backgroundColor = .clear
         window.rootViewController = host
         window.onLayout = { [weak self] window in
-            self?.screenSize = window.bounds.size
-            self?.safeAreaTop = window.safeAreaInsets.top
+            self?.updateLayout(size: window.bounds.size, insets: window.safeAreaInsets)
         }
         window.isHidden = false
         self.window = window
 
         annotations = store.loadDraft()
-        startKnockMonitor()
-        let monitor = knockMonitor
-        window.onTouch = { [weak monitor] time in monitor?.recordTouch(at: time) }
-        observeSystem()
+        observeKeyboard()
 
         if UserDefaults.standard.bool(forKey: "AgenticDebuggingPickOnLaunch") {
             Task {
@@ -248,8 +246,51 @@ final class DebugSession {
         return max(top, bottom - height)
     }
 
-    func setIdleCapsuleFrame(_ frame: CGRect?) {
+    // MARK: - Floating button
+
+    /// Called when a drag ends: the button snaps to the nearest screen edge and
+    /// remembers where it rests.
+    func moveButton(to proposed: CGPoint) {
+        let area = buttonArea
+        let center = FloatingButtonPlacement.snapped(proposed, within: area)
+        buttonCenter = center
+        let fraction = FloatingButtonPlacement.fraction(of: center, within: area)
+        UserDefaults.standard.set([fraction.x, fraction.y], forKey: Self.buttonPositionKey)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    /// Only the button takes touches while the debugger is idle; the rest go to the app.
+    func setButtonFrame(_ frame: CGRect?) {
         window?.touchableRect = frame
+    }
+
+    private static let buttonPositionKey = "AgenticDebuggingButtonPosition"
+
+    private var buttonArea: CGRect {
+        FloatingButtonPlacement.restingArea(
+            screen: screenSize,
+            top: safeAreaInsets.top,
+            left: safeAreaInsets.left,
+            bottom: safeAreaInsets.bottom,
+            right: safeAreaInsets.right
+        )
+    }
+
+    private func updateLayout(size: CGSize, insets: UIEdgeInsets) {
+        guard size != screenSize || insets != safeAreaInsets || buttonCenter == nil else { return }
+        let previousArea = buttonArea
+        let previousCenter = buttonCenter
+        screenSize = size
+        safeAreaInsets = insets
+        guard size.width > 0, size.height > 0 else { return }
+        if let previousCenter, previousArea.width > 0 {
+            let fraction = FloatingButtonPlacement.fraction(of: previousCenter, within: previousArea)
+            buttonCenter = FloatingButtonPlacement.center(fromFraction: fraction, within: buttonArea)
+        } else if let saved = UserDefaults.standard.array(forKey: Self.buttonPositionKey) as? [Double], saved.count == 2 {
+            buttonCenter = FloatingButtonPlacement.center(fromFraction: CGPoint(x: saved[0], y: saved[1]), within: buttonArea)
+        } else {
+            buttonCenter = FloatingButtonPlacement.defaultCenter(within: buttonArea)
+        }
     }
 
     // MARK: - Private
@@ -306,50 +347,8 @@ final class DebugSession {
             .sorted { $0.windowLevel < $1.windowLevel }
     }
 
-    private func startKnockMonitor() {
-        let defaults = UserDefaults.standard
-        var configuration = KnockDetector.Configuration()
-        if defaults.object(forKey: "AgenticDebuggingKnockThreshold") != nil {
-            configuration.threshold = defaults.double(forKey: "AgenticDebuggingKnockThreshold")
-        }
-        let showsReadout = defaults.bool(forKey: "AgenticDebuggingKnockReadout")
-        if showsReadout { readout = "Waiting for motion" }
-        let monitor = KnockMonitor(configuration: configuration, isTuning: showsReadout) { [weak self] output in
-            Task { @MainActor in self?.handle(output) }
-        }
-        monitor.start()
-        knockMonitor = monitor
-    }
-
-    private func handle(_ output: KnockMonitor.Output) {
-        switch output {
-        case .doubleKnock:
-            lastKnockResult = "double knock"
-            if mode == .idle {
-                enterPicking()
-            } else if mode == .picking {
-                exitPicking()
-            }
-        case .ignoredScreenTap:
-            lastKnockResult = "screen tap ignored"
-        case .knock(let strength):
-            lastKnockResult = String(format: "knock %.2f g", strength)
-        case .levels(let peak, let background):
-            let last = lastKnockResult.map { "  last: \($0)" } ?? ""
-            readout = String(format: "z %.2f g  background %.3f g", peak, background) + last
-        }
-    }
-
-    @ObservationIgnored private var lastKnockResult: String?
-
-    private func observeSystem() {
+    private func observeKeyboard() {
         let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.knockMonitor?.start() }
-        })
-        observers.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.knockMonitor?.stop() }
-        })
         observers.append(center.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] note in
             let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
             MainActor.assumeIsolated { self?.updateKeyboard(frame) }

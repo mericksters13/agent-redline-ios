@@ -15,7 +15,7 @@ These rules apply to every change in this repository.
 - Use plain language and no emoji in code, comments, documentation, commit messages, or UI strings.
 - The kit ships in Debug builds only. Every source file except the public modifier is wrapped in `#if AGENTIC_DEBUGGING`, which `Package.swift` defines for debug configurations only. The public modifier must return the view unchanged without it.
 - Private API use, such as the accessibility automation switch, stays inside `AGENTIC_DEBUGGING`.
-- Keep platform-independent logic (knock detection, element selection, report storage) free of UIKit so `swift test` runs on the Mac without a simulator.
+- Keep platform-independent logic (button placement, element selection, report storage) free of UIKit so `swift test` runs on the Mac without a simulator.
 - Do not add speculative abstractions, wrapper types, or dependencies. Every user-visible behavior must trace to the active issue.
 
 ## Verification
@@ -23,7 +23,7 @@ These rules apply to every change in this repository.
 - `swift test` for logic.
 - `xcodebuild -scheme iOSAgenticDebuggingKit -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/xcode build` in Debug and Release. The Release product must not contain `AXSSetAutomationEnabled`.
 - Simulator and device runs happen through a host app such as Trail or Tiny Tally and follow that repository's simulator rules.
-- Physical-device behavior (knock detection, haptics) needs a device check; a simulator run does not prove it.
+- Physical-device behavior (gestures, haptics, the real accessibility tree) needs a device check; a simulator run does not prove it.
 
 ## Delivery
 

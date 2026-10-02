@@ -8,6 +8,7 @@ struct OverlayView: View {
     @FocusState private var noteFocused: Bool
     @State private var noteBoxHeight: CGFloat = 180
     @State private var trayContentHeight: CGFloat = 0
+    @GestureState private var buttonDrag = CGSize.zero
 
     private var panelWidth: CGFloat { min(session.screenSize.width - 24, 420) }
     private var panelLeading: CGFloat { (session.screenSize.width - panelWidth) / 2 }
@@ -50,14 +51,8 @@ struct OverlayView: View {
 
             topBar
 
-            if let readout = session.readout {
-                Text(readout)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.white)
-                    .padding(6)
-                    .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 6))
-                    .offset(x: 8, y: islandBottom + 8)
-                    .allowsHitTesting(false)
+            if session.mode == .idle, let center = session.buttonCenter {
+                floatingButton(at: center)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -129,8 +124,6 @@ struct OverlayView: View {
                         .padding(.vertical, 8)
                         .background(.regularMaterial, in: Capsule())
                         .allowsHitTesting(false)
-                } else if !session.annotations.isEmpty {
-                    idleCapsule
                 }
             }
         }
@@ -178,22 +171,41 @@ struct OverlayView: View {
         .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
     }
 
-    private var idleCapsule: some View {
-        Button { session.enterPicking() } label: {
-            HStack(spacing: 6) {
-                Circle().fill(Color.blue).frame(width: 8, height: 8)
-                Text(session.annotations.count == 1 ? "1 note" : "\(session.annotations.count) notes")
+    // MARK: - Floating button
+
+    private func floatingButton(at center: CGPoint) -> some View {
+        let count = session.annotations.count
+        return Image(systemName: "ladybug.fill")
+            .font(.system(size: 20, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: FloatingButtonPlacement.size, height: FloatingButtonPlacement.size)
+            .background(Color.black.opacity(0.75), in: Circle())
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.3), lineWidth: 1))
+            .overlay(alignment: .topTrailing) {
+                if count > 0 {
+                    numberBadge(count).offset(x: 4, y: -4)
+                }
             }
-            .font(.footnote.weight(.medium))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(.regularMaterial, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Continue picking")
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setIdleCapsuleFrame($0) }
-        .onDisappear { session.setIdleCapsuleFrame(nil) }
+            .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
+            .contentShape(Circle())
+            .onTapGesture { session.enterPicking() }
+            .gesture(
+                DragGesture(minimumDistance: 6, coordinateSpace: .global)
+                    .updating($buttonDrag) { value, state, _ in state = value.translation }
+                    .onEnded { value in
+                        withAnimation(.spring(duration: 0.35, bounce: 0.2)) {
+                            session.moveButton(to: CGPoint(
+                                x: center.x + value.translation.width,
+                                y: center.y + value.translation.height
+                            ))
+                        }
+                    }
+            )
+            .accessibilityLabel(count == 0 ? "Report a UI issue" : "Report a UI issue, \(count) notes waiting")
+            .accessibilityAddTraits(.isButton)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setButtonFrame($0) }
+            .onDisappear { session.setButtonFrame(nil) }
+            .position(x: center.x + buttonDrag.width, y: center.y + buttonDrag.height)
     }
 
     // MARK: - Note box
