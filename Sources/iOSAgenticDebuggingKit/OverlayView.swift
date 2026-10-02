@@ -8,7 +8,8 @@ struct OverlayView: View {
     @FocusState private var noteFocused: Bool
     @State private var noteBoxHeight: CGFloat = 180
     @State private var trayContentHeight: CGFloat = 0
-    @GestureState private var buttonDrag = CGSize.zero
+    /// The button's center when the current drag began.
+    @State private var dragStart: CGPoint?
 
     private var panelWidth: CGFloat { min(session.screenSize.width - 24, 420) }
     private var panelLeading: CGFloat { (session.screenSize.width - panelWidth) / 2 }
@@ -191,12 +192,23 @@ struct OverlayView: View {
             .onTapGesture { session.enterPicking() }
             .gesture(
                 DragGesture(minimumDistance: 6, coordinateSpace: .global)
-                    .updating($buttonDrag) { value, state, _ in state = value.translation }
+                    .onChanged { value in
+                        // The button follows the finger itself, so the snap starts from where it's let go.
+                        let start = dragStart ?? center
+                        if dragStart == nil { dragStart = center }
+                        session.dragButton(to: CGPoint(
+                            x: start.x + value.translation.width,
+                            y: start.y + value.translation.height
+                        ))
+                    }
                     .onEnded { value in
-                        withAnimation(.spring(duration: 0.35, bounce: 0.2)) {
+                        let start = dragStart ?? center
+                        dragStart = nil
+                        // Snap toward where a flick was heading.
+                        withAnimation(.spring(duration: 0.35, bounce: 0.15)) {
                             session.moveButton(to: CGPoint(
-                                x: center.x + value.translation.width,
-                                y: center.y + value.translation.height
+                                x: start.x + value.predictedEndTranslation.width,
+                                y: start.y + value.predictedEndTranslation.height
                             ))
                         }
                     }
@@ -205,7 +217,7 @@ struct OverlayView: View {
             .accessibilityAddTraits(.isButton)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setButtonFrame($0) }
             .onDisappear { session.setButtonFrame(nil) }
-            .position(x: center.x + buttonDrag.width, y: center.y + buttonDrag.height)
+            .position(center)
     }
 
     // MARK: - Note box

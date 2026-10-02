@@ -16,9 +16,14 @@ struct FloatingButtonPlacementTests {
         #expect(FloatingButtonPlacement.snapped(CGPoint(x: 60, y: 400), within: area) == CGPoint(x: 34, y: 400))
     }
 
-    @Test func snapsToTopOrBottomWhenThoseAreCloser() {
+    @Test func restsOnTopOrBottomOnlyWhenDroppedRightByThem() {
         #expect(FloatingButtonPlacement.snapped(CGPoint(x: 200, y: 110), within: area) == CGPoint(x: 200, y: 96))
         #expect(FloatingButtonPlacement.snapped(CGPoint(x: 200, y: 780), within: area) == CGPoint(x: 200, y: 796))
+    }
+
+    @Test func aDropInTheUpperMiddleGoesToASideNotTheTop() {
+        #expect(FloatingButtonPlacement.snapped(CGPoint(x: 190, y: 200), within: area) == CGPoint(x: 34, y: 200))
+        #expect(FloatingButtonPlacement.snapped(CGPoint(x: 220, y: 200), within: area) == CGPoint(x: 368, y: 200))
     }
 
     @Test func aDropOutsideTheAreaComesBackOnScreen() {

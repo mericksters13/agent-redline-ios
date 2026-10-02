@@ -248,8 +248,15 @@ final class DebugSession {
 
     // MARK: - Floating button
 
-    /// Called when a drag ends: the button snaps to the nearest screen edge and
-    /// remembers where it rests.
+    /// Follows the finger during a drag, kept on screen. No snapping yet.
+    func dragButton(to point: CGPoint) {
+        buttonCenter = CGPoint(
+            x: min(max(point.x, 0), screenSize.width),
+            y: min(max(point.y, 0), screenSize.height)
+        )
+    }
+
+    /// Called when a drag ends: the button snaps to an edge and remembers where it rests.
     func moveButton(to proposed: CGPoint) {
         let area = buttonArea
         let center = FloatingButtonPlacement.snapped(proposed, within: area)

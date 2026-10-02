@@ -20,18 +20,18 @@ enum FloatingButtonPlacement {
         )
     }
 
-    /// Moves `center` onto whichever edge of `area` is closest, keeping it within
-    /// the area along that edge.
+    /// How close to the top or bottom a drop must land to rest there instead of on a side.
+    static let topBottomZone: CGFloat = 56
+
+    /// Where a dropped button comes to rest, like AssistiveTouch: on the left or
+    /// right side, whichever is closer, unless it was dropped right by the top or
+    /// bottom, in which case it rests there.
     static func snapped(_ center: CGPoint, within area: CGRect) -> CGPoint {
         let x = min(max(center.x, area.minX), area.maxX)
         let y = min(max(center.y, area.minY), area.maxY)
-        let distances = [
-            (abs(center.x - area.minX), CGPoint(x: area.minX, y: y)),
-            (abs(area.maxX - center.x), CGPoint(x: area.maxX, y: y)),
-            (abs(center.y - area.minY), CGPoint(x: x, y: area.minY)),
-            (abs(area.maxY - center.y), CGPoint(x: x, y: area.maxY)),
-        ]
-        return distances.min { $0.0 < $1.0 }!.1
+        if center.y - area.minY < topBottomZone { return CGPoint(x: x, y: area.minY) }
+        if area.maxY - center.y < topBottomZone { return CGPoint(x: x, y: area.maxY) }
+        return CGPoint(x: center.x < area.midX ? area.minX : area.maxX, y: y)
     }
 
     /// Where the button starts the first time: on the right edge, a little below the middle.
