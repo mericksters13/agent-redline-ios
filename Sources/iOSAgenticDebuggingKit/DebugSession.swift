@@ -33,6 +33,9 @@ final class DebugSession {
     private(set) var screenSize = CGSize.zero
     private(set) var safeAreaInsets = UIEdgeInsets.zero
     private(set) var keyboardTop = CGFloat.infinity
+    /// True from the moment the note card asks for the keyboard until the keyboard
+    /// reports its frame, so the card can open where it will end up.
+    private(set) var awaitingKeyboard = false
     /// Center of the floating button, in screen points. Nil until the window has a size.
     private(set) var buttonCenter: CGPoint?
     /// The screen being picked on.
@@ -99,10 +102,20 @@ final class DebugSession {
         annotations = store.loadDraft()
         observeKeyboard()
 
-        if UserDefaults.standard.bool(forKey: "AgenticDebuggingPickOnLaunch") {
+        // Launch arguments for checking layouts on a device without touching it:
+        // -AgenticDebuggingPickOnLaunch YES opens pick mode, -AgenticDebuggingPickPoint "0.5,0.8"
+        // then picks the element at that fraction of the screen, and
+        // -AgenticDebuggingNoteText "..." fills in the note.
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: "AgenticDebuggingPickOnLaunch") {
             Task {
                 try? await Task.sleep(for: .seconds(1))
                 enterPicking()
+                let parts = defaults.string(forKey: "AgenticDebuggingPickPoint")?.split(separator: ",").compactMap { Double($0) }
+                guard let parts, parts.count == 2 else { return }
+                try? await Task.sleep(for: .milliseconds(300))
+                finishHover(at: CGPoint(x: parts[0] * screenSize.width, y: parts[1] * screenSize.height))
+                if let text = defaults.string(forKey: "AgenticDebuggingNoteText") { noteText = text }
             }
         }
     }
@@ -264,15 +277,27 @@ final class DebugSession {
         return thumbnail
     }
 
-    /// The top of the note box: under the element if it fits above the keyboard,
-    /// otherwise above it, otherwise as low as it can go.
-    func noteBoxTop(height: CGFloat) -> CGFloat {
-        let top = safeAreaTop + 8
-        let bottom = min(keyboardTop, screenSize.height) - 8
-        guard editingID == nil, let frame = selected?.frame else { return top }
-        if frame.maxY + 8 + height <= bottom { return frame.maxY + 8 }
-        if frame.minY - 8 - height >= top { return frame.minY - 8 - height }
-        return max(top, bottom - height)
+    /// The note card's top edge. Until the keyboard reports its frame, the last
+    /// keyboard height stands in for it, so the card opens where it will end up
+    /// instead of jumping when the keyboard arrives.
+    func noteCardTop(height: CGFloat, reservedHeight: CGFloat) -> CGFloat {
+        let keyboard = awaitingKeyboard ? screenSize.height - expectedKeyboardHeight : keyboardTop
+        return NoteCardPlacement.top(
+            element: editingID == nil ? selected?.frame : nil,
+            height: height,
+            reservedHeight: reservedHeight,
+            top: safeAreaTop,
+            bottom: min(keyboard, screenSize.height - safeAreaInsets.bottom)
+        )
+    }
+
+    private static let keyboardHeightKey = "AgenticDebuggingKeyboardHeight"
+
+    /// The last keyboard height seen, or a typical iPhone keyboard with the
+    /// suggestion bar before any keyboard has shown.
+    private var expectedKeyboardHeight: CGFloat {
+        let saved = UserDefaults.standard.double(forKey: Self.keyboardHeightKey)
+        return saved > 0 ? saved : screenSize.height * 0.385
     }
 
     // MARK: - Floating button
@@ -338,13 +363,22 @@ final class DebugSession {
 
     private func beginNoting() {
         appKeyWindow = appWindows().first(where: \.isKeyWindow)
+        awaitingKeyboard = keyboardTop == .infinity
         setMode(.noting)
         window?.makeKey()
+        // A hardware keyboard never shows the on-screen one; stop waiting for it.
+        Task {
+            try? await Task.sleep(for: .seconds(0.8))
+            if awaitingKeyboard {
+                withAnimation(.smooth(duration: 0.25)) { awaitingKeyboard = false }
+            }
+        }
     }
 
     private func endNoting(returningTo next: Mode) {
         noteText = ""
         editingID = nil
+        awaitingKeyboard = false
         setMode(next)
         appKeyWindow?.makeKey()
         appKeyWindow = nil
@@ -387,19 +421,27 @@ final class DebugSession {
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] note in
             let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
-            MainActor.assumeIsolated { self?.updateKeyboard(frame) }
+            let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+            MainActor.assumeIsolated { self?.updateKeyboard(frame, duration: duration) }
         })
-        observers.append(center.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updateKeyboard(nil) }
+        observers.append(center.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { [weak self] note in
+            let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+            MainActor.assumeIsolated { self?.updateKeyboard(nil, duration: duration) }
         })
     }
 
-    private func updateKeyboard(_ frame: CGRect?) {
-        guard let frame, frame.minY < screenSize.height else {
-            keyboardTop = .infinity
-            return
+    /// Moves the note card with the keyboard, on the keyboard's own timing curve.
+    private func updateKeyboard(_ frame: CGRect?, duration: Double) {
+        let visible = frame.map { $0.minY < screenSize.height && $0.height > 0 } ?? false
+        withAnimation(.timingCurve(0.38, 0.7, 0.125, 1, duration: max(duration, 0.2))) {
+            if visible, let frame {
+                keyboardTop = frame.minY
+                awaitingKeyboard = false
+                UserDefaults.standard.set(Double(screenSize.height - frame.minY), forKey: Self.keyboardHeightKey)
+            } else {
+                keyboardTop = .infinity
+            }
         }
-        keyboardTop = frame.minY
     }
 }
 

@@ -19,6 +19,8 @@ struct OverlayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var noteFocused: Bool
     @State private var cardHeight: CGFloat = 0
+    /// The card's height when it opened, before any typing.
+    @State private var openingCardHeight: CGFloat = 0
     @State private var islandHeight: CGFloat = 52
     @State private var tagWidth: CGFloat = 140
     @State private var listContentHeight: CGFloat = 0
@@ -291,9 +293,23 @@ struct OverlayView: View {
         .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.3), radius: 18, y: 8)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
-        .offset(x: panelLeading, y: session.noteBoxTop(height: cardHeight == 0 ? 190 : cardHeight))
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+            cardHeight = height
+            if openingCardHeight == 0 { openingCardHeight = height }
+        }
+        .offset(x: panelLeading, y: session.noteCardTop(height: cardHeight == 0 ? 190 : cardHeight, reservedHeight: reservedCardHeight))
         .onAppear { noteFocused = true }
+        .onDisappear {
+            cardHeight = 0
+            openingCardHeight = 0
+        }
+    }
+
+    /// The height the card can reach while typing: three more lines than it opened with,
+    /// the text field's limit.
+    private var reservedCardHeight: CGFloat {
+        let opening = openingCardHeight == 0 ? 190 : openingCardHeight
+        return opening + 3 * UIFont.preferredFont(forTextStyle: .body).lineHeight
     }
 
     /// Moves the selection to a larger or smaller element around the same spot.
