@@ -8,8 +8,14 @@ final class OverlayWindow: UIWindow {
     var claimsAllTouches = false
     var touchableRect: CGRect?
     var onLayout: ((OverlayWindow) -> Void)?
+    /// Called with the timestamp of every touch on the screen, including the ones
+    /// passed through to the app. This window is on top, so it is asked first.
+    var onTouch: ((TimeInterval) -> Void)?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if let event, event.type == .touches {
+            onTouch?(event.timestamp)
+        }
         guard claimsAllTouches || touchableRect?.contains(point) == true else { return nil }
         return super.hitTest(point, with: event)
     }

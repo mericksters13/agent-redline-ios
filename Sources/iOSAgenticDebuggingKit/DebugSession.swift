@@ -85,6 +85,8 @@ final class DebugSession {
 
         annotations = store.loadDraft()
         startKnockMonitor()
+        let monitor = knockMonitor
+        window.onTouch = { [weak monitor] time in monitor?.recordTouch(at: time) }
         observeSystem()
 
         if UserDefaults.standard.bool(forKey: "AgenticDebuggingPickOnLaunch") {
@@ -101,7 +103,7 @@ final class DebugSession {
         guard mode == .idle, let window else { return }
         let appWindows = self.appWindows()
         elements = AccessibilityTree.elements(in: appWindows, screenBounds: window.bounds)
-        screen = AccessibilityTree.screen(of: appWindows.first(where: \.isKeyWindow) ?? appWindows.last)
+        screen = AccessibilityTree.screen(of: appWindows.first(where: \.isKeyWindow) ?? appWindows.last, elements: elements)
         screenshot = AccessibilityTree.screenshot(of: appWindows, bounds: window.bounds)
         levels = []
         refreshMarkers()
@@ -312,7 +314,7 @@ final class DebugSession {
         }
         let showsReadout = defaults.bool(forKey: "AgenticDebuggingKnockReadout")
         if showsReadout { readout = "Waiting for motion" }
-        let monitor = KnockMonitor(configuration: configuration, reportsLevels: showsReadout) { [weak self] output in
+        let monitor = KnockMonitor(configuration: configuration, isTuning: showsReadout) { [weak self] output in
             Task { @MainActor in self?.handle(output) }
         }
         monitor.start()
@@ -321,21 +323,24 @@ final class DebugSession {
 
     private func handle(_ output: KnockMonitor.Output) {
         switch output {
-        case .detector(.doubleKnock):
+        case .doubleKnock:
+            lastKnockResult = "double knock"
             if mode == .idle {
                 enterPicking()
             } else if mode == .picking {
                 exitPicking()
             }
-        case .detector(.knock(let strength)):
-            if readout != nil { lastKnock = strength }
+        case .ignoredScreenTap:
+            lastKnockResult = "screen tap ignored"
+        case .knock(let strength):
+            lastKnockResult = String(format: "knock %.2f g", strength)
         case .levels(let peak, let background):
-            let knock = lastKnock.map { String(format: "  last knock %.2f g", $0) } ?? ""
-            readout = String(format: "z %.2f g  background %.3f g", peak, background) + knock
+            let last = lastKnockResult.map { "  last: \($0)" } ?? ""
+            readout = String(format: "z %.2f g  background %.3f g", peak, background) + last
         }
     }
 
-    @ObservationIgnored private var lastKnock: Double?
+    @ObservationIgnored private var lastKnockResult: String?
 
     private func observeSystem() {
         let center = NotificationCenter.default

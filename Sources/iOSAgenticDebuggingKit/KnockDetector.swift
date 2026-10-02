@@ -36,7 +36,8 @@ struct KnockDetector: Sendable {
 
     enum Event: Equatable, Sendable {
         case knock(strength: Double)
-        case doubleKnock
+        /// The times of both knocks, so the caller can check them against screen touches.
+        case doubleKnock(first: TimeInterval, second: TimeInterval)
     }
 
     var configuration: Configuration
@@ -70,10 +71,32 @@ struct KnockDetector: Sendable {
         if let first = firstKnockTime, sample.time - first <= settings.maxGap {
             firstKnockTime = nil
             lastDoubleKnockTime = sample.time
-            return .doubleKnock
+            return .doubleKnock(first: first, second: sample.time)
         }
         firstKnockTime = sample.time
         return .knock(strength: sample.z)
+    }
+}
+
+/// Recent touches on the screen. A tap on the screen jolts the phone much like a
+/// knock on the back does, but a knock on the back never touches the screen, so a
+/// double knock with a touch around it is a double tap and gets thrown out.
+///
+/// Times are seconds since boot, the clock both motion samples and touch events use.
+struct TouchLog: Sendable {
+    /// How far before the first knock and after the second a touch still counts.
+    /// Touch events and motion samples arrive tens of milliseconds apart.
+    static let margin: TimeInterval = 0.2
+
+    private var times: [TimeInterval] = []
+
+    mutating func record(_ time: TimeInterval) {
+        times.append(time)
+        if times.count > 32 { times.removeFirst(times.count - 32) }
+    }
+
+    func hasTouch(around first: TimeInterval, _ second: TimeInterval) -> Bool {
+        times.contains { $0 >= first - Self.margin && $0 <= second + Self.margin }
     }
 }
 #endif

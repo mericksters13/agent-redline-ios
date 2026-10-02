@@ -63,6 +63,14 @@ enum ElementSelection {
         return hits.count == 1 ? hits[0] : nil
     }
 
+    /// The label of the topmost header on screen, which is usually the screen's title.
+    static func headerTitle(in elements: [ElementSnapshot]) -> String? {
+        elements
+            .filter { $0.role == "Header" && $0.label?.nonEmpty != nil }
+            .min { $0.frame.minY < $1.frame.minY }?
+            .label
+    }
+
     private static func area(_ rect: CGRect) -> CGFloat {
         rect.width * rect.height
     }

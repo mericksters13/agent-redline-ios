@@ -23,7 +23,7 @@ struct KnockDetectorTests {
 
     @Test func twoKnocksCloseTogetherAreADoubleKnock() {
         let samples = still(from: 0, to: 1) + [knock(at: 1.0)] + still(from: 1.01, to: 1.25) + [knock(at: 1.25)]
-        #expect(events(samples) == [.knock(strength: 0.5), .doubleKnock])
+        #expect(events(samples) == [.knock(strength: 0.5), .doubleKnock(first: 1.0, second: 1.25)])
     }
 
     @Test func oneKnockIsNotADoubleKnock() {
@@ -72,13 +72,39 @@ struct KnockDetectorTests {
     @Test func nothingCountsRightAfterADoubleKnock() {
         var samples = still(from: 0, to: 1) + [knock(at: 1.0)] + still(from: 1.01, to: 1.25) + [knock(at: 1.25)]
         samples += still(from: 1.26, to: 1.5) + [knock(at: 1.5)] + still(from: 1.51, to: 1.7) + [knock(at: 1.7)]
-        #expect(events(samples) == [.knock(strength: 0.5), .doubleKnock])
+        #expect(events(samples) == [.knock(strength: 0.5), .doubleKnock(first: 1.0, second: 1.25)])
     }
 
     @Test func thresholdIsConfigurable() {
         var detector = KnockDetector(configuration: .init(threshold: 0.6))
         let samples = still(from: 0, to: 1) + [knock(at: 1.0)] + still(from: 1.01, to: 1.25) + [knock(at: 1.25)]
         #expect(samples.compactMap { detector.process($0) }.isEmpty)
+    }
+
+    @Test func aTouchAroundEitherKnockMeansADoubleTap() {
+        var log = TouchLog()
+        log.record(1.24)
+        #expect(log.hasTouch(around: 1.0, 1.25))
+    }
+
+    @Test func aTouchArrivingJustAfterTheMotionStillCounts() {
+        var log = TouchLog()
+        log.record(1.4)
+        #expect(log.hasTouch(around: 1.0, 1.25))
+    }
+
+    @Test func touchesWellBeforeOrAfterDoNotCount() {
+        var log = TouchLog()
+        log.record(0.5)
+        log.record(2.0)
+        #expect(!log.hasTouch(around: 1.0, 1.25))
+    }
+
+    @Test func touchLogKeepsOnlyRecentTouches() {
+        var log = TouchLog()
+        log.record(1.1)
+        for index in 0..<40 { log.record(5.0 + Double(index)) }
+        #expect(!log.hasTouch(around: 1.0, 1.25))
     }
 }
 #endif

@@ -64,5 +64,13 @@ struct ElementSelectionTests {
         #expect(element("Image", nil, .zero, identifier: "logo").displayName == "Image · logo")
         #expect(element("Group", nil, .zero).displayName == "Group")
     }
+
+    @Test func headerTitleIsTheTopmostHeader() {
+        let section = element("Header", "Quick add", CGRect(x: 20, y: 600, width: 200, height: 30))
+        let title = element("Header", "Today", CGRect(x: 20, y: 150, width: 200, height: 40))
+        let text = element("Text", "Hello", CGRect(x: 20, y: 100, width: 200, height: 20))
+        #expect(ElementSelection.headerTitle(in: [section, text, title]) == "Today")
+        #expect(ElementSelection.headerTitle(in: [text]) == nil)
+    }
 }
 #endif

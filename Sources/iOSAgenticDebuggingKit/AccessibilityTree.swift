@@ -80,11 +80,15 @@ enum AccessibilityTree {
         return result
     }
 
-    /// The screen the user is looking at, by navigation title and view controller.
-    static func screen(of window: UIWindow?) -> ScreenInfo {
+    /// The screen the user is looking at: the navigation bar title, else the
+    /// topmost header on screen (custom headers such as a large "Today"), else the
+    /// selected tab, plus the view controller type.
+    static func screen(of window: UIWindow?, elements: [ElementSnapshot]) -> ScreenInfo {
         guard let window else { return ScreenInfo() }
         let controller = topController(from: window.rootViewController)
         let title = navigationBarTitle(in: window)
+            ?? ElementSelection.headerTitle(in: elements)
+            ?? selectedTabTitle(from: window.rootViewController)
             ?? controller?.navigationItem.title?.nonEmpty
             ?? controller?.title?.nonEmpty
         let typeName = controller.map { String(describing: type(of: $0)).split(separator: "<").first.map(String.init) ?? "" }
@@ -182,6 +186,17 @@ enum AccessibilityTree {
             }
         }
         return controller
+    }
+
+    private static func selectedTabTitle(from controller: UIViewController?) -> String? {
+        guard let controller else { return nil }
+        if let tabs = controller as? UITabBarController {
+            return tabs.selectedViewController?.tabBarItem.title?.nonEmpty ?? tabs.tabBar.selectedItem?.title?.nonEmpty
+        }
+        for child in controller.children {
+            if let title = selectedTabTitle(from: child) { return title }
+        }
+        return nil
     }
 
     private static func navigationBarTitle(in view: UIView) -> String? {
