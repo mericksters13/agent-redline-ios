@@ -43,6 +43,11 @@ struct OverlayView: View {
                 }
             }
 
+            if session.mode == .picking || session.mode == .tray || session.mode == .attaching || session.mode == .noting {
+                annotateFrame
+                    .transition(.opacity)
+            }
+
             if session.mode == .picking || session.mode == .noting, let element = session.selected {
                 outline(element.frame, weight: 2)
                 if session.mode == .picking {
@@ -60,10 +65,18 @@ struct OverlayView: View {
 
             if session.mode == .picking || session.mode == .tray || session.mode == .attaching {
                 island
+                    .modifier(Shake(phase: reduceMotion ? 0 : CGFloat(session.nudges)))
                     // Placed by layout, not offset: views moved with offset can keep taking
                     // touches at their original position when they contain UIKit-backed views.
                     .padding(.leading, (width - islandWidth) / 2)
                     .padding(.top, islandTop)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            if session.mode == .picking, let hint = session.hint {
+                hintChip(hint)
+                    .frame(width: width)
+                    .padding(.top, islandBottom + 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
 
@@ -124,6 +137,37 @@ struct OverlayView: View {
         case .noting, .idle, .viewer, .attaching:
             Color.clear.contentShape(Rectangle())
         }
+    }
+
+    /// A line around the whole screen, along its rounded corners, while the debugger has the
+    /// screen, so the app is never mistaken for being live. White against the bezel, with a
+    /// black inner edge for light apps, like the outlines.
+    private var annotateFrame: some View {
+        let shape = RoundedRectangle(cornerRadius: session.displayCornerRadius, style: .continuous)
+        return ZStack {
+            shape.strokeBorder(Color.black.opacity(0.75), lineWidth: 5)
+            shape.strokeBorder(Color.white, lineWidth: 3)
+        }
+        .frame(width: session.screenSize.width, height: session.screenSize.height)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    /// Under the island after a tap that found nothing: which mode this is and the way out.
+    private func hintChip(_ title: String) -> some View {
+        (Text(title).foregroundStyle(Mono.text)
+            + Text("  Tap ").foregroundStyle(Mono.secondary)
+            + Text(Image(systemName: "xmark.circle.fill")).foregroundStyle(Mono.text)
+            + Text(" to use the app").foregroundStyle(Mono.secondary))
+            .font(.footnote.weight(.semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(Mono.surface, in: Capsule(style: .continuous))
+            .overlay(Capsule(style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(0.3), radius: 12, y: 5)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     /// A white line with a black edge, readable over any app.
@@ -194,7 +238,7 @@ struct OverlayView: View {
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
-            .accessibilityLabel("Stop picking")
+            .accessibilityLabel("Close annotate mode")
 
             Button { session.toggleTray() } label: {
                 HStack(spacing: 4) {
@@ -708,6 +752,19 @@ struct CaptureFlight: View {
                 landed()
             }
         }
+    }
+}
+
+/// A quick side-to-side shake, played each time `phase` steps up by one.
+struct Shake: GeometryEffect {
+    var phase: CGFloat
+    var animatableData: CGFloat {
+        get { phase }
+        set { phase = newValue }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        ProjectionTransform(CGAffineTransform(translationX: 7 * sin(phase * .pi * 6), y: 0))
     }
 }
 

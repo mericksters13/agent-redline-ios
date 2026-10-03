@@ -73,6 +73,12 @@ final class DebugSession {
     private(set) var captureFlight: UIImage?
     /// Where the note box shows its first image: where a capture lands.
     var attachmentSlot = CGRect.zero
+    /// The display's corner radius, so the annotate-mode frame can follow the screen's edge.
+    private(set) var displayCornerRadius: CGFloat = 0
+    /// Counts taps in pick mode that found nothing; each one shakes the island.
+    private(set) var nudges = 0
+    /// A short reminder under the island after such a tap.
+    private(set) var hint: String?
 
     var safeAreaTop: CGFloat { safeAreaInsets.top }
 
@@ -133,6 +139,7 @@ final class DebugSession {
         }
         window.isHidden = false
         self.window = window
+        displayCornerRadius = Self.displayCornerRadius(of: scene.screen)
 
         annotations = store.loadDraft()
         observeKeyboard()
@@ -242,7 +249,10 @@ final class DebugSession {
     func finishHover(at point: CGPoint) {
         hover(at: point)
         touchIsDown = false
-        guard selected != nil else { return }
+        guard selected != nil else {
+            nudge()
+            return
+        }
         noteText = ""
         pending = nil
         notingReturnMode = .picking
@@ -710,12 +720,35 @@ final class DebugSession {
 
     // MARK: - Private
 
+    /// A tap in pick mode that found nothing: the app didn't respond because the debugger has
+    /// the screen. Says so, rather than leaving the tester to think the app is broken.
+    private func nudge() {
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        withAnimation(.linear(duration: 0.4)) { nudges += 1 }
+        withAnimation(.smooth(duration: 0.25)) { hint = "Annotate mode" }
+        UIAccessibility.post(notification: .announcement, argument: "Annotate mode. Close it to use the app.")
+        let count = nudges
+        Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            if nudges == count { withAnimation(.smooth(duration: 0.3)) { hint = nil } }
+        }
+    }
+
+    /// The display's corner radius, read through a private key; square corners when it
+    /// can't be read. Debug builds only, like the rest of the kit.
+    private static func displayCornerRadius(of screen: UIScreen) -> CGFloat {
+        let key = "_displayCornerRadius"
+        guard screen.responds(to: NSSelectorFromString(key)) else { return 0 }
+        return (screen.value(forKey: key) as? CGFloat) ?? 0
+    }
+
     /// Keyboard focus moves to the debugger when it leaves idle and back to the app when
     /// it returns to idle, never in between: the first tap after each handoff gets lost,
     /// so handing focus back and forth around every note cost a tap each time.
     private func setMode(_ newMode: Mode) {
         let wasIdle = mode == .idle
         mode = newMode
+        if newMode != .picking { hint = nil }
         window?.claimsAllTouches = newMode != .idle
         if wasIdle, newMode != .idle {
             appKeyWindow = appWindows().first(where: \.isKeyWindow)
