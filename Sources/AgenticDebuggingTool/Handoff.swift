@@ -1,10 +1,11 @@
 #if os(macOS)
 import Foundation
 
-/// What happens to a report no open chat takes. If a chat on its project is open but can't be
-/// woken, the report waits for that chat's next message and the Mac says so. If no chat is
-/// open, the hub starts one with the agent last used on the project, which looks into the
-/// report and proposes a fix without changing code.
+/// What happens to a report no waiting chat takes. An open Claude Code chat on its project gets
+/// it through the chat's socket, which starts a turn even when the chat is idle. If another
+/// agent's chat is open but can't be woken, the report waits for that chat's next message and
+/// the Mac says so. If no chat is open, the hub starts one with the agent last used on the
+/// project, which looks into the report and proposes a fix without changing code.
 final class Handoff: @unchecked Sendable {
     private unowned let hub: Hub
     private let queue = DispatchQueue(label: "handoff")
@@ -19,6 +20,16 @@ final class Handoff: @unchecked Sendable {
         self.hub = hub
     }
 
+    /// Hands over reports that arrived shortly before the hub started and no chat took.
+    func handOverRecent(within interval: TimeInterval = 3600) {
+        queue.asyncAfter(deadline: .now() + Self.grace) { [self] in
+            let apps = Set(Chats.live(hub.paths).flatMap(\.bundleIDs) + ProjectHistory.all(hub.paths).keys)
+            for report in InboxQueue.waiting(for: Array(apps), paths: hub.paths) where Date().timeIntervalSince(report.source.receivedAt) < interval {
+                handOver(report)
+            }
+        }
+    }
+
     func reportFiled(_ folder: URL, source: ReportSource) {
         queue.asyncAfter(deadline: .now() + Self.grace) { [self] in
             guard let report = InboxQueue.waiting(for: [source.bundleID], paths: hub.paths).first(where: { $0.folder == folder }) else { return }
@@ -28,6 +39,7 @@ final class Handoff: @unchecked Sendable {
 
     private func handOver(_ report: InboxReport) {
         let source = report.source
+        if sendToClaudeChat(report) { return }
         let open = Chats.live(hub.paths).filter { chat in
             chat.bundleIDs.contains(source.bundleID) && (chat.isWaiting || Date().timeIntervalSince(chat.lastActiveAt) < Self.staleAfter)
         }
@@ -43,6 +55,37 @@ final class Handoff: @unchecked Sendable {
             return
         }
         startChat(agent, in: use.folder, for: report)
+    }
+
+    /// Puts the report into the most recently used open Claude Code chat on the project. False
+    /// when there's none or its socket didn't take it.
+    private func sendToClaudeChat(_ report: InboxReport) -> Bool {
+        let source = report.source
+        // The chat the user last worked with on reports comes first: its hooks or MCP copy note
+        // when it was last used. Then an idle chat before a busy one, which is in the middle
+        // of other work.
+        let used = Dictionary(Chats.live(hub.paths).map { ($0.folder, $0.lastActiveAt) }, uniquingKeysWith: max)
+        let sessions = ClaudeSessions.open()
+            .filter { ProjectApps.bundleIDs(in: URL(fileURLWithPath: $0.folder)).contains(source.bundleID) }
+            .sorted { a, b in
+                let (usedA, usedB) = (used[a.folder] ?? .distantPast, used[b.folder] ?? .distantPast)
+                if usedA != usedB { return usedA > usedB }
+                if a.isIdle != b.isIdle { return a.isIdle }
+                return a.updatedAt > b.updatedAt
+            }
+        for session in sessions {
+            let chat = ChatRecord(id: "claude-\(session.id)", agent: Agent.claude.rawValue, folder: session.folder,
+                                  bundleIDs: [source.bundleID], pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
+            guard InboxQueue.claim(report, for: chat) else { return true }
+            if ClaudeSessions.send(AgentHooks.reportPrompt(ReportContent.text(for: report)), to: session) {
+                hub.log("Sent report \(source.reportID) to the Claude Code chat in \(session.folder)")
+                Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Claude Code chat in \(Self.folderName(session.folder)).")
+                return true
+            }
+            try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+            hub.log("The Claude Code chat in \(session.folder) didn't take report \(source.reportID)")
+        }
+        return false
     }
 
     private func startChat(_ agent: Agent, in folder: String, for report: InboxReport) {

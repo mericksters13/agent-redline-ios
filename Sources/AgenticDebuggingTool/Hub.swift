@@ -107,6 +107,7 @@ final class Hub: @unchecked Sendable {
         log(apps.isEmpty ? "Hub started; no chats open yet" : "Hub started for \(apps.joined(separator: ", "))")
         watchChats()
         handoff = Handoff(hub: self)
+        handoff?.handOverRecent()
         let simulators = SimulatorWatcher(hub: self)
         self.simulators = simulators
         let listener = HubListener(hub: self)
