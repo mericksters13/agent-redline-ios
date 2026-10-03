@@ -17,10 +17,15 @@ final class DebugSession {
     /// Images waiting for their note: what the note card is about when no element is picked.
     struct PendingAttachment {
         var kind: Annotation.Kind
+        /// The images, or small previews of them while the full ones load.
         var images: [UIImage]
         var screen: ScreenInfo?
         /// True for a suggested screenshot: its note box sends the report.
         var sendsReport: Bool
+        /// How many images, known before they finish loading.
+        var count = 1
+        /// The full-size images, while they load. The note box opens without waiting for them.
+        var loading: Task<[UIImage], Never>?
     }
 
     /// A screenshot offered at the side of the screen.
@@ -90,6 +95,10 @@ final class DebugSession {
     @ObservationIgnored private var thumbnails: [UUID: UIImage] = [:]
     /// Full-size images for the viewer, kept for the few around the one showing.
     @ObservationIgnored private var fullImages: [String: UIImage] = [:]
+    /// True while Add note waits for photos that are still loading.
+    @ObservationIgnored private var isSavingNote = false
+    /// Images still being written to the draft. Send waits for them.
+    @ObservationIgnored private var writes: [Task<Void, Never>] = []
     /// True while a finger is down in pick mode.
     @ObservationIgnored private var touchIsDown = false
     @ObservationIgnored private let store = ReportStore.standard
@@ -249,18 +258,29 @@ final class DebugSession {
     func saveNote() {
         let note = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         if let pending {
-            saveAttachment(pending, note: note)
+            guard !isSavingNote else { return }
+            guard let loading = pending.loading else {
+                saveAttachment(pending, note: note)
+                return
+            }
+            // Photos still loading: save once they're in. The note box stays until then.
+            isSavingNote = true
+            Task {
+                var ready = pending
+                ready.images = await loading.value
+                ready.loading = nil
+                isSavingNote = false
+                guard self.pending != nil, !ready.images.isEmpty else { return }
+                saveAttachment(ready, note: note)
+            }
             return
         }
         guard let element = selected, let screenshot else { return }
         let id = UUID()
         let fileName = "\(id.uuidString).png"
-        do {
-            let image = AccessibilityTree.outlining(element.frame, in: screenshot)
-            try store.saveScreenshot(image.pngData() ?? Data(), named: fileName)
-        } catch {
-            logger.error("Couldn't save the screenshot: \(error.localizedDescription, privacy: .public)")
-        }
+        let image = AccessibilityTree.outlining(element.frame, in: screenshot)
+        thumbnails[id] = Self.crop(image, around: element.frame, screenWidth: screenSize.width)
+        writeImages([image], named: [fileName], asPNG: true)
         annotations.append(Annotation(
             id: id,
             createdAt: .now,
@@ -280,6 +300,7 @@ final class DebugSession {
 
     func cancelNote() {
         levels = []
+        pending?.loading?.cancel()
         pending = nil
         endNoting(returningTo: notingReturnMode)
     }
@@ -288,18 +309,11 @@ final class DebugSession {
     /// then sends the report, with everything already in the draft.
     private func saveAttachment(_ attachment: PendingAttachment, note: String) {
         let id = UUID()
-        var files: [String] = []
-        for (index, image) in attachment.images.enumerated() {
-            // The app's own screens keep every pixel sharp; photos are stored smaller.
-            let isScreen = attachment.kind == .screen
-            let name = "\(id.uuidString)-\(index + 1).\(isScreen ? "png" : "jpg")"
-            do {
-                try store.saveScreenshot((isScreen ? image.pngData() : image.jpegData(compressionQuality: 0.85)) ?? Data(), named: name)
-                files.append(name)
-            } catch {
-                logger.error("Couldn't save an attached image: \(error.localizedDescription, privacy: .public)")
-            }
-        }
+        // The app's own screens keep every pixel sharp; photos are stored smaller.
+        let isScreen = attachment.kind == .screen
+        let files = attachment.images.indices.map { "\(id.uuidString)-\($0 + 1).\(isScreen ? "png" : "jpg")" }
+        thumbnails[id] = attachment.images.first.flatMap(Self.topSquare(of:))
+        writeImages(attachment.images, named: files, asPNG: isScreen)
         annotations.append(Annotation(
             id: id,
             createdAt: .now,
@@ -419,10 +433,23 @@ final class DebugSession {
         beginAttachmentNote(PendingAttachment(kind: .screen, images: [capture.image], screen: capture.screen, sendsReport: false))
     }
 
-    /// Attaches images chosen from Photos, together, as one item with one note.
-    func attachPhotos(_ images: [UIImage]) {
-        guard mode == .attaching, !images.isEmpty else { return }
-        beginAttachmentNote(PendingAttachment(kind: .photo, images: images, screen: nil, sendsReport: false))
+    /// Attaches images chosen from Photos, together, as one item with one note. The note
+    /// box opens at once with `previews`, and the full images take their place once loaded.
+    func attachPhotos(previews: [UIImage], count: Int, loading: Task<[UIImage], Never>) {
+        guard mode == .attaching, count > 0 else { return }
+        beginAttachmentNote(PendingAttachment(kind: .photo, images: previews, screen: nil, sendsReport: false, count: count, loading: loading))
+        Task {
+            let images = await loading.value
+            guard pending?.loading == loading else { return }
+            guard !images.isEmpty else {
+                logger.error("None of the chosen photos could be loaded")
+                cancelNote()
+                return
+            }
+            pending?.images = images
+            pending?.count = images.count
+            pending?.loading = nil
+        }
     }
 
     // MARK: - Suggested screenshots
@@ -513,6 +540,17 @@ final class DebugSession {
     }
 
     func send() {
+        guard !annotations.isEmpty else { return }
+        // The report takes the draft's files with it, so every image must be on disk first.
+        let pending = writes
+        writes = []
+        Task {
+            for write in pending { await write.value }
+            saveReport()
+        }
+    }
+
+    private func saveReport() {
         guard !annotations.isEmpty else { return }
         do {
             let folder = try store.send(annotations, app: .current, device: .current, date: .now)
@@ -691,6 +729,23 @@ final class DebugSession {
         noteText = ""
         awaitingKeyboard = false
         setMode(next)
+    }
+
+    /// Encodes and writes images off the main thread, so closing the note box never waits
+    /// on a large PNG or JPEG. The list and viewer read them back only after this finishes.
+    private func writeImages(_ images: [UIImage], named names: [String], asPNG: Bool) {
+        let store = store
+        let logger = logger
+        writes.append(Task.detached(priority: .userInitiated) {
+            for (image, name) in zip(images, names) {
+                do {
+                    let data = asPNG ? image.pngData() : image.jpegData(compressionQuality: 0.85)
+                    try store.saveScreenshot(data ?? Data(), named: name)
+                } catch {
+                    logger.error("Couldn't save an image: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        })
     }
 
     private func beginAttachmentNote(_ attachment: PendingAttachment, returningTo next: Mode = .picking) {

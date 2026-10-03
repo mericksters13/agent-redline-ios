@@ -257,7 +257,7 @@ struct OverlayView: View {
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
                 if let pending {
-                    attachmentPreview(pending.images)
+                    attachmentPreview(pending)
                 } else if elementIsHidden, let preview = session.selectedElementPreview() {
                     // The element is behind the keyboard or this card, so show what was picked.
                     Image(uiImage: preview)
@@ -274,7 +274,7 @@ struct OverlayView: View {
                     NumberBadge(number: session.nextNumber, size: 26)
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(pending.map { Annotation.title(kind: $0.kind, element: nil, screen: $0.screen, imageCount: $0.images.count) }
+                    Text(pending.map { Annotation.title(kind: $0.kind, element: nil, screen: $0.screen, imageCount: $0.count) }
                         ?? session.selected?.shortName ?? "Unnamed element")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Mono.text)
@@ -349,17 +349,24 @@ struct OverlayView: View {
     }
 
     /// The images a note is being written for: up to three, fanned like a small stack.
-    private func attachmentPreview(_ images: [UIImage]) -> some View {
+    /// Photos still loading show as placeholders until they arrive.
+    private func attachmentPreview(_ pending: DebugSession.PendingAttachment) -> some View {
         let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
         return HStack(spacing: -14) {
-            ForEach(Array(images.prefix(3).enumerated()), id: \.offset) { index, image in
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 34, height: 56, alignment: .top)
-                    .clipShape(shape)
-                    .overlay(shape.strokeBorder(Color.white.opacity(0.4), lineWidth: 1))
-                    .zIndex(Double(3 - index))
+            ForEach(0..<max(min(pending.count, 3), 1), id: \.self) { index in
+                Group {
+                    if pending.images.indices.contains(index) {
+                        Image(uiImage: pending.images[index]).resizable().scaledToFill()
+                    } else {
+                        Color(white: 0.16).overlay {
+                            if index == 0 { ProgressView().controlSize(.small).tint(Mono.text) }
+                        }
+                    }
+                }
+                .frame(width: 34, height: 56, alignment: .top)
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(Color.white.opacity(0.4), lineWidth: 1))
+                .zIndex(Double(3 - index))
             }
         }
         .overlay(alignment: .topLeading) {

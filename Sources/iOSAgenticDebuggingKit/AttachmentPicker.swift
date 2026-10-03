@@ -21,7 +21,6 @@ struct AttachmentPicker: View {
     @State private var selectedIDs: [String] = []
     @State private var showsSystemPicker = false
     @State private var pickerItems: [PhotosPickerItem] = []
-    @State private var isLoading = false
 
     static let selectionLimit = 10
     private let cornerRadius: CGFloat = 48
@@ -103,12 +102,14 @@ struct AttachmentPicker: View {
             selection: $pickerItems,
             maxSelectionCount: Self.selectionLimit,
             selectionBehavior: .ordered,
-            matching: .images
+            matching: .images,
+            // As stored, so a HEIC photo isn't converted to JPEG before the kit shrinks it anyway.
+            preferredItemEncoding: .current
         )
         .onChange(of: pickerItems) { _, items in
             guard !items.isEmpty else { return }
             pickerItems = []
-            attach { await Self.images(from: items) }
+            session.attachPhotos(previews: [], count: items.count, loading: Task { await Self.images(from: items) })
         }
     }
 
@@ -189,9 +190,7 @@ struct AttachmentPicker: View {
             HStack {
                 backButton
                 Spacer()
-                if isLoading {
-                    ProgressView().tint(Mono.text).frame(width: 44, height: 44)
-                } else if !selectedIDs.isEmpty {
+                if !selectedIDs.isEmpty {
                     Button(action: addSelected) {
                         Text("Add \(selectedIDs.count)")
                             .font(.system(size: 16, weight: .semibold))
@@ -317,19 +316,12 @@ struct AttachmentPicker: View {
 
     // MARK: - Actions
 
+    /// Opens the note box at once with the grid's thumbnails; the full photos load behind it.
     private func addSelected() {
         let ids = selectedIDs
-        attach { await library.images(for: ids) }
-    }
-
-    /// Loads the chosen images, then opens the note box for them.
-    private func attach(_ load: @escaping @MainActor () async -> [UIImage]) {
-        isLoading = true
-        Task {
-            let images = await load()
-            isLoading = false
-            session.attachPhotos(images)
-        }
+        let previews = ids.compactMap { id in library.items.first { $0.id == id }?.thumbnail }
+        let library = library
+        session.attachPhotos(previews: previews, count: ids.count, loading: Task { await library.images(for: ids) })
     }
 
     private func close() {
@@ -340,14 +332,20 @@ struct AttachmentPicker: View {
         }
     }
 
-    private static func images(from items: [PhotosPickerItem]) async -> [UIImage] {
-        var images: [UIImage] = []
-        for item in items {
-            if let data = try? await item.loadTransferable(type: Data.self), let image = PhotoLibrary.downscaled(data) {
-                images.append(image)
+    /// Off the main thread and in parallel: reading and shrinking a large photo takes long
+    /// enough to stall the UI. Keeps the order they were chosen in.
+    nonisolated private static func images(from items: [PhotosPickerItem]) async -> [UIImage] {
+        await withTaskGroup(of: (Int, UIImage?).self) { group in
+            for (index, item) in items.enumerated() {
+                group.addTask {
+                    guard let data = try? await item.loadTransferable(type: Data.self) else { return (index, nil) }
+                    return (index, PhotoLibrary.downscaled(data))
+                }
             }
+            var loaded = [UIImage?](repeating: nil, count: items.count)
+            for await (index, image) in group { loaded[index] = image }
+            return loaded.compactMap { $0 }
         }
-        return images
     }
 }
 
@@ -410,14 +408,15 @@ final class RecentPhotos {
         isLoaded = true
     }
 
-    /// The chosen photos at attachment size, in the order they were chosen.
+    /// The chosen photos at attachment size, in the order they were chosen, all requested at once.
     func images(for ids: [String]) async -> [UIImage] {
         if usesSamples { return ids.compactMap { UIImage(contentsOfFile: $0) } }
+        let requests = ids.compactMap { assets[$0] }.map { asset in
+            Task { await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels) }
+        }
         var images: [UIImage] = []
-        for id in ids {
-            if let asset = assets[id], let image = await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels) {
-                images.append(image)
-            }
+        for request in requests {
+            if let image = await request.value { images.append(image) }
         }
         return images
     }

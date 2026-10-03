@@ -63,7 +63,7 @@ enum PhotoLibrary {
         // One call back, with the final image.
         options.deliveryMode = .highQualityFormat
         options.resizeMode = fill ? .fast : .exact
-        return await withCheckedContinuation { continuation in
+        let image: UIImage? = await withCheckedContinuation { continuation in
             PHImageManager.default().requestImage(
                 for: asset,
                 targetSize: CGSize(width: pixels, height: pixels),
@@ -73,15 +73,19 @@ enum PhotoLibrary {
                 continuation.resume(returning: image)
             }
         }
+        // Decoded here, off the main thread, so drawing it later never stalls an animation.
+        return await image?.byPreparingForDisplay() ?? image
     }
 
     /// An image from the system photo picker, decoded no bigger than `maxPixels`
-    /// and turned upright.
+    /// and turned upright. Slow for a large photo, so it's never called on the main thread.
     nonisolated static func downscaled(_ data: Data) -> UIImage? {
+        dispatchPrecondition(condition: .notOnQueue(.main))
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
             kCGImageSourceThumbnailMaxPixelSize: maxPixels,
         ]
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
