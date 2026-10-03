@@ -157,6 +157,7 @@ final class DebugSession {
         Task {
             try? await Task.sleep(for: .seconds(1))
             offerRecentScreenshot()
+            offerUndeliveredReports()
         }
 
         // Launch arguments for checking layouts on a device without touching it:
@@ -527,7 +528,10 @@ final class DebugSession {
             MainActor.assumeIsolated { self?.offerInAppScreenshot() }
         })
         observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.offerRecentScreenshot() }
+            MainActor.assumeIsolated {
+                self?.offerRecentScreenshot()
+                self?.offerUndeliveredReports()
+            }
         })
     }
 
@@ -568,6 +572,35 @@ final class DebugSession {
         Task {
             try? await Task.sleep(for: .seconds(20))
             if self.suggestion?.id == id { dismissSuggestion() }
+        }
+    }
+
+    // MARK: - Handing reports to the Mac
+
+    /// Set once a report has reached the Mac's hub, and so iOS has allowed local network access.
+    nonisolated static let hubReachedKey = "AgenticDebuggingHubReached"
+
+    /// Offers every report the Mac hasn't confirmed to its hub, when one has set this app up,
+    /// and notes the ones it now has. Nil when there's no hub, nothing to offer, or no answer.
+    nonisolated static func offerReports(from store: ReportStore, patience: TimeInterval) async -> HubLink.Reply? {
+        guard let address = store.hubAddress(), let bundleID = Bundle.main.bundleIdentifier else { return nil }
+        let reports = store.undeliveredReports()
+        guard !reports.isEmpty else { return nil }
+        let offer = HubLink.Offer(device: address.device, bundleID: bundleID, reports: reports)
+        guard let reply = await HubLink.send(offer, to: address, patience: patience) else { return nil }
+        store.markDelivered(reply.delivered)
+        UserDefaults.standard.set(true, forKey: hubReachedKey)
+        return reply
+    }
+
+    /// When the app comes back, offers what the Mac hasn't confirmed, such as a report sent from
+    /// another network. Only after a report has reached the hub once, so iOS's local network
+    /// question is never asked at launch.
+    private func offerUndeliveredReports() {
+        guard UserDefaults.standard.bool(forKey: Self.hubReachedKey) else { return }
+        let store = store
+        Task.detached(priority: .utility) {
+            _ = await DebugSession.offerReports(from: store, patience: 8)
         }
     }
 
@@ -641,7 +674,12 @@ final class DebugSession {
                 let report = try ReportBuilder.build(input)
                 try store.finishReport(report, in: started.folder)
                 logger.notice("Report saved at \(started.folder.path, privacy: .public)")
-                await self?.show(toast: count == 1 ? "Saved 1 note on this iPhone" : "Saved \(count) notes on this iPhone")
+                // The first time, iOS asks about local network access before the hub can answer.
+                let patience: TimeInterval = UserDefaults.standard.bool(forKey: DebugSession.hubReachedKey) ? 8 : 60
+                let reply = await DebugSession.offerReports(from: store, patience: patience)
+                let notes = count == 1 ? "1 note" : "\(count) notes"
+                let reachedMac = reply?.delivered.contains(started.id) == true
+                await self?.show(toast: reachedMac ? "Sent \(notes) to the Mac" : "Saved \(notes) on this iPhone")
             } catch {
                 logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
                 await self?.show(toast: "Couldn't save the report")

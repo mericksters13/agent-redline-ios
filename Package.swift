@@ -13,6 +13,7 @@ let package = Package(
     platforms: [.iOS(.v18), .macOS(.v15)],
     products: [
         .library(name: "iOSAgenticDebuggingKit", targets: ["iOSAgenticDebuggingKit"]),
+        .executable(name: "agentic-debugging", targets: ["AgenticDebuggingTool"]),
     ],
     targets: [
         .target(name: "iOSAgenticDebuggingKit", swiftSettings: debugOnly),
@@ -21,5 +22,9 @@ let package = Package(
             dependencies: ["iOSAgenticDebuggingKit"],
             swiftSettings: debugOnly
         ),
+        // The Mac side: takes reports off paired phones and simulators for agent chats. It runs
+        // on the Mac only and never ships in an app, so it isn't limited to debug builds.
+        .executableTarget(name: "AgenticDebuggingTool"),
+        .testTarget(name: "AgenticDebuggingToolTests", dependencies: ["AgenticDebuggingTool"]),
     ]
 )

@@ -129,6 +129,37 @@ struct ReportStoreTests {
         #expect(FileManager.default.fileExists(atPath: sent[0].folder.appending(path: "report.json").path))
     }
 
+    @Test func reportsAreOfferedUntilTheMacHasThem() throws {
+        var ids: [String] = []
+        for seconds in [1_790_000_000.0, 1_790_000_600.0] {
+            try store.saveDraft([annotation("Cut off")])
+            let started = try store.beginReport(date: Date(timeIntervalSince1970: seconds))
+            var report = sampleReport(id: started.id)
+            report.createdAt = Date(timeIntervalSince1970: seconds)
+            try store.finishReport(report, in: started.folder)
+            ids.append(started.id)
+        }
+        // Oldest first, named by folder.
+        #expect(store.undeliveredReports().map(\.id) == ids)
+        #expect(store.undeliveredReports().first?.finishedAt == Date(timeIntervalSince1970: 1_790_000_000))
+        store.markDelivered([ids[0]])
+        #expect(store.undeliveredReports().map(\.id) == [ids[1]])
+    }
+
+    @Test func theHubsAddressAndMessagesRoundTrip() throws {
+        #expect(store.hubAddress() == nil)
+        let address = HubLink.Address(device: "00008150-00123C360CF3C01C", hosts: ["192.168.1.2", "mac.local"], port: 47361)
+        try FileManager.default.createDirectory(at: store.root, withIntermediateDirectories: true)
+        try HubLink.encode(address).write(to: store.hubAddressFile)
+        #expect(store.hubAddress() == address)
+        // The hub reads exactly this line; see the Mac tool's HubMessagesTests.
+        let offer = HubLink.Offer(device: address.device, bundleID: "com.example.app",
+                                  reports: [.init(id: "20261003-215826", finishedAt: Date(timeIntervalSince1970: 1_791_000_000))])
+        let line = String(decoding: HubLink.encode(offer), as: UTF8.self)
+        #expect(line == #"{"bundleID":"com.example.app","device":"00008150-00123C360CF3C01C","reports":[{"finishedAt":"2026-10-03T04:00:00Z","id":"20261003-215826"}]}"# + "\n")
+        #expect(HubLink.decode(HubLink.Reply.self, from: Data(#"{"delivered":["20261003-215826"]}"#.utf8)) == HubLink.Reply(delivered: ["20261003-215826"]))
+    }
+
     @Test func aSentReportIsSummedUpForTheList() {
         let report = sampleReport(id: "r")
         #expect(report.screenNames == "Today")

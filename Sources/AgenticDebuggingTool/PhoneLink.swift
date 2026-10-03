@@ -1,0 +1,102 @@
+#if os(macOS)
+import Foundation
+
+/// One paired phone. Leaves the hub's address in each watched app's folder on it, once and
+/// again only when the address changes, and copies the reports an app offers. Nothing runs
+/// while the phone is quiet: the app speaks first.
+final class PhoneLink: @unchecked Sendable {
+    let phone: Devicectl.Phone
+    private unowned let hub: Hub
+    /// Blocking `devicectl` calls for this phone run here, one at a time.
+    private let queue: DispatchQueue
+    private var address: HubMessage.Address?
+    /// The address each app was given.
+    private var given: [String: HubMessage.Address] = [:]
+    /// Apps not on the phone at the last look; looked for again at the next discovery.
+    private var missing = Set<String>()
+    private var retryDelay = PhoneLink.firstRetry
+    private var retryAt: Date?
+
+    static let firstRetry: TimeInterval = 30
+    static let longestRetry: TimeInterval = 1800
+
+    init(phone: Devicectl.Phone, hub: Hub) {
+        self.phone = phone
+        self.hub = hub
+        queue = DispatchQueue(label: "phone.\(phone.udid)")
+    }
+
+    /// Gives the address to every watched app that doesn't have it yet. `rediscover` looks
+    /// again for apps that weren't installed.
+    func update(hosts: [String], port: UInt16, rediscover: Bool) {
+        queue.async {
+            let address = HubMessage.Address(device: self.phone.udid, hosts: hosts, port: port)
+            if address != self.address || rediscover {
+                self.address = address
+                self.missing = []
+                self.retryDelay = Self.firstRetry
+            }
+            self.giveAddress()
+        }
+    }
+
+    /// A phone woke up somewhere on the network. If this one still needs its address and its
+    /// wait is over, try now: it's awake and likely about to be used.
+    func phoneWoke() {
+        queue.async {
+            guard let retryAt = self.retryAt, Date() >= retryAt else { return }
+            self.giveAddress()
+        }
+    }
+
+    /// Copies the offered reports the hub doesn't have, then says which ones the app can stop offering.
+    func deliver(_ offer: HubMessage.Offer, reply: @escaping @Sendable (HubMessage.Reply) -> Void) {
+        queue.async {
+            let finished = offer.reports.map { FinishedReport(id: $0.id, finishedAt: $0.finishedAt) }
+            for id in self.hub.toCopy(device: self.phone.udid, bundleID: offer.bundleID, finished: finished) {
+                let source = ReportSource(kind: .phone, device: self.phone.udid, deviceName: self.phone.name,
+                                          bundleID: offer.bundleID, reportID: id, receivedAt: Date())
+                self.hub.receive(source) { destination in
+                    self.hub.devicectl.copyReport(id, of: offer.bundleID, on: self.phone.udid, to: destination)
+                }
+            }
+            reply(HubMessage.Reply(delivered: self.hub.settled(device: self.phone.udid, bundleID: offer.bundleID, finished: finished)))
+        }
+    }
+
+    private func giveAddress() {
+        guard let address else { return }
+        retryAt = nil
+        var unreachable = false
+        for bundleID in hub.apps where given[bundleID] != address && !missing.contains(bundleID) {
+            if hub.devicectl.write(HubMessage.encode(address), to: HubMessage.addressPath, of: bundleID, on: phone.udid) {
+                given[bundleID] = address
+                hub.log("Gave \(bundleID) on \(phone.name) the hub's address")
+                continue
+            }
+            // Either the app isn't installed, or the phone can't be reached right now.
+            if hub.devicectl.isInstalled(bundleID, on: phone.udid) == false {
+                missing.insert(bundleID)
+            } else {
+                unreachable = true
+            }
+        }
+        let ready = hub.apps.filter { given[$0] == address }
+        if unreachable {
+            retryAt = Date().addingTimeInterval(retryDelay)
+            hub.phoneChanged(phone, state: "Not reachable, trying again in \(Int(retryDelay)) s or when a phone wakes")
+            let delay = retryDelay
+            retryDelay = min(retryDelay * 2, Self.longestRetry)
+            queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, let retryAt = self.retryAt, Date() >= retryAt.addingTimeInterval(-1) else { return }
+                self.giveAddress()
+            }
+        } else if ready.isEmpty {
+            hub.phoneChanged(phone, state: "None of the watched apps installed")
+        } else {
+            retryDelay = Self.firstRetry
+            hub.phoneChanged(phone, state: "Ready for \(ready.joined(separator: ", "))")
+        }
+    }
+}
+#endif

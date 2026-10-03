@@ -15,6 +15,7 @@ These rules apply to every change in this repository.
 - Use plain language and no emoji in code, comments, documentation, commit messages, or UI strings.
 - The kit ships in Debug builds only. Every source file except the public modifier is wrapped in `#if AGENTIC_DEBUGGING`, which `Package.swift` defines for debug configurations only. The public modifier must return the view unchanged without it.
 - Private API use, such as the accessibility automation switch, stays inside `AGENTIC_DEBUGGING`.
+- The Mac tool in `Sources/AgenticDebuggingTool` runs only on the Mac and never ships in an app, so it is wrapped in `#if os(macOS)` instead of `AGENTIC_DEBUGGING`.
 - Keep platform-independent logic (button placement, element selection, report storage) free of UIKit so `swift test` runs on the Mac without a simulator.
 - Do not add speculative abstractions, wrapper types, or dependencies. Every user-visible behavior must trace to the active issue.
 

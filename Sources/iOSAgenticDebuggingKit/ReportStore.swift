@@ -363,6 +363,31 @@ struct ReportStore: Sendable {
         try? FileManager.default.removeItem(at: folder.appending(path: "draft"))
     }
 
+    /// Where the Mac's hub leaves its address, over Xcode's device link.
+    var hubAddressFile: URL { root.appending(path: "hub.json") }
+
+    func hubAddress() -> HubLink.Address? {
+        (try? Data(contentsOf: hubAddressFile)).flatMap { HubLink.decode(HubLink.Address.self, from: $0) }
+    }
+
+    /// Sent reports the Mac hasn't confirmed yet, oldest first.
+    func undeliveredReports() -> [HubLink.Offer.Report] {
+        sentReports()
+            .filter { !FileManager.default.fileExists(atPath: $0.folder.appending(path: "delivered").path) }
+            // Named by folder: the hub copies the report's folder.
+            .map { HubLink.Offer.Report(id: $0.folder.lastPathComponent, finishedAt: $0.report.createdAt) }
+            .reversed()
+    }
+
+    /// Notes that the Mac has these reports, so they aren't offered again.
+    func markDelivered(_ ids: [String]) {
+        for id in ids {
+            let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+            guard FileManager.default.fileExists(atPath: folder.path) else { continue }
+            FileManager.default.createFile(atPath: folder.appending(path: "delivered").path, contents: nil)
+        }
+    }
+
     /// Reports already sent, newest first. One still being drawn isn't listed yet, nor one
     /// saved in an earlier format.
     func sentReports() -> [SentReport] {
