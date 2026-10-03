@@ -16,6 +16,9 @@ struct NoteViewer: View {
     /// The note the draft belongs to, so moving to another note saves it against the right one.
     @State private var draftOwner: UUID?
     @State private var isConfirmingDelete = false
+    /// The details panel's height, which sets where the screenshot ends. Kept from before
+    /// a zoom, so the screenshot never resizes under the finger while the details are hidden.
+    @State private var detailsHeight: CGFloat = 0
     @FocusState private var isEditingNote: Bool
 
     private var annotations: [Annotation] { session.annotations }
@@ -25,11 +28,22 @@ struct NoteViewer: View {
     private var size: CGSize { session.screenSize }
     /// The details panel rises with the keyboard while a note is edited.
     private var panelBottom: CGFloat { min(session.keyboardTop, size.height - session.safeAreaInsets.bottom) - 8 }
+    /// The screenshot sits between the top bar and the details panel, so the outlined
+    /// element is never under the panel and the picture never reads as the live app.
+    private var imageTop: CGFloat { session.safeAreaTop + 56 }
+    /// While a note is edited the screenshot shrinks to the space above the panel,
+    /// so the outlined element stays in view next to what is being written about it.
+    private var imageHeight: CGFloat {
+        let reserve = detailsHeight == 0 ? 200 : detailsHeight
+        return max(panelBottom - reserve - 12 - imageTop, 120)
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
             Color.black
             pager
+                .frame(height: imageHeight)
+                .padding(.top, imageTop)
             if detailsVisible {
                 topBar
                     .transition(.opacity)
@@ -40,6 +54,8 @@ struct NoteViewer: View {
             }
         }
         .frame(width: size.width, height: size.height)
+        // The panel follows the keyboard itself; SwiftUI must not also push the whole viewer up.
+        .ignoresSafeArea()
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.25), value: detailsVisible)
         .onChange(of: session.viewerID, initial: true) { _, _ in
             saveDraft()
@@ -58,7 +74,8 @@ struct NoteViewer: View {
                 HStack(spacing: 0) {
                     ForEach(Array(annotations.enumerated()), id: \.element.id) { index, annotation in
                         page(for: annotation, number: index + 1, isNear: abs(index - (currentIndex ?? 0)) <= 1)
-                            .frame(width: size.width, height: size.height)
+                            .padding(.horizontal, 16)
+                            .frame(width: size.width, height: imageHeight)
                             .id(annotation.id)
                     }
                 }
@@ -67,7 +84,7 @@ struct NoteViewer: View {
             .scrollTargetBehavior(.paging)
             .scrollPosition(id: $shownID)
             .scrollDisabled(isZoomed)
-            .frame(width: size.width, height: size.height)
+            .frame(width: size.width, height: imageHeight)
             // A scroll position binding is not honored on first layout, so the first jump is made explicitly.
             .onAppear {
                 shownID = session.viewerID
@@ -143,10 +160,10 @@ struct NoteViewer: View {
                 HStack(spacing: 12) {
                     NumberBadge(number: index + 1, size: 26)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(current.element.displayName)
+                        Text(current.element.label ?? current.element.identifier ?? current.element.role)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Mono.text)
-                        Text(current.screen.title.map { "On \($0)" } ?? current.element.role)
+                        Text([current.element.role, current.screen.title].compactMap { $0 }.joined(separator: " · "))
                             .font(.caption)
                             .foregroundStyle(Mono.secondary)
                     }
@@ -164,18 +181,20 @@ struct NoteViewer: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Delete note \(index + 1)")
                     .confirmationDialog("Delete this note?", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
-                        Button("Delete note", role: .destructive) { session.delete(current) }
+                        Button("Delete note", role: .destructive) {
+                            isEditingNote = false
+                            session.delete(current)
+                        }
                     }
                 }
 
-                // Typed right here; the panel rises with the keyboard and the screenshot stays put.
+                // Typed right here; the panel rises with the keyboard and the screenshot fits above it.
                 TextField("What's wrong?", text: $draft, axis: .vertical)
                     .font(.body)
                     .foregroundStyle(Mono.text)
                     .tint(Color.white)
                     .lineLimit(1...4)
                     .focused($isEditingNote)
-                    .submitLabel(.done)
                     .onChange(of: draft) { _, text in
                         // Return ends the note; a vertical field would otherwise add a line.
                         if text.contains("\n") {
@@ -194,6 +213,7 @@ struct NoteViewer: View {
         .frame(width: min(size.width - 24, 420))
         .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { detailsHeight = $0 }
     }
 
     private var strip: some View {
@@ -325,7 +345,9 @@ struct ZoomableScreenshot: UIViewRepresentable {
             photo.contentMode = .scaleAspectFit
             photo.clipsToBounds = true
             photo.layer.cornerCurve = .continuous
-            photo.layer.cornerRadius = 12
+            photo.layer.cornerRadius = 14
+            photo.layer.borderWidth = 1
+            photo.layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor
             addSubview(photo)
             minimumZoomScale = 1
             maximumZoomScale = 5

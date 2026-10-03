@@ -84,6 +84,11 @@ final class DebugSession {
         window.backgroundColor = .clear
         let host = UIHostingController(rootView: OverlayView(session: self))
         host.view.backgroundColor = .clear
+        // The overlay places everything itself from the window's insets and the keyboard frame.
+        // Left on, the keyboard shrinks the space SwiftUI lays out in and re-centers full-screen views.
+        host.safeAreaRegions = []
+        // Dark at the UIKit level too, so the keyboard and system popovers always match the black panels.
+        window.overrideUserInterfaceStyle = .dark
         window.rootViewController = host
         window.onLayout = { [weak self] window in
             self?.updateLayout(size: window.bounds.size, insets: window.safeAreaInsets)
@@ -100,9 +105,11 @@ final class DebugSession {
         // -AgenticDebuggingNoteText "..." fills in the note. -AgenticDebuggingOpenViewer YES
         // opens the viewer on the first saved note.
         let defaults = UserDefaults.standard
+        // -AgenticDebuggingLaunchDelay waits that many seconds first, for apps that load slowly.
+        let launchDelay = max(defaults.double(forKey: "AgenticDebuggingLaunchDelay"), 1)
         if defaults.bool(forKey: "AgenticDebuggingOpenViewer") {
             Task {
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .seconds(launchDelay))
                 enterPicking()
                 try? await Task.sleep(for: .milliseconds(300))
                 toggleTray()
@@ -111,12 +118,21 @@ final class DebugSession {
         }
         if defaults.bool(forKey: "AgenticDebuggingPickOnLaunch") {
             Task {
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .seconds(launchDelay))
                 enterPicking()
-                let parts = defaults.string(forKey: "AgenticDebuggingPickPoint")?.split(separator: ",").compactMap { Double($0) }
-                guard let parts, parts.count == 2 else { return }
                 try? await Task.sleep(for: .milliseconds(300))
-                finishHover(at: CGPoint(x: parts[0] * screenSize.width, y: parts[1] * screenSize.height))
+                let point: (String) -> CGPoint? = { key in
+                    let parts = defaults.string(forKey: key)?.split(separator: ",").compactMap { Double($0) }
+                    guard let parts, parts.count == 2 else { return nil }
+                    return CGPoint(x: parts[0] * self.screenSize.width, y: parts[1] * self.screenSize.height)
+                }
+                // -AgenticDebuggingHoverPoint holds a finger-down hover there instead of picking.
+                if let hover = point("AgenticDebuggingHoverPoint") {
+                    self.hover(at: hover)
+                    return
+                }
+                guard let pick = point("AgenticDebuggingPickPoint") else { return }
+                finishHover(at: pick)
                 if let text = defaults.string(forKey: "AgenticDebuggingNoteText") { noteText = text }
             }
         }
@@ -239,10 +255,7 @@ final class DebugSession {
     func openViewer(_ annotation: Annotation) {
         guard mode == .tray else { return }
         viewerID = annotation.id
-        appKeyWindow = appWindows().first(where: \.isKeyWindow)
         setMode(.viewer)
-        // The viewer edits notes in place, so it needs the keyboard.
-        window?.makeKey()
     }
 
     func showInViewer(_ id: UUID) {
@@ -254,8 +267,6 @@ final class DebugSession {
         viewerID = nil
         fullScreenshots = [:]
         setMode(annotations.isEmpty ? trayReturnMode : .tray)
-        appKeyWindow?.makeKey()
-        appKeyWindow = nil
     }
 
     func updateNote(_ id: UUID, to text: String) {
@@ -311,26 +322,48 @@ final class DebugSession {
         }
     }
 
+    /// A close crop of the picked element from the current screenshot, for the note card
+    /// when the element itself is hidden behind the keyboard or the card.
+    func selectedElementPreview() -> UIImage? {
+        guard let frame = selected?.frame, let image = screenshot else { return nil }
+        return Self.crop(image, around: frame, screenWidth: screenSize.width)
+    }
+
+    /// A square crop for a thumbnail. A wide element keeps its leading end and a tall one its
+    /// top, where the icon and title usually are; the middle of a row is often empty.
+    private static func crop(_ image: UIImage, around frame: CGRect, screenWidth: CGFloat) -> UIImage? {
+        guard let cgImage = image.cgImage, screenWidth > 0 else { return nil }
+        let scale = CGFloat(cgImage.width) / screenWidth
+        var area = frame.insetBy(dx: -12, dy: -12)
+        let side = min(area.width, area.height)
+        area.size = CGSize(width: side, height: side)
+        let crop = CGRect(x: area.minX * scale, y: area.minY * scale, width: area.width * scale, height: area.height * scale)
+            .intersection(CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        guard !crop.isEmpty, let cropped = cgImage.cropping(to: crop) else { return nil }
+        return UIImage(cgImage: cropped)
+    }
+
     /// A close crop of the annotation's screenshot around its element, for the notes list.
     func thumbnail(for annotation: Annotation) -> UIImage? {
         if let cached = thumbnails[annotation.id] { return cached }
         let url = store.draftDirectory.appending(path: annotation.screenshot)
-        guard let image = UIImage(contentsOfFile: url.path), let cgImage = image.cgImage, screenSize.width > 0 else { return nil }
-        let scale = CGFloat(cgImage.width) / screenSize.width
-        let area = annotation.element.frame.insetBy(dx: -24, dy: -24)
-        let crop = CGRect(x: area.minX * scale, y: area.minY * scale, width: area.width * scale, height: area.height * scale)
-            .intersection(CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
-        guard !crop.isEmpty, let cropped = cgImage.cropping(to: crop) else { return nil }
-        let thumbnail = UIImage(cgImage: cropped)
+        guard let image = UIImage(contentsOfFile: url.path),
+              let thumbnail = Self.crop(image, around: annotation.element.frame, screenWidth: screenSize.width)
+        else { return nil }
         thumbnails[annotation.id] = thumbnail
         return thumbnail
     }
 
-    /// The note card's top edge. Until the keyboard reports its frame, the last
-    /// keyboard height stands in for it, so the card opens where it will end up
-    /// instead of jumping when the keyboard arrives.
+    /// The keyboard's top edge for placing the note card. Until the keyboard reports its
+    /// frame, the last keyboard height stands in for it, so the card opens where it will
+    /// end up instead of jumping when the keyboard arrives.
+    var noteKeyboardTop: CGFloat {
+        awaitingKeyboard ? screenSize.height - expectedKeyboardHeight : keyboardTop
+    }
+
+    /// The note card's top edge.
     func noteCardTop(height: CGFloat, reservedHeight: CGFloat) -> CGFloat {
-        let keyboard = awaitingKeyboard ? screenSize.height - expectedKeyboardHeight : keyboardTop
+        let keyboard = noteKeyboardTop
         return NoteCardPlacement.top(
             element: selected?.frame,
             height: height,
@@ -405,16 +438,25 @@ final class DebugSession {
 
     // MARK: - Private
 
+    /// Keyboard focus moves to the debugger when it leaves idle and back to the app when
+    /// it returns to idle, never in between: the first tap after each handoff gets lost,
+    /// so handing focus back and forth around every note cost a tap each time.
     private func setMode(_ newMode: Mode) {
+        let wasIdle = mode == .idle
         mode = newMode
         window?.claimsAllTouches = newMode != .idle
+        if wasIdle, newMode != .idle {
+            appKeyWindow = appWindows().first(where: \.isKeyWindow)
+            window?.makeKey()
+        } else if !wasIdle, newMode == .idle {
+            appKeyWindow?.makeKey()
+            appKeyWindow = nil
+        }
     }
 
     private func beginNoting() {
-        appKeyWindow = appWindows().first(where: \.isKeyWindow)
         awaitingKeyboard = keyboardTop == .infinity
         setMode(.noting)
-        window?.makeKey()
         // A hardware keyboard never shows the on-screen one; stop waiting for it.
         Task {
             try? await Task.sleep(for: .seconds(0.8))
@@ -428,8 +470,6 @@ final class DebugSession {
         noteText = ""
         awaitingKeyboard = false
         setMode(next)
-        appKeyWindow?.makeKey()
-        appKeyWindow = nil
     }
 
     /// Reads every element's position, the screen's name and a screenshot, all at the same moment.

@@ -60,7 +60,10 @@ struct OverlayView: View {
 
             if session.mode == .picking || session.mode == .tray {
                 island
-                    .offset(x: (width - islandWidth) / 2, y: islandTop)
+                    // Placed by layout, not offset: views moved with offset can keep taking
+                    // touches at their original position when they contain UIKit-backed views.
+                    .padding(.leading, (width - islandWidth) / 2)
+                    .padding(.top, islandTop)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
 
@@ -203,7 +206,8 @@ struct OverlayView: View {
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
-            .disabled(count == 0)
+            // Not disabled: a disabled button fades its text, and this one also shows the screen name.
+            .allowsHitTesting(count > 0)
             .accessibilityLabel(count == 0 ? "\(session.screenTitle). Tap an element to add a note." : session.mode == .tray ? "Hide notes" : "Show \(count) notes")
 
             if count > 0 {
@@ -236,7 +240,21 @@ struct OverlayView: View {
     private var noteCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                NumberBadge(number: session.nextNumber, size: 26)
+                if elementIsHidden, let preview = session.selectedElementPreview() {
+                    // The element is behind the keyboard or this card, so show what was picked.
+                    Image(uiImage: preview)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+                        .overlay(alignment: .topLeading) {
+                            NumberBadge(number: session.nextNumber, size: 20).offset(x: -6, y: -6)
+                        }
+                        .accessibilityHidden(true)
+                } else {
+                    NumberBadge(number: session.nextNumber, size: 26)
+                }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(session.selected.flatMap(shortName(of:)) ?? "Unnamed element")
                         .font(.subheadline.weight(.semibold))
@@ -293,12 +311,23 @@ struct OverlayView: View {
             cardHeight = height
             if openingCardHeight == 0 { openingCardHeight = height }
         }
-        .offset(x: panelLeading, y: session.noteCardTop(height: cardHeight == 0 ? 190 : cardHeight, reservedHeight: reservedCardHeight))
+        .padding(.leading, panelLeading)
+        .padding(.top, session.noteCardTop(height: cardHeight == 0 ? 190 : cardHeight, reservedHeight: reservedCardHeight))
         .onAppear { noteFocused = true }
         .onDisappear {
             cardHeight = 0
             openingCardHeight = 0
         }
+    }
+
+    /// True when the picked element sits under the keyboard or under the card itself.
+    private var elementIsHidden: Bool {
+        guard let frame = session.selected?.frame else { return false }
+        let visibleBottom = min(session.noteKeyboardTop, session.screenSize.height)
+        let height = cardHeight == 0 ? 190 : cardHeight
+        let card = CGRect(x: panelLeading, y: session.noteCardTop(height: height, reservedHeight: reservedCardHeight), width: panelWidth, height: height)
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        return center.y >= visibleBottom || card.contains(center)
     }
 
     /// The height the card can reach while typing: three more lines than it opened with,
@@ -345,7 +374,8 @@ struct OverlayView: View {
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.3), radius: 18, y: 8)
-        .offset(x: panelLeading, y: islandBottom + 8)
+        .padding(.leading, panelLeading)
+        .padding(.top, islandBottom + 8)
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
