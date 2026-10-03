@@ -25,27 +25,40 @@ enum ReportRenderer {
     }
 
     /// Draws the rows `rows` of the plan's picture, all of it by default.
+    ///
+    /// The pieces are placed on whole pixels. A piece that starts or ends partway through a
+    /// pixel leaves that pixel row or column partly uncovered, and the background shows
+    /// through as a faint line.
     static func render(_ plan: ImagePlan, pictures: [UUID: UIImage], outlines: [Outline], rows: ClosedRange<CGFloat>? = nil, scale: CGFloat) -> UIImage {
+        func pixel(_ points: CGFloat) -> CGFloat { (points * scale).rounded() }
         let rows = rows ?? 0...plan.size.height
         let visible = CGRect(x: 0, y: rows.lowerBound, width: plan.size.width, height: rows.upperBound - rows.lowerBound)
+        let top = pixel(rows.lowerBound)
+        let size = CGSize(width: pixel(plan.size.width), height: pixel(rows.upperBound) - top)
         let format = UIGraphicsImageRendererFormat()
-        format.scale = scale
+        format.scale = 1
         format.opaque = true
-        return UIGraphicsImageRenderer(size: visible.size, format: format).image { context in
-            context.cgContext.translateBy(x: 0, y: -visible.minY)
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
             UIColor.white.setFill()
-            UIRectFill(visible)
+            UIRectFill(CGRect(origin: .zero, size: size))
             for segment in plan.segments where segment.height > 0 {
-                let destination = CGRect(x: 0, y: segment.destinationY, width: plan.size.width, height: segment.height)
-                guard destination.intersects(visible), let picture = pictures[segment.capture],
+                let minY = pixel(segment.destinationY) - top
+                let destination = CGRect(x: 0, y: minY, width: size.width, height: pixel(segment.destinationY + segment.height) - top - minY)
+                guard destination.maxY > 0, destination.minY < size.height, let picture = pictures[segment.capture],
                       let capture = plan.captures[segment.capture] else { continue }
                 draw(picture, pointWidth: capture.size.width, rowsFrom: segment.sourceMinY, height: segment.height, into: destination)
             }
-            for gap in plan.gaps where gap.intersects(visible) { drawGap(gap) }
+            context.cgContext.translateBy(x: 0, y: -top)
+            context.cgContext.scaleBy(x: scale, y: scale)
+            for gap in plan.gaps where gap.intersects(visible) {
+                drawGap(CGRect(x: 0, y: pixel(gap.minY) / scale, width: size.width / scale, height: (pixel(gap.maxY) - pixel(gap.minY)) / scale))
+            }
             for outline in outlines where outline.rect.insetBy(dx: -12, dy: -12).intersects(visible) {
                 draw(outline, within: visible)
             }
         }
+        guard let pixels = image.cgImage else { return image }
+        return UIImage(cgImage: pixels, scale: scale, orientation: .up)
     }
 
     static func jpeg(_ image: UIImage) -> Data? {
@@ -65,11 +78,12 @@ enum ReportRenderer {
         }
     }
 
-    /// Copies rows of a capture, given in points, into the picture.
+    /// Copies rows of a capture, given in points, into the picture, on whole pixels of both.
     private static func draw(_ picture: UIImage, pointWidth: CGFloat, rowsFrom minY: CGFloat, height: CGFloat, into destination: CGRect) {
         guard let image = picture.cgImage, pointWidth > 0 else { return }
         let ratio = CGFloat(image.width) / pointWidth
-        let source = CGRect(x: 0, y: minY * ratio, width: CGFloat(image.width), height: height * ratio)
+        let first = (minY * ratio).rounded()
+        let source = CGRect(x: 0, y: first, width: CGFloat(image.width), height: ((minY + height) * ratio).rounded() - first)
             .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
         guard !source.isEmpty, let rows = image.cropping(to: source) else { return }
         UIImage(cgImage: rows).draw(in: destination)

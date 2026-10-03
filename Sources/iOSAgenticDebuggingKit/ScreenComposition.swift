@@ -187,7 +187,9 @@ enum ScreenComposition {
                 if frame.midY > middle { bottom = min(bottom, frame.minY) } else { top = max(top, frame.maxY) }
             }
         }
-        return bottom > top ? top...bottom : nil
+        // A bar draws its border just outside its frame. Left in the band, a capture's border
+        // would show as a line where its content meets another capture's.
+        return bottom - top > 2 ? (top + 1)...(bottom - 1) : nil
     }
 
     /// The plan for one group of captures: the newest capture whole, or, when the group

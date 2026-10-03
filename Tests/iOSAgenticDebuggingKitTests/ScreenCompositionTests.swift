@@ -102,7 +102,8 @@ struct ScreenCompositionTests {
     // MARK: - Where content scrolls
 
     @Test func theScrollingBandLeavesOutTheBarsInsets() {
-        #expect(ScreenComposition.band(for: [capture(-62), capture(400)]) == 62...840)
+        // And a point more at each end, for the bars' borders.
+        #expect(ScreenComposition.band(for: [capture(-62), capture(400)]) == 63...839)
     }
 
     @Test func aTabBarFloatingOverTheContentIsLeftOut() {
@@ -110,7 +111,7 @@ struct ScreenCompositionTests {
         let tabBar = element("Today", y: 780, id: "tab.today")
         let top = capture(-62, elements: [tabBar, element("Newborn", y: 200)], insetBottom: 0)
         let scrolled = capture(400, elements: [tabBar, element("Feed", y: 300)], insetBottom: 0)
-        #expect(ScreenComposition.band(for: [top, scrolled]) == 62...780)
+        #expect(ScreenComposition.band(for: [top, scrolled]) == 63...779)
     }
 
     // MARK: - Stitching
@@ -139,17 +140,17 @@ struct ScreenCompositionTests {
         #expect(plan.place(CGRect(x: 20, y: 100, width: 100, height: 40), from: top.id)?.minY == 100)
         #expect(plan.place(CGRect(x: 20, y: 500, width: 100, height: 40), from: lower.id)?.minY == 962)
         // A note on the bottom bars sits at the bottom of the picture.
-        #expect(plan.place(CGRect(x: 20, y: 850, width: 100, height: 20), from: top.id)?.minY == plan.footerY + 10)
+        #expect(plan.place(CGRect(x: 20, y: 850, width: 100, height: 20), from: top.id)?.minY == plan.footerY + 11)
     }
 
     @Test func capturesFarApartAreJoinedAcrossAMarkedGap() throws {
         let top = capture(-62), far = capture(1500)
         let plan = try #require(ScreenComposition.plan(for: [top, far]))
         #expect(plan.gaps.count == 1)
-        // The top capture ends at 778 in the content; the far one starts at 1562.
-        #expect(plan.skipped == [784])
-        #expect(plan.size.height == 62 + 778 + ScreenComposition.gapHeight + 778 + 34)
-        #expect(plan.place(CGRect(x: 20, y: 100, width: 100, height: 40), from: far.id)?.minY == 62 + 778 + ScreenComposition.gapHeight + 38)
+        // The top capture ends at 777 in the content; the far one starts at 1563.
+        #expect(plan.skipped == [786])
+        #expect(plan.size.height == 63 + 776 + ScreenComposition.gapHeight + 776 + 35)
+        #expect(plan.place(CGRect(x: 20, y: 100, width: 100, height: 40), from: far.id)?.minY == 63 + 776 + ScreenComposition.gapHeight + 37)
     }
 
     @Test func aNoteShowsOnAnotherCaptureOnlyWhenItWasInView() {
