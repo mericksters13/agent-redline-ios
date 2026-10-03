@@ -34,8 +34,8 @@ struct OverlayView: View {
     @State private var islandHeight: CGFloat = 52
     @State private var tagWidth: CGFloat = 140
     @State private var listContentHeight: CGFloat = 0
-    /// The button's center when the current drag began.
-    @State private var dragStart: CGPoint?
+    /// The finger on the floating button, from touch down to lift.
+    @State private var press: ButtonPress?
 
     private var width: CGFloat { session.screenSize.width }
     private var panelWidth: CGFloat { min(width - 24, 420) }
@@ -46,7 +46,7 @@ struct OverlayView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if session.mode != .idle && session.mode != .viewer {
+            if session.mode != .idle && session.mode != .viewer && session.mode != .reports {
                 touchSurface
                 ForEach(session.markers) { marker in
                     savedNoteMarker(number: marker.number, frame: marker.frame)
@@ -99,6 +99,11 @@ struct OverlayView: View {
                     .transition(.opacity)
             }
 
+            if session.mode == .reports {
+                SentReportsView(session: session)
+                    .transition(.opacity)
+            }
+
             if session.mode == .idle {
                 if let toast = session.toast {
                     toastView(toast)
@@ -144,7 +149,7 @@ struct OverlayView: View {
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture { session.toggleTray() }
-        case .noting, .idle, .viewer, .attaching:
+        case .noting, .idle, .viewer, .attaching, .reports:
             Color.clear.contentShape(Rectangle())
         }
     }
@@ -617,26 +622,45 @@ struct OverlayView: View {
             }
             .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
             .contentShape(Circle())
-            .onTapGesture { session.enterPicking() }
+            // One gesture tells a tap, a press held still and a drag apart. Separate tap,
+            // long press and drag gestures left the tap winning over a held press.
             .gesture(
-                DragGesture(minimumDistance: 6, coordinateSpace: .global)
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
                     .onChanged { value in
+                        if press == nil {
+                            press = ButtonPress(center: center, hold: Task {
+                                try? await Task.sleep(for: .seconds(ButtonPress.holdDuration))
+                                guard !Task.isCancelled, press?.isDragging == false else { return }
+                                press?.held = true
+                                session.openSentReports()
+                            })
+                        }
+                        guard let current = press, !current.held else { return }
+                        if !current.isDragging {
+                            guard hypot(value.translation.width, value.translation.height) >= ButtonPress.dragDistance else { return }
+                            current.hold.cancel()
+                            press?.isDragging = true
+                        }
                         // The button follows the finger itself, so the snap starts from where it's let go.
-                        let start = dragStart ?? center
-                        if dragStart == nil { dragStart = center }
                         session.dragButton(to: CGPoint(
-                            x: start.x + value.translation.width,
-                            y: start.y + value.translation.height
+                            x: current.center.x + value.translation.width,
+                            y: current.center.y + value.translation.height
                         ))
                     }
                     .onEnded { value in
-                        let start = dragStart ?? center
-                        dragStart = nil
+                        guard let current = press else { return }
+                        press = nil
+                        current.hold.cancel()
+                        if current.held { return }
+                        guard current.isDragging else {
+                            session.enterPicking()
+                            return
+                        }
                         // Snap toward where a flick was heading.
                         withAnimation(.spring(duration: 0.35, bounce: 0.15)) {
                             session.moveButton(to: CGPoint(
-                                x: start.x + value.predictedEndTranslation.width,
-                                y: start.y + value.predictedEndTranslation.height
+                                x: current.center.x + value.predictedEndTranslation.width,
+                                y: current.center.y + value.predictedEndTranslation.height
                             ))
                         }
                     }
@@ -644,8 +668,15 @@ struct OverlayView: View {
             .accessibilityElement()
             .accessibilityLabel(count == 0 ? "Report a UI issue" : "Report a UI issue, \(count) notes waiting")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { session.enterPicking() }
+            .accessibilityAction(named: "Sent reports") { session.openSentReports() }
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setTouchableFrame($0, for: "button") }
-            .onDisappear { session.setTouchableFrame(nil, for: "button") }
+            .onDisappear {
+                // A press that opened the sent reports never sees the finger lift here.
+                press?.hold.cancel()
+                press = nil
+                session.setTouchableFrame(nil, for: "button")
+            }
             .position(center)
     }
 
@@ -765,6 +796,20 @@ struct CaptureFlight: View {
             }
         }
     }
+}
+
+/// A touch on the floating button: a tap opens pick mode, a press held still opens the
+/// sent reports, and moving it drags the button.
+struct ButtonPress {
+    static let holdDuration = 0.45
+    static let dragDistance: CGFloat = 6
+
+    /// The button's center when the finger came down.
+    var center: CGPoint
+    /// Opens the sent reports once the press has been held long enough.
+    var hold: Task<Void, Never>
+    var isDragging = false
+    var held = false
 }
 
 /// A quick side-to-side shake, played each time `phase` steps up by one.

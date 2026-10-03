@@ -12,6 +12,8 @@ final class DebugSession {
 
     enum Mode {
         case idle, picking, noting, tray, viewer, attaching
+        /// The reports already sent, opened with a long press on the floating button.
+        case reports
     }
 
     /// Images waiting for their note: what the note card is about when no element is picked.
@@ -401,6 +403,25 @@ final class DebugSession {
         setMode(annotations.isEmpty ? trayReturnMode : .tray)
     }
 
+    // MARK: - Sent reports
+
+    func openSentReports() {
+        guard mode == .idle, window != nil else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        setMode(.reports)
+    }
+
+    func closeSentReports() {
+        guard mode == .reports else { return }
+        setMode(.idle)
+    }
+
+    /// The reports already sent, newest first, read off the main thread.
+    func sentReports() async -> [SentReport] {
+        let store = store
+        return await Task.detached(priority: .userInitiated) { store.sentReports() }.value
+    }
+
     func updateNote(_ id: UUID, to text: String) {
         let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return }
@@ -433,7 +454,7 @@ final class DebugSession {
             guard !annotations.isEmpty else { return }
             trayReturnMode = mode
             setMode(.tray)
-        case .noting, .viewer, .attaching:
+        case .noting, .viewer, .attaching, .reports:
             break
         }
     }

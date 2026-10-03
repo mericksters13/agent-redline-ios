@@ -181,6 +181,31 @@ struct Report: Codable, Sendable {
     var items: [Item]
 }
 
+extension Report {
+    /// The screens it covers, for the list of sent reports.
+    var screenNames: String {
+        var seen = Set<String>()
+        let names = screens.map { $0.title ?? $0.viewController ?? "Untitled" }.filter { seen.insert($0).inserted }
+        guard !names.isEmpty else { return items.count == 1 ? "Attachment" : "Attachments" }
+        return names.joined(separator: ", ")
+    }
+
+    /// How much it holds, such as "3 notes, 1 screen".
+    var contents: String {
+        let notes = items.count == 1 ? "1 note" : "\(items.count) notes"
+        guard !screens.isEmpty else { return notes }
+        return notes + ", " + (screens.count == 1 ? "1 screen" : "\(screens.count) screens")
+    }
+}
+
+/// A report already sent, read back to show on the phone.
+struct SentReport: Identifiable, Sendable {
+    var report: Report
+    /// Where its pictures are.
+    var folder: URL
+    var id: String { report.id }
+}
+
 /// The report as text the agent reads first: what was reported, on which screen, and
 /// which picture shows each note.
 enum ReportSummary {
@@ -336,6 +361,19 @@ struct ReportStore: Sendable {
         try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)
         try Data(ReportSummary.markdown(report).utf8).write(to: folder.appending(path: "report.md"), options: .atomic)
         try? FileManager.default.removeItem(at: folder.appending(path: "draft"))
+    }
+
+    /// Reports already sent, newest first. One still being drawn isn't listed yet, nor one
+    /// saved in an earlier format.
+    func sentReports() -> [SentReport] {
+        let folders = (try? FileManager.default.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: nil)) ?? []
+        return folders.compactMap { folder in
+            guard let data = try? Data(contentsOf: folder.appending(path: "report.json")),
+                  let report = try? Self.decoder.decode(Report.self, from: data)
+            else { return nil }
+            return SentReport(report: report, folder: folder)
+        }
+        .sorted { ($0.report.createdAt, $0.id) > ($1.report.createdAt, $1.id) }
     }
 
     private static let encoder: JSONEncoder = {

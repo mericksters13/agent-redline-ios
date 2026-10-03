@@ -108,6 +108,38 @@ struct ReportStoreTests {
         #expect(store.loadScreens() == screens)
     }
 
+    @Test func sentReportsAreListedNewestFirst() throws {
+        for (id, seconds) in [("older", 1_790_000_000.0), ("newer", 1_790_000_600.0)] {
+            try store.saveDraft([annotation(id)])
+            let started = try store.beginReport(date: Date(timeIntervalSince1970: seconds))
+            var report = sampleReport(id: id)
+            report.createdAt = Date(timeIntervalSince1970: seconds)
+            try store.finishReport(report, in: started.folder)
+        }
+        // Still being drawn: no report.json yet.
+        try store.saveDraft([annotation("In progress")])
+        _ = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_001_000))
+        // Saved before reports listed their screens.
+        let old = store.reportsDirectory.appending(path: "20261002-135144")
+        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
+        try Data(#"{"id":"20261002-135144","annotations":[]}"#.utf8).write(to: old.appending(path: "report.json"))
+
+        let sent = store.sentReports()
+        #expect(sent.map(\.id) == ["newer", "older"])
+        #expect(FileManager.default.fileExists(atPath: sent[0].folder.appending(path: "report.json").path))
+    }
+
+    @Test func aSentReportIsSummedUpForTheList() {
+        let report = sampleReport(id: "r")
+        #expect(report.screenNames == "Today")
+        #expect(report.contents == "3 notes, 1 screen")
+        var attachmentsOnly = report
+        attachmentsOnly.screens = []
+        attachmentsOnly.items = [report.items[2]]
+        #expect(attachmentsOnly.screenNames == "Attachment")
+        #expect(attachmentsOnly.contents == "1 note")
+    }
+
     @Test func theSummaryTellsTheAgentWhichPictureShowsEachNote() {
         let text = ReportSummary.markdown(sampleReport(id: "r"))
         #expect(text.contains("## Screen: Today"))
