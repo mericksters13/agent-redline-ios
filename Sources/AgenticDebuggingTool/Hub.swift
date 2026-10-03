@@ -57,7 +57,10 @@ struct HubStatus: Codable, Sendable {
 final class Hub: @unchecked Sendable {
     let paths: HubPaths
     let devicectl: Devicectl
-    let apps: [String]
+    /// Apps given on the command line, watched whether or not a chat is open for them.
+    private let fixedApps: [String]
+    private var currentApps: [String] = []
+    private var chatsWatcher: DispatchSourceFileSystemObject?
     private let startedAt = Date()
     private let lock = NSLock()
     private var state: [String: SourceState] = [:]
@@ -77,10 +80,13 @@ final class Hub: @unchecked Sendable {
     /// Mac's network are noticed as they happen.
     static let discoveryInterval: TimeInterval = 1800
 
+    /// The apps the hub takes reports from: those of the open chats, and any given on the command line.
+    var apps: [String] { lock.withLock { currentApps } }
+
     init(paths: HubPaths, devicectl: Devicectl, apps: [String]) {
         self.paths = paths
         self.devicectl = devicectl
-        self.apps = apps
+        fixedApps = apps
         if let data = try? Data(contentsOf: paths.state), let saved = try? Self.decoder.decode([String: SourceState].self, from: data) {
             state = saved
         }
@@ -89,7 +95,9 @@ final class Hub: @unchecked Sendable {
     func start() {
         try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
         try? Data("\(getpid())".utf8).write(to: paths.pid, options: .atomic)
-        log("Hub started for \(apps.joined(separator: ", "))")
+        updateApps(starting: true)
+        log(apps.isEmpty ? "Hub started; no chats open yet" : "Hub started for \(apps.joined(separator: ", "))")
+        watchChats()
         let simulators = SimulatorWatcher(hub: self)
         self.simulators = simulators
         let listener = HubListener(hub: self)
@@ -110,6 +118,7 @@ final class Hub: @unchecked Sendable {
 
     func stop() {
         discovery?.cancel()
+        chatsWatcher?.cancel()
         network.cancel()
         listener?.stop()
         simulators?.stop()
@@ -131,6 +140,32 @@ final class Hub: @unchecked Sendable {
             link(for: phone).update(hosts: hosts, port: HubListener.port, rediscover: rediscover)
         }
         writeStatus()
+    }
+
+    /// A chat opening or closing changes the apps to take reports from.
+    private func watchChats() {
+        let folder = Chats.folder(paths)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let descriptor = open(folder.path, O_EVTONLY)
+        guard descriptor >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: .write, queue: queue)
+        source.setEventHandler { [weak self] in self?.updateApps(starting: false) }
+        source.setCancelHandler { close(descriptor) }
+        source.resume()
+        chatsWatcher = source
+    }
+
+    private func updateApps(starting: Bool) {
+        let apps = Array(Set(fixedApps + Chats.live(paths).flatMap(\.bundleIDs))).sorted()
+        let changed = lock.withLock {
+            defer { currentApps = apps }
+            return currentApps != apps
+        }
+        guard changed, !starting else { return }
+        log(apps.isEmpty ? "No chats open" : "Taking reports from \(apps.joined(separator: ", "))")
+        // New apps' simulator folders to watch and phones to give the address to.
+        simulators?.rescan()
+        queue.async { self.discover(rediscover: true) }
     }
 
     private func link(for phone: Devicectl.Phone) -> PhoneLink {
@@ -255,7 +290,7 @@ final class Hub: @unchecked Sendable {
     func writeStatus() {
         let containers = simulators?.containerCount ?? 0
         let status = lock.withLock {
-            HubStatus(pid: getpid(), startedAt: startedAt, apps: apps, hosts: hosts, port: HubListener.port,
+            HubStatus(pid: getpid(), startedAt: startedAt, apps: currentApps, hosts: hosts, port: HubListener.port,
                       phones: phoneStates.values.sorted { $0.name < $1.name }, simulatorContainers: containers)
         }
         let encoder = JSONEncoder()
