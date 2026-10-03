@@ -24,6 +24,21 @@ enum PictureComparison {
         return Double(differing) / Double(x.count)
     }
 
+    /// The share of pixels that differ noticeably between two areas, in pixels: the same
+    /// element in two captures, to tell whether it still looks the same or is now covered.
+    static func difference(_ a: CGImage, in areaA: CGRect, _ b: CGImage, in areaB: CGRect) -> Double {
+        let boundsA = CGRect(x: 0, y: 0, width: a.width, height: a.height)
+        let boundsB = CGRect(x: 0, y: 0, width: b.width, height: b.height)
+        guard let first = a.cropping(to: areaA.integral.intersection(boundsA)),
+              let second = b.cropping(to: areaB.integral.intersection(boundsB)) else { return 1 }
+        let height = max(1, Int((Double(first.height) / Double(max(first.width, 1)) * Double(width)).rounded()))
+        guard let x = gray(first, height: height), let y = gray(second, height: height) else { return 1 }
+        return Double(zip(x, y).count { abs(Int($0) - Int($1)) > tolerance }) / Double(x.count)
+    }
+
+    /// Below this share of differing pixels, an element looks the same in two captures.
+    static let sameElement = 0.08
+
     private static func crop(_ image: CGImage, rows: Range<Int>?) -> CGImage? {
         guard let rows else { return image }
         let clamped = rows.clamped(to: 0..<image.height)

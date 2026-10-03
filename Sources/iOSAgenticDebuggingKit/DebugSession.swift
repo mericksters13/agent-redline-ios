@@ -663,13 +663,18 @@ final class DebugSession {
             capture.group = previous.group + 1
             screens[index].captures.append(capture)
             keep(capture, image)
-            let screenCaptures = Set(screens[index].captures.map(\.id))
+            let screenCaptures = screens[index].captures
             let onScreen = CGRect(origin: .zero, size: screenSize)
             for i in annotations.indices {
-                guard let old = annotations[i].captureID, old != capture.id, screenCaptures.contains(old),
+                // An earlier note moves onto the new picture only if its element is still
+                // there and still looks the same. Under a popup or a dimmed backdrop it doesn't,
+                // and the note keeps the picture it was made on, as an earlier state.
+                guard let old = annotations[i].captureID, old != capture.id,
+                      let oldCapture = screenCaptures.first(where: { $0.id == old }),
                       let element = annotations[i].element,
                       let match = ElementSelection.match(element, in: capture.elements),
-                      onScreen.contains(match.frame.insetBy(dx: 1, dy: 1))
+                      onScreen.contains(match.frame.insetBy(dx: 1, dy: 1)),
+                      looksTheSame(element.frame, in: oldCapture, as: match.frame, in: image)
                 else { continue }
                 annotations[i].captureID = capture.id
                 annotations[i].element?.frame = match.frame
@@ -694,6 +699,19 @@ final class DebugSession {
         }
         return PictureComparison.difference(old, rows: pixelRows(from, in: old), current, rows: pixelRows(to, in: current))
             < PictureComparison.sameOverlap
+    }
+
+    /// Whether an element looks the same in an earlier capture and in the new screen.
+    private func looksTheSame(_ frame: CGRect, in capture: Capture, as newFrame: CGRect, in image: UIImage) -> Bool {
+        guard let old = captureImage(capture)?.cgImage, let new = image.cgImage else { return false }
+        func pixels(_ rect: CGRect, of picture: CGImage, width: CGFloat) -> CGRect {
+            let ratio = CGFloat(picture.width) / width
+            return CGRect(x: rect.minX * ratio, y: rect.minY * ratio, width: rect.width * ratio, height: rect.height * ratio)
+        }
+        return PictureComparison.difference(
+            old, in: pixels(frame, of: old, width: capture.size.width),
+            new, in: pixels(newFrame, of: new, width: screenSize.width)
+        ) < PictureComparison.sameElement
     }
 
     private func keep(_ capture: Capture, _ image: UIImage) {

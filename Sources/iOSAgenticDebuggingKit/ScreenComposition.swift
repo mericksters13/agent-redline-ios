@@ -71,9 +71,48 @@ enum CaptureMerge {
         guard previous.size == new.size else { return .replace }
         if let before = previous.scroll, let after = new.scroll, before.isSameView(as: after),
            abs(before.offsetY - after.offsetY) > 2 {
-            return overlapMatches == false ? .replace : .stitch
+            // Joined only when it's proven the same content, scrolled.
+            guard overlapMatches != false, isScroll(from: previous, to: new) else { return .replace }
+            return .stitch
         }
-        return picturesMatch ? .reuse(previous.id) : .replace
+        return picturesMatch && sameLayout(previous, new) ? .reuse(previous.id) : .replace
+    }
+
+    /// Whether two captures hold the same elements in the same places. A light menu over a
+    /// light screen can look almost unchanged in a small picture, but its items are new
+    /// elements. Text may change, like a time stamp, and a label's width with it.
+    static func sameLayout(_ a: Capture, _ b: Capture) -> Bool {
+        guard a.elements.count == b.elements.count else { return false }
+        func ordered(_ capture: Capture) -> [ElementSnapshot] {
+            capture.elements.sorted { ($0.frame.minY.rounded(), $0.frame.minX.rounded()) < ($1.frame.minY.rounded(), $1.frame.minX.rounded()) }
+        }
+        return zip(ordered(a), ordered(b)).allSatisfy { old, new in
+            old.role == new.role && old.isContainer == new.isContainer
+                && abs(old.frame.minX - new.frame.minX) <= 2 && abs(old.frame.minY - new.frame.minY) <= 2
+                && abs(old.frame.height - new.frame.height) <= 2
+        }
+    }
+
+    /// Whether two captures of one scroll view show the same content at two scroll positions,
+    /// rather than different content under the same screen title (two detail pages both
+    /// called "Feed"). Elements found whole in both captures must have moved by exactly the
+    /// scroll distance; a few may stay put, like a pinned section header, but most must
+    /// agree. With nothing in common, the content must be just as long.
+    static func isScroll(from previous: Capture, to new: Capture) -> Bool {
+        guard let before = previous.scroll, let after = new.scroll, before.isSameView(as: after) else { return false }
+        let distance = after.offsetY - before.offsetY
+        let band = ScreenComposition.band(for: [previous, new]) ?? 0...previous.size.height
+        func inBand(_ frame: CGRect) -> Bool { frame.minY >= band.lowerBound && frame.maxY <= band.upperBound }
+        var agreeing = 0
+        var disagreeing = 0
+        for element in new.elements where !element.isContainer && inBand(element.frame) {
+            guard let match = ElementSelection.match(element, in: previous.elements), inBand(match.frame),
+                  abs(match.frame.height - element.frame.height) < 1 else { continue }
+            if abs(match.frame.minY - distance - element.frame.minY) <= 2 { agreeing += 1 } else { disagreeing += 1 }
+        }
+        if agreeing + disagreeing > 0 { return agreeing > 0 && agreeing >= disagreeing * 2 }
+        let longer = max(before.contentHeight, after.contentHeight)
+        return longer > 0 && (longer - min(before.contentHeight, after.contentHeight)) / longer <= 0.03
     }
 }
 
@@ -98,6 +137,8 @@ struct ImagePlan: Equatable, Sendable {
     var segments: [Segment]
     /// Stretches of the screen scrolled past without a capture.
     var gaps: [CGRect]
+    /// How much content each gap stands for, in points.
+    var skipped: [CGFloat] = []
     var stitchedFrom: Int
     /// Where content scrolls, in screen points. Nil for a picture of one capture.
     var band: ClosedRange<CGFloat>?
@@ -177,6 +218,7 @@ enum ScreenComposition {
         var y = band.lowerBound
         var runs: [ImagePlan.Run] = []
         var gaps: [CGRect] = []
+        var skipped: [CGFloat] = []
         var lastEnd: CGFloat?
         var pendingGap = false
         for (start, end) in zip(points, points.dropFirst()) where end - start > 0.5 {
@@ -187,6 +229,7 @@ enum ScreenComposition {
             }
             if pendingGap {
                 gaps.append(CGRect(x: 0, y: y, width: reference.size.width, height: gapHeight))
+                skipped.append(start - (lastEnd ?? start))
                 y += gapHeight
                 pendingGap = false
             }
@@ -210,7 +253,7 @@ enum ScreenComposition {
         y += reference.size.height - band.upperBound
         return ImagePlan(
             size: CGSize(width: reference.size.width, height: y),
-            segments: segments, gaps: gaps, stitchedFrom: captures.count, band: band, runs: runs,
+            segments: segments, gaps: gaps, skipped: skipped, stitchedFrom: captures.count, band: band, runs: runs,
             footerY: footerY, captures: byID
         )
     }
@@ -237,7 +280,8 @@ enum ScreenComposition {
     /// - Parameters:
     ///   - outlines: the notes' outlines, never cut.
     ///   - elements: everything on screen, in picture coordinates, cut through only when unavoidable.
-    static func parts(height: CGFloat, maxHeight: CGFloat, keepingWhole outlines: [CGRect], avoiding elements: [CGRect] = []) -> [ClosedRange<CGFloat>] {
+    ///   - preferred: rows to cut at first when one falls in range, such as a "Scrolled past" band.
+    static func parts(height: CGFloat, maxHeight: CGFloat, keepingWhole outlines: [CGRect], avoiding elements: [CGRect] = [], preferring preferred: [CGFloat] = []) -> [ClosedRange<CGFloat>] {
         guard height > maxHeight else { return [0...height] }
         var parts: [ClosedRange<CGFloat>] = []
         var start: CGFloat = 0
@@ -247,7 +291,9 @@ enum ScreenComposition {
                 parts.append(start...height)
                 break
             }
-            let cut = gap(between: start + maxHeight * 0.5, and: limit, outlines: outlines, elements: elements) ?? limit
+            let low = start + maxHeight * 0.5
+            let cut = preferred.filter { $0 >= low && $0 <= limit }.max()
+                ?? gap(between: low, and: limit, outlines: outlines, elements: elements) ?? limit
             parts.append(start...cut)
             start = cut
         }

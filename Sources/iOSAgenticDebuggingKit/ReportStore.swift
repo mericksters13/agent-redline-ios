@@ -141,6 +141,9 @@ struct Report: Codable, Sendable {
         var notes: [Int]
         var width: Int
         var height: Int
+        /// Points of content scrolled past between captures and not shown, marked
+        /// "Scrolled past" in the picture. Nil when nothing was skipped.
+        var scrolledPast: Int? = nil
     }
 
     /// A box in a picture's pixels.
@@ -211,6 +214,10 @@ enum ReportSummary {
                 let numbers = Array(Set(current.flatMap(\.notes))).sorted()
                 let outlined = numbers.count == 1 ? "Note \(list(numbers)) is" : "Notes \(list(numbers)) are"
                 lines.append("\(description). \(outlined) outlined and numbered on it.")
+                let skipped = current.compactMap(\.scrolledPast).reduce(0, +)
+                if skipped > 0 {
+                    lines.append("The notes are far apart: about \(skipped) pt of the screen between them wasn't captured and is marked \"Scrolled past\". Those parts aren't next to each other in the layout.")
+                }
             }
             for earlier in screen.images where earlier.earlierState {
                 lines.append("An earlier state of the same screen, before its content changed: \(earlier.file), with \(earlier.notes.count == 1 ? "note" : "notes") \(list(earlier.notes)).")

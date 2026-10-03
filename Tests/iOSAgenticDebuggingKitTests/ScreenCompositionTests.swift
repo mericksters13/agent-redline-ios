@@ -8,8 +8,8 @@ import Testing
 struct ScreenCompositionTests {
     private let size = CGSize(width: 402, height: 874)
 
-    private func scroll(_ offset: CGFloat, insetBottom: CGFloat = 34) -> ScrollState {
-        ScrollState(frame: CGRect(origin: .zero, size: size), offsetY: offset, insetTop: 62, insetBottom: insetBottom, contentHeight: 3000)
+    private func scroll(_ offset: CGFloat, insetBottom: CGFloat = 34, contentHeight: CGFloat = 3000) -> ScrollState {
+        ScrollState(frame: CGRect(origin: .zero, size: size), offsetY: offset, insetTop: 62, insetBottom: insetBottom, contentHeight: contentHeight)
     }
 
     private func element(_ label: String, y: CGFloat, height: CGFloat = 50, id: String? = nil) -> ElementSnapshot {
@@ -17,8 +17,8 @@ struct ScreenCompositionTests {
                         frame: CGRect(x: 20, y: y, width: 362, height: height))
     }
 
-    private func capture(_ offset: CGFloat?, group: Int = 0, elements: [ElementSnapshot] = [], insetBottom: CGFloat = 34) -> Capture {
-        Capture(id: UUID(), file: "c.png", size: size, scroll: offset.map { scroll($0, insetBottom: insetBottom) },
+    private func capture(_ offset: CGFloat?, group: Int = 0, elements: [ElementSnapshot] = [], insetBottom: CGFloat = 34, contentHeight: CGFloat = 3000) -> Capture {
+        Capture(id: UUID(), file: "c.png", size: size, scroll: offset.map { scroll($0, insetBottom: insetBottom, contentHeight: contentHeight) },
                 elements: elements, group: group)
     }
 
@@ -26,6 +26,23 @@ struct ScreenCompositionTests {
 
     @Test func anUnchangedScreenReusesItsPicture() {
         let first = capture(-62), second = capture(-62)
+        #expect(CaptureMerge.decide(previous: first, new: second, picturesMatch: true, overlapMatches: nil) == .reuse(first.id))
+    }
+
+    @Test func aMenuOverALookalikePictureIsNotReused() {
+        // A light menu over a light screen: the small pictures match, the elements don't.
+        let row = element("Milk", y: 252, id: "glance.milk")
+        let first = capture(-62, elements: [row])
+        let withMenu = capture(-62, elements: [row, element("PDF report", y: 100), element("CSV file", y: 178)])
+        #expect(CaptureMerge.decide(previous: first, new: withMenu, picturesMatch: true, overlapMatches: nil) == .replace)
+    }
+
+    @Test func changedTextStillReusesThePicture() {
+        // "Last feed 2:08 PM" becomes "2:09 PM" between two notes: same element, same place.
+        let first = capture(-62, elements: [element("Last feed 2:08 PM", y: 252)])
+        var later = element("Last feed 2:09 PM", y: 252)
+        later.frame.size.width -= 3
+        let second = capture(-62, elements: [later])
         #expect(CaptureMerge.decide(previous: first, new: second, picturesMatch: true, overlapMatches: nil) == .reuse(first.id))
     }
 
@@ -48,6 +65,38 @@ struct ScreenCompositionTests {
         var turned = capture(-62)
         turned.size = CGSize(width: 874, height: 402)
         #expect(CaptureMerge.decide(previous: capture(-62), new: turned, picturesMatch: true, overlapMatches: nil) == .replace)
+    }
+
+    // MARK: - A scroll, or different content under the same title
+
+    @Test func elementsThatMovedByTheScrollDistanceProveAScroll() {
+        // Scrolled 262 pt: the row seen at 600 is now at 338.
+        let before = capture(-62, elements: [element("Feed", y: 600, id: "row.feed"), element("Pee", y: 700, id: "row.pee")])
+        let after = capture(200, elements: [element("Feed", y: 338, id: "row.feed"), element("Pee", y: 438, id: "row.pee")])
+        #expect(CaptureMerge.isScroll(from: before, to: after))
+        #expect(CaptureMerge.decide(previous: before, new: after, picturesMatch: false, overlapMatches: true) == .stitch)
+    }
+
+    @Test func aPinnedSectionHeaderDoesNotSpoilAScroll() {
+        let header = element("Today", y: 100, height: 30, id: "section.today")
+        let before = capture(-62, elements: [header, element("Feed", y: 600, id: "row.feed"), element("Pee", y: 700, id: "row.pee")])
+        let after = capture(200, elements: [header, element("Feed", y: 338, id: "row.feed"), element("Pee", y: 438, id: "row.pee")])
+        #expect(CaptureMerge.isScroll(from: before, to: after))
+    }
+
+    @Test func anotherItemUnderTheSameTitleIsNotAScroll() {
+        // Two detail pages called "Feed": their shared header sits at unrelated places.
+        let before = capture(-62, elements: [element("Notes", y: 400, height: 30, id: "detail.notes")])
+        let after = capture(200, elements: [element("Notes", y: 500, height: 30, id: "detail.notes")])
+        #expect(!CaptureMerge.isScroll(from: before, to: after))
+        #expect(CaptureMerge.decide(previous: before, new: after, picturesMatch: false, overlapMatches: nil) == .replace)
+    }
+
+    @Test func farApartWithNothingSharedTheContentMustBeAsLong() {
+        #expect(CaptureMerge.isScroll(from: capture(-62), to: capture(1500)))
+        let other = capture(1500, contentHeight: 2400)
+        #expect(!CaptureMerge.isScroll(from: capture(-62), to: other))
+        #expect(CaptureMerge.decide(previous: capture(-62), new: other, picturesMatch: false, overlapMatches: nil) == .replace)
     }
 
     // MARK: - Where content scrolls
@@ -97,6 +146,8 @@ struct ScreenCompositionTests {
         let top = capture(-62), far = capture(1500)
         let plan = try #require(ScreenComposition.plan(for: [top, far]))
         #expect(plan.gaps.count == 1)
+        // The top capture ends at 778 in the content; the far one starts at 1562.
+        #expect(plan.skipped == [784])
         #expect(plan.size.height == 62 + 778 + ScreenComposition.gapHeight + 778 + 34)
         #expect(plan.place(CGRect(x: 20, y: 100, width: 100, height: 40), from: far.id)?.minY == 62 + 778 + ScreenComposition.gapHeight + 38)
     }
@@ -144,6 +195,11 @@ struct ScreenCompositionTests {
         let parts = ScreenComposition.parts(height: 3000, maxHeight: twoScreens, keepingWhole: [], avoiding: [card] + rows)
         let cut = parts[0].upperBound
         #expect(!rows.contains { $0.minY < cut && $0.maxY > cut })
+    }
+
+    @Test func aCutPrefersTheScrolledPastBand() {
+        let parts = ScreenComposition.parts(height: 3000, maxHeight: twoScreens, keepingWhole: [], preferring: [1200])
+        #expect(parts.first?.upperBound == 1200)
     }
 
     @Test func partsCoverThePictureWithoutGapsOrOverlap() {

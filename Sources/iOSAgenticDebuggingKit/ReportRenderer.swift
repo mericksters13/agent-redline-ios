@@ -188,7 +188,8 @@ enum ReportBuilder {
                     height: plan.size.height,
                     maxHeight: group[0].size.height * ScreenComposition.screensPerPicture,
                     keepingWhole: outlines.map(\.rect),
-                    avoiding: onScreen
+                    avoiding: onScreen,
+                    preferring: plan.gaps.map(\.midY)
                 )
                 var files: [String] = []
                 for (partIndex, rows) in parts.enumerated() {
@@ -198,10 +199,12 @@ enum ReportBuilder {
                     try data.write(to: input.folder.appending(path: file), options: .atomic)
                     files.append(file)
                     let shown = CGRect(x: 0, y: rows.lowerBound, width: plan.size.width, height: rows.upperBound - rows.lowerBound)
+                    let skipped = zip(plan.gaps, plan.skipped).filter { shown.intersects($0.0) }.map(\.1).reduce(0, +)
                     pictures.append(Report.Picture(
                         file: file, part: partIndex + 1, parts: parts.count, stitchedFrom: plan.stitchedFrom, earlierState: earlier,
                         notes: outlines.filter { $0.rect.intersects(shown) }.map(\.number).sorted(),
-                        width: Int((image.size.width * image.scale).rounded()), height: Int((image.size.height * image.scale).rounded())
+                        width: Int((image.size.width * image.scale).rounded()), height: Int((image.size.height * image.scale).rounded()),
+                        scrolledPast: skipped > 0 ? Int(skipped.rounded()) : nil
                     ))
                 }
                 // Each note points at the part that shows most of its outline.
