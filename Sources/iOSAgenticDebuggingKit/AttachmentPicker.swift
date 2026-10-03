@@ -67,17 +67,21 @@ struct AttachmentPicker: View {
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAction { close() }
 
-            ZStack {
+            // Each page is held to the surface's size and pinned to the button's edge, so
+            // the taller page, even hidden, never stretches the surface or shifts the other.
+            ZStack(alignment: corner.isTop ? .top : .bottom) {
                 menu
+                    .frame(width: frame.width, height: frame.height, alignment: corner.isTop ? .top : .bottom)
                     .opacity(page == .menu ? 1 : 0)
                     .allowsHitTesting(page == .menu)
                     .accessibilityHidden(page != .menu)
                 photosPage
+                    .frame(width: frame.width, height: frame.height)
                     .opacity(page == .photos ? 1 : 0)
                     .allowsHitTesting(page == .photos)
                     .accessibilityHidden(page != .photos)
             }
-            .frame(width: frame.width, height: frame.height, alignment: corner.isTop ? .top : .bottom)
+            .frame(width: frame.width, height: frame.height)
             .background(Mono.surface)
             .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
