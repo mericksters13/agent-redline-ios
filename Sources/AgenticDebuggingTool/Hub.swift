@@ -73,6 +73,7 @@ final class Hub: @unchecked Sendable {
     private var hosts: [String] = []
     private var simulators: SimulatorWatcher?
     private var listener: HubListener?
+    private var handoff: Handoff?
     private let queue = DispatchQueue(label: "hub")
     private var discovery: DispatchSourceTimer?
     private let network = NWPathMonitor()
@@ -105,6 +106,7 @@ final class Hub: @unchecked Sendable {
         updateApps(starting: true)
         log(apps.isEmpty ? "Hub started; no chats open yet" : "Hub started for \(apps.joined(separator: ", "))")
         watchChats()
+        handoff = Handoff(hub: self)
         let simulators = SimulatorWatcher(hub: self)
         self.simulators = simulators
         let listener = HubListener(hub: self)
@@ -350,6 +352,7 @@ final class Hub: @unchecked Sendable {
             saveState()
         }
         log(String(format: "Received %@ from %@ (%@) in %.2f s", source.reportID, source.deviceName, source.bundleID, Date().timeIntervalSince(started)))
+        handoff?.reportFiled(destination, source: source)
         return true
     }
 

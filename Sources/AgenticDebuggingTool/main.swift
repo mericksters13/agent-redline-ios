@@ -11,7 +11,15 @@ Usage:
   agentic-debugging check [--project <folder>] [--app <bundle ID> ...]
       Prints the reports waiting for the project's apps and takes them, for agents without MCP.
   agentic-debugging wait [--project <folder>] [--app <bundle ID> ...] [--timeout <seconds>]
-      Waits for the next report for the project's apps, then prints it and takes it.
+                         [--session <chat ID>] [--agent <name>]
+      Waits for the next report for the project's apps, then prints it and takes it. Run in an
+      agent's background, it wakes the chat when a report arrives. With several chats waiting,
+      the one used most recently gets the report.
+  agentic-debugging setup | remove
+      Adds to (or removes from) Claude Code's, Codex's and Cursor's hook settings the hooks that
+      bring reports into a chat on an app project by themselves. Other hooks stay as they are.
+  agentic-debugging hook <claude | codex | cursor> <start | prompt | wait | stop | end>
+      Run by the agents' hooks, with the event's JSON on standard input.
   agentic-debugging hub [--app <bundle ID> ...]
       Takes reports from phones and simulators for the open chats' apps and files them in the inbox.
       Chats start it when it isn't running.
@@ -25,6 +33,8 @@ struct ChatOptions {
     var project = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     var apps: [String] = []
     var timeout: TimeInterval?
+    var session: String?
+    var agent = "command line"
 
     init(_ arguments: ArraySlice<String>) {
         var rest = arguments
@@ -33,6 +43,8 @@ struct ChatOptions {
             case ("--project", let value?): project = URL(fileURLWithPath: (value as NSString).expandingTildeInPath)
             case ("--app", let value?): apps.append(value)
             case ("--timeout", let value?): timeout = TimeInterval(value)
+            case ("--session", let value?): session = value
+            case ("--agent", let value?): agent = value
             default:
                 FileHandle.standardError.write(Data(usage.utf8))
                 exit(64)
@@ -73,21 +85,66 @@ case "check":
 
 case "wait":
     let options = ChatOptions(arguments.dropFirst())
-    let session = ChatSession(paths: paths, folder: options.project, extraApps: options.apps, agent: "command line")
+    let session = ChatSession(paths: paths, folder: options.project, extraApps: options.apps, agent: options.agent, id: options.session)
     guard !session.chat.bundleIDs.isEmpty else {
         print("No app found for \(options.project.path). Pass --app <bundle ID>.")
         exit(1)
     }
-    // Registered while waiting, so the hub takes this project's reports.
-    session.register()
+    // Registered while waiting, so the hub takes this project's reports and they come here.
+    session.registerWaiting()
     stopOnSignals { session.unregister() }
-    let arrived = session.waitForReport(timeout: options.timeout, waiter: ChatSession.Waiter())
-    session.unregister()
-    if arrived {
-        printReports(session)
-    } else {
-        print("No report arrived.")
+    // The chat that started the wait closed: stop waiting, so no report goes to a closed chat.
+    let parent = DispatchSource.makeProcessSource(identifier: getppid(), eventMask: .exit, queue: .global())
+    parent.setEventHandler {
+        session.unregister()
+        exit(0)
     }
+    parent.resume()
+    let waiter = ChatSession.Waiter()
+    let deadline = options.timeout.map { Date().addingTimeInterval($0) }
+    while true {
+        let left = deadline.map { $0.timeIntervalSinceNow }
+        guard session.waitForRoutedReport(timeout: left, waiter: waiter) else {
+            session.unregister()
+            print("No report arrived.")
+            break
+        }
+        // Another chat may have taken it in the meantime; then keep waiting.
+        if printReports(session, quietWhenNone: true) {
+            session.unregister()
+            break
+        }
+    }
+
+case "hook":
+    guard arguments.count == 3, let agent = Agent(rawValue: arguments[1]), let event = HookEvent(rawValue: arguments[2]) else {
+        FileHandle.standardError.write(Data(usage.utf8))
+        exit(64)
+    }
+    exit(AgentHooks.run(agent, event, paths: paths))
+
+case "setup", "remove":
+    let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
+    let adding = arguments.first == "setup"
+    var failed = false
+    for agent in Agent.allCases {
+        guard AgentSettings.isPresent(agent) else {
+            if adding { print("\(agent.name): not used on this Mac, skipped.") }
+            continue
+        }
+        do {
+            try AgentSettings.update(agent) {
+                adding ? AgentSettings.adding(agent, to: $0, executable: executable) : AgentSettings.removing(agent, from: $0, executable: executable)
+            }
+            print("\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.file(agent).path)")
+            if adding, agent == .codex { print("  Codex runs new hooks only once you trust them: open /hooks in Codex and trust the four agentic-debugging hooks.") }
+        } catch {
+            print("\(agent.name): couldn't update \(AgentSettings.file(agent).path): \(error.localizedDescription)")
+            failed = true
+        }
+    }
+    if adding { print("Chats opened from now on get reports for their project's apps by themselves.") }
+    exit(failed ? 1 : 0)
 
 case "status":
     printStatus(paths)
@@ -117,12 +174,15 @@ enum SignalSources {
 }
 
 /// Prints the reports waiting for the session's apps and takes them. Pictures are named by
-/// path; an agent opens them with its own tools.
-func printReports(_ session: ChatSession) {
+/// path; an agent opens them with its own tools. True when it printed any.
+@discardableResult
+func printReports(_ session: ChatSession, quietWhenNone: Bool = false) -> Bool {
     let taken = session.take(budget: Int.max)
     guard taken.taken > 0 else {
-        print(session.chat.bundleIDs.isEmpty ? "No app found for \(session.chat.folder). Pass --app <bundle ID>." : "No reports waiting for \(session.chat.bundleIDs.joined(separator: ", ")).")
-        return
+        if !quietWhenNone {
+            print(session.chat.bundleIDs.isEmpty ? "No app found for \(session.chat.folder). Pass --app <bundle ID>." : "No reports waiting for \(session.chat.bundleIDs.joined(separator: ", ")).")
+        }
+        return false
     }
     for item in taken.items {
         switch item {
@@ -130,6 +190,7 @@ func printReports(_ session: ChatSession) {
         case .image(let file, _): print("Picture: \(file.path)")
         }
     }
+    return true
 }
 
 func printStatus(_ paths: HubPaths) {

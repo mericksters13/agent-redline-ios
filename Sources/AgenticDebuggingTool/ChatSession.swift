@@ -12,12 +12,20 @@ final class ChatSession: @unchecked Sendable {
 
     var chat: ChatRecord { lock.withLock { record } }
 
-    init(paths: HubPaths, folder: URL, extraApps: [String], agent: String, startsHub: Bool = true) {
+    /// `id` names the chat, such as an agent's session ID, so each of its hooks finds the same
+    /// record. `pid` is the process the chat lives in, when that isn't this one.
+    init(paths: HubPaths, folder: URL, extraApps: [String], agent: String, id: String? = nil, pid: Int32? = nil, startsHub: Bool = true) {
         self.paths = paths
         self.startsHub = startsHub
         let apps = Array(Set(ProjectApps.bundleIDs(in: folder) + extraApps)).sorted()
-        record = ChatRecord(id: UUID().uuidString, agent: agent, folder: folder.path, bundleIDs: apps,
-                            pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
+        record = ChatRecord(id: id ?? UUID().uuidString, agent: agent, folder: folder.path, bundleIDs: apps,
+                            pid: pid ?? getpid(), registeredAt: Date(), lastActiveAt: Date())
+    }
+
+    /// Registers this process as the one waiting for the chat's reports.
+    func registerWaiting() {
+        lock.withLock { record.waiter = getpid() }
+        register()
     }
 
     /// Registers the chat and starts the hub if it isn't running. A chat whose project builds
@@ -40,6 +48,16 @@ final class ChatSession: @unchecked Sendable {
         save()
     }
 
+    /// Takes every report waiting for this chat's apps, as text with pictures named by path, for
+    /// agents that get reports through hooks. Nil when none is waiting.
+    func takeText() -> String? {
+        let chat = self.chat
+        let texts = InboxQueue.waiting(for: chat.bundleIDs, paths: paths)
+            .filter { InboxQueue.claim($0, for: chat) }
+            .map(ReportContent.text(for:))
+        return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
+    }
+
     /// Takes the reports waiting for this chat's apps, oldest first. Always takes at least one
     /// waiting report; takes more while their pictures fit in `budget` bytes.
     func take(budget: Int) -> (items: [ReportContent.Item], taken: Int, remaining: Int) {
@@ -57,6 +75,32 @@ final class ChatSession: @unchecked Sendable {
             taken += 1
         }
         return (items, taken, InboxQueue.waiting(for: chat.bundleIDs, paths: paths).count)
+    }
+
+    /// How long a chat that wasn't used most recently waits for the one that was to take a
+    /// report, before taking it itself.
+    static let deferToRecentChat: TimeInterval = 4
+
+    /// Waits until there's a report this chat should take. When several chats on the project
+    /// are waiting, the one used most recently takes it; the others take it only if it's still
+    /// waiting a moment later, such as when that chat is busy or gone.
+    func waitForRoutedReport(timeout: TimeInterval?, waiter: Waiter) -> Bool {
+        let deadline = timeout.map { Date().addingTimeInterval($0) }
+        while true {
+            let left = deadline.map { $0.timeIntervalSinceNow }
+            if let left, left <= 0 { return false }
+            guard waitForReport(timeout: left, waiter: waiter) else { return false }
+            let me = Chats.live(paths).first { $0.id == chat.id } ?? chat
+            let moreRecent = Chats.live(paths).contains { other in
+                other.id != me.id && other.isWaiting && other.lastActiveAt > me.lastActiveAt
+                    && !Set(other.bundleIDs).isDisjoint(with: me.bundleIDs)
+            }
+            guard moreRecent else { return true }
+            _ = waiter.signal.wait(timeout: .now() + Self.deferToRecentChat)
+            if waiter.isCancelled { return false }
+            // Still there: the more recent chat didn't take it.
+            if !InboxQueue.waiting(for: chat.bundleIDs, paths: paths).isEmpty { return true }
+        }
     }
 
     /// Something to wait on that can be stopped from another thread.
@@ -104,7 +148,14 @@ final class ChatSession: @unchecked Sendable {
         }
     }
 
+    /// Saves the record, keeping the waiter and first registration another process saved for
+    /// the same chat: each hook runs in its own process.
     private func save() {
+        var chat = self.chat
+        if let saved = Chats.record(chat.id, paths: paths) {
+            chat.registeredAt = saved.registeredAt
+            if chat.waiter == nil { chat.waiter = saved.waiter }
+        }
         do {
             try Chats.register(chat, paths: paths)
         } catch {

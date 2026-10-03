@@ -26,19 +26,26 @@ enum ReportContent {
         return names.map { folder.appending(path: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
+    /// The report as text, its pictures named by path for the agent to open: for agents that
+    /// get reports through hooks.
+    static func text(for report: InboxReport) -> String {
+        let pictures = pictures(in: report.folder)
+        var text = header(for: report) + "\n" + summary(of: report).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pictures.isEmpty {
+            text += "\n\nPictures, in the order above:\n" + pictures.map(\.path).joined(separator: "\n")
+        }
+        return text
+    }
+
     /// The report's items, with pictures attached while `budget` bytes allow; the rest are
     /// named by path. Returns the items and the bytes of pictures attached.
     static func items(for report: InboxReport, budget: Int) -> (items: [Item], bytes: Int) {
-        let source = report.source
-        let summary = (try? String(contentsOf: report.folder.appending(path: "report.md"), encoding: .utf8)) ?? ""
         let pictures = pictures(in: report.folder)
-        var header = "Report \(source.reportID) from \(source.deviceName) (\(source.kind == .phone ? "iPhone" : "simulator")), "
-            + "app \(source.bundleID), received \(source.receivedAt.formatted(date: .abbreviated, time: .shortened)).\n"
-            + "Folder: \(report.folder.path)\n"
+        var header = header(for: report)
         if !pictures.isEmpty {
             header += "Pictures: " + pictures.map(\.lastPathComponent).joined(separator: ", ") + ", attached below.\n"
         }
-        var items: [Item] = [.text(header + "\n" + summary)]
+        var items: [Item] = [.text(header + "\n" + summary(of: report))]
         var used = 0
         for picture in pictures {
             guard let data = try? Data(contentsOf: picture) else { continue }
@@ -51,6 +58,17 @@ enum ReportContent {
             used += data.count
         }
         return (items, used)
+    }
+
+    private static func header(for report: InboxReport) -> String {
+        let source = report.source
+        return "Report \(source.reportID) from \(source.deviceName) (\(source.kind == .phone ? "iPhone" : "simulator")), "
+            + "app \(source.bundleID), received \(source.receivedAt.formatted(date: .abbreviated, time: .shortened)).\n"
+            + "Folder: \(report.folder.path)\n"
+    }
+
+    private static func summary(of report: InboxReport) -> String {
+        (try? String(contentsOf: report.folder.appending(path: "report.md"), encoding: .utf8)) ?? ""
     }
 }
 #endif
