@@ -226,27 +226,49 @@ enum ScreenComposition {
         return moved.midY >= band.lowerBound && moved.midY <= band.upperBound ? moved : nil
     }
 
-    /// Splits a tall picture into parts no taller than `maxHeight`, so agents that shrink
-    /// large images can still read them. Cuts move up to the top of an outline instead of
-    /// running through it, when that leaves the part at least half full.
-    static func parts(height: CGFloat, maxHeight: CGFloat, keepingWhole outlines: [CGRect]) -> [ClosedRange<CGFloat>] {
-        guard height > maxHeight * 1.1 else { return [0...height] }
+    /// How many screens tall a picture can be and still be sent whole. Agents shrink large
+    /// images (Claude to about 1,568 pixels on the long side); at two screens the text stays readable.
+    static let screensPerPicture: CGFloat = 2
+
+    /// Splits a picture taller than `maxHeight` into parts, so agents that shrink large images
+    /// can still read them. A picture that fits is sent whole. Each cut goes in a gap between
+    /// rows or sections, so no outline, row or card is sliced; only when there is no such gap
+    /// in the lower half of a part does it cut at the limit.
+    /// - Parameters:
+    ///   - outlines: the notes' outlines, never cut.
+    ///   - elements: everything on screen, in picture coordinates, cut through only when unavoidable.
+    static func parts(height: CGFloat, maxHeight: CGFloat, keepingWhole outlines: [CGRect], avoiding elements: [CGRect] = []) -> [ClosedRange<CGFloat>] {
+        guard height > maxHeight else { return [0...height] }
         var parts: [ClosedRange<CGFloat>] = []
         var start: CGFloat = 0
         while start < height - 0.5 {
-            var cut = start + maxHeight
-            if cut >= height - maxHeight * 0.1 {
+            let limit = start + maxHeight
+            if limit >= height {
                 parts.append(start...height)
                 break
             }
-            let crossing = outlines.filter { $0.minY < cut && $0.maxY > cut }
-            if let top = crossing.map(\.minY).min(), top - 8 > start + maxHeight * 0.5 {
-                cut = top - 8
-            }
+            let cut = gap(between: start + maxHeight * 0.5, and: limit, outlines: outlines, elements: elements) ?? limit
             parts.append(start...cut)
             start = cut
         }
         return parts
+    }
+
+    /// The lowest row between `low` and `high` that runs through nothing: first avoiding every
+    /// outline, row and card; then only outlines and rows, since a long section may span the range.
+    private static func gap(between low: CGFloat, and high: CGFloat, outlines: [CGRect], elements: [CGRect]) -> CGFloat? {
+        let span = high - low
+        let sections = elements.filter { $0.height < span }
+        let rows = elements.filter { $0.height < span * 0.25 }
+        let candidates = ([high] + (outlines + elements).flatMap { [$0.minY - 4, $0.maxY + 4] })
+            .filter { $0 >= low && $0 <= high }
+            .sorted(by: >)
+        for blockers in [outlines + sections, outlines + rows] {
+            if let row = candidates.first(where: { row in !blockers.contains { $0.minY < row && $0.maxY > row } }) {
+                return row
+            }
+        }
+        return nil
     }
 }
 #endif

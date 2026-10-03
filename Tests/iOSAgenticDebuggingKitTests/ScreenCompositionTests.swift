@@ -112,22 +112,46 @@ struct ScreenCompositionTests {
 
     // MARK: - Parts
 
-    @Test func aPictureAboutOneScreenTallStaysWhole() {
-        #expect(ScreenComposition.parts(height: 900, maxHeight: 874, keepingWhole: []) == [0...900])
+    /// Two phone screens: the most a picture can be before it's split.
+    private let twoScreens: CGFloat = 874 * ScreenComposition.screensPerPicture
+
+    @Test func aScreenScrolledOnceIsSentAsOneImage() {
+        // The stitched Today screen from the simulator: about one and a half screens.
+        #expect(ScreenComposition.parts(height: 1307, maxHeight: twoScreens, keepingWhole: []) == [0...1307])
+        #expect(ScreenComposition.parts(height: twoScreens, maxHeight: twoScreens, keepingWhole: []) == [0...twoScreens])
     }
 
-    @Test func aTallPictureIsSplitWithoutCuttingThroughAnOutline() {
-        let outline = CGRect(x: 20, y: 850, width: 100, height: 50)
-        let parts = ScreenComposition.parts(height: 1336, maxHeight: 874, keepingWhole: [outline])
-        #expect(parts == [0...842, 842...1336])
+    @Test func aLongerScreenIsCutInAGapBetweenSections() {
+        // Cards 300 pt tall with 20 pt between them; the limit falls inside a card.
+        let cards = stride(from: 0.0, to: 3000, by: 320).map { CGRect(x: 16, y: $0, width: 370, height: 300) }
+        let parts = ScreenComposition.parts(height: 3000, maxHeight: twoScreens, keepingWhole: [], avoiding: cards)
+        #expect(parts.count == 2)
+        let cut = parts[0].upperBound
+        #expect(cut <= twoScreens)
+        #expect(!cards.contains { $0.minY < cut && $0.maxY > cut })
+    }
+
+    @Test func aCutNeverRunsThroughAnOutline() {
+        let outline = CGRect(x: 20, y: 1700, width: 100, height: 80)
+        let parts = ScreenComposition.parts(height: 3000, maxHeight: twoScreens, keepingWhole: [outline])
+        #expect(parts.first?.upperBound == 1696)
+    }
+
+    @Test func aSectionTallerThanTheRangeIsCutBetweenItsRows() {
+        // One long card holding rows 60 pt tall with 8 pt between them.
+        let card = CGRect(x: 16, y: 0, width: 370, height: 3000)
+        let rows = stride(from: 0.0, to: 3000, by: 68).map { CGRect(x: 24, y: $0, width: 354, height: 60) }
+        let parts = ScreenComposition.parts(height: 3000, maxHeight: twoScreens, keepingWhole: [], avoiding: [card] + rows)
+        let cut = parts[0].upperBound
+        #expect(!rows.contains { $0.minY < cut && $0.maxY > cut })
     }
 
     @Test func partsCoverThePictureWithoutGapsOrOverlap() {
-        let parts = ScreenComposition.parts(height: 3000, maxHeight: 874, keepingWhole: [])
+        let parts = ScreenComposition.parts(height: 6000, maxHeight: twoScreens, keepingWhole: [])
         #expect(parts.first?.lowerBound == 0)
-        #expect(parts.last?.upperBound == 3000)
+        #expect(parts.last?.upperBound == 6000)
         for (a, b) in zip(parts, parts.dropFirst()) { #expect(a.upperBound == b.lowerBound) }
-        #expect(parts.allSatisfy { $0.upperBound - $0.lowerBound <= 874 * 1.1 })
+        #expect(parts.allSatisfy { $0.upperBound - $0.lowerBound <= twoScreens })
     }
 }
 #endif

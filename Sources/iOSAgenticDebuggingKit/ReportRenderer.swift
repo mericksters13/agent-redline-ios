@@ -180,7 +180,16 @@ enum ReportBuilder {
                 // The newest group is the screen as it is; older groups are its earlier states.
                 let earlier = groupIndex < groups.count - 1
                 let base = earlier ? "\(screenID)-earlier-\(groupIndex + 1)" : screenID
-                let parts = ScreenComposition.parts(height: plan.size.height, maxHeight: group[0].size.height, keepingWhole: outlines.map(\.rect))
+                // Everything that was on screen, where it sits in the picture, so cuts fall between rows and sections.
+                let onScreen = group.flatMap { capture in
+                    capture.elements.compactMap { plan.place($0.frame, from: capture.id) }
+                }
+                let parts = ScreenComposition.parts(
+                    height: plan.size.height,
+                    maxHeight: group[0].size.height * ScreenComposition.screensPerPicture,
+                    keepingWhole: outlines.map(\.rect),
+                    avoiding: onScreen
+                )
                 var files: [String] = []
                 for (partIndex, rows) in parts.enumerated() {
                     let file = partIndex == 0 ? "\(base).jpg" : "\(base)-part-\(partIndex + 1).jpg"
