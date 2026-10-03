@@ -7,8 +7,9 @@ import SwiftUI
 /// and the menu opens into a grid of recent photos in place. Modeled on the photo
 /// picker in Trail's Ask chat, in the debugger's black and white.
 ///
-/// The grid needs Photos access the app already has. Without it, Photos opens the
-/// system photo picker instead, which runs outside the app and needs no permission.
+/// Like Trail's picker, Photos always opens this grid. Before the app has Photos access
+/// the grid offers to show recent photos, which asks for access, or to open the system
+/// photo picker, which runs outside the app and needs no permission.
 struct AttachmentPicker: View {
     @Bindable var session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -109,7 +110,7 @@ struct AttachmentPicker: View {
 
     /// The height the photos page needs: the header, the rows of tiles and the footer.
     private func photosHeight(width: CGFloat) -> CGFloat {
-        guard !library.items.isEmpty else { return headerHeight + 120 + footerHeight }
+        guard !library.items.isEmpty else { return headerHeight + 170 + footerHeight }
         let tileWidth = (width - 2 * gridInset - CGFloat(columns - 1) * gridSpacing) / CGFloat(columns)
         let rows = CGFloat((library.items.count + columns - 1) / columns)
         let grid = rows * tileWidth / tileAspect + (rows - 1) * gridSpacing
@@ -149,11 +150,7 @@ struct AttachmentPicker: View {
     }
 
     private func openPhotos() {
-        if library.canShowGrid {
-            withAnimation(motion) { page = .photos }
-        } else {
-            showsSystemPicker = true
-        }
+        withAnimation(motion) { page = .photos }
     }
 
     // MARK: - Photos
@@ -169,10 +166,7 @@ struct AttachmentPicker: View {
                 .accessibilityAddTraits(.isHeader)
 
             if library.items.isEmpty {
-                Text(library.isLoaded ? "No recent photos" : "Loading…")
-                    .font(.subheadline)
-                    .foregroundStyle(Mono.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyPhotos
             } else {
                 ScrollView {
                     LazyVGrid(
@@ -217,6 +211,50 @@ struct AttachmentPicker: View {
             .padding(.horizontal, 24)
             .frame(height: footerHeight)
         }
+    }
+
+    /// Before there is anything to show: a way to see recent photos, or the system picker.
+    @ViewBuilder
+    private var emptyPhotos: some View {
+        VStack(spacing: 14) {
+            if !library.isLoaded {
+                Text("Loading…")
+                    .font(.subheadline)
+                    .foregroundStyle(Mono.secondary)
+            } else if library.canAskForAccess {
+                Text("Your recent photos and screenshots show here.")
+                    .font(.subheadline)
+                    .foregroundStyle(Mono.secondary)
+                    .multilineTextAlignment(.center)
+                Button { Task { await library.requestAccess() } } label: {
+                    Text("Show recent photos")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.black)
+                        .padding(.horizontal, 22)
+                        .frame(height: 44)
+                        .background(Color.white, in: Capsule(style: .continuous))
+                }
+                .accessibilityHint("Asks for access to your photos")
+            } else if library.hasAccess {
+                Text("No recent photos")
+                    .font(.subheadline)
+                    .foregroundStyle(Mono.secondary)
+            } else {
+                Text("Choose from your photo library.")
+                    .font(.subheadline)
+                    .foregroundStyle(Mono.secondary)
+                Button { showsSystemPicker = true } label: {
+                    Text("Open photo library")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.black)
+                        .padding(.horizontal, 22)
+                        .frame(height: 44)
+                        .background(Color.white, in: Capsule(style: .continuous))
+                }
+            }
+        }
+        .padding(.horizontal, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func tile(_ item: RecentPhotos.Item) -> some View {
@@ -328,8 +366,18 @@ final class RecentPhotos {
     /// Photos library or permissions.
     private let usesSamples = UserDefaults.standard.bool(forKey: "AgenticDebuggingSampleScreenshots")
 
-    /// The grid only shows when the app already has Photos access.
-    var canShowGrid: Bool { usesSamples || PhotoLibrary.canRead }
+    var hasAccess: Bool { usesSamples || PhotoLibrary.canRead }
+    /// The app hasn't been asked for Photos access yet and can be.
+    private(set) var canAskForAccess = false
+
+    func requestAccess() async {
+        guard await PhotoLibrary.requestAccess() else {
+            canAskForAccess = false
+            return
+        }
+        isLoaded = false
+        await load()
+    }
 
     func load() async {
         if usesSamples {
@@ -341,6 +389,7 @@ final class RecentPhotos {
             isLoaded = true
             return
         }
+        canAskForAccess = PhotoLibrary.canAsk
         guard PhotoLibrary.canRead, !isLoaded else {
             isLoaded = true
             return

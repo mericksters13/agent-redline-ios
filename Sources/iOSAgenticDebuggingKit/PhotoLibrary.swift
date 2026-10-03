@@ -3,10 +3,10 @@ import ImageIO
 import Photos
 import UIKit
 
-/// Reads recent photos and screenshots from Photos, only when the app already has Photos access
-/// for its own reasons. The kit never asks for it: asking needs a usage description in
-/// the host app's Info.plist, and the kit must work with nothing but its one line of setup.
-/// Without access, nothing here touches the library, so no prompt can appear.
+/// Reads recent photos and screenshots from Photos with the app's own Photos access.
+/// Asking for access needs a usage description in the app's Info.plist, which the kit
+/// can't add, so it asks only in apps that already declare one, and only when the person
+/// taps to see their photos. Without access, nothing here touches the library.
 @MainActor
 enum PhotoLibrary {
     /// The longest side of an attached image, in pixels. Enough to read any text on a
@@ -15,6 +15,20 @@ enum PhotoLibrary {
 
     static var canRead: Bool {
         let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        return status == .authorized || status == .limited
+    }
+
+    /// True when the app hasn't been asked yet and declares why it uses Photos.
+    /// Asking without that declaration would crash the app.
+    static var canAsk: Bool {
+        PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined
+            && Bundle.main.object(forInfoDictionaryKey: "NSPhotoLibraryUsageDescription") != nil
+    }
+
+    /// Shows the system's Photos prompt, with the app's own wording.
+    static func requestAccess() async -> Bool {
+        guard canAsk else { return canRead }
+        let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         return status == .authorized || status == .limited
     }
 
