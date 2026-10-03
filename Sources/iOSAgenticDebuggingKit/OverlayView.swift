@@ -12,6 +12,16 @@ enum Mono {
     static let hairline = Color.white.opacity(0.16)
 }
 
+/// The colors of marking the app itself, the only color the debugger draws over the app.
+/// Red is the usual color for markup and matches the outlines in sent screenshots.
+enum Markup {
+    /// What is marked: the element under the finger and notes already made.
+    static let red = Color(uiColor: .systemRed)
+    /// The steady frame around the screen in annotate mode: lighter, since it's ambient.
+    /// A blinking red is kept for recording.
+    static let frame = Color(red: 1, green: 0.42, blue: 0.42)
+}
+
 /// Everything the debugger draws. The view fills the overlay window and ignores
 /// safe areas, so its coordinates match the screen coordinates elements use.
 struct OverlayView: View {
@@ -49,7 +59,7 @@ struct OverlayView: View {
             }
 
             if session.mode == .picking || session.mode == .noting, let element = session.selected {
-                outline(element.frame, weight: 2)
+                outline(element.frame, weight: 2.5)
                 if session.mode == .picking {
                     nameTag(element)
                 }
@@ -139,15 +149,11 @@ struct OverlayView: View {
         }
     }
 
-    /// A line around the whole screen, along its rounded corners, while the debugger has the
-    /// screen, so the app is never mistaken for being live. White against the bezel, with a
-    /// black inner edge for light apps, like the outlines.
+    /// A steady light red line around the whole screen, along its rounded corners, while the
+    /// debugger has the screen, so the app is never mistaken for being live.
     private var annotateFrame: some View {
-        let shape = RoundedRectangle(cornerRadius: session.displayCornerRadius, style: .continuous)
-        return ZStack {
-            shape.strokeBorder(Color.black.opacity(0.75), lineWidth: 5)
-            shape.strokeBorder(Color.white, lineWidth: 3)
-        }
+        RoundedRectangle(cornerRadius: session.displayCornerRadius, style: .continuous)
+            .strokeBorder(Markup.frame, lineWidth: 4)
         .frame(width: session.screenSize.width, height: session.screenSize.height)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -170,13 +176,13 @@ struct OverlayView: View {
             .accessibilityHidden(true)
     }
 
-    /// A white line with a black edge, readable over any app.
+    /// A red line with a thin white halo, so it reads on dark and red content too.
     private func outline(_ frame: CGRect, weight: CGFloat) -> some View {
         let box = frame.insetBy(dx: -3, dy: -3)
         let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
         return ZStack {
-            shape.stroke(Color.black.opacity(0.75), lineWidth: weight + 2)
-            shape.stroke(Color.white, lineWidth: weight)
+            shape.stroke(Color.white.opacity(0.9), lineWidth: weight + 2)
+            shape.stroke(Markup.red, lineWidth: weight)
         }
         .frame(width: box.width, height: box.height)
         .offset(x: box.minX, y: box.minY)
@@ -214,8 +220,14 @@ struct OverlayView: View {
         let x = min(max(frame.minX - badge / 2, 4), width - badge - 4)
         let y = max(frame.minY - badge / 2, islandBottom + 4)
         return ZStack(alignment: .topLeading) {
-            outline(frame, weight: 1)
-            NumberBadge(number: number, size: badge)
+            outline(frame, weight: 1.5)
+            // Red with a white number, like the notes in sent screenshots.
+            Text("\(number)")
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(Color.white)
+                .frame(minWidth: badge, minHeight: badge)
+                .background(Markup.red, in: Circle())
+                .overlay(Circle().strokeBorder(Color.white, lineWidth: 1.5))
                 .offset(x: x, y: y)
         }
         .allowsHitTesting(false)
