@@ -36,7 +36,7 @@ struct NoteViewer: View {
     private var current: Annotation? { currentIndex.map { annotations[$0] } }
     private var pages: [Page] {
         annotations.enumerated().flatMap { number, annotation in
-            annotation.screenshots.indices.map { Page(annotation: annotation, number: number + 1, index: $0) }
+            (0..<annotation.imageCount).map { Page(annotation: annotation, number: number + 1, index: $0) }
         }
     }
     /// The page showing, or the first page of the current note before the pager settles.
@@ -139,8 +139,8 @@ struct NoteViewer: View {
                 tapped: { if isEditingNote { isEditingNote = false } else { showsDetails.toggle() } }
             )
             .accessibilityElement()
-            .accessibilityLabel(page.annotation.screenshots.count > 1
-                ? "Image \(page.index + 1) of \(page.annotation.screenshots.count) for note \(number)"
+            .accessibilityLabel(page.annotation.imageCount > 1
+                ? "Image \(page.index + 1) of \(page.annotation.imageCount) for note \(number)"
                 : "Screenshot for note \(number)")
             .accessibilityValue(isZoomed ? "Zoomed in" : "")
             .accessibilityHint("Double-tap with two fingers to zoom")
@@ -249,8 +249,8 @@ struct NoteViewer: View {
 
     /// What the note is, and which of its images is showing when it has several.
     private func subtitle(for annotation: Annotation) -> String {
-        guard annotation.screenshots.count > 1, let page = currentPage else { return annotation.subtitle }
-        return "\(annotation.subtitle) · \(page.index + 1) of \(annotation.screenshots.count)"
+        guard annotation.imageCount > 1, let page = currentPage else { return annotation.subtitle }
+        return "\(annotation.subtitle) · \(page.index + 1) of \(annotation.imageCount)"
     }
 
     private var strip: some View {

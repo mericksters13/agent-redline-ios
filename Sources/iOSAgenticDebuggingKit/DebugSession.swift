@@ -97,6 +97,12 @@ final class DebugSession {
     @ObservationIgnored private var window: OverlayWindow?
     @ObservationIgnored private var elements: [ElementSnapshot] = []
     @ObservationIgnored private var screenshot: UIImage?
+    /// The main scroll view's position when the screen was read.
+    @ObservationIgnored private var scrollState: ScrollState?
+    /// Every screen notes were made on, with its captures: one picture per screen.
+    @ObservationIgnored private var screens: [ScreenRecord] = []
+    /// Captures loaded from disk, kept while they're in use.
+    @ObservationIgnored private var captureImages: [UUID: UIImage] = [:]
     @ObservationIgnored private var appKeyWindow: UIWindow?
     @ObservationIgnored private var trayReturnMode = Mode.idle
     /// Where Cancel or Add on the note card goes back to.
@@ -142,6 +148,7 @@ final class DebugSession {
         displayCornerRadius = Self.displayCornerRadius(of: scene.screen)
 
         annotations = store.loadDraft()
+        screens = store.loadScreens()
         observeKeyboard()
         observeScreenshots()
         // On a cold launch the app became active before the debugger was installed.
@@ -291,10 +298,8 @@ final class DebugSession {
         }
         guard let element = selected, let screenshot else { return }
         let id = UUID()
-        let fileName = "\(id.uuidString).png"
-        let image = AccessibilityTree.outlining(element.frame, in: screenshot)
-        thumbnails[id] = Self.crop(image, around: element.frame, screenWidth: screenSize.width)
-        writeImages([image], named: [fileName], asPNG: true)
+        let captureID = fileCapture(screenshot)
+        thumbnails[id] = Self.crop(screenshot, around: element.frame, screenWidth: screenSize.width)
         annotations.append(Annotation(
             id: id,
             createdAt: .now,
@@ -303,8 +308,11 @@ final class DebugSession {
             element: element,
             ancestors: Array(levels.dropFirst(levelIndex + 1)),
             screen: screen,
-            screenshots: [fileName]
+            screenshots: [],
+            captureID: captureID
         ))
+        pruneCaptures()
+        fullImages = [:]
         persist()
         levels = []
         refreshMarkers()
@@ -355,8 +363,10 @@ final class DebugSession {
         guard let index = annotations.firstIndex(where: { $0.id == annotation.id }) else { return }
         annotations.remove(at: index)
         thumbnails[annotation.id] = nil
-        fullImages = fullImages.filter { !$0.key.hasPrefix(annotation.id.uuidString) }
+        // Other notes on the same screen show this one's outline, so their pictures are redrawn.
+        fullImages = [:]
         annotation.screenshots.forEach(store.deleteScreenshot(named:))
+        pruneCaptures()
         persist()
         refreshMarkers()
         if mode == .viewer {
@@ -398,9 +408,10 @@ final class DebugSession {
         persist()
     }
 
-    /// One of the item's images at full size: the screenshot with its element outlined,
-    /// or an attached image.
+    /// One of the item's images at full size: its screen's picture with every note on it
+    /// outlined and this one standing out, or an attached image.
     func fullImage(for annotation: Annotation, at index: Int) -> UIImage? {
+        if let captureID = annotation.captureID { return screenPicture(for: annotation, on: captureID) }
         guard annotation.screenshots.indices.contains(index) else { return nil }
         let key = "\(annotation.id.uuidString)-\(index)"
         if let cached = fullImages[key] { return cached }
@@ -573,24 +584,170 @@ final class DebugSession {
         }
     }
 
+    /// Moves the draft into a report folder at once, so new notes start a fresh draft, then
+    /// draws the report's pictures in the background.
     private func saveReport() {
         guard !annotations.isEmpty else { return }
+        let date = Date.now
+        let started: (id: String, folder: URL, draft: URL)
         do {
-            let folder = try store.send(annotations, app: .current, device: .current, date: .now)
-            logger.notice("Report saved at \(folder.path, privacy: .public)")
-            let count = annotations.count
-            annotations = []
-            thumbnails = [:]
-            levels = []
-            markers = []
-            elements = []
-            screenshot = nil
-            setMode(.idle)
-            show(toast: count == 1 ? "Saved 1 note on this iPhone" : "Saved \(count) notes on this iPhone")
+            started = try store.beginReport(date: date)
         } catch {
-            logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
+            logger.error("Couldn't start the report: \(error.localizedDescription, privacy: .public)")
             show(toast: "Couldn't save the report")
+            return
         }
+        let input = ReportBuilder.Input(
+            id: started.id, date: date, app: .current, device: .current,
+            annotations: annotations, screens: screens, draft: started.draft, folder: started.folder
+        )
+        let count = annotations.count
+        annotations = []
+        screens = []
+        thumbnails = [:]
+        fullImages = [:]
+        captureImages = [:]
+        levels = []
+        markers = []
+        elements = []
+        screenshot = nil
+        setMode(.idle)
+
+        let store = store
+        let logger = logger
+        Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                let report = try ReportBuilder.build(input)
+                try store.finishReport(report, in: started.folder)
+                logger.notice("Report saved at \(started.folder.path, privacy: .public)")
+                await self?.show(toast: count == 1 ? "Saved 1 note on this iPhone" : "Saved \(count) notes on this iPhone")
+            } catch {
+                logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
+                await self?.show(toast: "Couldn't save the report")
+            }
+        }
+    }
+
+    // MARK: - One picture per screen
+
+    /// Files the screen as just read under its screen, so every screen has one picture:
+    /// reuses the screen's picture when nothing changed, stitches the new capture in when
+    /// the screen scrolled, and otherwise makes the new capture the screen's picture and
+    /// moves the earlier notes onto it wherever their elements can be found again.
+    /// Returns the capture the new note belongs to.
+    private func fileCapture(_ image: UIImage) -> UUID {
+        var capture = Capture(
+            id: UUID(), file: "capture-\(UUID().uuidString).png", size: screenSize,
+            scroll: scrollState, elements: elements, group: 0
+        )
+        guard let index = screens.firstIndex(where: { $0.info == screen }), let previous = screens[index].captures.last else {
+            screens.append(ScreenRecord(id: UUID(), info: screen, captures: [capture]))
+            keep(capture, image)
+            return capture.id
+        }
+        let before = captureImage(previous)
+        let picturesMatch = before?.cgImage.flatMap { old in
+            image.cgImage.map { PictureComparison.difference(old, $0) < PictureComparison.samePicture }
+        } ?? false
+        let overlap = overlapMatches(previous: previous, before: before, new: capture, after: image)
+
+        switch CaptureMerge.decide(previous: previous, new: capture, picturesMatch: picturesMatch, overlapMatches: overlap) {
+        case .reuse(let existing):
+            return existing
+        case .stitch:
+            capture.group = previous.group
+            screens[index].captures.append(capture)
+            keep(capture, image)
+            return capture.id
+        case .replace:
+            capture.group = previous.group + 1
+            screens[index].captures.append(capture)
+            keep(capture, image)
+            let screenCaptures = Set(screens[index].captures.map(\.id))
+            let onScreen = CGRect(origin: .zero, size: screenSize)
+            for i in annotations.indices {
+                guard let old = annotations[i].captureID, old != capture.id, screenCaptures.contains(old),
+                      let element = annotations[i].element,
+                      let match = ElementSelection.match(element, in: capture.elements),
+                      onScreen.contains(match.frame.insetBy(dx: 1, dy: 1))
+                else { continue }
+                annotations[i].captureID = capture.id
+                annotations[i].element?.frame = match.frame
+                thumbnails[annotations[i].id] = nil
+            }
+            return capture.id
+        }
+    }
+
+    /// Whether the content two captures of a scrolled screen share looks the same; nil when
+    /// they share too little to tell.
+    private func overlapMatches(previous: Capture, before: UIImage?, new: Capture, after: UIImage) -> Bool? {
+        guard let from = previous.scroll, let to = new.scroll, from.isSameView(as: to),
+              let band = ScreenComposition.band(for: [previous, new]),
+              let old = before?.cgImage, let current = after.cgImage else { return nil }
+        let low = max(from.contentY(ofScreenY: band.lowerBound), to.contentY(ofScreenY: band.lowerBound))
+        let high = min(from.contentY(ofScreenY: band.upperBound), to.contentY(ofScreenY: band.upperBound))
+        guard high - low >= 40 else { return nil }
+        func pixelRows(_ scroll: ScrollState, in image: CGImage) -> Range<Int> {
+            let ratio = CGFloat(image.width) / screenSize.width
+            return Int((scroll.screenY(ofContentY: low) * ratio).rounded())..<Int((scroll.screenY(ofContentY: high) * ratio).rounded())
+        }
+        return PictureComparison.difference(old, rows: pixelRows(from, in: old), current, rows: pixelRows(to, in: current))
+            < PictureComparison.sameOverlap
+    }
+
+    private func keep(_ capture: Capture, _ image: UIImage) {
+        captureImages[capture.id] = image
+        writeImages([image], named: [capture.file], asPNG: true)
+    }
+
+    private func captureImage(_ capture: Capture) -> UIImage? {
+        if let cached = captureImages[capture.id] { return cached }
+        guard let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: capture.file).path) else { return nil }
+        captureImages[capture.id] = image
+        return image
+    }
+
+    private func capture(withID id: UUID) -> (record: ScreenRecord, capture: Capture)? {
+        for record in screens {
+            if let capture = record.captures.first(where: { $0.id == id }) { return (record, capture) }
+        }
+        return nil
+    }
+
+    /// Drops captures no note points at any more, and screens with no captures left.
+    private func pruneCaptures() {
+        let used = Set(annotations.compactMap(\.captureID))
+        for index in screens.indices.reversed() {
+            for capture in screens[index].captures where !used.contains(capture.id) {
+                store.deleteScreenshot(named: capture.file)
+                captureImages[capture.id] = nil
+            }
+            screens[index].captures.removeAll { !used.contains($0.id) }
+            if screens[index].captures.isEmpty { screens.remove(at: index) }
+        }
+    }
+
+    /// The capture a note was made on, with every note of its screen that's in view
+    /// outlined and numbered, the note itself standing out.
+    private func screenPicture(for annotation: Annotation, on captureID: UUID) -> UIImage? {
+        let key = "\(annotation.id.uuidString)-screen"
+        if let cached = fullImages[key] { return cached }
+        guard let (record, capture) = capture(withID: captureID), let image = captureImage(capture),
+              let plan = ScreenComposition.plan(for: [capture]) else { return nil }
+        let group = record.captures.filter { $0.group == capture.group }
+        let band = ScreenComposition.band(for: group)
+        let outlines = annotations.enumerated().compactMap { index, other -> ReportRenderer.Outline? in
+            guard let otherCapture = other.captureID.flatMap({ id in group.first { $0.id == id } }),
+                  let frame = other.element?.frame,
+                  let rect = ScreenComposition.position(of: frame, from: otherCapture, on: capture, band: band)
+            else { return nil }
+            return ReportRenderer.Outline(number: index + 1, rect: rect, style: other.id == annotation.id ? .current : .quiet)
+        }
+        let picture = ReportRenderer.render(plan, pictures: [capture.id: image], outlines: outlines, scale: 2)
+        if fullImages.count >= 5 { fullImages.removeAll() }
+        fullImages[key] = picture
+        return picture
     }
 
     /// A close crop of the picked element from the current screenshot, for the note card
@@ -626,6 +783,13 @@ final class DebugSession {
     /// or the top of its first image.
     func thumbnail(for annotation: Annotation) -> UIImage? {
         if let cached = thumbnails[annotation.id] { return cached }
+        if let captureID = annotation.captureID, let element = annotation.element {
+            guard let (_, capture) = capture(withID: captureID), let image = captureImage(capture),
+                  let thumbnail = Self.crop(image, around: element.frame, screenWidth: capture.size.width)
+            else { return nil }
+            thumbnails[annotation.id] = thumbnail
+            return thumbnail
+        }
         guard let first = annotation.screenshots.first,
               let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: first).path)
         else { return nil }
@@ -818,12 +982,14 @@ final class DebugSession {
         elements = AccessibilityTree.elements(in: appWindows, screenBounds: window.bounds)
         screen = AccessibilityTree.screen(of: appWindows.first(where: \.isKeyWindow) ?? appWindows.last, elements: elements)
         screenshot = AccessibilityTree.screenshot(of: appWindows, bounds: window.bounds)
+        scrollState = AccessibilityTree.mainScrollState(in: appWindows, screenBounds: window.bounds)
         refreshMarkers()
     }
 
     private func persist() {
         do {
             try store.saveDraft(annotations)
+            try store.saveScreens(screens)
         } catch {
             logger.error("Couldn't save the draft: \(error.localizedDescription, privacy: .public)")
         }

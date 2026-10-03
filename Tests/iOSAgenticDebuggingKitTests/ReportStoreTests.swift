@@ -70,27 +70,78 @@ struct ReportStoreTests {
         #expect(store.loadDraft().isEmpty)
     }
 
-    @Test func sendMovesEveryImageIntoTheReportAndClearsTheDraft() throws {
-        let annotations = [annotation("Cut off"), photos("Same bug on another screen", count: 2), annotation("Wrong color")]
-        for name in annotations.flatMap(\.screenshots) {
+    @Test func aReportTakesTheWholeDraftAndLeavesAFreshOne() throws {
+        let items = [annotation("Cut off"), photos("Same bug on another screen", count: 2)]
+        for name in items.flatMap(\.screenshots) {
             try store.saveScreenshot(Data([1, 2, 3]), named: name)
         }
-        try store.saveDraft(annotations)
+        try store.saveDraft(items)
 
-        let app = Report.App(bundleIdentifier: "com.example.app", name: "Example", version: "1.0", build: "1")
-        let device = Report.Device(model: "iPhone17,1", systemName: "iOS", systemVersion: "27.0")
-        let folder = try store.send(annotations, app: app, device: device, date: Date(timeIntervalSince1970: 1_790_000_000))
+        let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        #expect(store.loadDraft().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: store.draftDirectory.path))
+        for name in items.flatMap(\.screenshots) {
+            #expect(FileManager.default.fileExists(atPath: started.draft.appending(path: name).path))
+        }
+
+        // A second report in the same second gets its own folder.
+        try store.saveDraft([annotation("Later")])
+        let second = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        #expect(second.id != started.id)
+
+        try store.finishReport(sampleReport(id: started.id), in: started.folder)
+        #expect(FileManager.default.fileExists(atPath: started.folder.appending(path: "report.json").path))
+        #expect(FileManager.default.fileExists(atPath: started.folder.appending(path: "report.md").path))
+        #expect(!FileManager.default.fileExists(atPath: started.draft.path))
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let report = try decoder.decode(Report.self, from: Data(contentsOf: folder.appending(path: "report.json")))
-        #expect(report.annotations == annotations)
-        #expect(report.app.bundleIdentifier == "com.example.app")
-        for name in annotations.flatMap(\.screenshots) {
-            #expect(FileManager.default.fileExists(atPath: folder.appending(path: name).path))
+        let report = try decoder.decode(Report.self, from: Data(contentsOf: started.folder.appending(path: "report.json")))
+        #expect(report.screens.first?.images.first?.notes == [1, 2])
+        #expect(report.items.first?.picture == "screen-1.jpg")
+    }
+
+    @Test func screensSurviveAReload() throws {
+        let capture = Capture(id: UUID(), file: "capture.png", size: CGSize(width: 402, height: 874), scroll: nil, elements: [], group: 0)
+        let screens = [ScreenRecord(id: UUID(), info: ScreenInfo(title: "Today", viewController: "Home"), captures: [capture])]
+        try store.saveScreens(screens)
+        #expect(store.loadScreens() == screens)
+    }
+
+    @Test func theSummaryTellsTheAgentWhichPictureShowsEachNote() {
+        let text = ReportSummary.markdown(sampleReport(id: "r"))
+        #expect(text.contains("## Screen: Today"))
+        #expect(text.contains("One screenshot of this screen, stitched from 2 scroll positions, in 2 parts: screen-1.jpg, screen-1-part-2.jpg."))
+        #expect(text.contains("Notes 1 and 2 are outlined and numbered on it."))
+        #expect(text.contains("1. **Save** (Button, identifier `save`): Cut off. See screen-1.jpg."))
+        #expect(text.contains("## Attachments"))
+        #expect(text.contains("3. **2 images from Photos**: Same bug. Images: note-3-1.jpg, note-3-2.jpg."))
+    }
+
+    private func sampleReport(id: String) -> Report {
+        let element = ElementSnapshot(role: "Button", label: "Save", value: nil, identifier: "save", className: nil, isContainer: false, frame: CGRect(x: 1, y: 2, width: 3, height: 4))
+        func item(_ number: Int, _ note: String, picture: String) -> Report.Item {
+            Report.Item(number: number, kind: .element, note: note, createdAt: Date(timeIntervalSince1970: 1_790_000_000), title: "Save",
+                        element: element, ancestors: [], screen: "screen-1", screenTitle: "Today", picture: picture,
+                        outline: Report.Box(x: 10, y: 20, width: 30, height: 40), attachments: [])
         }
-        #expect(store.loadDraft().isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: store.draftDirectory.path))
+        return Report(
+            id: id,
+            createdAt: Date(timeIntervalSince1970: 1_790_000_000),
+            app: Report.App(bundleIdentifier: "com.example.app", name: "Example", version: "1.0", build: "1"),
+            device: Report.Device(model: "iPhone18,1", systemName: "iOS", systemVersion: "27.0"),
+            screens: [Report.Screen(id: "screen-1", title: "Today", viewController: "Home", notes: [1, 2], images: [
+                Report.Picture(file: "screen-1.jpg", part: 1, parts: 2, stitchedFrom: 2, earlierState: false, notes: [1, 2], width: 563, height: 1224),
+                Report.Picture(file: "screen-1-part-2.jpg", part: 2, parts: 2, stitchedFrom: 2, earlierState: false, notes: [2], width: 563, height: 700),
+            ])],
+            items: [
+                item(1, "Cut off", picture: "screen-1.jpg"),
+                item(2, "Too faint", picture: "screen-1-part-2.jpg"),
+                Report.Item(number: 3, kind: .photo, note: "Same bug", createdAt: Date(timeIntervalSince1970: 1_790_000_000), title: "2 images from Photos",
+                            element: nil, ancestors: [], screen: nil, screenTitle: nil, picture: nil, outline: nil,
+                            attachments: ["note-3-1.jpg", "note-3-2.jpg"]),
+            ]
+        )
     }
 }
 #endif

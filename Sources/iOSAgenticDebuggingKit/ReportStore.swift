@@ -28,14 +28,20 @@ struct Annotation: Codable, Equatable, Identifiable, Sendable {
     var ancestors: [ElementSnapshot]
     /// The screen it was made on. Nil for images from Photos, which can come from anywhere.
     var screen: ScreenInfo?
-    /// Image file names, in order: the screenshot with the element outlined, the
-    /// captured screen, or the images picked from Photos.
+    /// Attached images, in order: the captured screen or the images picked from Photos.
+    /// Element notes made before screens shared one screenshot keep theirs here, outlined.
     var screenshots: [String]
+    /// For an element note, the capture of its screen it was made on. Every note on a
+    /// screen shares the screen's picture; outlines are drawn when it's shown or sent.
+    var captureID: UUID? = nil
+
+    /// How many pictures the note shows in the viewer.
+    var imageCount: Int { captureID != nil ? 1 : screenshots.count }
 }
 
 extension Annotation {
     private enum CodingKeys: String, CodingKey {
-        case id, createdAt, note, kind, element, ancestors, screen, screenshots
+        case id, createdAt, note, kind, element, ancestors, screen, screenshots, captureID
         /// The single screenshot of drafts saved before attachments existed.
         case screenshot
     }
@@ -54,6 +60,7 @@ extension Annotation {
         } else {
             screenshots = [try container.decode(String.self, forKey: .screenshot)]
         }
+        captureID = try container.decodeIfPresent(UUID.self, forKey: .captureID)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -66,6 +73,7 @@ extension Annotation {
         try container.encode(ancestors, forKey: .ancestors)
         try container.encodeIfPresent(screen, forKey: .screen)
         try container.encode(screenshots, forKey: .screenshots)
+        try container.encodeIfPresent(captureID, forKey: .captureID)
     }
 
     /// What the item shows as its name in the debugger.
@@ -86,11 +94,13 @@ extension Annotation {
         }
     }
 
-    var title: String { Self.title(kind: kind, element: element, screen: screen, imageCount: screenshots.count) }
+    var title: String { Self.title(kind: kind, element: element, screen: screen, imageCount: imageCount) }
     var subtitle: String { Self.subtitle(kind: kind, element: element, screen: screen) }
 }
 
-/// What Send produces: every element note and attachment, in the order the agent will number them.
+/// What Send produces, for the agent: one picture per screen with every note on it outlined
+/// and numbered, and every note and attachment in the order the phone numbered them.
+/// Screens, pictures and notes point at each other, so the agent can go either way.
 struct Report: Codable, Sendable {
     struct App: Codable, Sendable {
         var bundleIdentifier: String?
@@ -105,19 +115,155 @@ struct Report: Codable, Sendable {
         var systemVersion: String
     }
 
+    /// A screen notes were made on, and its pictures.
+    struct Screen: Codable, Equatable, Sendable {
+        var id: String
+        var title: String?
+        var viewController: String?
+        /// The numbers of the notes made on this screen.
+        var notes: [Int]
+        /// Usually one picture. A screen that scrolled may be stitched into one tall picture
+        /// sent in parts; a screen whose content changed between notes keeps a picture of its
+        /// earlier state for the notes that weren't on the newer one.
+        var images: [Picture]
+    }
+
+    struct Picture: Codable, Equatable, Sendable {
+        var file: String
+        /// Which part of the screen's picture this is, counting from 1, and how many parts.
+        var part: Int
+        var parts: Int
+        /// How many captures at different scroll positions were stitched into the picture.
+        var stitchedFrom: Int
+        /// True for a picture of the screen before its content changed.
+        var earlierState: Bool
+        /// The notes outlined on this part.
+        var notes: [Int]
+        var width: Int
+        var height: Int
+    }
+
+    /// A box in a picture's pixels.
+    struct Box: Codable, Equatable, Sendable {
+        var x: Int
+        var y: Int
+        var width: Int
+        var height: Int
+    }
+
+    /// A note or an attachment, numbered as on the phone.
+    struct Item: Codable, Equatable, Sendable {
+        var number: Int
+        var kind: Annotation.Kind
+        var note: String
+        var createdAt: Date
+        var title: String
+        var element: ElementSnapshot?
+        var ancestors: [ElementSnapshot]
+        /// The screen it was made on, matching a `Screen.id`.
+        var screen: String?
+        var screenTitle: String?
+        /// The picture its outline is drawn on, and where.
+        var picture: String?
+        var outline: Box?
+        /// Attached images, for whole-screen captures and photos.
+        var attachments: [String]
+    }
+
     var id: String
     var createdAt: Date
     var app: App
     var device: Device
-    var annotations: [Annotation]
+    var screens: [Screen]
+    var items: [Item]
+}
+
+/// The report as text the agent reads first: what was reported, on which screen, and
+/// which picture shows each note.
+enum ReportSummary {
+    static func markdown(_ report: Report) -> String {
+        var lines: [String] = []
+        let app = [report.app.name ?? report.app.bundleIdentifier ?? "App", report.app.version.map { "\($0)" }, report.app.build.map { "(\($0))" }]
+            .compactMap { $0 }.joined(separator: " ")
+        lines.append("# UI report: \(app)")
+        lines.append("")
+        let count = report.items.count
+        let screens = report.screens.count
+        lines.append("\(report.device.model), \(report.device.systemName) \(report.device.systemVersion). "
+            + "\(count == 1 ? "1 note" : "\(count) notes")"
+            + (screens > 0 ? " on \(screens == 1 ? "1 screen" : "\(screens) screens")" : "") + ". "
+            + "Numbers match the red numbered outlines in the pictures.")
+        let items = Dictionary(uniqueKeysWithValues: report.items.map { ($0.number, $0) })
+
+        for screen in report.screens {
+            lines.append("")
+            lines.append("## Screen: \(screen.title ?? screen.viewController ?? "Untitled")")
+            lines.append("")
+            let current = screen.images.filter { !$0.earlierState }
+            if let first = current.first {
+                var description = "One screenshot of this screen"
+                if first.stitchedFrom > 1 { description += ", stitched from \(first.stitchedFrom) scroll positions" }
+                if current.count > 1 {
+                    description += ", in \(current.count) parts: " + current.map(\.file).joined(separator: ", ")
+                } else {
+                    description += ": \(first.file)"
+                }
+                let numbers = Array(Set(current.flatMap(\.notes))).sorted()
+                let outlined = numbers.count == 1 ? "Note \(list(numbers)) is" : "Notes \(list(numbers)) are"
+                lines.append("\(description). \(outlined) outlined and numbered on it.")
+            }
+            for earlier in screen.images where earlier.earlierState {
+                lines.append("An earlier state of the same screen, before its content changed: \(earlier.file), with \(earlier.notes.count == 1 ? "note" : "notes") \(list(earlier.notes)).")
+            }
+            lines.append("")
+            for number in screen.notes {
+                guard let item = items[number] else { continue }
+                lines.append(line(for: item))
+            }
+        }
+
+        let attachments = report.items.filter { $0.screen == nil }
+        if !attachments.isEmpty {
+            lines.append("")
+            lines.append("## Attachments")
+            lines.append("")
+            for item in attachments { lines.append(line(for: item)) }
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func line(for item: Report.Item) -> String {
+        var text = "\(item.number). **\(item.title)**"
+        if let element = item.element {
+            var details = [element.role]
+            if let identifier = element.identifier { details.append("identifier `\(identifier)`") }
+            if element.label != nil, element.label != item.title { details.append("label \"\(element.label!)\"") }
+            text += " (\(details.joined(separator: ", ")))"
+        }
+        if item.note.isEmpty {
+            text += ". No note."
+        } else {
+            let ended = item.note.last.map { ".!?".contains($0) } ?? false
+            text += ": \(item.note)\(ended ? "" : ".")"
+        }
+        if let picture = item.picture { text += " See \(picture)." }
+        if !item.attachments.isEmpty { text += " Images: \(item.attachments.joined(separator: ", "))." }
+        return text
+    }
+
+    private static func list(_ numbers: [Int]) -> String {
+        let words = numbers.map(String.init)
+        guard words.count > 1 else { return words.first ?? "" }
+        return words.dropLast().joined(separator: ", ") + " and " + words.last!
+    }
 }
 
 /// Keeps the unsent draft and sent reports on disk, so a draft survives the app
 /// being killed or reinstalled by a rebuild.
 ///
 /// Layout under `root`:
-/// - `draft/annotations.json` and the images each item refers to
-/// - `reports/<id>/report.json` and the images it refers to
+/// - `draft/annotations.json`, `draft/screens.json`, the screen captures and attached images
+/// - `reports/<id>/report.json`, `reports/<id>/report.md` and the pictures they refer to
 struct ReportStore: Sendable {
     let root: URL
 
@@ -126,6 +272,7 @@ struct ReportStore: Sendable {
     var draftDirectory: URL { root.appending(path: "draft", directoryHint: .isDirectory) }
     var reportsDirectory: URL { root.appending(path: "reports", directoryHint: .isDirectory) }
     private var draftFile: URL { draftDirectory.appending(path: "annotations.json") }
+    private var screensFile: URL { draftDirectory.appending(path: "screens.json") }
 
     func loadDraft() -> [Annotation] {
         guard let data = try? Data(contentsOf: draftFile) else { return [] }
@@ -137,6 +284,16 @@ struct ReportStore: Sendable {
         try Self.encoder.encode(annotations).write(to: draftFile, options: .atomic)
     }
 
+    func loadScreens() -> [ScreenRecord] {
+        guard let data = try? Data(contentsOf: screensFile) else { return [] }
+        return (try? Self.decoder.decode([ScreenRecord].self, from: data)) ?? []
+    }
+
+    func saveScreens(_ screens: [ScreenRecord]) throws {
+        try FileManager.default.createDirectory(at: draftDirectory, withIntermediateDirectories: true)
+        try Self.encoder.encode(screens).write(to: screensFile, options: .atomic)
+    }
+
     func saveScreenshot(_ data: Data, named name: String) throws {
         try FileManager.default.createDirectory(at: draftDirectory, withIntermediateDirectories: true)
         try data.write(to: draftDirectory.appending(path: name), options: .atomic)
@@ -146,26 +303,32 @@ struct ReportStore: Sendable {
         try? FileManager.default.removeItem(at: draftDirectory.appending(path: name))
     }
 
-    /// Moves the draft into a new report folder and clears the draft.
-    /// Returns the report folder.
-    func send(_ annotations: [Annotation], app: Report.App, device: Report.Device, date: Date) throws -> URL {
+    /// Starts a report: moves the whole draft into a new report folder, so new notes go into
+    /// a fresh draft while the report's pictures are drawn from the old one.
+    /// Returns the report's id, its folder and where the draft now is.
+    func beginReport(date: Date) throws -> (id: String, folder: URL, draft: URL) {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let id = formatter.string(from: date)
-        let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
         let files = FileManager.default
-        try files.createDirectory(at: folder, withIntermediateDirectories: true)
-        for name in annotations.flatMap(\.screenshots) {
-            let source = draftDirectory.appending(path: name)
-            if files.fileExists(atPath: source.path) {
-                try files.moveItem(at: source, to: folder.appending(path: name))
-            }
+        var id = formatter.string(from: date)
+        var suffix = 2
+        while files.fileExists(atPath: reportsDirectory.appending(path: id).path) {
+            id = formatter.string(from: date) + "-\(suffix)"
+            suffix += 1
         }
-        let report = Report(id: id, createdAt: date, app: app, device: device, annotations: annotations)
+        let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+        let draft = folder.appending(path: "draft", directoryHint: .isDirectory)
+        try files.createDirectory(at: folder, withIntermediateDirectories: true)
+        try files.moveItem(at: draftDirectory, to: draft)
+        return (id, folder, draft)
+    }
+
+    /// Finishes a report: writes `report.json` and `report.md` and removes the old draft.
+    func finishReport(_ report: Report, in folder: URL) throws {
         try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)
-        try? files.removeItem(at: draftDirectory)
-        return folder
+        try Data(ReportSummary.markdown(report).utf8).write(to: folder.appending(path: "report.md"), options: .atomic)
+        try? FileManager.default.removeItem(at: folder.appending(path: "draft"))
     }
 
     private static let encoder: JSONEncoder = {

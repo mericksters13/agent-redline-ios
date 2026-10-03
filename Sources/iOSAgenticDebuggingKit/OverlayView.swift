@@ -538,7 +538,7 @@ struct OverlayView: View {
         .contentShape(Rectangle())
         .onTapGesture { session.openViewer(annotation) }
         .accessibilityAddTraits(.isButton)
-        .accessibilityHint(annotation.screenshots.count > 1 ? "Opens the \(annotation.screenshots.count) images and the note" : "Opens the screenshot and note")
+        .accessibilityHint(annotation.imageCount > 1 ? "Opens the \(annotation.imageCount) images and the note" : "Opens the screenshot and note")
     }
 
     @ViewBuilder
@@ -552,9 +552,9 @@ struct OverlayView: View {
                 .clipShape(shape)
                 .overlay(shape.strokeBorder(Mono.hairline, lineWidth: 1))
                 .overlay(alignment: .bottomTrailing) {
-                    if annotation.screenshots.count > 1 {
+                    if annotation.imageCount > 1 {
                         // More images travel with this note.
-                        Text("\(annotation.screenshots.count)")
+                        Text("\(annotation.imageCount)")
                             .font(.caption2.weight(.bold).monospacedDigit())
                             .foregroundStyle(Mono.text)
                             .padding(.horizontal, 5)

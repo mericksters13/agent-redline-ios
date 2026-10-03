@@ -125,19 +125,29 @@ enum AccessibilityTree {
         }
     }
 
-    /// The screenshot with one element outlined.
-    static func outlining(_ rect: CGRect, in image: UIImage) -> UIImage {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = image.scale
-        format.opaque = true
-        return UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
-            image.draw(at: .zero)
-            // Red reads clearly on almost any app and is the usual color for markup.
-            UIColor.systemRed.setStroke()
-            let path = UIBezierPath(roundedRect: rect.insetBy(dx: -3, dy: -3), cornerRadius: 6)
-            path.lineWidth = 3
-            path.stroke()
+    /// The screen's main vertical scroll view, and how far it's scrolled: the largest one
+    /// that scrolls vertically and covers a good part of the screen.
+    static func mainScrollState(in windows: [UIWindow], screenBounds: CGRect) -> ScrollState? {
+        var best: (view: UIScrollView, frame: CGRect, area: CGFloat)?
+        func visit(_ view: UIView) {
+            guard !view.isHidden, view.alpha > 0.01 else { return }
+            if let scrollView = view as? UIScrollView, !(view is UITextView) {
+                let frame = scrollView.convert(scrollView.bounds, to: nil)
+                let visible = frame.intersection(screenBounds)
+                let inset = scrollView.adjustedContentInset
+                let scrollsVertically = scrollView.contentSize.height > scrollView.bounds.height - inset.top - inset.bottom + 1
+                let area = visible.isNull ? 0 : visible.width * visible.height
+                if scrollsVertically, area > (best?.area ?? 0) { best = (scrollView, frame, area) }
+            }
+            for subview in view.subviews { visit(subview) }
         }
+        for window in windows { visit(visibleRoot(of: window)) }
+        guard let best, best.area > screenBounds.width * screenBounds.height * 0.3 else { return nil }
+        let inset = best.view.adjustedContentInset
+        return ScrollState(
+            frame: best.frame, offsetY: best.view.contentOffset.y,
+            insetTop: inset.top, insetBottom: inset.bottom, contentHeight: best.view.contentSize.height
+        )
     }
 
     // MARK: - Helpers
