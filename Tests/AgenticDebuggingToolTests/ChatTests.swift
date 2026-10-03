@@ -92,6 +92,13 @@ struct ChatTests {
         #expect(ProjectApps.bundleIDs(in: try project()) == ["com.markbuot.AthenaTracker"])
     }
 
+    @Test func aChatOutsideAnAppProjectStaysOut() throws {
+        let notes = root.appending(path: "Notes", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
+        session(notes).register(agent: "claude-code")
+        #expect(Chats.live(paths).isEmpty)
+    }
+
     @Test func onlyOneChatTakesAReport() throws {
         let folder = try project()
         _ = try inboxReport("20261003-223449")

@@ -20,9 +20,11 @@ final class ChatSession: @unchecked Sendable {
                             pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
     }
 
-    /// Registers the chat and starts the hub if it isn't running.
+    /// Registers the chat and starts the hub if it isn't running. A chat whose project builds
+    /// no iOS app stays out of it: the server is set up for every project, and most aren't apps.
     func register(agent: String? = nil) {
         lock.withLock { if let agent { record.agent = agent } }
+        guard !chat.bundleIDs.isEmpty else { return }
         save()
         if startsHub { HubProcess.startIfNeeded(paths) }
     }
@@ -34,6 +36,7 @@ final class ChatSession: @unchecked Sendable {
     /// Notes that the chat was used just now, for picking the most recent chat.
     func touch() {
         lock.withLock { record.lastActiveAt = Date() }
+        guard !chat.bundleIDs.isEmpty else { return }
         save()
     }
 
