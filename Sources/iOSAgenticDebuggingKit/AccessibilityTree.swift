@@ -26,6 +26,10 @@ enum AccessibilityTree {
 
     /// Every element and named group visible in `windows`, in screen points.
     static func elements(in windows: [UIWindow], screenBounds: CGRect) -> [ElementSnapshot] {
+        elements(under: windows.flatMap(visibleRoots(of:)), screenBounds: screenBounds)
+    }
+
+    private static func elements(under roots: [UIView], screenBounds: CGRect) -> [ElementSnapshot] {
         var result: [ElementSnapshot] = []
         var visited = Set<ObjectIdentifier>()
 
@@ -76,7 +80,7 @@ enum AccessibilityTree {
             }
         }
 
-        for window in windows { visit(visibleRoot(of: window), depth: 0) }
+        for root in roots { visit(root, depth: 0) }
         return result
     }
 
@@ -141,7 +145,7 @@ enum AccessibilityTree {
             }
             for subview in view.subviews { visit(subview) }
         }
-        for window in windows { visit(visibleRoot(of: window)) }
+        for root in windows.flatMap(visibleRoots(of:)) { visit(root) }
         guard let best, best.area > screenBounds.width * screenBounds.height * 0.3 else { return nil }
         let inset = best.view.adjustedContentInset
         return ScrollState(
@@ -152,17 +156,32 @@ enum AccessibilityTree {
 
     // MARK: - Helpers
 
-    /// A presented sheet or full-screen cover hides what's under it, so only its
-    /// view is read when one is up.
-    private static func visibleRoot(of window: UIWindow) -> UIView {
+    /// A presented sheet or full-screen cover hides what's under it, so only its view is
+    /// read when one is up, along with anything drawn above it, such as a menu opened from it.
+    private static func visibleRoots(of window: UIWindow) -> [UIView] {
+        guard let cover = coveringController(in: window)?.viewIfLoaded else { return [window] }
+        var top: UIView = cover
+        while let parent = top.superview, parent !== window { top = parent }
+        guard let index = window.subviews.firstIndex(of: top) else { return [cover] }
+        return [cover] + window.subviews[(index + 1)...]
+    }
+
+    /// The topmost presented controller that shows something of its own.
+    private static func coveringController(in window: UIWindow) -> UIViewController? {
         var controller = window.rootViewController
+        var covering: UIViewController?
         while let presented = controller?.presentedViewController, !presented.isBeingDismissed {
             controller = presented
+            if showsContent(presented) { covering = presented }
         }
-        if let controller, controller !== window.rootViewController, let view = controller.viewIfLoaded {
-            return view
-        }
-        return window
+        return covering
+    }
+
+    /// An open menu presents an empty controller and draws its items in the window, over
+    /// the screen it opened from. Such a presentation hides nothing and isn't a new screen.
+    private static func showsContent(_ controller: UIViewController) -> Bool {
+        guard let view = controller.viewIfLoaded, let window = view.window else { return false }
+        return !elements(under: [view], screenBounds: window.bounds).isEmpty
     }
 
     private static func role(of object: NSObject, isContainer: Bool) -> String {
@@ -198,11 +217,12 @@ enum AccessibilityTree {
 
     private static func topController(from controller: UIViewController?) -> UIViewController? {
         guard let controller else { return nil }
-        if let presented = controller.presentedViewController, !presented.isBeingDismissed {
+        if let presented = controller.presentedViewController, !presented.isBeingDismissed, showsContent(presented) {
             return topController(from: presented)
         }
         if let navigation = controller as? UINavigationController {
-            return navigation.visibleViewController.map { $0 === navigation ? navigation : topController(from: $0) ?? $0 }
+            // Not `visibleViewController`: that is any presented controller, an open menu's included.
+            return navigation.topViewController.map { topController(from: $0) ?? $0 }
         }
         if let tabs = controller as? UITabBarController {
             return topController(from: tabs.selectedViewController) ?? tabs
