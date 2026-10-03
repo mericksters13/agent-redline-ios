@@ -3,9 +3,8 @@ import Photos
 import PhotosUI
 import SwiftUI
 
-/// The attachment surface. It grows out of the attachment button as a small menu,
-/// and the menu opens into a grid of recent photos in place. Modeled on the photo
-/// picker in Trail's Ask chat, in the debugger's black and white.
+/// The photo panel. It grows out of the attachment button into a grid of recent photos.
+/// Modeled on the photo picker in Trail's Ask chat, in the debugger's black and white.
 ///
 /// Like Trail's picker, Photos always opens this grid. Before the app has Photos access
 /// the grid offers to show recent photos, which asks for access, or to open the system
@@ -14,8 +13,6 @@ struct AttachmentPicker: View {
     @Bindable var session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private enum Page { case menu, photos }
-    @State private var page = Page.menu
     @State private var expanded = false
     @State private var library = RecentPhotos()
     @State private var selectedIDs: [String] = []
@@ -54,9 +51,11 @@ struct AttachmentPicker: View {
     var body: some View {
         let anchor = session.attachAnchor
         let corner = AttachmentPlacement.corner(for: anchor, in: bounds)
-        let frame = page == .menu
-            ? AttachmentPlacement.menu(anchor: anchor, in: bounds)
-            : AttachmentPlacement.expanded(anchor: anchor, in: bounds, contentHeight: photosHeight(width: AttachmentPlacement.expanded(anchor: anchor, in: bounds).width))
+        let frame = AttachmentPlacement.expanded(
+            anchor: anchor,
+            in: bounds,
+            contentHeight: photosHeight(width: AttachmentPlacement.expanded(anchor: anchor, in: bounds).width)
+        )
         ZStack(alignment: .topLeading) {
             Color.clear
                 .contentShape(Rectangle())
@@ -66,21 +65,8 @@ struct AttachmentPicker: View {
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAction { close() }
 
-            // Each page is held to the surface's size and pinned to the button's edge, so
-            // the taller page, even hidden, never stretches the surface or shifts the other.
-            ZStack(alignment: corner.isTop ? .top : .bottom) {
-                menu
-                    .frame(width: frame.width, height: frame.height, alignment: corner.isTop ? .top : .bottom)
-                    .opacity(page == .menu ? 1 : 0)
-                    .allowsHitTesting(page == .menu)
-                    .accessibilityHidden(page != .menu)
-                photosPage
-                    .frame(width: frame.width, height: frame.height)
-                    .opacity(page == .photos ? 1 : 0)
-                    .allowsHitTesting(page == .photos)
-                    .accessibilityHidden(page != .photos)
-            }
-            .frame(width: frame.width, height: frame.height)
+            photosPage
+                .frame(width: frame.width, height: frame.height)
             .background(Mono.surface)
             .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
@@ -122,42 +108,6 @@ struct AttachmentPicker: View {
         return headerHeight + grid + footerHeight
     }
 
-    // MARK: - Menu
-
-    private var menu: some View {
-        VStack(spacing: 0) {
-            Button(action: session.attachThisScreen) {
-                menuLabel("This screen", symbol: "iphone")
-            }
-            .accessibilityHint("Attaches the app as it looks now")
-            Button(action: openPhotos) {
-                menuLabel("Photos", symbol: "photo.on.rectangle")
-            }
-            .accessibilityHint("Choose recent photos or screenshots to attach")
-        }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 14)
-    }
-
-    private func menuLabel(_ title: String, symbol: String) -> some View {
-        HStack(spacing: 16) {
-            Image(systemName: symbol)
-                .font(.system(size: 22, weight: .regular))
-                .frame(width: 44, height: 44)
-                .background(Mono.fill, in: Circle())
-            Text(title)
-            Spacer()
-        }
-        .font(.system(size: 20))
-        .foregroundStyle(Mono.text)
-        .frame(height: 66)
-        .contentShape(Rectangle())
-    }
-
-    private func openPhotos() {
-        withAnimation(motion) { page = .photos }
-    }
-
     // MARK: - Photos
 
     private var photosPage: some View {
@@ -188,7 +138,7 @@ struct AttachmentPicker: View {
             }
 
             HStack {
-                backButton
+                closeButton
                 Spacer()
                 if !selectedIDs.isEmpty {
                     Button(action: addSelected) {
@@ -299,19 +249,16 @@ struct AttachmentPicker: View {
         .accessibilityAddTraits(order != nil ? .isSelected : [])
     }
 
-    private var backButton: some View {
-        Button {
-            selectedIDs = []
-            withAnimation(motion) { page = .menu }
-        } label: {
-            Image(systemName: "chevron.left")
-                .font(.system(size: 17, weight: .medium))
+    private var closeButton: some View {
+        Button(action: close) {
+            Image(systemName: "xmark")
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Mono.text)
                 .frame(width: 44, height: 44)
                 .background(Mono.fill, in: Circle())
                 .contentShape(Circle())
         }
-        .accessibilityLabel("Back to attachments")
+        .accessibilityLabel("Close photos")
     }
 
     // MARK: - Actions

@@ -67,8 +67,12 @@ final class DebugSession {
     private(set) var pending: PendingAttachment?
     /// A screenshot just taken, offered at the side until it is sent or dismissed.
     private(set) var suggestion: Suggestion?
-    /// The attachment button's frame, where the attachment surface grows from.
+    /// The attachment button's frame, where the photo panel grows from.
     var attachAnchor = CGRect.zero
+    /// The screen just captured with the capture button, flying into the note box.
+    private(set) var captureFlight: UIImage?
+    /// Where the note box shows its first image: where a capture lands.
+    var attachmentSlot = CGRect.zero
 
     var safeAreaTop: CGFloat { safeAreaInsets.top }
 
@@ -300,6 +304,7 @@ final class DebugSession {
 
     func cancelNote() {
         levels = []
+        captureFlight = nil
         pending?.loading?.cancel()
         pending = nil
         endNoting(returningTo: notingReturnMode)
@@ -414,7 +419,7 @@ final class DebugSession {
 
     // MARK: - Attachments
 
-    /// Opens the attachment surface from the attachment button in the island.
+    /// Opens the photo panel from the attachment button in the island.
     func openAttachments() {
         guard mode == .picking || mode == .tray else { return }
         levels = []
@@ -426,11 +431,19 @@ final class DebugSession {
         setMode(.picking)
     }
 
-    /// Attaches the app's screen as it is now, without the debugger.
-    func attachThisScreen() {
-        guard mode == .attaching else { return }
+    /// The capture button: takes the app's screen as it is now, without the debugger, the
+    /// way a screenshot is taken, and opens the note box for it.
+    func captureThisScreen() {
+        guard mode == .picking || mode == .tray else { return }
         let capture = captureScreen()
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        captureFlight = capture.image
         beginAttachmentNote(PendingAttachment(kind: .screen, images: [capture.image], screen: capture.screen, sendsReport: false))
+    }
+
+    /// The captured screen has landed in the note box.
+    func finishCaptureFlight() {
+        captureFlight = nil
     }
 
     /// Attaches images chosen from Photos, together, as one item with one note. The note

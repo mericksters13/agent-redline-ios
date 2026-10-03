@@ -11,24 +11,20 @@ struct AttachmentPlacementTests {
 
     @Test func aButtonNearTheTopRightGrowsFromItsTopTrailingCorner() {
         #expect(AttachmentPlacement.corner(for: islandButton, in: bounds) == .topTrailing)
-        let menu = AttachmentPlacement.menu(anchor: islandButton, in: bounds)
-        #expect(menu.maxX == islandButton.maxX)
-        #expect(menu.minY == islandButton.minY)
     }
 
     @Test func aButtonNearTheBottomLeftGrowsUpward() {
         let button = CGRect(x: 20, y: 780, width: 44, height: 44)
         #expect(AttachmentPlacement.corner(for: button, in: bounds) == .bottomLeading)
-        let menu = AttachmentPlacement.menu(anchor: button, in: bounds)
-        #expect(menu.minX == button.minX)
-        #expect(menu.maxY == button.maxY)
+        let grid = AttachmentPlacement.expanded(anchor: button, in: bounds)
+        #expect(grid.maxY == button.maxY)
     }
 
-    @Test func theMenuStaysInsideTheSpace() {
+    @Test func theGridStaysInsideTheSpace() {
         for x in stride(from: 0.0, through: 380, by: 20) {
             for y in stride(from: 62.0, through: 820, by: 40) {
-                let menu = AttachmentPlacement.menu(anchor: CGRect(x: x, y: y, width: 44, height: 44), in: bounds)
-                #expect(bounds.insetBy(dx: AttachmentPlacement.margin - 0.001, dy: -0.001).contains(menu))
+                let grid = AttachmentPlacement.expanded(anchor: CGRect(x: x, y: y, width: 44, height: 44), in: bounds)
+                #expect(bounds.insetBy(dx: AttachmentPlacement.margin - 0.001, dy: -0.001).contains(grid))
             }
         }
     }

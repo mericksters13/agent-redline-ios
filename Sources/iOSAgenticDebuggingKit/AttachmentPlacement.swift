@@ -1,12 +1,11 @@
 #if AGENTIC_DEBUGGING
 import Foundation
 
-/// Where the attachment surface sits. It grows out of the attachment button: it
-/// covers the button and opens toward the middle of the screen, so it follows the
-/// button wherever it is.
+/// Where the photo panel sits. It grows out of the attachment button: it starts at the
+/// button's edge and opens toward the middle of the screen, so it follows the button
+/// wherever it is.
 enum AttachmentPlacement {
     static let margin: CGFloat = 12
-    static let menuSize = CGSize(width: 280, height: 160)
 
     /// The corner the surface grows from, the one at the attachment button.
     enum Corner: Equatable {
@@ -27,21 +26,6 @@ enum AttachmentPlacement {
         case (false, true): return .bottomLeading
         case (false, false): return .bottomTrailing
         }
-    }
-
-    /// The small menu, pinned to the button's corner so it covers the button, and
-    /// kept inside `bounds`, a margin away from the sides.
-    static func menu(anchor: CGRect, in bounds: CGRect) -> CGRect {
-        let size = CGSize(width: min(menuSize.width, bounds.width - 2 * margin), height: menuSize.height)
-        let corner = corner(for: anchor, in: bounds)
-        let x = corner.isLeading ? anchor.minX : anchor.maxX - size.width
-        let y = corner.isTop ? anchor.minY : anchor.maxY - size.height
-        return CGRect(
-            x: min(max(x, bounds.minX + margin), bounds.maxX - margin - size.width),
-            y: min(max(y, bounds.minY), bounds.maxY - size.height),
-            width: size.width,
-            height: size.height
-        )
     }
 
     /// How tall the opened grid may get for its width: room for two full rows of

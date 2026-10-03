@@ -88,6 +88,14 @@ struct OverlayView: View {
             if let suggestion = session.suggestion, session.mode == .idle || session.mode == .picking {
                 suggestionCard(suggestion)
             }
+
+            if let capture = session.captureFlight {
+                CaptureFlight(image: capture, screenSize: session.screenSize, slot: session.attachmentSlot) {
+                    session.finishCaptureFlight()
+                }
+                // Shown at once: fading in with the mode change would swallow the flash.
+                .transition(.identity)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .ignoresSafeArea()
@@ -213,6 +221,17 @@ struct OverlayView: View {
             .allowsHitTesting(count > 0)
             .accessibilityLabel(count == 0 ? "\(session.screenTitle). Tap an element to add a note." : session.mode == .tray ? "Hide notes" : "Show \(count) notes")
 
+            Button { session.captureThisScreen() } label: {
+                Image(systemName: "camera.viewfinder")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Mono.text)
+                    .frame(width: 32, height: 32)
+                    .background(Mono.fill, in: Circle())
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Capture this screen")
+
             Button { session.openAttachments() } label: {
                 Image(systemName: "paperclip")
                     .font(.subheadline.weight(.semibold))
@@ -222,7 +241,7 @@ struct OverlayView: View {
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
-            .accessibilityLabel("Attach a screenshot")
+            .accessibilityLabel("Attach photos")
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.attachAnchor = $0 }
 
             if count > 0 {
@@ -366,6 +385,11 @@ struct OverlayView: View {
                 .frame(width: 34, height: 56, alignment: .top)
                 .clipShape(shape)
                 .overlay(shape.strokeBorder(Color.white.opacity(0.4), lineWidth: 1))
+                // A screen just captured is still flying in; it lands here.
+                .opacity(index == 0 && session.captureFlight != nil ? 0 : 1)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                    if index == 0 { session.attachmentSlot = frame }
+                }
                 .zIndex(Double(3 - index))
             }
         }
@@ -630,6 +654,60 @@ struct OverlayView: View {
         .padding(.leading, onRight ? width - 12 - cardWidth : 12)
         .padding(.top, top)
         .transition(.move(edge: onRight ? .trailing : .leading).combined(with: .opacity))
+    }
+}
+
+/// A capture shown the way iOS shows a screenshot: a white flash, then the picture of the
+/// screen shrinks from full size and lands in the note box's first image slot.
+struct CaptureFlight: View {
+    let image: UIImage
+    let screenSize: CGSize
+    /// Where it lands. It follows the slot as the note box rises with the keyboard.
+    let slot: CGRect
+    let landed: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var flash = 0.9
+    @State private var isLanding = false
+
+    /// Close to the curve of an iPhone's screen corners.
+    private let screenCornerRadius: CGFloat = 55
+
+    var body: some View {
+        let full = CGRect(origin: .zero, size: screenSize)
+        let target = slot.isEmpty ? CGRect(x: 28, y: screenSize.height * 0.5, width: 34, height: 56) : slot
+        let frame = isLanding ? target : full
+        let radius = isLanding ? 8 : screenCornerRadius
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        ZStack(alignment: .topLeading) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: frame.width, height: frame.height, alignment: .top)
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(Color.white.opacity(isLanding ? 0.4 : 0.9), lineWidth: isLanding ? 1 : 4))
+                .shadow(color: .black.opacity(0.35), radius: isLanding ? 4 : 24, y: isLanding ? 2 : 10)
+                .position(x: frame.midX, y: frame.midY)
+                .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.5, bounce: 0.12), value: slot)
+
+            Color.white
+                .opacity(flash)
+                .frame(width: screenSize.width, height: screenSize.height)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear {
+            withAnimation(.easeOut(duration: reduceMotion ? 0.1 : 0.3)) { flash = 0 }
+            // Hold the full-size picture for a beat, as a screenshot does, then send it to the note box.
+            withAnimation(
+                reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.55, bounce: 0.12).delay(0.2),
+                completionCriteria: .logicallyComplete
+            ) {
+                isLanding = true
+            } completion: {
+                landed()
+            }
+        }
     }
 }
 
