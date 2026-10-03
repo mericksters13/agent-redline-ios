@@ -4,27 +4,31 @@ import PhotosUI
 import SwiftUI
 
 /// The attachment surface. It grows out of the attachment button as a small menu,
-/// and the menu opens into a grid of recent screenshots in place. Modeled on the photo
+/// and the menu opens into a grid of recent photos in place. Modeled on the photo
 /// picker in Trail's Ask chat, in the debugger's black and white.
 ///
-/// The grid needs Photos access the app already has. Without it, Screenshots opens the
+/// The grid needs Photos access the app already has. Without it, Photos opens the
 /// system photo picker instead, which runs outside the app and needs no permission.
 struct AttachmentPicker: View {
     @Bindable var session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private enum Page { case menu, screenshots }
+    private enum Page { case menu, photos }
     @State private var page = Page.menu
     @State private var expanded = false
-    @State private var library = RecentScreenshots()
+    @State private var library = RecentPhotos()
     @State private var selectedIDs: [String] = []
     @State private var showsSystemPicker = false
-    @State private var systemPickerFilter = PHPickerFilter.screenshots
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var isLoading = false
 
     static let selectionLimit = 10
     private let cornerRadius: CGFloat = 48
+    private let columns = 3
+    private let gridSpacing: CGFloat = 6
+    private let gridInset: CGFloat = 12
+    private let headerHeight: CGFloat = 60
+    private let footerHeight: CGFloat = 78
 
     private var motion: Animation {
         reduceMotion ? .linear(duration: 0.12) : .interpolatingSpring(mass: 1, stiffness: 440, damping: 42, initialVelocity: 0)
@@ -40,12 +44,19 @@ struct AttachmentPicker: View {
         )
     }
 
+    /// Every tile has the screen's shape, so a screenshot fills its tile whole and
+    /// any other photo sits whole inside it.
+    private var tileAspect: CGFloat {
+        let size = session.screenSize
+        return size.height > 0 ? size.width / size.height : 0.46
+    }
+
     var body: some View {
         let anchor = session.attachAnchor
         let corner = AttachmentPlacement.corner(for: anchor, in: bounds)
         let frame = page == .menu
             ? AttachmentPlacement.menu(anchor: anchor, in: bounds)
-            : AttachmentPlacement.expanded(anchor: anchor, in: bounds)
+            : AttachmentPlacement.expanded(anchor: anchor, in: bounds, contentHeight: photosHeight(width: AttachmentPlacement.expanded(anchor: anchor, in: bounds).width))
         ZStack(alignment: .topLeading) {
             Color.clear
                 .contentShape(Rectangle())
@@ -60,10 +71,10 @@ struct AttachmentPicker: View {
                     .opacity(page == .menu ? 1 : 0)
                     .allowsHitTesting(page == .menu)
                     .accessibilityHidden(page != .menu)
-                screenshotsPage
-                    .opacity(page == .screenshots ? 1 : 0)
-                    .allowsHitTesting(page == .screenshots)
-                    .accessibilityHidden(page != .screenshots)
+                photosPage
+                    .opacity(page == .photos ? 1 : 0)
+                    .allowsHitTesting(page == .photos)
+                    .accessibilityHidden(page != .photos)
             }
             .frame(width: frame.width, height: frame.height, alignment: corner.isTop ? .top : .bottom)
             .background(Mono.surface)
@@ -87,13 +98,22 @@ struct AttachmentPicker: View {
             selection: $pickerItems,
             maxSelectionCount: Self.selectionLimit,
             selectionBehavior: .ordered,
-            matching: systemPickerFilter
+            matching: .images
         )
         .onChange(of: pickerItems) { _, items in
             guard !items.isEmpty else { return }
             pickerItems = []
             attach { await Self.images(from: items) }
         }
+    }
+
+    /// The height the photos page needs: the header, the rows of tiles and the footer.
+    private func photosHeight(width: CGFloat) -> CGFloat {
+        guard !library.items.isEmpty else { return headerHeight + 120 + footerHeight }
+        let tileWidth = (width - 2 * gridInset - CGFloat(columns - 1) * gridSpacing) / CGFloat(columns)
+        let rows = CGFloat((library.items.count + columns - 1) / columns)
+        let grid = rows * tileWidth / tileAspect + (rows - 1) * gridSpacing
+        return headerHeight + grid + footerHeight
     }
 
     // MARK: - Menu
@@ -104,10 +124,10 @@ struct AttachmentPicker: View {
                 menuLabel("This screen", symbol: "iphone")
             }
             .accessibilityHint("Attaches the app as it looks now")
-            Button(action: openScreenshots) {
-                menuLabel("Screenshots", symbol: "photo.on.rectangle")
+            Button(action: openPhotos) {
+                menuLabel("Photos", symbol: "photo.on.rectangle")
             }
-            .accessibilityHint("Choose recent screenshots to attach")
+            .accessibilityHint("Choose recent photos or screenshots to attach")
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 14)
@@ -128,41 +148,42 @@ struct AttachmentPicker: View {
         .contentShape(Rectangle())
     }
 
-    private func openScreenshots() {
+    private func openPhotos() {
         if library.canShowGrid {
-            withAnimation(motion) { page = .screenshots }
+            withAnimation(motion) { page = .photos }
         } else {
-            systemPickerFilter = .screenshots
             showsSystemPicker = true
         }
     }
 
-    // MARK: - Screenshots
+    // MARK: - Photos
 
-    private var screenshotsPage: some View {
+    private var photosPage: some View {
         VStack(spacing: 0) {
-            Text("Recent screenshots")
+            Text("Recent photos")
                 .font(.headline)
                 .foregroundStyle(Mono.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 28)
-                .frame(height: 60)
+                .frame(height: headerHeight)
                 .accessibilityAddTraits(.isHeader)
 
             if library.items.isEmpty {
-                VStack(spacing: 12) {
-                    Text(library.isLoaded ? "No screenshots from the last while" : "Loading…")
-                        .font(.subheadline)
-                        .foregroundStyle(Mono.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text(library.isLoaded ? "No recent photos" : "Loading…")
+                    .font(.subheadline)
+                    .foregroundStyle(Mono.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 3), spacing: 2) {
+                    LazyVGrid(
+                        columns: Array(repeating: GridItem(.flexible(), spacing: gridSpacing), count: columns),
+                        spacing: gridSpacing
+                    ) {
                         ForEach(library.items) { item in
                             tile(item)
                         }
                     }
+                    .padding(.horizontal, gridInset)
                 }
                 .scrollIndicators(.hidden)
             }
@@ -181,12 +202,9 @@ struct AttachmentPicker: View {
                             .frame(height: 44)
                             .background(Color.white, in: Capsule(style: .continuous))
                     }
-                    .accessibilityLabel(selectedIDs.count == 1 ? "Add 1 screenshot" : "Add \(selectedIDs.count) screenshots")
+                    .accessibilityLabel(selectedIDs.count == 1 ? "Add 1 photo" : "Add \(selectedIDs.count) photos")
                 } else {
-                    Button {
-                        systemPickerFilter = .images
-                        showsSystemPicker = true
-                    } label: {
+                    Button { showsSystemPicker = true } label: {
                         Text("All Photos")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(Mono.text)
@@ -196,14 +214,14 @@ struct AttachmentPicker: View {
                     }
                 }
             }
-            .frame(height: 64)
             .padding(.horizontal, 24)
-            .padding(.bottom, 14)
+            .frame(height: footerHeight)
         }
     }
 
-    private func tile(_ item: RecentScreenshots.Item) -> some View {
+    private func tile(_ item: RecentPhotos.Item) -> some View {
         let order = selectedIDs.firstIndex(of: item.id)
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
         return Button {
             if let order {
                 selectedIDs.remove(at: order)
@@ -213,28 +231,30 @@ struct AttachmentPicker: View {
             }
             UISelectionFeedbackGenerator().selectionChanged()
         } label: {
-            Color.clear
-                .aspectRatio(1, contentMode: .fit)
-                .overlay(alignment: .top) {
-                    // The top of a screenshot, where its title is, says the most about it.
-                    Image(uiImage: item.thumbnail).resizable().scaledToFill()
+            Mono.fill
+                .aspectRatio(tileAspect, contentMode: .fit)
+                .overlay {
+                    // The whole photo, never a crop of it.
+                    Image(uiImage: item.thumbnail).resizable().scaledToFit()
                 }
-                .clipped()
+                .clipShape(shape)
                 .overlay {
                     if order != nil {
-                        // White with a black edge, like the debugger's outlines, so it reads on any screenshot.
-                        Rectangle().strokeBorder(Color.black.opacity(0.75), lineWidth: 5)
-                        Rectangle().strokeBorder(Color.white, lineWidth: 3)
+                        // White with a black edge, like the debugger's outlines, so it reads on any photo.
+                        shape.strokeBorder(Color.black.opacity(0.75), lineWidth: 5)
+                        shape.strokeBorder(Color.white, lineWidth: 3)
+                    } else {
+                        shape.strokeBorder(Mono.hairline, lineWidth: 1)
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
                     if let order {
-                        NumberBadge(number: order + 1, size: 26).padding(8)
+                        NumberBadge(number: order + 1, size: 26).padding(6)
                     }
                 }
                 .contentShape(Rectangle())
         }
-        .accessibilityLabel("Screenshot, \(item.createdAt.formatted(.relative(presentation: .named)))")
+        .accessibilityLabel("Photo, \(item.createdAt.formatted(.relative(presentation: .named)))")
         .accessibilityAddTraits(order != nil ? .isSelected : [])
     }
 
@@ -289,10 +309,10 @@ struct AttachmentPicker: View {
     }
 }
 
-/// The newest screenshots in Photos, for the grid. Empty without Photos access.
+/// The newest photos and screenshots in Photos, for the grid. Empty without Photos access.
 @MainActor
 @Observable
-final class RecentScreenshots {
+final class RecentPhotos {
     struct Item: Identifiable {
         let id: String
         let createdAt: Date
@@ -314,7 +334,8 @@ final class RecentScreenshots {
     func load() async {
         if usesSamples {
             items = Self.sampleFiles().compactMap { file in
-                guard let image = UIImage(contentsOfFile: file.url.path), let thumbnail = DebugSession.topSquare(of: image) else { return nil }
+                guard let image = UIImage(contentsOfFile: file.url.path) else { return nil }
+                let thumbnail = image.preparingThumbnail(of: CGSize(width: 240, height: 240 * image.size.height / max(image.size.width, 1))) ?? image
                 return Item(id: file.url.path, createdAt: file.date, thumbnail: thumbnail)
             }
             isLoaded = true
@@ -324,11 +345,11 @@ final class RecentScreenshots {
             isLoaded = true
             return
         }
-        let found = PhotoLibrary.newestScreenshots(limit: 30)
+        let found = PhotoLibrary.newestPhotos(limit: 30)
         assets = Dictionary(found.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
         var loaded: [Item] = []
         for asset in found {
-            if let thumbnail = await PhotoLibrary.image(for: asset, pixels: 300, fill: true) {
+            if let thumbnail = await PhotoLibrary.image(for: asset, pixels: 480) {
                 loaded.append(Item(id: asset.localIdentifier, createdAt: asset.creationDate ?? .distantPast, thumbnail: thumbnail))
             }
         }
@@ -336,7 +357,7 @@ final class RecentScreenshots {
         isLoaded = true
     }
 
-    /// The chosen screenshots at attachment size, in the order they were chosen.
+    /// The chosen photos at attachment size, in the order they were chosen.
     func images(for ids: [String]) async -> [UIImage] {
         if usesSamples { return ids.compactMap { UIImage(contentsOfFile: $0) } }
         var images: [UIImage] = []
@@ -349,7 +370,7 @@ final class RecentScreenshots {
     }
 }
 
-extension RecentScreenshots {
+extension RecentPhotos {
     /// Images from sent reports, newest first.
     private static func sampleFiles() -> [(url: URL, date: Date)] {
         let files = FileManager.default

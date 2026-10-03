@@ -44,16 +44,27 @@ enum AttachmentPlacement {
         )
     }
 
-    /// The opened photo grid: the full width of `bounds` less the margins, three
-    /// quarters as wide as it is tall where it fits, starting at the button's edge
-    /// and stopping a margin short of the far edge.
+    /// How tall the opened grid may get for its width: room for two full rows of
+    /// phone-shaped tiles on a phone.
+    static let maxHeightRatio: CGFloat = 1.75
+
+    /// The opened photo grid at its largest: the full width of `bounds` less the
+    /// margins, starting at the button's edge and stopping a margin short of the far edge.
     static func expanded(anchor: CGRect, in bounds: CGRect) -> CGRect {
         let width = bounds.width - 2 * margin
         let corner = corner(for: anchor, in: bounds)
         let start = corner.isTop ? max(anchor.minY, bounds.minY) : min(anchor.maxY, bounds.maxY)
         let room = corner.isTop ? bounds.maxY - margin - start : start - bounds.minY - margin
-        let height = max(min(width * 4 / 3, room), 0)
+        let height = max(min(width * maxHeightRatio, room), 0)
         return CGRect(x: bounds.minX + margin, y: corner.isTop ? start : start - height, width: width, height: height)
+    }
+
+    /// The opened photo grid, no taller than its content, still anchored at the button's edge.
+    static func expanded(anchor: CGRect, in bounds: CGRect, contentHeight: CGFloat) -> CGRect {
+        let largest = expanded(anchor: anchor, in: bounds)
+        let height = min(largest.height, max(contentHeight, 0))
+        let y = corner(for: anchor, in: bounds).isTop ? largest.minY : largest.maxY - height
+        return CGRect(x: largest.minX, y: y, width: largest.width, height: height)
     }
 }
 #endif

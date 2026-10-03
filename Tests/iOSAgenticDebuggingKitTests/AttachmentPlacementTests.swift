@@ -38,7 +38,22 @@ struct AttachmentPlacementTests {
         #expect(grid.minX == 12)
         #expect(grid.width == 378)
         #expect(grid.minY == islandButton.minY)
-        #expect(grid.height == 504)
+        #expect(grid.height == 378 * AttachmentPlacement.maxHeightRatio)
+    }
+
+    @Test func aGridWithFewPhotosIsOnlyAsTallAsItsContent() {
+        let short = AttachmentPlacement.expanded(anchor: islandButton, in: bounds, contentHeight: 400)
+        #expect(short.minY == islandButton.minY)
+        #expect(short.height == 400)
+        let full = AttachmentPlacement.expanded(anchor: islandButton, in: bounds, contentHeight: 5000)
+        #expect(full == AttachmentPlacement.expanded(anchor: islandButton, in: bounds))
+    }
+
+    @Test func aShortGridOpeningUpwardKeepsItsBottomAtTheButton() {
+        let button = CGRect(x: 268, y: 760, width: 44, height: 44)
+        let grid = AttachmentPlacement.expanded(anchor: button, in: bounds, contentHeight: 300)
+        #expect(grid.maxY == button.maxY)
+        #expect(grid.height == 300)
     }
 
     @Test func theGridIsShortenedWhenThereIsNoRoom() {

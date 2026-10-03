@@ -3,7 +3,7 @@ import ImageIO
 import Photos
 import UIKit
 
-/// Reads recent screenshots from Photos, only when the app already has Photos access
+/// Reads recent photos and screenshots from Photos, only when the app already has Photos access
 /// for its own reasons. The kit never asks for it: asking needs a usage description in
 /// the host app's Info.plist, and the kit must work with nothing but its one line of setup.
 /// Without access, nothing here touches the library, so no prompt can appear.
@@ -23,6 +23,17 @@ enum PhotoLibrary {
         guard canRead else { return [] }
         let options = PHFetchOptions()
         options.predicate = NSPredicate(format: "(mediaSubtypes & %d) != 0", PHAssetMediaSubtype.photoScreenshot.rawValue)
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        options.fetchLimit = limit
+        var assets: [PHAsset] = []
+        PHAsset.fetchAssets(with: .image, options: options).enumerateObjects { asset, _, _ in assets.append(asset) }
+        return assets
+    }
+
+    /// The newest photos and screenshots, newest first. Loads no images.
+    static func newestPhotos(limit: Int) -> [PHAsset] {
+        guard canRead else { return [] }
+        let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         options.fetchLimit = limit
         var assets: [PHAsset] = []
