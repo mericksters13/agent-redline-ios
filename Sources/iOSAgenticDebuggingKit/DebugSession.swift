@@ -423,6 +423,11 @@ final class DebugSession {
         return await Task.detached(priority: .userInitiated) { store.sentReports() }.value
     }
 
+    /// The last attempt to hand reports to the Mac.
+    func lastDelivery() -> Delivery? {
+        store.lastDelivery()
+    }
+
     func updateNote(_ id: UUID, to text: String) {
         let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return }
@@ -580,17 +585,33 @@ final class DebugSession {
     /// Set once a report has reached the Mac's hub, and so iOS has allowed local network access.
     nonisolated static let hubReachedKey = "AgenticDebuggingHubReached"
 
-    /// Offers every report the Mac hasn't confirmed to its hub, when one has set this app up,
-    /// and notes the ones it now has. Nil when there's no hub, nothing to offer, or no answer.
-    nonisolated static func offerReports(from store: ReportStore, patience: TimeInterval) async -> HubLink.Reply? {
-        guard let address = store.hubAddress(), let bundleID = Bundle.main.bundleIdentifier else { return nil }
+    /// Sends every report the Mac hasn't confirmed to its hub, notes the ones it now has, and
+    /// records how it went. Nil when there's nothing to send.
+    nonisolated static func deliverReports(from store: ReportStore, patience: TimeInterval) async -> HubLink.Outcome? {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
         let reports = store.undeliveredReports()
         guard !reports.isEmpty else { return nil }
-        let offer = HubLink.Offer(device: address.device, bundleID: bundleID, reports: reports)
-        guard let reply = await HubLink.send(offer, to: address, patience: patience) else { return nil }
-        store.markDelivered(reply.delivered)
-        UserDefaults.standard.set(true, forKey: hubReachedKey)
-        return reply
+        guard let address = store.hubAddress() else {
+            store.recordDelivery(.noHub)
+            return .noHub
+        }
+        let result = await HubLink.deliver(reports, bundleID: bundleID, address: address, files: { store.reportFiles($0) }, patience: patience)
+        store.markDelivered(result.delivered)
+        store.recordDelivery(result.outcome)
+        // The hub answered, so iOS has allowed local network access.
+        if result.outcome != .unreachable { UserDefaults.standard.set(true, forKey: hubReachedKey) }
+        return result.outcome
+    }
+
+    /// What the toast after Send says, so a report that didn't reach the Mac says why.
+    nonisolated static func toast(for outcome: HubLink.Outcome?, notes: String) -> String {
+        switch outcome {
+        case .delivered: "Sent \(notes) to the Mac"
+        case .noHub, nil: "Saved \(notes) on this iPhone"
+        case .unreachable: "Saved on this iPhone. Couldn't reach the Mac"
+        case .refused: "Saved on this iPhone. The Mac didn't accept it"
+        case .interrupted: "Saved on this iPhone. Sending to the Mac stopped"
+        }
     }
 
     /// When the app comes back, offers what the Mac hasn't confirmed, such as a report sent from
@@ -600,7 +621,7 @@ final class DebugSession {
         guard UserDefaults.standard.bool(forKey: Self.hubReachedKey) else { return }
         let store = store
         Task.detached(priority: .utility) {
-            _ = await DebugSession.offerReports(from: store, patience: 8)
+            _ = await DebugSession.deliverReports(from: store, patience: 8)
         }
     }
 
@@ -676,10 +697,9 @@ final class DebugSession {
                 logger.notice("Report saved at \(started.folder.path, privacy: .public)")
                 // The first time, iOS asks about local network access before the hub can answer.
                 let patience: TimeInterval = UserDefaults.standard.bool(forKey: DebugSession.hubReachedKey) ? 8 : 60
-                let reply = await DebugSession.offerReports(from: store, patience: patience)
+                let outcome = await DebugSession.deliverReports(from: store, patience: patience)
                 let notes = count == 1 ? "1 note" : "\(count) notes"
-                let reachedMac = reply?.delivered.contains(started.id) == true
-                await self?.show(toast: reachedMac ? "Sent \(notes) to the Mac" : "Saved \(notes) on this iPhone")
+                await self?.show(toast: DebugSession.toast(for: outcome, notes: notes))
             } catch {
                 logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
                 await self?.show(toast: "Couldn't save the report")

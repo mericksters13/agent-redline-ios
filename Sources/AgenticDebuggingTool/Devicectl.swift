@@ -55,38 +55,6 @@ struct Devicectl: Sendable {
         return response.map { $0.result.apps.contains { $0.bundleIdentifier == bundleID } }
     }
 
-    /// The app's finished reports on the phone; nil when they can't be listed, because the
-    /// phone can't be reached or the app hasn't sent a report yet.
-    func finishedReports(of bundleID: String, on udid: String) -> [FinishedReport]? {
-        struct Response: Decodable {
-            struct Result: Decodable { var files: [File] }
-            struct File: Decodable {
-                struct Metadata: Decodable { var lastModDate: String? }
-                var relativePath: String
-                var metadata: Metadata?
-            }
-            var result: Result
-        }
-        guard let response: Response = json([
-            "device", "info", "files", "--device", udid, "--domain-type", "appDataContainer",
-            "--domain-identifier", bundleID, "--subdirectory", ReportFolder.path,
-        ]) else { return nil }
-        let dates = ISO8601DateFormatter()
-        dates.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return ReportFolder.finished(in: response.result.files.map { file in
-            (file.relativePath, file.metadata?.lastModDate.flatMap { dates.date(from: $0) })
-        })
-    }
-
-    /// Copies one report folder off the phone into `destination`, which must not exist yet.
-    func copyReport(_ id: String, of bundleID: String, on udid: String, to destination: URL) -> Bool {
-        let result = Self.run(executable, [
-            "device", "copy", "from", "--device", udid, "--domain-type", "appDataContainer",
-            "--domain-identifier", bundleID, "--source", "\(ReportFolder.path)/\(id)", "--destination", destination.path, "--quiet",
-        ])
-        return result.status == 0 && FileManager.default.fileExists(atPath: destination.appending(path: "report.json").path)
-    }
-
     /// Writes a small file into an app's data container on the phone, creating its folders.
     func write(_ data: Data, to path: String, of bundleID: String, on udid: String) -> Bool {
         let file = FileManager.default.temporaryDirectory.appending(path: "agentic-debugging-\(UUID().uuidString)")

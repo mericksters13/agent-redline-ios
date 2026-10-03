@@ -2,7 +2,8 @@
 import Foundation
 import Network
 
-/// Where apps reach the hub: one line of JSON in, one line back, over the local network.
+/// Where apps send their reports: an offer, the hub's answer, the reports it asked for, and its
+/// reply, one line of JSON each, over the local network.
 final class HubListener: @unchecked Sendable {
     static let port: UInt16 = 47361
 
@@ -23,7 +24,12 @@ final class HubListener: @unchecked Sendable {
             return
         }
         listener.newConnectionHandler = { [weak self] connection in
-            self?.accept(connection)
+            guard let self else { return }
+            let lines = Lines(connection: connection)
+            Task {
+                await self.serve(lines)
+                lines.close()
+            }
         }
         listener.stateUpdateHandler = { [weak self] state in
             if case .failed(let error) = state { self?.hub.log("Stopped listening: \(error)") }
@@ -38,32 +44,25 @@ final class HubListener: @unchecked Sendable {
         browser?.cancel()
     }
 
-    private func accept(_ connection: NWConnection) {
-        connection.start(queue: queue)
-        read(connection, received: Data())
-        // A client that never finishes its line doesn't hold the connection open.
-        queue.asyncAfter(deadline: .now() + 120) { connection.cancel() }
-    }
-
-    private func read(_ connection: NWConnection, received: Data) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
-            guard let self else { return }
-            var received = received
-            if let data { received.append(data) }
-            if let newline = received.firstIndex(of: UInt8(ascii: "\n")) {
-                guard let offer = HubMessage.decode(HubMessage.Offer.self, from: received[..<newline]) else {
-                    connection.cancel()
-                    return
-                }
-                self.hub.handle(offer) { reply in
-                    connection.send(content: HubMessage.encode(reply), completion: .contentProcessed { _ in connection.cancel() })
-                }
-            } else if isComplete || error != nil || received.count > 1_000_000 {
-                connection.cancel()
-            } else {
-                self.read(connection, received: received)
-            }
+    private func serve(_ lines: Lines) async {
+        guard await lines.open() else { return }
+        guard let first = await lines.read(), let offer = HubMessage.decode(HubMessage.Offer.self, from: first) else {
+            hub.log("A connection didn't start with an offer from an app")
+            return
         }
+        let answer = hub.answer(offer)
+        guard await lines.send(HubMessage.encode(answer)), !answer.want.isEmpty else { return }
+        var waiting = Set(answer.want)
+        while !waiting.isEmpty {
+            guard let line = await lines.read(), let upload = HubMessage.decode(HubMessage.Upload.self, from: line), waiting.contains(upload.id) else {
+                hub.log("\(offer.bundleID) stopped sending before \(waiting.count == 1 ? "a report" : "\(waiting.count) reports") arrived")
+                break
+            }
+            waiting.remove(upload.id)
+            hub.store(upload, offeredIn: offer)
+        }
+        let finished = offer.reports.map { FinishedReport(id: $0.id, finishedAt: $0.finishedAt) }
+        _ = await lines.send(HubMessage.encode(HubMessage.Reply(delivered: hub.settled(device: offer.device, bundleID: offer.bundleID, finished: finished))))
     }
 
     /// Phones announce Xcode's wireless link whenever they wake. The announcement doesn't say
@@ -79,6 +78,100 @@ final class HubListener: @unchecked Sendable {
         }
         browser.start(queue: queue)
         self.browser = browser
+    }
+
+    /// One app's connection, read and written a line at a time.
+    private final class Lines: @unchecked Sendable {
+        private let connection: NWConnection
+        private let queue = DispatchQueue(label: "listener.connection")
+        private var buffer = Data()
+
+        /// The longest line taken: one report, its pictures encoded in the line.
+        static let longestLine = Hub.largestReport * 4 / 3 + 65_536
+
+        init(connection: NWConnection) {
+            self.connection = connection
+        }
+
+        func open() async -> Bool {
+            let once = Once<Bool>()
+            return await withCheckedContinuation { continuation in
+                once.set(continuation)
+                connection.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready: once.resume(true)
+                    case .failed, .cancelled: once.resume(false)
+                    default: break
+                    }
+                }
+                connection.start(queue: queue)
+                queue.asyncAfter(deadline: .now() + 10) { once.resume(false) }
+            }
+        }
+
+        func send(_ data: Data) async -> Bool {
+            await withCheckedContinuation { continuation in
+                connection.send(content: data, completion: .contentProcessed { error in continuation.resume(returning: error == nil) })
+            }
+        }
+
+        /// The next line, without its newline; nil when the connection ends, the line is too
+        /// long, or 60 seconds pass.
+        func read() async -> Data? {
+            let once = Once<Data?>()
+            return await withCheckedContinuation { continuation in
+                once.set(continuation)
+                queue.async {
+                    if let line = self.takeLine() { return once.resume(line) }
+                    self.queue.asyncAfter(deadline: .now() + 60) { once.resume(nil) }
+                    self.receive(once)
+                }
+            }
+        }
+
+        func close() {
+            connection.cancel()
+        }
+
+        private func receive(_ once: Once<Data?>) {
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [self] data, _, isComplete, error in
+                queue.async {
+                    if let data { self.buffer.append(data) }
+                    if let line = self.takeLine() {
+                        once.resume(line)
+                    } else if isComplete || error != nil || self.buffer.count > Self.longestLine {
+                        once.resume(nil)
+                    } else {
+                        self.receive(once)
+                    }
+                }
+            }
+        }
+
+        private func takeLine() -> Data? {
+            guard let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) else { return nil }
+            let line = Data(buffer[..<newline])
+            buffer.removeSubrange(...newline)
+            return line
+        }
+    }
+
+    /// Resumes a continuation once, whichever of several callbacks comes first.
+    private final class Once<T: Sendable>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<T, Never>?
+
+        func set(_ continuation: CheckedContinuation<T, Never>) {
+            lock.withLock { self.continuation = continuation }
+        }
+
+        func resume(_ value: T) {
+            let continuation = lock.withLock {
+                defer { self.continuation = nil }
+                return self.continuation
+            }
+            continuation?.resume(returning: value)
+        }
     }
 }
 #endif

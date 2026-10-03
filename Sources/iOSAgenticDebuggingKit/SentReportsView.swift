@@ -79,7 +79,7 @@ struct SentReportsView: View {
                     Text(sent.report.screenNames)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Mono.text)
-                    Text(sent.report.contents)
+                    Text(sent.delivered ? sent.report.contents : "\(sent.report.contents) · Not on the Mac yet")
                         .font(.caption)
                         .foregroundStyle(Mono.secondary)
                 }
@@ -146,9 +146,12 @@ private struct ReportDetail: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 32) {
-                        Text(about)
-                            .font(.caption)
-                            .foregroundStyle(Mono.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(about)
+                            Text(delivery)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(Mono.secondary)
                         ForEach(report.screens, id: \.id) { screen in
                             section(screen, proxy: proxy)
                         }
@@ -163,6 +166,20 @@ private struct ReportDetail: View {
     }
 
     /// What was reported from where: "3 notes, 1 screen · Tiny Tally 1.0.9 (41)".
+    /// Whether the Mac has it, and if not, why, from the last attempt to send.
+    private var delivery: String {
+        guard !sent.delivered else { return "On the Mac" }
+        guard let last = session.lastDelivery() else { return "Not on the Mac yet" }
+        let when = SentReportsView.time(last.at)
+        return switch last.outcome {
+        case .noHub: "Not on the Mac yet: no Mac has set up this app"
+        case .unreachable: "Not on the Mac yet: couldn't reach it at \(when)"
+        case .refused: "Not on the Mac yet: it didn't accept the report at \(when)"
+        case .interrupted: "Not on the Mac yet: sending stopped at \(when)"
+        case .delivered: "Not on the Mac yet"
+        }
+    }
+
     private var about: String {
         let app = [report.app.name ?? report.app.bundleIdentifier, report.app.version, report.app.build.map { "(\($0))" }]
             .compactMap { $0 }.joined(separator: " ")

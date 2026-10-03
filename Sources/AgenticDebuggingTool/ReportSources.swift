@@ -2,7 +2,8 @@
 import Foundation
 
 /// The messages between the kit and the hub, one line of JSON each. Must match the kit's
-/// `HubLink` exactly.
+/// `HubLink` exactly. On one connection: the app's `Offer`, the hub's `Answer`, an `Upload` for
+/// each report the hub wants, and the hub's `Reply`.
 enum HubMessage {
     /// What the hub leaves in each watched app's folder on a phone, over the device link.
     struct Address: Codable, Equatable, Sendable {
@@ -10,9 +11,11 @@ enum HubMessage {
         var device: String
         var hosts: [String]
         var port: UInt16
+        /// Proves an offer comes from the phone and app the address was given to: only a Mac
+        /// paired with the phone can leave it there.
+        var token: String?
     }
 
-    /// The app's offer: the reports the Mac hasn't confirmed yet.
     struct Offer: Codable, Equatable, Sendable {
         struct Report: Codable, Equatable, Sendable {
             var id: String
@@ -21,10 +24,25 @@ enum HubMessage {
 
         var device: String
         var bundleID: String
+        var token: String
         var reports: [Report]
     }
 
-    /// The hub's answer: reports the Mac has, now or from before, so the app can stop offering them.
+    struct Answer: Codable, Equatable, Sendable {
+        /// Reports to send now.
+        var want: [String]
+        /// Reports the Mac already has, or doesn't take: the app can stop offering them.
+        var delivered: [String]
+        /// Why the offer was turned down, when it was.
+        var refused: String?
+    }
+
+    struct Upload: Codable, Equatable, Sendable {
+        var id: String
+        /// File name to contents, base64 in the line.
+        var files: [String: Data]
+    }
+
     struct Reply: Codable, Equatable, Sendable {
         var delivered: [String]
     }

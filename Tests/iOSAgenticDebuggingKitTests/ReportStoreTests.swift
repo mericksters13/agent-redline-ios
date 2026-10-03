@@ -148,16 +148,38 @@ struct ReportStoreTests {
 
     @Test func theHubsAddressAndMessagesRoundTrip() throws {
         #expect(store.hubAddress() == nil)
-        let address = HubLink.Address(device: "00008150-00123C360CF3C01C", hosts: ["192.168.1.2", "mac.local"], port: 47361)
+        let address = HubLink.Address(device: "00008150-00123C360CF3C01C", hosts: ["192.168.1.2", "mac.local"], port: 47361, token: "secret")
         try FileManager.default.createDirectory(at: store.root, withIntermediateDirectories: true)
         try HubLink.encode(address).write(to: store.hubAddressFile)
         #expect(store.hubAddress() == address)
-        // The hub reads exactly this line; see the Mac tool's HubMessagesTests.
-        let offer = HubLink.Offer(device: address.device, bundleID: "com.example.app",
+        // An address left by an older hub has no token.
+        try Data(#"{"device":"x","hosts":["mac.local"],"port":47361}"#.utf8).write(to: store.hubAddressFile)
+        #expect(store.hubAddress()?.token == nil)
+        // The hub reads exactly these lines; see the Mac tool's ReportSourcesTests.
+        let offer = HubLink.Offer(device: address.device, bundleID: "com.example.app", token: "secret",
                                   reports: [.init(id: "20261003-215826", finishedAt: Date(timeIntervalSince1970: 1_791_000_000))])
         let line = String(decoding: HubLink.encode(offer), as: UTF8.self)
-        #expect(line == #"{"bundleID":"com.example.app","device":"00008150-00123C360CF3C01C","reports":[{"finishedAt":"2026-10-03T04:00:00Z","id":"20261003-215826"}]}"# + "\n")
-        #expect(HubLink.decode(HubLink.Reply.self, from: Data(#"{"delivered":["20261003-215826"]}"#.utf8)) == HubLink.Reply(delivered: ["20261003-215826"]))
+        #expect(line == #"{"bundleID":"com.example.app","device":"00008150-00123C360CF3C01C","reports":[{"finishedAt":"2026-10-03T04:00:00Z","id":"20261003-215826"}],"token":"secret"}"# + "\n")
+        #expect(HubLink.decode(HubLink.Answer.self, from: Data(#"{"delivered":[],"want":["20261003-215826"]}"#.utf8))
+                == HubLink.Answer(want: ["20261003-215826"], delivered: []))
+        let upload = String(decoding: HubLink.encode(HubLink.Upload(id: "r", files: ["report.md": Data("# Hi".utf8)])), as: UTF8.self)
+        #expect(upload == #"{"files":{"report.md":"IyBIaQ=="},"id":"r"}"# + "\n")
+    }
+
+    @Test func aReportsFilesAreSentWithoutItsDraftOrMark() throws {
+        try store.saveDraft([annotation("Cut off")])
+        let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        try Data([1, 2, 3]).write(to: started.folder.appending(path: "screen-1.jpg"))
+        try store.finishReport(sampleReport(id: started.id), in: started.folder)
+        store.markDelivered([started.id])
+        #expect(store.reportFiles(started.id).keys.sorted() == ["report.json", "report.md", "screen-1.jpg"])
+        #expect(store.sentReports().first?.delivered == true)
+    }
+
+    @Test func theLastDeliveryIsRemembered() {
+        #expect(store.lastDelivery() == nil)
+        store.recordDelivery(.unreachable, at: Date(timeIntervalSince1970: 1_791_000_000))
+        #expect(store.lastDelivery() == Delivery(at: Date(timeIntervalSince1970: 1_791_000_000), outcome: .unreachable))
     }
 
     @Test func aSentReportIsSummedUpForTheList() {

@@ -1,9 +1,9 @@
 #if os(macOS)
 import Foundation
 
-/// One paired phone. Leaves the hub's address in each watched app's folder on it, once and
-/// again only when the address changes, and copies the reports an app offers. Nothing runs
-/// while the phone is quiet: the app speaks first.
+/// One paired phone. Leaves the hub's address and a token in each watched app's folder on it,
+/// once and again only when the address changes. The apps send their reports themselves, so
+/// nothing runs while the phone is quiet.
 final class PhoneLink: @unchecked Sendable {
     let phone: Devicectl.Phone
     private unowned let hub: Hub
@@ -49,26 +49,16 @@ final class PhoneLink: @unchecked Sendable {
         }
     }
 
-    /// Copies the offered reports the hub doesn't have, then says which ones the app can stop offering.
-    func deliver(_ offer: HubMessage.Offer, reply: @escaping @Sendable (HubMessage.Reply) -> Void) {
-        queue.async {
-            let finished = offer.reports.map { FinishedReport(id: $0.id, finishedAt: $0.finishedAt) }
-            for id in self.hub.toCopy(device: self.phone.udid, bundleID: offer.bundleID, finished: finished) {
-                let source = ReportSource(kind: .phone, device: self.phone.udid, deviceName: self.phone.name,
-                                          bundleID: offer.bundleID, reportID: id, receivedAt: Date())
-                self.hub.receive(source) { destination in
-                    self.hub.devicectl.copyReport(id, of: offer.bundleID, on: self.phone.udid, to: destination)
-                }
-            }
-            reply(HubMessage.Reply(delivered: self.hub.settled(device: self.phone.udid, bundleID: offer.bundleID, finished: finished)))
-        }
-    }
-
     private func giveAddress() {
         guard let address else { return }
         retryAt = nil
         var unreachable = false
-        for bundleID in hub.apps where given[bundleID] != address && !missing.contains(bundleID) {
+        let addresses = Dictionary(uniqueKeysWithValues: hub.apps.map { bundleID in
+            var app = address
+            app.token = hub.token(device: phone.udid, bundleID: bundleID)
+            return (bundleID, app)
+        })
+        for (bundleID, address) in addresses.sorted(by: { $0.key < $1.key }) where given[bundleID] != address && !missing.contains(bundleID) {
             if hub.devicectl.write(HubMessage.encode(address), to: HubMessage.addressPath, of: bundleID, on: phone.udid) {
                 given[bundleID] = address
                 hub.log("Gave \(bundleID) on \(phone.name) the hub's address")
@@ -81,7 +71,7 @@ final class PhoneLink: @unchecked Sendable {
                 unreachable = true
             }
         }
-        let ready = hub.apps.filter { given[$0] == address }
+        let ready = hub.apps.filter { given[$0] == addresses[$0] }
         if unreachable {
             retryAt = Date().addingTimeInterval(retryDelay)
             hub.phoneChanged(phone, state: "Not reachable, trying again in \(Int(retryDelay)) s or when a phone wakes")

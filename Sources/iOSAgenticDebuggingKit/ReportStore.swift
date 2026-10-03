@@ -203,7 +203,15 @@ struct SentReport: Identifiable, Sendable {
     var report: Report
     /// Where its pictures are.
     var folder: URL
+    /// The Mac has confirmed it has the report.
+    var delivered = false
     var id: String { report.id }
+}
+
+/// The last attempt to hand reports to the Mac, kept so the phone can say why one isn't there.
+struct Delivery: Codable, Equatable, Sendable {
+    var at: Date
+    var outcome: HubLink.Outcome
 }
 
 /// The report as text the agent reads first: what was reported, on which screen, and
@@ -373,10 +381,34 @@ struct ReportStore: Sendable {
     /// Sent reports the Mac hasn't confirmed yet, oldest first.
     func undeliveredReports() -> [HubLink.Offer.Report] {
         sentReports()
-            .filter { !FileManager.default.fileExists(atPath: $0.folder.appending(path: "delivered").path) }
+            .filter { !$0.delivered }
             // Named by folder: the hub copies the report's folder.
             .map { HubLink.Offer.Report(id: $0.folder.lastPathComponent, finishedAt: $0.report.createdAt) }
             .reversed()
+    }
+
+    /// A sent report's files, as the hub keeps them: everything in its folder but the draft
+    /// and the delivery mark.
+    func reportFiles(_ id: String) -> [String: Data] {
+        let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+        var files: [String: Data] = [:]
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name != "delivered" && !name.hasPrefix(".") {
+            let file = folder.appending(path: name)
+            guard (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true, let data = try? Data(contentsOf: file) else { continue }
+            files[name] = data
+        }
+        return files
+    }
+
+    var deliveryFile: URL { root.appending(path: "delivery.json") }
+
+    func lastDelivery() -> Delivery? {
+        (try? Data(contentsOf: deliveryFile)).flatMap { try? Self.decoder.decode(Delivery.self, from: $0) }
+    }
+
+    func recordDelivery(_ outcome: HubLink.Outcome, at date: Date = .now) {
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try? Self.encoder.encode(Delivery(at: date, outcome: outcome)).write(to: deliveryFile, options: .atomic)
     }
 
     /// Notes that the Mac has these reports, so they aren't offered again.
@@ -396,7 +428,8 @@ struct ReportStore: Sendable {
             guard let data = try? Data(contentsOf: folder.appending(path: "report.json")),
                   let report = try? Self.decoder.decode(Report.self, from: data)
             else { return nil }
-            return SentReport(report: report, folder: folder)
+            let delivered = FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path)
+            return SentReport(report: report, folder: folder, delivered: delivered)
         }
         .sorted { ($0.report.createdAt, $0.id) > ($1.report.createdAt, $1.id) }
     }

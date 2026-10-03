@@ -1,6 +1,7 @@
 #if os(macOS)
 import Foundation
 import Network
+import Security
 
 /// Where the tool keeps things on the Mac.
 ///
@@ -18,6 +19,8 @@ struct HubPaths: Sendable {
     var status: URL { hub.appending(path: "status.json") }
     var pid: URL { hub.appending(path: "hub.pid") }
     var log: URL { hub.appending(path: "hub.log") }
+    /// The token each app on each phone was given; secret, readable only by the user.
+    var tokens: URL { hub.appending(path: "tokens.json") }
 }
 
 /// Where a report came from, saved next to it in the inbox.
@@ -64,6 +67,7 @@ final class Hub: @unchecked Sendable {
     private let startedAt = Date()
     private let lock = NSLock()
     private var state: [String: SourceState] = [:]
+    private var tokens: [String: String] = [:]
     private var links: [String: PhoneLink] = [:]
     private var phoneStates: [String: HubStatus.Phone] = [:]
     private var hosts: [String] = []
@@ -89,6 +93,9 @@ final class Hub: @unchecked Sendable {
         fixedApps = apps
         if let data = try? Data(contentsOf: paths.state), let saved = try? Self.decoder.decode([String: SourceState].self, from: data) {
             state = saved
+        }
+        if let data = try? Data(contentsOf: paths.tokens), let saved = try? Self.decoder.decode([String: String].self, from: data) {
+            tokens = saved
         }
     }
 
@@ -182,22 +189,86 @@ final class Hub: @unchecked Sendable {
         lock.withLock { links.values }.forEach { $0.phoneWoke() }
     }
 
-    /// An app's offer of reports. Only reports from phones paired with this Mac are copied.
-    func handle(_ offer: HubMessage.Offer, reply: @escaping @Sendable (HubMessage.Reply) -> Void) {
-        queue.async {
-            // Report IDs become paths on the phone and in the inbox.
-            let safe = offer.reports.allSatisfy { $0.id.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" } && !$0.id.isEmpty }
-            var link = self.lock.withLock { self.links[offer.device] }
-            if link == nil, safe, let phone = self.devicectl.pairedPhones()?.first(where: { $0.udid == offer.device }) {
-                link = self.link(for: phone)
-            }
-            guard safe, let link else {
-                self.log("Ignored an offer from \(offer.device), not a phone paired with this Mac")
-                reply(HubMessage.Reply(delivered: []))
-                return
-            }
-            link.deliver(offer, reply: reply)
+    // MARK: - Offers from apps
+
+    /// The token for an app on a phone. Made once and kept, so the address the app has stays
+    /// good when the hub restarts.
+    func token(device: String, bundleID: String) -> String {
+        lock.withLock {
+            let key = "\(device)|\(bundleID)"
+            if let token = tokens[key] { return token }
+            var bytes = [UInt8](repeating: 0, count: 32)
+            _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+            let token = bytes.map { String(format: "%02x", $0) }.joined()
+            tokens[key] = token
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try? encoder.encode(tokens).write(to: paths.tokens, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: paths.tokens.path)
+            return token
         }
+    }
+
+    /// The hub's answer to an app's offer: the reports to send now, and the ones the app can
+    /// stop offering. Only an app that was given this hub's address, and so is on a phone paired
+    /// with this Mac, can deliver.
+    func answer(_ offer: HubMessage.Offer) -> HubMessage.Answer {
+        let expected = lock.withLock { tokens["\(offer.device)|\(offer.bundleID)"] }
+        guard let expected, Self.same(expected, offer.token) else {
+            log("Turned down \(offer.bundleID) from \(phoneName(offer.device)): \(expected == nil ? "this hub never gave it an address" : "its token doesn't match")")
+            return HubMessage.Answer(want: [], delivered: [], refused: "The app needs this Mac's address again; it gets it the next time Xcode can reach the phone.")
+        }
+        // Report IDs become folder names in the inbox.
+        guard offer.reports.allSatisfy({ Self.isSafeName($0.id) }) else {
+            log("Turned down \(offer.bundleID) from \(phoneName(offer.device)): a report name it can't use")
+            return HubMessage.Answer(want: [], delivered: [], refused: "Report names")
+        }
+        let finished = offer.reports.map { FinishedReport(id: $0.id, finishedAt: $0.finishedAt) }
+        let want = toCopy(device: offer.device, bundleID: offer.bundleID, finished: finished)
+        log("\(phoneName(offer.device)) offered \(offer.reports.count) of \(offer.bundleID)'s reports; \(want.isEmpty ? "the Mac has them all" : "taking \(want.count)")")
+        return HubMessage.Answer(want: want, delivered: settled(device: offer.device, bundleID: offer.bundleID, finished: finished))
+    }
+
+    /// Files a report the hub asked for. False when it can't be filed.
+    @discardableResult
+    func store(_ upload: HubMessage.Upload, offeredIn offer: HubMessage.Offer) -> Bool {
+        let total = upload.files.values.reduce(0) { $0 + $1.count }
+        guard Self.isSafeName(upload.id), upload.files.keys.allSatisfy(Self.isSafeName), total <= Self.largestReport,
+              upload.files["report.json"] != nil
+        else {
+            log("Couldn't use report \(upload.id) of \(offer.bundleID): missing its report.json, a file name it can't use, or over \(Self.largestReport / 1_000_000) MB")
+            return false
+        }
+        let source = ReportSource(kind: .phone, device: offer.device, deviceName: phoneName(offer.device), bundleID: offer.bundleID,
+                                  reportID: upload.id, receivedAt: Date())
+        return receive(source) { destination in
+            do {
+                try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+                for (name, data) in upload.files { try data.write(to: destination.appending(path: name)) }
+                return true
+            } catch {
+                return false
+            }
+        }
+    }
+
+    /// A report bigger than this isn't taken: a phone screen's picture is about 100 KB.
+    static let largestReport = 50_000_000
+
+    private func phoneName(_ udid: String) -> String {
+        lock.withLock { links[udid]?.phone.name } ?? "A phone"
+    }
+
+    /// File and report names: letters, digits, dots, dashes and underscores, not starting with a dot.
+    static func isSafeName(_ name: String) -> Bool {
+        !name.isEmpty && !name.hasPrefix(".") && name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "." }
+    }
+
+    /// Compares tokens in time that doesn't depend on where they differ.
+    static func same(_ a: String, _ b: String) -> Bool {
+        let x = Array(a.utf8), y = Array(b.utf8)
+        guard x.count == y.count else { return false }
+        return zip(x, y).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
     /// The Mac's addresses on its local networks, then its `.local` name, which keeps working
@@ -247,8 +318,9 @@ final class Hub: @unchecked Sendable {
     }
 
     /// Files a report in the inbox. `copy` fills a folder that doesn't exist yet; the report
-    /// appears in the inbox only once it's complete.
-    func receive(_ source: ReportSource, copy: (URL) -> Bool) {
+    /// appears in the inbox only once it's complete. False when it couldn't be filed.
+    @discardableResult
+    func receive(_ source: ReportSource, copy: (URL) -> Bool) -> Bool {
         let folder = paths.inbox.appending(path: source.bundleID, directoryHint: .isDirectory)
         let name = Inbox.folderName(reportID: source.reportID, device: source.device)
         let incoming = folder.appending(path: ".incoming-\(name)", directoryHint: .isDirectory)
@@ -260,7 +332,7 @@ final class Hub: @unchecked Sendable {
         guard copy(incoming) else {
             try? files.removeItem(at: incoming)
             log("Couldn't copy report \(source.reportID) of \(source.bundleID) from \(source.deviceName)")
-            return
+            return false
         }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -271,13 +343,14 @@ final class Hub: @unchecked Sendable {
             try files.moveItem(at: incoming, to: destination)
         } catch {
             log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
-            return
+            return false
         }
         lock.withLock {
             state["\(source.device)|\(source.bundleID)", default: SourceState(since: startedAt)].delivered.append(source.reportID)
             saveState()
         }
         log(String(format: "Received %@ from %@ (%@) in %.2f s", source.reportID, source.deviceName, source.bundleID, Date().timeIntervalSince(started)))
+        return true
     }
 
     // MARK: - Status

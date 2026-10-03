@@ -2,10 +2,16 @@
 import Foundation
 import Network
 
-/// Offers this app's reports to the Mac's hub. The hub leaves its address in the app's folder
-/// over Xcode's device link; when the app has reports, it says so over Wi-Fi, and the hub
-/// copies them over the device link. iOS asks once per app for local network access, the
-/// first time a report is sent.
+/// Sends this app's reports to the Mac's hub over the local network. The hub leaves its address
+/// and a token in the app's folder over Xcode's device link, once; the token shows the hub that
+/// the reports come from a phone paired with that Mac. iOS asks once per app for local network
+/// access, the first time a report is sent.
+///
+/// One connection, one line of JSON per message:
+/// 1. The app offers the reports the Mac hasn't confirmed (`Offer`).
+/// 2. The hub answers which it wants and which it already has (`Answer`).
+/// 3. The app sends each wanted report's files (`Upload`).
+/// 4. The hub confirms what it now has (`Reply`).
 enum HubLink {
     /// What the hub leaves in the app's folder.
     struct Address: Codable, Equatable, Sendable {
@@ -13,9 +19,11 @@ enum HubLink {
         var device: String
         var hosts: [String]
         var port: UInt16
+        /// Proves to the hub that an offer comes from this phone and app. Missing from addresses
+        /// left by an older hub, which the hub turns down until it leaves a new one.
+        var token: String?
     }
 
-    /// The app's offer: the reports the Mac hasn't confirmed yet.
     struct Offer: Codable, Equatable, Sendable {
         struct Report: Codable, Equatable, Sendable {
             var id: String
@@ -24,13 +32,41 @@ enum HubLink {
 
         var device: String
         var bundleID: String
+        var token: String
         var reports: [Report]
     }
 
-    /// The hub's answer.
-    struct Reply: Codable, Equatable, Sendable {
-        /// Reports the Mac has, now or from before, so the app can stop offering them.
+    struct Answer: Codable, Equatable, Sendable {
+        /// Reports to send now.
+        var want: [String]
+        /// Reports the Mac already has, or doesn't take: the app can stop offering them.
         var delivered: [String]
+        /// Why the hub turned the offer down, when it did.
+        var refused: String?
+    }
+
+    struct Upload: Codable, Equatable, Sendable {
+        var id: String
+        /// File name to contents. Encoded as base64 in the line.
+        var files: [String: Data]
+    }
+
+    struct Reply: Codable, Equatable, Sendable {
+        var delivered: [String]
+    }
+
+    /// How an attempt to deliver went, kept so the phone can say why a report isn't on the Mac.
+    enum Outcome: String, Codable, Sendable {
+        /// The Mac has every report it was offered.
+        case delivered
+        /// No hub has set this app up yet.
+        case noHub
+        /// The hub couldn't be reached at any of its addresses.
+        case unreachable
+        /// The hub turned the reports down, such as for a token from an older hub.
+        case refused
+        /// The connection ended before the hub confirmed.
+        case interrupted
     }
 
     /// One line of JSON.
@@ -47,74 +83,121 @@ enum HubLink {
         return try? decoder.decode(type, from: data)
     }
 
-    /// Offers reports to the hub and waits for its answer: nil when it can't be reached within
-    /// `patience` at any of its addresses.
-    static func send(_ offer: Offer, to address: Address, patience: TimeInterval) async -> Reply? {
+    /// Delivers the reports the Mac hasn't confirmed. `patience` is how long to wait for the
+    /// connection, which includes iOS asking about local network access the first time.
+    /// Returns how it went and the reports the Mac now has.
+    static func deliver(_ reports: [Offer.Report], bundleID: String, address: Address,
+                        files: @Sendable (String) -> [String: Data], patience: TimeInterval) async -> (outcome: Outcome, delivered: [String]) {
+        guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return (.refused, []) }
+        let offer = Offer(device: address.device, bundleID: bundleID, token: token, reports: reports)
         for host in address.hosts {
-            guard let port = NWEndpoint.Port(rawValue: address.port) else { return nil }
-            if let reply = await Attempt(host: host, port: port, offer: offer).run(patience: patience) {
-                return reply
+            let line = Line(host: host, port: port)
+            guard await line.open(patience: patience) else { continue }
+            defer { line.close() }
+            guard await line.send(encode(offer)), let answerData = await line.read(), let answer = decode(Answer.self, from: answerData) else {
+                return (.interrupted, [])
             }
+            if answer.refused != nil { return (.refused, answer.delivered) }
+            var delivered = answer.delivered
+            guard !answer.want.isEmpty else { return (.delivered, delivered) }
+            for id in answer.want {
+                guard await line.send(encode(Upload(id: id, files: files(id)))) else { return (.interrupted, delivered) }
+            }
+            guard let replyData = await line.read(), let reply = decode(Reply.self, from: replyData) else { return (.interrupted, delivered) }
+            delivered += reply.delivered
+            let offered = Set(reports.map(\.id))
+            return (offered.isSubset(of: Set(delivered)) ? .delivered : .interrupted, delivered)
         }
-        return nil
+        return (.unreachable, [])
     }
 
-    /// One connection to one of the hub's addresses.
-    private final class Attempt: @unchecked Sendable {
+    /// A connection that sends and reads whole lines.
+    private final class Line: @unchecked Sendable {
         private let connection: NWConnection
-        private let offer: Offer
-        private let lock = NSLock()
-        private var continuation: CheckedContinuation<Reply?, Never>?
-        private var received = Data()
+        private let queue = DispatchQueue(label: "hub-link")
+        private var buffer = Data()
 
-        init(host: String, port: NWEndpoint.Port, offer: Offer) {
+        init(host: String, port: NWEndpoint.Port) {
             connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
-            self.offer = offer
         }
 
-        func run(patience: TimeInterval) async -> Reply? {
-            await withCheckedContinuation { continuation in
-                lock.withLock { self.continuation = continuation }
-                let queue = DispatchQueue(label: "hub-link")
-                connection.stateUpdateHandler = { [self] state in
+        /// Waits for the connection. `.waiting` (no route yet, or iOS still asking about local
+        /// network access) keeps waiting until `patience` runs out.
+        func open(patience: TimeInterval) async -> Bool {
+            let once = Once<Bool>()
+            return await withCheckedContinuation { continuation in
+                once.set(continuation)
+                connection.stateUpdateHandler = { state in
                     switch state {
-                    case .ready:
-                        connection.send(content: HubLink.encode(offer), completion: .contentProcessed { _ in })
-                        receive()
-                    case .failed, .cancelled:
-                        finish(nil)
-                    default:
-                        // `.waiting` while iOS asks about local network access, or with no route:
-                        // keep waiting until `patience` runs out.
-                        break
+                    case .ready: once.resume(true)
+                    case .failed, .cancelled: once.resume(false)
+                    default: break
                     }
                 }
                 connection.start(queue: queue)
-                queue.asyncAfter(deadline: .now() + patience) { [self] in finish(nil) }
+                queue.asyncAfter(deadline: .now() + patience) { once.resume(false) }
             }
         }
 
-        private func receive() {
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [self] data, _, isComplete, error in
-                if let data { received.append(data) }
-                if let newline = received.firstIndex(of: UInt8(ascii: "\n")) {
-                    finish(HubLink.decode(Reply.self, from: received[..<newline]))
-                } else if isComplete || error != nil || received.count > 1_000_000 {
-                    finish(nil)
-                } else {
-                    receive()
+        func send(_ data: Data) async -> Bool {
+            await withCheckedContinuation { continuation in
+                connection.send(content: data, completion: .contentProcessed { error in continuation.resume(returning: error == nil) })
+            }
+        }
+
+        /// The next line, without its newline; nil when the connection ends first or 30 seconds pass.
+        func read() async -> Data? {
+            if let line = takeLine() { return line }
+            let once = Once<Data?>()
+            return await withCheckedContinuation { continuation in
+                once.set(continuation)
+                queue.asyncAfter(deadline: .now() + 30) { once.resume(nil) }
+                receive(once)
+            }
+        }
+
+        func close() {
+            connection.cancel()
+        }
+
+        private func receive(_ once: Once<Data?>) {
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [self] data, _, isComplete, error in
+                queue.async {
+                    if let data { self.buffer.append(data) }
+                    if let line = self.takeLine() {
+                        once.resume(line)
+                    } else if isComplete || error != nil {
+                        once.resume(nil)
+                    } else {
+                        self.receive(once)
+                    }
                 }
             }
         }
 
-        private func finish(_ reply: Reply?) {
+        private func takeLine() -> Data? {
+            guard let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) else { return nil }
+            let line = buffer[..<newline]
+            buffer.removeSubrange(...newline)
+            return Data(line)
+        }
+    }
+
+    /// Resumes a continuation once, whichever of several callbacks comes first.
+    private final class Once<T: Sendable>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<T, Never>?
+
+        func set(_ continuation: CheckedContinuation<T, Never>) {
+            lock.withLock { self.continuation = continuation }
+        }
+
+        func resume(_ value: T) {
             let continuation = lock.withLock {
                 defer { self.continuation = nil }
                 return self.continuation
             }
-            guard let continuation else { return }
-            connection.cancel()
-            continuation.resume(returning: reply)
+            continuation?.resume(returning: value)
         }
     }
 }
