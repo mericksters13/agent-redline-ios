@@ -7,11 +7,13 @@ import UIKit
 /// drawn from the app's windows only, so nothing in this window ever appears in them.
 final class OverlayWindow: UIWindow {
     var claimsAllTouches = false
-    var touchableRect: CGRect?
+    /// What takes touches while the debugger is idle, such as the floating button and a
+    /// suggested screenshot, by name.
+    var touchableRects: [String: CGRect] = [:]
     var onLayout: ((OverlayWindow) -> Void)?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard claimsAllTouches || touchableRect?.contains(point) == true else { return nil }
+        guard claimsAllTouches || touchableRects.values.contains(where: { $0.contains(point) }) else { return nil }
         return super.hitTest(point, with: event)
     }
 

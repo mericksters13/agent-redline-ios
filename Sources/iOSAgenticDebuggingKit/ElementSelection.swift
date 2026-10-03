@@ -14,6 +14,12 @@ struct ElementSnapshot: Codable, Equatable, Sendable {
     /// Position on screen, in points.
     var frame: CGRect
 
+    /// The element's own name, shortened for chips and lists, or nil when it has none.
+    var shortName: String? {
+        guard let name = label?.nonEmpty ?? identifier?.nonEmpty ?? value?.nonEmpty else { return nil }
+        return name.count > 34 ? String(name.prefix(33)) + "…" : name
+    }
+
     /// Short name for chips and lists, such as "Button · Save".
     var displayName: String {
         guard let name = label?.nonEmpty ?? identifier?.nonEmpty ?? value?.nonEmpty else { return role }

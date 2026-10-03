@@ -3,13 +3,23 @@ import SwiftUI
 import UIKit
 
 /// The saved notes, full screen: each note's screenshot with its note underneath.
+/// Every image is a page, so a note with several attached images pages through them.
 /// Swipe or use the strip to move between notes. A tap on the screenshot hides or
 /// shows the details, and zooming in hides them. Modeled on Tiny Tally's photo viewer.
 struct NoteViewer: View {
     @Bindable var session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// One image of one note.
+    private struct Page: Identifiable {
+        let annotation: Annotation
+        let number: Int
+        let index: Int
+        var id: String { "\(annotation.id.uuidString)-\(index)" }
+    }
+
     /// The page the pager has settled on, kept apart from `session.viewerID` so the two can lead each other.
-    @State private var shownID: UUID?
+    @State private var shownID: String?
     @State private var showsDetails = true
     @State private var isZoomed = false
     @State private var draft = ""
@@ -24,6 +34,17 @@ struct NoteViewer: View {
     private var annotations: [Annotation] { session.annotations }
     private var currentIndex: Int? { annotations.firstIndex { $0.id == session.viewerID } }
     private var current: Annotation? { currentIndex.map { annotations[$0] } }
+    private var pages: [Page] {
+        annotations.enumerated().flatMap { number, annotation in
+            annotation.screenshots.indices.map { Page(annotation: annotation, number: number + 1, index: $0) }
+        }
+    }
+    /// The page showing, or the first page of the current note before the pager settles.
+    private var currentPage: Page? {
+        let pages = pages
+        return pages.first { $0.id == shownID && $0.annotation.id == session.viewerID }
+            ?? pages.first { $0.annotation.id == session.viewerID }
+    }
     private var detailsVisible: Bool { showsDetails && !isZoomed }
     private var size: CGSize { session.screenSize }
     /// The details panel rises with the keyboard while a note is edited.
@@ -69,14 +90,16 @@ struct NoteViewer: View {
     // MARK: - Pager
 
     private var pager: some View {
-        ScrollViewReader { scroller in
+        let pages = pages
+        let shownPosition = pages.firstIndex { $0.id == currentPage?.id } ?? 0
+        return ScrollViewReader { scroller in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
-                    ForEach(Array(annotations.enumerated()), id: \.element.id) { index, annotation in
-                        page(for: annotation, number: index + 1, isNear: abs(index - (currentIndex ?? 0)) <= 1)
+                    ForEach(Array(pages.enumerated()), id: \.element.id) { position, page in
+                        self.page(page, isNear: abs(position - shownPosition) <= 1)
                             .padding(.horizontal, 16)
                             .frame(width: size.width, height: imageHeight)
-                            .id(annotation.id)
+                            .id(page.id)
                     }
                 }
                 .scrollTargetLayout()
@@ -87,30 +110,38 @@ struct NoteViewer: View {
             .frame(width: size.width, height: imageHeight)
             // A scroll position binding is not honored on first layout, so the first jump is made explicitly.
             .onAppear {
-                shownID = session.viewerID
-                if let id = session.viewerID { scroller.scrollTo(id, anchor: .center) }
+                shownID = currentPage?.id
+                if let id = shownID { scroller.scrollTo(id, anchor: .center) }
             }
             .onChange(of: session.viewerID) { _, id in
-                guard let id, shownID != id else { return }
-                withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) { scroller.scrollTo(id, anchor: .center) }
+                // Another note was chosen from the strip, or the one showing was deleted.
+                guard let id, self.pages.first(where: { $0.id == shownID })?.annotation.id != id,
+                      let first = self.pages.first(where: { $0.annotation.id == id })
+                else { return }
+                withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) { scroller.scrollTo(first.id, anchor: .center) }
             }
             .onChange(of: shownID) { _, id in
-                if let id, id != session.viewerID { session.showInViewer(id) }
+                if let page = self.pages.first(where: { $0.id == id }), page.annotation.id != session.viewerID {
+                    session.showInViewer(page.annotation.id)
+                }
             }
         }
     }
 
-    /// Only the note showing and its neighbors hold a full-size screenshot.
+    /// Only the page showing and its neighbors hold a full-size image.
     @ViewBuilder
-    private func page(for annotation: Annotation, number: Int, isNear: Bool) -> some View {
-        if isNear, let image = session.fullScreenshot(for: annotation) {
+    private func page(_ page: Page, isNear: Bool) -> some View {
+        let number = page.number
+        if isNear, let image = session.fullImage(for: page.annotation, at: page.index) {
             ZoomableScreenshot(
                 image: image,
                 zoomChanged: { isZoomed = $0 },
                 tapped: { if isEditingNote { isEditingNote = false } else { showsDetails.toggle() } }
             )
             .accessibilityElement()
-            .accessibilityLabel("Screenshot for note \(number)")
+            .accessibilityLabel(page.annotation.screenshots.count > 1
+                ? "Image \(page.index + 1) of \(page.annotation.screenshots.count) for note \(number)"
+                : "Screenshot for note \(number)")
             .accessibilityValue(isZoomed ? "Zoomed in" : "")
             .accessibilityHint("Double-tap with two fingers to zoom")
             .accessibilityAddTraits(.isImage)
@@ -160,10 +191,10 @@ struct NoteViewer: View {
                 HStack(spacing: 12) {
                     NumberBadge(number: index + 1, size: 26)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(current.element.label ?? current.element.identifier ?? current.element.role)
+                        Text(current.element.map { $0.label ?? $0.identifier ?? $0.role } ?? current.title)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Mono.text)
-                        Text([current.element.role, current.screen.title].compactMap { $0 }.joined(separator: " · "))
+                        Text(subtitle(for: current))
                             .font(.caption)
                             .foregroundStyle(Mono.secondary)
                     }
@@ -214,6 +245,12 @@ struct NoteViewer: View {
         .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { detailsHeight = $0 }
+    }
+
+    /// What the note is, and which of its images is showing when it has several.
+    private func subtitle(for annotation: Annotation) -> String {
+        guard annotation.screenshots.count > 1, let page = currentPage else { return annotation.subtitle }
+        return "\(annotation.subtitle) · \(page.index + 1) of \(annotation.screenshots.count)"
     }
 
     private var strip: some View {

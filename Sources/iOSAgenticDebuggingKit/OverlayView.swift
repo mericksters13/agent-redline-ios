@@ -58,13 +58,17 @@ struct OverlayView: View {
                 notesList
             }
 
-            if session.mode == .picking || session.mode == .tray {
+            if session.mode == .picking || session.mode == .tray || session.mode == .attaching {
                 island
                     // Placed by layout, not offset: views moved with offset can keep taking
                     // touches at their original position when they contain UIKit-backed views.
                     .padding(.leading, (width - islandWidth) / 2)
                     .padding(.top, islandTop)
                     .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            if session.mode == .attaching {
+                AttachmentPicker(session: session)
             }
 
             if session.mode == .viewer {
@@ -79,6 +83,10 @@ struct OverlayView: View {
                 if let center = session.buttonCenter {
                     floatingButton(at: center)
                 }
+            }
+
+            if let suggestion = session.suggestion, session.mode == .idle || session.mode == .picking {
+                suggestionCard(suggestion)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -105,7 +113,7 @@ struct OverlayView: View {
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture { session.toggleTray() }
-        case .noting, .idle, .viewer:
+        case .noting, .idle, .viewer, .attaching:
             Color.clear.contentShape(Rectangle())
         }
     }
@@ -129,9 +137,9 @@ struct OverlayView: View {
         let above = element.frame.minY - 40 > islandBottom + 4
         let x = min(max(element.frame.minX - 3, 8), width - tagWidth - 8)
         return HStack(spacing: 6) {
-            Text(shortName(of: element) ?? element.role)
+            Text(element.shortName ?? element.role)
                 .foregroundStyle(Mono.text)
-            if shortName(of: element) != nil {
+            if element.shortName != nil {
                 Text(element.role)
                     .foregroundStyle(Mono.secondary)
             }
@@ -161,11 +169,6 @@ struct OverlayView: View {
         .allowsHitTesting(false)
         .accessibilityElement()
         .accessibilityLabel("Note \(number)")
-    }
-
-    private func shortName(of element: ElementSnapshot) -> String? {
-        guard let name = element.label?.nonEmpty ?? element.identifier?.nonEmpty ?? element.value?.nonEmpty else { return nil }
-        return name.count > 34 ? String(name.prefix(33)) + "…" : name
     }
 
     // MARK: - Island
@@ -210,6 +213,18 @@ struct OverlayView: View {
             .allowsHitTesting(count > 0)
             .accessibilityLabel(count == 0 ? "\(session.screenTitle). Tap an element to add a note." : session.mode == .tray ? "Hide notes" : "Show \(count) notes")
 
+            Button { session.openAttachments() } label: {
+                Image(systemName: "paperclip")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Mono.text)
+                    .frame(width: 32, height: 32)
+                    .background(Mono.fill, in: Circle())
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Attach a screenshot")
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.attachAnchor = $0 }
+
             if count > 0 {
                 Button { session.send() } label: {
                     Text("Send")
@@ -226,7 +241,7 @@ struct OverlayView: View {
         }
         .buttonStyle(.plain)
         .padding(.leading, 4)
-        .padding(.trailing, count > 0 ? 9 : 16)
+        .padding(.trailing, count > 0 ? 9 : 4)
         .padding(.vertical, 4)
         .frame(width: islandWidth)
         .background(Mono.surface, in: Capsule(style: .continuous))
@@ -238,9 +253,12 @@ struct OverlayView: View {
     // MARK: - Note card
 
     private var noteCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let pending = session.pending
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                if elementIsHidden, let preview = session.selectedElementPreview() {
+                if let pending {
+                    attachmentPreview(pending.images)
+                } else if elementIsHidden, let preview = session.selectedElementPreview() {
                     // The element is behind the keyboard or this card, so show what was picked.
                     Image(uiImage: preview)
                         .resizable()
@@ -256,20 +274,23 @@ struct OverlayView: View {
                     NumberBadge(number: session.nextNumber, size: 26)
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(session.selected.flatMap(shortName(of:)) ?? "Unnamed element")
+                    Text(pending.map { Annotation.title(kind: $0.kind, element: nil, screen: $0.screen, imageCount: $0.images.count) }
+                        ?? session.selected?.shortName ?? "Unnamed element")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Mono.text)
-                    Text(session.selected?.role ?? "Element")
+                    Text(pending.map { Annotation.subtitle(kind: $0.kind, element: nil, screen: $0.screen) } ?? session.selected?.role ?? "Element")
                         .font(.caption)
                         .foregroundStyle(Mono.secondary)
                 }
                 .lineLimit(1)
                 Spacer(minLength: 0)
-                if session.canStepDown {
-                    sizeButton("Smaller") { session.stepDown() }
-                }
-                if session.canStepUp {
-                    sizeButton("Larger") { session.stepUp() }
+                if pending == nil {
+                    if session.canStepDown {
+                        sizeButton("Smaller") { session.stepDown() }
+                    }
+                    if session.canStepUp {
+                        sizeButton("Larger") { session.stepUp() }
+                    }
                 }
             }
 
@@ -290,7 +311,7 @@ struct OverlayView: View {
                     .contentShape(Rectangle())
                 Spacer()
                 Button { session.saveNote() } label: {
-                    Text("Add note")
+                    Text(primaryNoteAction(sendsReport: pending?.sendsReport == true))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.black)
                         .padding(.horizontal, 18)
@@ -318,6 +339,33 @@ struct OverlayView: View {
             cardHeight = 0
             openingCardHeight = 0
         }
+    }
+
+    /// A suggested screenshot's note box sends the report, with the rest of the draft.
+    private func primaryNoteAction(sendsReport: Bool) -> String {
+        guard sendsReport else { return "Add note" }
+        let count = session.annotations.count + 1
+        return count == 1 ? "Send" : "Send \(count) notes"
+    }
+
+    /// The images a note is being written for: up to three, fanned like a small stack.
+    private func attachmentPreview(_ images: [UIImage]) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        return HStack(spacing: -14) {
+            ForEach(Array(images.prefix(3).enumerated()), id: \.offset) { index, image in
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 34, height: 56, alignment: .top)
+                    .clipShape(shape)
+                    .overlay(shape.strokeBorder(Color.white.opacity(0.4), lineWidth: 1))
+                    .zIndex(Double(3 - index))
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            NumberBadge(number: session.nextNumber, size: 20).offset(x: -6, y: -6)
+        }
+        .accessibilityHidden(true)
     }
 
     /// True when the picked element sits under the keyboard or under the card itself.
@@ -386,7 +434,7 @@ struct OverlayView: View {
                     NumberBadge(number: number, size: 20).offset(x: -6, y: -6)
                 }
             VStack(alignment: .leading, spacing: 2) {
-                Text(shortName(of: annotation.element) ?? annotation.element.role)
+                Text(annotation.title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Mono.text)
                     .lineLimit(1)
@@ -394,7 +442,7 @@ struct OverlayView: View {
                     .font(.subheadline)
                     .foregroundStyle(annotation.note.isEmpty ? Mono.secondary : Mono.text)
                     .lineLimit(2)
-                Text([annotation.element.role, annotation.screen.title].compactMap { $0 }.joined(separator: " · "))
+                Text(annotation.subtitle)
                     .font(.caption)
                     .foregroundStyle(Mono.secondary)
                     .lineLimit(1)
@@ -415,7 +463,7 @@ struct OverlayView: View {
         .contentShape(Rectangle())
         .onTapGesture { session.openViewer(annotation) }
         .accessibilityAddTraits(.isButton)
-        .accessibilityHint("Opens the screenshot and note")
+        .accessibilityHint(annotation.screenshots.count > 1 ? "Opens the \(annotation.screenshots.count) images and the note" : "Opens the screenshot and note")
     }
 
     @ViewBuilder
@@ -428,6 +476,18 @@ struct OverlayView: View {
                 .frame(width: 52, height: 52)
                 .clipShape(shape)
                 .overlay(shape.strokeBorder(Mono.hairline, lineWidth: 1))
+                .overlay(alignment: .bottomTrailing) {
+                    if annotation.screenshots.count > 1 {
+                        // More images travel with this note.
+                        Text("\(annotation.screenshots.count)")
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Mono.text)
+                            .padding(.horizontal, 5)
+                            .frame(minWidth: 18, minHeight: 18)
+                            .background(Mono.surface, in: Capsule(style: .continuous))
+                            .padding(3)
+                    }
+                }
                 .accessibilityHidden(true)
         } else {
             shape.fill(Mono.fill).frame(width: 52, height: 52)
@@ -497,9 +557,72 @@ struct OverlayView: View {
             .accessibilityElement()
             .accessibilityLabel(count == 0 ? "Report a UI issue" : "Report a UI issue, \(count) notes waiting")
             .accessibilityAddTraits(.isButton)
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setButtonFrame($0) }
-            .onDisappear { session.setButtonFrame(nil) }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setTouchableFrame($0, for: "button") }
+            .onDisappear { session.setTouchableFrame(nil, for: "button") }
             .position(center)
+    }
+
+    // MARK: - Suggested screenshot
+
+    /// A screenshot just taken, docked at the side the floating button rests on, with a
+    /// close button on its inner corner and a send button below it.
+    private func suggestionCard(_ suggestion: DebugSession.Suggestion) -> some View {
+        let cardWidth: CGFloat = 96
+        let aspect = suggestion.image.size.height / max(suggestion.image.size.width, 1)
+        let cardHeight = min(cardWidth * aspect, 220)
+        let center = session.buttonCenter ?? CGPoint(x: width - 34, y: session.screenSize.height / 2)
+        let onRight = center.x > width / 2
+        let groupHeight = cardHeight + 12 + 44
+        let buttonRadius = FloatingButtonPlacement.size / 2
+        // Above the button when there is room, otherwise below it.
+        let above = center.y - buttonRadius - 14 - groupHeight
+        let top = above >= session.safeAreaTop + 8 ? above : center.y + buttonRadius + 14
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        return VStack(spacing: 12) {
+            Button { session.sendSuggestion() } label: {
+                Image(uiImage: suggestion.image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: cardWidth, height: cardHeight, alignment: .top)
+                    .clipShape(shape)
+                    .overlay(shape.strokeBorder(Color.white, lineWidth: 3))
+                    .overlay(shape.strokeBorder(Color.black.opacity(0.18), lineWidth: 0.5))
+            }
+            .accessibilityLabel("Screenshot just taken")
+            .accessibilityHint("Write a note and send it")
+            .overlay(alignment: onRight ? .topLeading : .topTrailing) {
+                Button { session.dismissSuggestion() } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Mono.text)
+                        .frame(width: 26, height: 26)
+                        .background(Mono.surface, in: Circle())
+                        .overlay(Circle().strokeBorder(Mono.hairline, lineWidth: 1))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Dismiss screenshot")
+                .offset(x: onRight ? -18 : 18, y: -18)
+            }
+
+            Button { session.sendSuggestion() } label: {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(Color.black)
+                    .frame(width: 44, height: 44)
+                    .background(Color.white, in: Circle())
+                    .overlay(Circle().strokeBorder(Color.black.opacity(0.15), lineWidth: 0.5))
+            }
+            .accessibilityLabel("Send screenshot")
+        }
+        .buttonStyle(.plain)
+        .shadow(color: .black.opacity(0.3), radius: 12, y: 5)
+        // The close button reaches past the card's corner, so take touches a little around it.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setTouchableFrame($0.insetBy(dx: -24, dy: -24), for: "suggestion") }
+        .onDisappear { session.setTouchableFrame(nil, for: "suggestion") }
+        .padding(.leading, onRight ? width - 12 - cardWidth : 12)
+        .padding(.top, top)
+        .transition(.move(edge: onRight ? .trailing : .leading).combined(with: .opacity))
     }
 }
 

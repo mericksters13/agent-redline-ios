@@ -4,14 +4,31 @@ import SwiftUI
 import UIKit
 
 /// Owns the debugger for the life of the app: the overlay window, the floating
-/// button, pick mode and the draft of annotations.
+/// button, pick mode, attachments, suggested screenshots and the draft.
 @MainActor
 @Observable
 final class DebugSession {
     static let shared = DebugSession()
 
     enum Mode {
-        case idle, picking, noting, tray, viewer
+        case idle, picking, noting, tray, viewer, attaching
+    }
+
+    /// Images waiting for their note: what the note card is about when no element is picked.
+    struct PendingAttachment {
+        var kind: Annotation.Kind
+        var images: [UIImage]
+        var screen: ScreenInfo?
+        /// True for a suggested screenshot: its note box sends the report.
+        var sendsReport: Bool
+    }
+
+    /// A screenshot offered at the side of the screen.
+    struct Suggestion: Identifiable {
+        let id = UUID()
+        var image: UIImage
+        var kind: Annotation.Kind
+        var screen: ScreenInfo?
     }
 
     struct Marker: Identifiable {
@@ -41,6 +58,12 @@ final class DebugSession {
     private(set) var buttonCenter: CGPoint?
     /// The screen being picked on.
     private(set) var screen = ScreenInfo()
+    /// The attachment the note card is for, when it isn't for a picked element.
+    private(set) var pending: PendingAttachment?
+    /// A screenshot just taken, offered at the side until it is sent or dismissed.
+    private(set) var suggestion: Suggestion?
+    /// The attachment button's frame, where the attachment surface grows from.
+    var attachAnchor = CGRect.zero
 
     var safeAreaTop: CGFloat { safeAreaInsets.top }
 
@@ -61,10 +84,12 @@ final class DebugSession {
     @ObservationIgnored private var screenshot: UIImage?
     @ObservationIgnored private var appKeyWindow: UIWindow?
     @ObservationIgnored private var trayReturnMode = Mode.idle
+    /// Where Cancel or Add on the note card goes back to.
+    @ObservationIgnored private var notingReturnMode = Mode.picking
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var thumbnails: [UUID: UIImage] = [:]
-    /// Full-size screenshots for the viewer, kept for the few notes around the one showing.
-    @ObservationIgnored private var fullScreenshots: [UUID: UIImage] = [:]
+    /// Full-size images for the viewer, kept for the few around the one showing.
+    @ObservationIgnored private var fullImages: [String: UIImage] = [:]
     /// True while a finger is down in pick mode.
     @ObservationIgnored private var touchIsDown = false
     @ObservationIgnored private let store = ReportStore.standard
@@ -98,12 +123,20 @@ final class DebugSession {
 
         annotations = store.loadDraft()
         observeKeyboard()
+        observeScreenshots()
+        // On a cold launch the app became active before the debugger was installed.
+        Task {
+            try? await Task.sleep(for: .seconds(1))
+            offerRecentScreenshot()
+        }
 
         // Launch arguments for checking layouts on a device without touching it:
         // -AgenticDebuggingPickOnLaunch YES opens pick mode, -AgenticDebuggingPickPoint "0.5,0.8"
         // then picks the element at that fraction of the screen, and
         // -AgenticDebuggingNoteText "..." fills in the note. -AgenticDebuggingOpenViewer YES
-        // opens the viewer on the first saved note.
+        // opens the viewer on the first saved note. -AgenticDebuggingOpenAttachments YES opens
+        // the attachment surface, and -AgenticDebuggingSimulateScreenshot YES acts as if a
+        // screenshot was taken, which a simulator can't do from the command line.
         let defaults = UserDefaults.standard
         // -AgenticDebuggingLaunchDelay waits that many seconds first, for apps that load slowly.
         let launchDelay = max(defaults.double(forKey: "AgenticDebuggingLaunchDelay"), 1)
@@ -114,6 +147,20 @@ final class DebugSession {
                 try? await Task.sleep(for: .milliseconds(300))
                 toggleTray()
                 if let first = annotations.first { openViewer(first) }
+            }
+        }
+        if defaults.bool(forKey: "AgenticDebuggingOpenAttachments") {
+            Task {
+                try? await Task.sleep(for: .seconds(launchDelay))
+                enterPicking()
+                try? await Task.sleep(for: .milliseconds(400))
+                openAttachments()
+            }
+        }
+        if defaults.bool(forKey: "AgenticDebuggingSimulateScreenshot") {
+            Task {
+                try? await Task.sleep(for: .seconds(launchDelay))
+                NotificationCenter.default.post(name: UIApplication.userDidTakeScreenshotNotification, object: UIApplication.shared)
             }
         }
         if defaults.bool(forKey: "AgenticDebuggingPickOnLaunch") {
@@ -184,6 +231,8 @@ final class DebugSession {
         touchIsDown = false
         guard selected != nil else { return }
         noteText = ""
+        pending = nil
+        notingReturnMode = .picking
         beginNoting()
     }
 
@@ -199,6 +248,10 @@ final class DebugSession {
 
     func saveNote() {
         let note = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let pending {
+            saveAttachment(pending, note: note)
+            return
+        }
         guard let element = selected, let screenshot else { return }
         let id = UUID()
         let fileName = "\(id.uuidString).png"
@@ -212,29 +265,69 @@ final class DebugSession {
             id: id,
             createdAt: .now,
             note: note,
+            kind: .element,
             element: element,
             ancestors: Array(levels.dropFirst(levelIndex + 1)),
             screen: screen,
-            screenshot: fileName
+            screenshots: [fileName]
         ))
         persist()
         levels = []
         refreshMarkers()
-        endNoting(returningTo: .picking)
+        endNoting(returningTo: notingReturnMode)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
     func cancelNote() {
         levels = []
-        endNoting(returningTo: .picking)
+        pending = nil
+        endNoting(returningTo: notingReturnMode)
+    }
+
+    /// Saves the attachment's images and adds it to the draft. A suggested screenshot
+    /// then sends the report, with everything already in the draft.
+    private func saveAttachment(_ attachment: PendingAttachment, note: String) {
+        let id = UUID()
+        var files: [String] = []
+        for (index, image) in attachment.images.enumerated() {
+            // The app's own screens keep every pixel sharp; photos are stored smaller.
+            let isScreen = attachment.kind == .screen
+            let name = "\(id.uuidString)-\(index + 1).\(isScreen ? "png" : "jpg")"
+            do {
+                try store.saveScreenshot((isScreen ? image.pngData() : image.jpegData(compressionQuality: 0.85)) ?? Data(), named: name)
+                files.append(name)
+            } catch {
+                logger.error("Couldn't save an attached image: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        annotations.append(Annotation(
+            id: id,
+            createdAt: .now,
+            note: note,
+            kind: attachment.kind,
+            element: nil,
+            ancestors: [],
+            screen: attachment.screen,
+            screenshots: files
+        ))
+        persist()
+        pending = nil
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        if attachment.sendsReport {
+            noteText = ""
+            awaitingKeyboard = false
+            send()
+        } else {
+            endNoting(returningTo: notingReturnMode)
+        }
     }
 
     func delete(_ annotation: Annotation) {
         guard let index = annotations.firstIndex(where: { $0.id == annotation.id }) else { return }
         annotations.remove(at: index)
         thumbnails[annotation.id] = nil
-        fullScreenshots[annotation.id] = nil
-        store.deleteScreenshot(named: annotation.screenshot)
+        fullImages = fullImages.filter { !$0.key.hasPrefix(annotation.id.uuidString) }
+        annotation.screenshots.forEach(store.deleteScreenshot(named:))
         persist()
         refreshMarkers()
         if mode == .viewer {
@@ -265,7 +358,7 @@ final class DebugSession {
 
     func closeViewer() {
         viewerID = nil
-        fullScreenshots = [:]
+        fullImages = [:]
         setMode(annotations.isEmpty ? trayReturnMode : .tray)
     }
 
@@ -276,14 +369,17 @@ final class DebugSession {
         persist()
     }
 
-    /// The note's whole screenshot, with its element outlined.
-    func fullScreenshot(for annotation: Annotation) -> UIImage? {
-        if let cached = fullScreenshots[annotation.id] { return cached }
-        let url = store.draftDirectory.appending(path: annotation.screenshot)
+    /// One of the item's images at full size: the screenshot with its element outlined,
+    /// or an attached image.
+    func fullImage(for annotation: Annotation, at index: Int) -> UIImage? {
+        guard annotation.screenshots.indices.contains(index) else { return nil }
+        let key = "\(annotation.id.uuidString)-\(index)"
+        if let cached = fullImages[key] { return cached }
+        let url = store.draftDirectory.appending(path: annotation.screenshots[index])
         guard let image = UIImage(contentsOfFile: url.path) else { return nil }
         // Keep only a few; a long session can collect many full-screen images.
-        if fullScreenshots.count >= 5 { fullScreenshots.removeAll() }
-        fullScreenshots[annotation.id] = image
+        if fullImages.count >= 5 { fullImages.removeAll() }
+        fullImages[key] = image
         return image
     }
 
@@ -297,9 +393,123 @@ final class DebugSession {
             guard !annotations.isEmpty else { return }
             trayReturnMode = mode
             setMode(.tray)
-        case .noting, .viewer:
+        case .noting, .viewer, .attaching:
             break
         }
+    }
+
+    // MARK: - Attachments
+
+    /// Opens the attachment surface from the attachment button in the island.
+    func openAttachments() {
+        guard mode == .picking || mode == .tray else { return }
+        levels = []
+        setMode(.attaching)
+    }
+
+    func closeAttachments() {
+        guard mode == .attaching else { return }
+        setMode(.picking)
+    }
+
+    /// Attaches the app's screen as it is now, without the debugger.
+    func attachThisScreen() {
+        guard mode == .attaching else { return }
+        let capture = captureScreen()
+        beginAttachmentNote(PendingAttachment(kind: .screen, images: [capture.image], screen: capture.screen, sendsReport: false))
+    }
+
+    /// Attaches images chosen from Photos, together, as one item with one note.
+    func attachPhotos(_ images: [UIImage]) {
+        guard mode == .attaching, !images.isEmpty else { return }
+        beginAttachmentNote(PendingAttachment(kind: .photo, images: images, screen: nil, sendsReport: false))
+    }
+
+    // MARK: - Suggested screenshots
+
+    /// Send under a suggested screenshot: write a note, then send it with the rest of the draft.
+    func sendSuggestion() {
+        guard let suggestion, mode == .idle || mode == .picking else { return }
+        self.suggestion = nil
+        let attachment = PendingAttachment(kind: suggestion.kind, images: [suggestion.image], screen: suggestion.screen, sendsReport: true)
+        beginAttachmentNote(attachment, returningTo: mode)
+    }
+
+    func dismissSuggestion() {
+        withAnimation(.smooth(duration: 0.3)) { suggestion = nil }
+    }
+
+    private func observeScreenshots() {
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: UIApplication.userDidTakeScreenshotNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.offerInAppScreenshot() }
+        })
+        observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.offerRecentScreenshot() }
+        })
+    }
+
+    /// A screenshot was just taken in the app. The system's picture includes the debugger,
+    /// so the app's own windows are captured instead, at the same moment, without it.
+    private func offerInAppScreenshot() {
+        guard window != nil, mode == .idle || mode == .picking else { return }
+        let capture = captureScreen()
+        rememberInAppCapture(at: .now)
+        offer(Suggestion(image: capture.image, kind: .screen, screen: capture.screen))
+    }
+
+    /// The newest screenshot taken in another app in the last 10 minutes, offered once,
+    /// only when the app already has Photos access.
+    private func offerRecentScreenshot() {
+        guard window != nil, PhotoLibrary.canRead else { return }
+        let assets = PhotoLibrary.newestScreenshots(limit: 1)
+        let candidates = assets.compactMap { asset in
+            asset.creationDate.map { ScreenshotSuggestion.Candidate(id: asset.localIdentifier, createdAt: $0) }
+        }
+        guard let pick = ScreenshotSuggestion.pick(newest: candidates, now: .now, offered: offeredPhotoIDs, inAppCaptures: inAppCaptureDates),
+              let asset = assets.first(where: { $0.localIdentifier == pick.id })
+        else { return }
+        markOffered(pick.id)
+        Task {
+            guard let image = await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels),
+                  mode == .idle || mode == .picking
+            else { return }
+            offer(Suggestion(image: image, kind: .photo, screen: nil))
+        }
+    }
+
+    private func offer(_ suggestion: Suggestion) {
+        withAnimation(.spring(duration: 0.4, bounce: 0.2)) { self.suggestion = suggestion }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let id = suggestion.id
+        // A screenshot nobody acts on steps aside on its own.
+        Task {
+            try? await Task.sleep(for: .seconds(20))
+            if self.suggestion?.id == id { dismissSuggestion() }
+        }
+    }
+
+    private static let offeredPhotosKey = "AgenticDebuggingOfferedScreenshots"
+    private static let inAppCapturesKey = "AgenticDebuggingInAppScreenshots"
+
+    private var offeredPhotoIDs: Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: Self.offeredPhotosKey) ?? [])
+    }
+
+    private func markOffered(_ id: String) {
+        let ids = (UserDefaults.standard.stringArray(forKey: Self.offeredPhotosKey) ?? []) + [id]
+        UserDefaults.standard.set(Array(ids.suffix(20)), forKey: Self.offeredPhotosKey)
+    }
+
+    /// When screenshots were taken in the app, so the same screenshot isn't offered
+    /// again once it shows up in Photos.
+    private var inAppCaptureDates: [Date] {
+        (UserDefaults.standard.array(forKey: Self.inAppCapturesKey) as? [Double] ?? []).map(Date.init(timeIntervalSince1970:))
+    }
+
+    private func rememberInAppCapture(at date: Date) {
+        let dates = (UserDefaults.standard.array(forKey: Self.inAppCapturesKey) as? [Double] ?? []) + [date.timeIntervalSince1970]
+        UserDefaults.standard.set(Array(dates.suffix(10)), forKey: Self.inAppCapturesKey)
     }
 
     func send() {
@@ -343,13 +553,23 @@ final class DebugSession {
         return UIImage(cgImage: cropped)
     }
 
-    /// A close crop of the annotation's screenshot around its element, for the notes list.
+    /// The top of an attached image, square, where a screen's title usually is.
+    static func topSquare(of image: UIImage) -> UIImage? {
+        guard let cgImage = image.cgImage else { return nil }
+        let side = min(cgImage.width, cgImage.height)
+        let crop = CGRect(x: (cgImage.width - side) / 2, y: 0, width: side, height: side)
+        return cgImage.cropping(to: crop).map { UIImage(cgImage: $0) }
+    }
+
+    /// A small picture of the item for the notes list: a close crop around its element,
+    /// or the top of its first image.
     func thumbnail(for annotation: Annotation) -> UIImage? {
         if let cached = thumbnails[annotation.id] { return cached }
-        let url = store.draftDirectory.appending(path: annotation.screenshot)
-        guard let image = UIImage(contentsOfFile: url.path),
-              let thumbnail = Self.crop(image, around: annotation.element.frame, screenWidth: screenSize.width)
+        guard let first = annotation.screenshots.first,
+              let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: first).path)
         else { return nil }
+        let thumbnail = annotation.element.map { Self.crop(image, around: $0.frame, screenWidth: screenSize.width) } ?? Self.topSquare(of: image)
+        guard let thumbnail else { return nil }
         thumbnails[annotation.id] = thumbnail
         return thumbnail
     }
@@ -402,9 +622,10 @@ final class DebugSession {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
-    /// Only the button takes touches while the debugger is idle; the rest go to the app.
-    func setButtonFrame(_ frame: CGRect?) {
-        window?.touchableRect = frame
+    /// While the debugger is idle only the floating button and a suggested screenshot
+    /// take touches; the rest go to the app.
+    func setTouchableFrame(_ frame: CGRect?, for name: String) {
+        window?.touchableRects[name] = frame
     }
 
     private static let buttonPositionKey = "AgenticDebuggingButtonPosition"
@@ -472,6 +693,23 @@ final class DebugSession {
         setMode(next)
     }
 
+    private func beginAttachmentNote(_ attachment: PendingAttachment, returningTo next: Mode = .picking) {
+        pending = attachment
+        levels = []
+        noteText = ""
+        notingReturnMode = next
+        beginNoting()
+    }
+
+    /// The app's screen as it is now, without the debugger, and the screen's name.
+    private func captureScreen() -> (image: UIImage, screen: ScreenInfo) {
+        let windows = appWindows()
+        let bounds = window?.bounds ?? .zero
+        let elements = AccessibilityTree.elements(in: windows, screenBounds: bounds)
+        let screen = AccessibilityTree.screen(of: windows.first(where: \.isKeyWindow) ?? windows.last, elements: elements)
+        return (AccessibilityTree.screenshot(of: windows, bounds: bounds), screen)
+    }
+
     /// Reads every element's position, the screen's name and a screenshot, all at the same moment.
     private func readScreen() {
         guard let window else { return }
@@ -492,8 +730,8 @@ final class DebugSession {
 
     private func refreshMarkers() {
         markers = annotations.enumerated().compactMap { index, annotation in
-            guard annotation.screen == screen,
-                  let match = ElementSelection.match(annotation.element, in: elements)
+            guard let element = annotation.element, annotation.screen == screen,
+                  let match = ElementSelection.match(element, in: elements)
             else { return nil }
             return Marker(id: annotation.id, number: index + 1, frame: match.frame)
         }
