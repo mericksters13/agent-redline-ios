@@ -19,6 +19,8 @@ struct NoteViewer: View {
     /// The details panel's height, which sets where the screenshot ends. Kept from before
     /// a zoom, so the screenshot never resizes under the finger while the details are hidden.
     @State private var detailsHeight: CGFloat = 0
+    /// The details content's own height, which can be more than fits above the keyboard.
+    @State private var detailsContentHeight: CGFloat = 0
     @FocusState private var isEditingNote: Bool
 
     private var annotations: [Annotation] { session.annotations }
@@ -36,6 +38,15 @@ struct NoteViewer: View {
     private var imageHeight: CGFloat {
         let reserve = detailsHeight == 0 ? 200 : detailsHeight
         return max(panelBottom - reserve - 12 - imageTop, 120)
+    }
+
+    /// The details scroll only when they are taller than the space above the keyboard,
+    /// such as in landscape or at large text sizes, so the delete button and the note
+    /// field never move off screen.
+    private var detailsScrollHeight: CGFloat {
+        let content = detailsContentHeight == 0 ? 200 : detailsContentHeight
+        let room = panelBottom - session.safeAreaTop - 8 - 32
+        return max(min(content, room), 44)
     }
 
     var body: some View {
@@ -157,6 +168,21 @@ struct NoteViewer: View {
     }
 
     private var details: some View {
+        ScrollView {
+            detailsContent
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { detailsContentHeight = $0 }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(height: detailsScrollHeight)
+        .padding(16)
+        .frame(width: min(size.width - 24, 420))
+        .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { detailsHeight = $0 }
+    }
+
+    private var detailsContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let current, let index = currentIndex {
                 HStack(spacing: 12) {
@@ -211,11 +237,6 @@ struct NoteViewer: View {
                 if annotations.count > 1 { strip }
             }
         }
-        .padding(16)
-        .frame(width: min(size.width - 24, 420))
-        .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { detailsHeight = $0 }
     }
 
     private var strip: some View {
