@@ -23,6 +23,41 @@ struct HubPaths: Sendable {
     var tokens: URL { hub.appending(path: "tokens.json") }
 }
 
+/// Reading the hub's own files, where a missing file is normal and any other failure isn't.
+enum StoredFile {
+    /// The file's contents, or nil when it doesn't exist. Any other failure, such as a file the
+    /// user can't read, throws, so it's never mistaken for an empty one and written over.
+    static func read(_ url: URL) throws -> Data? {
+        do {
+            return try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+            return nil
+        }
+    }
+
+    /// Moves a file that can't be read or decoded out of the way, so starting fresh doesn't
+    /// write over what might still be recovered. Returns where it went.
+    @discardableResult
+    static func moveAside(_ url: URL) -> URL? {
+        let stamp = Date().formatted(.iso8601).replacingOccurrences(of: ":", with: "-")
+        let aside = url.deletingLastPathComponent().appending(path: "\(url.lastPathComponent).unreadable-\(stamp)")
+        return (try? FileManager.default.moveItem(at: url, to: aside)) == nil ? nil : aside
+    }
+
+    /// The decoded file; nil when it doesn't exist. A file that can't be read or decoded is
+    /// moved aside, with `report` told why, and treated as missing.
+    static func load<T: Decodable>(_ type: T.Type, from url: URL, decoder: JSONDecoder, report: (String) -> Void) -> T? {
+        do {
+            guard let data = try read(url) else { return nil }
+            return try decoder.decode(type, from: data)
+        } catch {
+            let aside = moveAside(url)
+            report("Couldn't read \(url.path): \(error.localizedDescription). \(aside.map { "Moved it to \($0.lastPathComponent); starting fresh" } ?? "Starting fresh").")
+            return nil
+        }
+    }
+}
+
 /// Where a report came from, saved next to it in the inbox.
 struct ReportSource: Codable, Sendable {
     enum Kind: String, Codable, Sendable { case phone, simulator }
@@ -36,6 +71,40 @@ struct ReportSource: Codable, Sendable {
     var receivedAt: Date
 }
 
+/// Where a paired phone stands, as the hub and the panel show it.
+enum PhoneState: Codable, Equatable, Sendable, CustomStringConvertible {
+    /// The watched apps on it have the hub's address.
+    case ready(apps: [String])
+    /// The phone couldn't be reached; it's tried again after the delay or when a phone wakes.
+    case unreachable(retryInSeconds: Int)
+    case noWatchedApps
+
+    /// For `redline status` and the log.
+    var description: String {
+        switch self {
+        case .ready(let apps): "Ready for \(apps.joined(separator: ", "))"
+        case .unreachable(let seconds): "Not reachable, trying again in \(seconds) s or when a phone wakes"
+        case .noWatchedApps: "None of the watched apps installed"
+        }
+    }
+
+    /// For the panel.
+    var shortDescription: String {
+        switch self {
+        case .ready: "Ready"
+        case .unreachable: "Not reachable"
+        case .noWatchedApps: "No watched app installed"
+        }
+    }
+
+    var isReady: Bool {
+        switch self {
+        case .ready: true
+        case .unreachable, .noWatchedApps: false
+        }
+    }
+}
+
 /// What the hub tells `redline status`.
 struct HubStatus: Codable, Sendable {
     struct Phone: Codable, Equatable, Sendable {
@@ -44,6 +113,9 @@ struct HubStatus: Codable, Sendable {
         var state: String
         /// "iPhone 17 Pro": tells apart phones with the same name.
         var model: String? = nil
+        /// The state as a value, for the panel. `state` stays the text, which a `redline status`
+        /// of an earlier version reads; nil in a status.json an earlier hub wrote.
+        var phoneState: PhoneState? = nil
     }
 
     var pid: Int32
@@ -105,7 +177,17 @@ final class Hub: @unchecked Sendable {
         var queuedWrites: Set<SavedFile> = []
     }
 
-    private enum SavedFile { case state, tokens, status }
+    private enum SavedFile: CustomStringConvertible {
+        case state, tokens, status
+
+        var description: String {
+            switch self {
+            case .state: "state.json"
+            case .tokens: "tokens.json"
+            case .status: "status.json"
+            }
+        }
+    }
 
     /// A report finished up to this long before the hub first looked at its app still counts
     /// as new: the phone's clock and the Mac's can disagree by a little.
@@ -123,14 +205,13 @@ final class Hub: @unchecked Sendable {
         self.paths = paths
         self.devicectl = devicectl
         fixedApps = apps
-        var initial = State()
-        if let data = try? Data(contentsOf: paths.state), let saved = try? Self.decoder.decode([String: SourceState].self, from: data) {
-            initial.sources = saved
+        state = Mutex(State())
+        let sources = StoredFile.load([String: SourceState].self, from: paths.state, decoder: Self.decoder) { log($0) }
+        let tokens = StoredFile.load([String: String].self, from: paths.tokens, decoder: Self.decoder) { log($0) }
+        state.withLock { state in
+            state.sources = sources ?? [:]
+            state.tokens = tokens ?? [:]
         }
-        if let data = try? Data(contentsOf: paths.tokens), let saved = try? Self.decoder.decode([String: String].self, from: data) {
-            initial.tokens = saved
-        }
-        state = Mutex(initial)
     }
 
     /// Starts taking reports. False when another hub holds the lock on `hub.pid`, or it can't
@@ -198,8 +279,11 @@ final class Hub: @unchecked Sendable {
         let hosts = Self.addresses()
         state.withLock { $0.hosts = hosts }
         if rediscover { simulators?.rescan() }
-        guard let paired = devicectl.pairedPhones() else {
-            log("Couldn't list paired phones")
+        let paired: [Devicectl.Phone]
+        do {
+            paired = try devicectl.pairedPhones()
+        } catch {
+            log("Couldn't list paired phones: \(error.localizedDescription)")
             return
         }
         for phone in paired {
@@ -307,27 +391,27 @@ final class Hub: @unchecked Sendable {
         return ChatDirectory.list(bundleID: request.bundleID, sourceFile: request.sourceFile, paths: paths)
     }
 
-    /// Files a report the hub asked for. False when it can't be filed.
-    @discardableResult
-    func storeNow(_ upload: HubMessage.Upload, offeredIn offer: HubMessage.Offer) -> Bool {
+    /// Files a report the hub asked for. Throws, after logging why, when it can't be filed.
+    func storeNow(_ upload: HubMessage.Upload, offeredIn offer: HubMessage.Offer) throws {
         let total = upload.files.values.reduce(0) { $0 + $1.count }
         guard Self.isSafeName(upload.id), upload.files.keys.allSatisfy(Self.isSafeName), total <= Self.largestReport,
               upload.files["report.json"] != nil
         else {
             log("Couldn't use report \(upload.id) of \(offer.bundleID): missing its report.json, a file name it can't use, or over \(Self.largestReport / 1_000_000) MB")
-            return false
+            throw FilingError.unusableUpload
         }
         let source = ReportSource(kind: .phone, device: offer.device, deviceName: phoneName(offer.device), bundleID: offer.bundleID,
                                   reportID: upload.id, receivedAt: Date())
-        return receive(source) { destination in
-            do {
-                try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
-                for (name, data) in upload.files { try data.write(to: destination.appending(path: name)) }
-                return true
-            } catch {
-                return false
-            }
+        try receive(source) { destination in
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+            for (name, data) in upload.files { try data.write(to: destination.appending(path: name)) }
         }
+    }
+
+    /// Why a report wasn't filed, beyond the file system's own errors.
+    enum FilingError: Error {
+        /// No report.json, a file name the hub can't use, or too big.
+        case unusableUpload
     }
 
     // Connections are served from Swift tasks, which must never block their thread: these run
@@ -345,10 +429,9 @@ final class Hub: @unchecked Sendable {
         }
     }
 
-    @discardableResult
-    func store(_ upload: HubMessage.Upload, offeredIn offer: HubMessage.Offer) async -> Bool {
-        await withCheckedContinuation { continuation in
-            inbox.async { continuation.resume(returning: self.storeNow(upload, offeredIn: offer)) }
+    func store(_ upload: HubMessage.Upload, offeredIn offer: HubMessage.Offer) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            inbox.async { continuation.resume(with: Result { try self.storeNow(upload, offeredIn: offer) }) }
         }
     }
 
@@ -426,32 +509,32 @@ final class Hub: @unchecked Sendable {
     }
 
     /// Files a report in the inbox. `copy` fills a folder that doesn't exist yet; the report
-    /// appears in the inbox only once it's complete. False when it couldn't be filed.
-    @discardableResult
-    func receive(_ source: ReportSource, copy: (URL) -> Bool) -> Bool {
+    /// appears in the inbox only once it's complete, with its source.json. Throws, after logging
+    /// why, when it couldn't be filed; then nothing is left in the inbox and the report isn't
+    /// counted as delivered, so it's offered again.
+    func receive(_ source: ReportSource, copy: (_ destination: URL) throws -> Void) throws {
         let folder = paths.inbox.appending(path: source.bundleID, directoryHint: .isDirectory)
         let name = Inbox.folderName(reportID: source.reportID, device: source.device)
         let incoming = folder.appending(path: ".incoming-\(name)", directoryHint: .isDirectory)
         let destination = folder.appending(path: name, directoryHint: .isDirectory)
         let files = FileManager.default
-        try? files.createDirectory(at: folder, withIntermediateDirectories: true)
-        try? files.removeItem(at: incoming)
         let started = Date()
-        guard copy(incoming) else {
-            try? files.removeItem(at: incoming)
-            log("Couldn't copy report \(source.reportID) of \(source.bundleID) from \(source.deviceName)")
-            return false
-        }
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? encoder.encode(source).write(to: incoming.appending(path: "source.json"))
-        try? files.removeItem(at: destination)
         do {
+            try files.createDirectory(at: folder, withIntermediateDirectories: true)
+            // Left by an earlier try that didn't finish.
+            try? files.removeItem(at: incoming)
+            try copy(incoming)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(source).write(to: incoming.appending(path: "source.json"))
+            // The same report sent again replaces the earlier copy.
+            try? files.removeItem(at: destination)
             try files.moveItem(at: incoming, to: destination)
         } catch {
-            log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
-            return false
+            try? files.removeItem(at: incoming)
+            log("Couldn't file report \(source.reportID) of \(source.bundleID) from \(source.deviceName): \(error.localizedDescription)")
+            throw error
         }
         state.withLock { state in
             state.sources[Self.key(device: source.device, bundleID: source.bundleID), default: SourceState(since: startedAt)].delivered.append(source.reportID)
@@ -459,13 +542,13 @@ final class Hub: @unchecked Sendable {
         }
         log(String(format: "Received %@ from %@ (%@) in %.2f s", source.reportID, source.deviceName, source.bundleID, Date().timeIntervalSince(started)))
         handoff?.reportFiled(destination, source: source)
-        return true
     }
 
     // MARK: - Status
 
-    func phoneChanged(_ phone: Devicectl.Phone, state description: String) {
-        let phone = HubStatus.Phone(name: phone.name, udid: phone.udid, state: description, model: phone.model.isEmpty ? nil : phone.model)
+    func phoneChanged(_ phone: Devicectl.Phone, state phoneState: PhoneState) {
+        let phone = HubStatus.Phone(name: phone.name, udid: phone.udid, state: phoneState.description, model: phone.model.isEmpty ? nil : phone.model,
+                                    phoneState: phoneState)
         state.withLock { state in
             // A pass that changes nothing writes nothing.
             guard state.phoneStates.updateValue(phone, forKey: phone.udid) != phone else { return }
@@ -507,23 +590,31 @@ final class Hub: @unchecked Sendable {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        switch file {
-        case .state:
-            let sources = state.withLock { state in
-                state.queuedWrites.remove(.state)
-                return state.sources
+        let url: URL
+        do {
+            switch file {
+            case .state:
+                url = paths.state
+                let sources = state.withLock { state in
+                    state.queuedWrites.remove(.state)
+                    return state.sources
+                }
+                try encoder.encode(sources).write(to: url, options: .atomic)
+            case .tokens:
+                url = paths.tokens
+                let tokens = state.withLock { state in
+                    state.queuedWrites.remove(.tokens)
+                    return state.tokens
+                }
+                try encoder.encode(tokens).write(to: url, options: .atomic)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            case .status:
+                url = paths.status
+                state.withLock { _ = $0.queuedWrites.remove(.status) }
+                try encoder.encode(statusSnapshot()).write(to: url, options: .atomic)
             }
-            try? encoder.encode(sources).write(to: paths.state, options: .atomic)
-        case .tokens:
-            let tokens = state.withLock { state in
-                state.queuedWrites.remove(.tokens)
-                return state.tokens
-            }
-            try? encoder.encode(tokens).write(to: paths.tokens, options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: paths.tokens.path)
-        case .status:
-            state.withLock { _ = $0.queuedWrites.remove(.status) }
-            try? encoder.encode(statusSnapshot()).write(to: paths.status, options: .atomic)
+        } catch {
+            log("Couldn't save \(file): \(error.localizedDescription)")
         }
     }
 

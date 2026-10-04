@@ -29,8 +29,8 @@ struct HubWindowTests {
     @Test func reportsShowWhereTheyWentNewestFirst() throws {
         let older = try report("20261004-090000", at: Date(timeIntervalSince1970: 1_791_000_000))
         let newer = try report("20261004-120000", at: Date(timeIntervalSince1970: 1_791_010_000))
-        ReportDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: newer)
-        ReportDelivery.save(.init(agent: nil, chat: nil, title: "2 chats work in wt; pick one on the phone", kind: .waiting), in: older)
+        try ReportDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: newer)
+        try ReportDelivery.save(.init(agent: nil, chat: nil, title: "2 chats work in wt; pick one on the phone", kind: .waiting), in: older)
 
         let rows = HubWindowModel.readReports(paths: paths).map(\.row)
         #expect(rows.map(\.folder) == [newer, older])
@@ -45,9 +45,16 @@ struct HubWindowTests {
     }
 
     @Test func phonesSayWhyTheyCantTakeReports() {
-        #expect(HubWindowModel.phoneState("Ready for com.example.app") == "Ready")
-        #expect(HubWindowModel.phoneState("Not reachable, trying again in 30 s or when a phone wakes") == "Not reachable")
-        #expect(HubWindowModel.phoneState("None of the watched apps installed") == "No watched app installed")
+        func phone(_ state: PhoneState?, text: String = "") -> HubStatus.Phone {
+            HubStatus.Phone(name: "P", udid: "U", state: state?.description ?? text, phoneState: state)
+        }
+        #expect(HubWindowModel.phoneState(phone(.ready(apps: ["com.example.app"]))) == "Ready")
+        #expect(HubWindowModel.phoneState(phone(.unreachable(retryInSeconds: 30))) == "Not reachable")
+        #expect(HubWindowModel.phoneState(phone(.noWatchedApps)) == "No watched app installed")
+        #expect(PhoneState.unreachable(retryInSeconds: 30).description == "Not reachable, trying again in 30 s or when a phone wakes")
+        // Saved by an earlier hub, as text only.
+        #expect(HubWindowModel.phoneState(phone(nil, text: "Ready for com.example.app")) == "Ready")
+        #expect(HubWindowModel.phoneState(phone(nil, text: "None of the watched apps installed")) == "No watched app installed")
     }
 
     @Test func aReportTakenBeforeDeliveriesWereSavedNamesItsChat() throws {
@@ -83,7 +90,7 @@ struct HubWindowTests {
         // What the hub saved when it delivered it, with the folder of the chat that took it.
         let sent = try report("20261004-140000", at: Date())
         try claim("claude-s-1", agent: "claude", folder: "/repo", in: sent)
-        ReportDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: sent)
+        try ReportDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: sent)
         let chat = try #require(HubWindowModel.chat(of: sent))
         #expect(chat.agent == .claude && chat.id == "s-1" && chat.folder == "/repo")
 
@@ -101,18 +108,18 @@ struct HubWindowTests {
 
         // Waiting: nothing to open.
         let waiting = try report("20261004-140300", at: Date())
-        ReportDelivery.save(.init(agent: .claude, chat: nil, title: "Waiting for claude auth login", kind: .waiting), in: waiting)
+        try ReportDelivery.save(.init(agent: .claude, chat: nil, title: "Waiting for claude auth login", kind: .waiting), in: waiting)
         #expect(HubWindowModel.chat(of: waiting) == nil)
         #expect(HubWindowModel.chat(of: try report("20261004-140500", at: Date())) == nil)
     }
 
     @Test func chatsOpenInTheirAgentsAppWhenItIsInstalled() {
-        #expect(Handoff.appLink(.claude, id: "c28a077b-d80c-4c2b-844e-c544401d77ec", hasClaudeApp: true, hasCodexApp: false)
+        #expect(Handoff.appLink(.claude, id: "c28a077b-d80c-4c2b-844e-c544401d77ec", isClaudeAppInstalled: true, isCodexAppInstalled: false)
             == "claude://resume?session=c28a077b-d80c-4c2b-844e-c544401d77ec")
-        #expect(Handoff.appLink(.codex, id: "01a0e409-5a20", hasClaudeApp: false, hasCodexApp: true) == "codex://threads/01a0e409-5a20")
+        #expect(Handoff.appLink(.codex, id: "01a0e409-5a20", isClaudeAppInstalled: false, isCodexAppInstalled: true) == "codex://threads/01a0e409-5a20")
         // Without the app, a terminal resumes the chat instead.
-        #expect(Handoff.appLink(.claude, id: "s-1", hasClaudeApp: false, hasCodexApp: true) == nil)
-        #expect(Handoff.appLink(.codex, id: "t-1", hasClaudeApp: true, hasCodexApp: false) == nil)
+        #expect(Handoff.appLink(.claude, id: "s-1", isClaudeAppInstalled: false, isCodexAppInstalled: true) == nil)
+        #expect(Handoff.appLink(.codex, id: "t-1", isClaudeAppInstalled: true, isCodexAppInstalled: false) == nil)
     }
 }
 #endif

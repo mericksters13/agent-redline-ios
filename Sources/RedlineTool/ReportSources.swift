@@ -91,17 +91,36 @@ enum HubMessage {
     /// Where the kit looks for the hub's address, inside an app's data container.
     static let addressPath = "Library/Application Support/Redline/hub.json"
 
+    /// One line: the value's JSON and a newline.
     static func encode<T: Encodable>(_ value: T) -> Data {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        return ((try? encoder.encode(value)) ?? Data()) + Data("\n".utf8)
+        do {
+            return try encoder.encode(value) + Data("\n".utf8)
+        } catch {
+            // The messages are plain structs of strings, numbers, dates and data, which always encode.
+            assertionFailure("Couldn't encode \(T.self): \(error)")
+            return Data("\n".utf8)
+        }
     }
 
-    static func decode<T: Decodable>(_ type: T.Type, from data: Data) -> T? {
+    /// Decodes one line. Throws a DecodingError that says which field was wrong.
+    static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(type, from: data)
+        return try decoder.decode(type, from: data)
+    }
+
+    /// Why a line didn't decode, short enough for the log.
+    static func reason(_ error: any Error) -> String {
+        switch error as? DecodingError {
+        case .keyNotFound(let key, _): "no \(key.stringValue)"
+        case .typeMismatch(_, let context), .valueNotFound(_, let context), .dataCorrupted(let context):
+            context.codingPath.isEmpty ? context.debugDescription : "\(context.codingPath.map(\.stringValue).joined(separator: ".")): \(context.debugDescription)"
+        case .none: error.localizedDescription
+        @unknown default: error.localizedDescription
+        }
     }
 }
 

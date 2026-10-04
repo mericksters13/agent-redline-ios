@@ -51,7 +51,7 @@ struct ChatOptions {
             case ("--session", let value?): session = value
             case ("--agent", let value?): agent = value
             default:
-                FileHandle.standardError.write(Data(usage.utf8))
+                printError(usage)
                 exit(64)
             }
         }
@@ -150,7 +150,7 @@ case "wait":
 
 case "hook":
     guard arguments.count == 3, let agent = Agent(rawValue: arguments[1]), let event = HookEvent(rawValue: arguments[2]) else {
-        FileHandle.standardError.write(Data(usage.utf8))
+        printError(usage)
         exit(64)
     }
     exit(AgentHooks.run(agent, event, paths: paths))
@@ -159,7 +159,7 @@ case "setup", "remove":
     let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
     let adding = arguments.first == "setup"
     // Before anything else: new Claude Code chats need the claude command signed in.
-    if adding, AgentSettings.isPresent(.claude) || AgentCommand.hasClaudeApp {
+    if adding, AgentSettings.isPresent(.claude) || AgentCommand.isClaudeAppInstalled() {
         guard ClaudeCLI.prepare() else { exit(1) }
         print("Claude Code: the claude command is signed in and ready to start new chats.")
     }
@@ -169,15 +169,16 @@ case "setup", "remove":
             if adding { print("\(agent.name): not used on this Mac, skipped.") }
             continue
         }
+        // An agent that needs no hooks is left alone: its settings file isn't touched.
+        if adding, AgentSettings.hooks(agent, executable: executable).isEmpty {
+            print("\(agent.name): no hooks needed")
+            continue
+        }
         do {
             try AgentSettings.update(agent) {
                 adding ? AgentSettings.adding(agent, to: $0, executable: executable) : AgentSettings.removing(agent, from: $0)
             }
-            if adding, AgentSettings.hooks(agent, executable: executable).isEmpty {
-                print("\(agent.name): no hooks needed")
-            } else {
-                print("\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.file(agent).path)")
-            }
+            print("\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.file(agent).path)")
             if adding, agent == .codex { print("  Codex runs a new hook only once you trust it: open /hooks in Codex and trust \"Report delivery\".") }
         } catch {
             print("\(agent.name): couldn't update \(AgentSettings.file(agent).path): \(error.localizedDescription)")
@@ -192,6 +193,11 @@ case "status":
 
 default:
     print(usage, terminator: "")
+}
+
+/// Writes a line to standard error.
+func printError(_ message: String) {
+    try? FileHandle.standardError.write(contentsOf: Data((message + "\n").utf8))
 }
 
 /// Runs `cleanup` and exits on Control-C or a termination request. Called from the top-level
@@ -240,11 +246,16 @@ func printReports(_ session: ChatSession, quietWhenNone: Bool = false) -> Bool {
 func printStatus(_ paths: HubPaths) {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    if let pid = HubProcess.running(paths), let data = try? Data(contentsOf: paths.status), let status = try? decoder.decode(HubStatus.self, from: data) {
-        print("Hub running (pid \(pid)) since \(status.startedAt.formatted(date: .omitted, time: .shortened)), for \(status.apps.joined(separator: ", "))")
-        print("  Apps reach it at \(status.hosts.joined(separator: ", ")), port \(status.port)")
-        for phone in status.phones { print("  \(phone.name) (\([phone.model, phone.udid].compactMap { $0 }.joined(separator: ", "))): \(phone.state)") }
-        print("  Simulators: \(status.simulatorContainers) app \(status.simulatorContainers == 1 ? "container" : "containers") watched")
+    if let pid = HubProcess.running(paths) {
+        do {
+            let status = try decoder.decode(HubStatus.self, from: Data(contentsOf: paths.status))
+            print("Hub running (pid \(pid)) since \(status.startedAt.formatted(date: .omitted, time: .shortened)), for \(status.apps.joined(separator: ", "))")
+            print("  Apps reach it at \(status.hosts.joined(separator: ", ")), port \(status.port)")
+            for phone in status.phones { print("  \(phone.name) (\([phone.model, phone.udid].compactMap { $0 }.joined(separator: ", "))): \(phone.state)") }
+            print("  Simulators: \(status.simulatorContainers) app \(status.simulatorContainers == 1 ? "container" : "containers") watched")
+        } catch {
+            print("Hub running (pid \(pid)), but its status couldn't be read: \(error.localizedDescription)")
+        }
     } else {
         print("Hub not running")
     }

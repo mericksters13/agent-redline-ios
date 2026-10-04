@@ -111,9 +111,51 @@ final class Handoff: Sendable {
             }
         case .undecided(let reason):
             hub.log("Report \(source.reportID) waits in the inbox: \(reason)")
-            ReportDelivery.save(.init(agent: nil, chat: nil, title: reason, kind: .waiting), in: report.folder)
-            Self.notify(title: "Report from \(source.deviceName)", message: "\(reason).")
+            record(.init(agent: nil, chat: nil, title: reason, kind: .waiting), for: report)
+            Self.notify(title: Self.reportTitle(source), message: "\(reason).")
         }
+    }
+
+    /// Takes the report for a chat. False, after logging why when it isn't another chat that
+    /// took it first, when the report can't be taken.
+    private func claim(_ report: InboxReport, for chat: ChatRecord) -> Bool {
+        switch InboxQueue.claim(report, for: chat) {
+        case .claimed:
+            return true
+        case .takenByAnotherChat:
+            return false
+        case .failed(let error):
+            hub.log("Couldn't take report \(report.source.reportID) for \(chat.id): \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// Lets the report go again, for a chat that opens later.
+    private func release(_ report: InboxReport) {
+        do {
+            try FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+        } catch {
+            hub.log("Couldn't let report \(report.source.reportID) go for another chat: \(error.localizedDescription)")
+        }
+    }
+
+    /// Saves where the report went, for the panel and the viewer.
+    private func record(_ delivery: ReportDelivery, for report: InboxReport) {
+        do {
+            try ReportDelivery.save(delivery, in: report.folder)
+        } catch {
+            hub.log("Couldn't save where report \(report.source.reportID) went: \(error.localizedDescription)")
+        }
+    }
+
+    /// A chat record for a chat the hub hands a report to, as the claim names it.
+    private static func claimant(id: String, agent: Agent, folder: String, bundleID: String) -> ChatRecord {
+        ChatRecord(id: id, agent: agent.rawValue, folder: folder, bundleIDs: [bundleID], pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
+    }
+
+    /// The title of every notification about a report.
+    private static func reportTitle(_ source: ReportSource) -> String {
+        "Report from \(source.deviceName)"
     }
 
     /// Puts the report into a Claude Code chat through its socket. If the chat closed, a new
@@ -124,27 +166,25 @@ final class Handoff: Sendable {
             hub.log("The Claude Code chat for report \(source.reportID) is closed")
             // Continued where it left off, then reopened in the desktop app.
             if let worktree, ClaudeCLI.ready() {
-                let chat = ChatRecord(id: "claude-\(id)", agent: Agent.claude.rawValue, folder: worktree, bundleIDs: [source.bundleID],
-                                      pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
-                guard InboxQueue.claim(report, for: chat) else { return }
+                let chat = Self.claimant(id: ChatID.make(.claude, id), agent: .claude, folder: worktree, bundleID: source.bundleID)
+                guard claim(report, for: chat) else { return }
                 openClaude(id, in: worktree, thenSend: ReportContent.text(for: report), for: report)
             } else if worktree != nil {
                 waitForClaudeSignIn(report)
             }
             return
         }
-        let chat = ChatRecord(id: "claude-\(id)", agent: Agent.claude.rawValue, folder: session.folder, bundleIDs: [source.bundleID],
-                              pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
-        guard InboxQueue.claim(report, for: chat) else { return }
+        let chat = Self.claimant(id: ChatID.make(.claude, id), agent: .claude, folder: session.folder, bundleID: source.bundleID)
+        guard claim(report, for: chat) else { return }
         let name = session.title ?? Self.folderName(session.folder)
         if ClaudeSessions.send(ReportContent.text(for: report), to: session) {
             hub.log("Sent report \(source.reportID) to the Claude Code chat \(name), in \(session.folder)")
-            ReportDelivery.save(.init(agent: .claude, chat: id, title: name, kind: .sent), in: report.folder)
-            Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Claude Code chat \(name).")
+            record(.init(agent: .claude, chat: id, title: name, kind: .sent), for: report)
+            Self.notify(title: Self.reportTitle(source), message: "Sent to the Claude Code chat \(name).")
         } else {
-            try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+            release(report)
             hub.log("The Claude Code chat \(name) didn't take report \(source.reportID); it waits in the inbox")
-            Self.notify(title: "Report from \(source.deviceName)", message: "The Claude Code chat \(name) didn't take it. It waits in the inbox.")
+            Self.notify(title: Self.reportTitle(source), message: "The Claude Code chat \(name) didn't take it. It waits in the inbox.")
         }
     }
 
@@ -153,52 +193,54 @@ final class Handoff: Sendable {
     /// with the next message.
     private func sendToCodex(_ report: InboxReport, thread: String) {
         let source = report.source
-        let chat = ChatRecord(id: "codex-\(thread)", agent: Agent.codex.rawValue, folder: "", bundleIDs: [source.bundleID], pid: getpid(),
-                              registeredAt: Date(), lastActiveAt: Date())
-        guard InboxQueue.claim(report, for: chat) else { return }
+        let chat = Self.claimant(id: ChatID.make(.codex, thread), agent: .codex, folder: "", bundleID: source.bundleID)
+        guard claim(report, for: chat) else { return }
         let pictures = ReportContent.pictures(in: report.folder)
         let text = ReportContent.text(for: report)
         var outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
         if outcome == .notOpen {
             hub.log("The Codex chat for report \(source.reportID) isn't open; opening it")
-            Self.open("codex://threads/\(thread)")
+            do {
+                try Self.open(Self.appLink(.codex, id: thread, isClaudeAppInstalled: false, isCodexAppInstalled: true) ?? "codex://threads/\(thread)")
+            } catch {
+                hub.log("Couldn't open the Codex chat \(thread): \(error.localizedDescription)")
+            }
             Thread.sleep(forTimeInterval: 5)
             outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
         }
         if outcome == .started {
             hub.log("Sent report \(source.reportID) with \(pictures.count) pictures to the Codex chat \(thread)")
-            ReportDelivery.save(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread) ?? "Codex chat", kind: .sent), in: report.folder)
-            Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Codex chat, with its pictures.")
+            record(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread, in: CodexThreads.newestDatabase()) ?? "Codex chat", kind: .sent), for: report)
+            Self.notify(title: Self.reportTitle(source), message: "Sent to the Codex chat, with its pictures.")
             return
         }
-        try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
-        InboxQueue.setAddress(Address(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
+        do {
+            // Addressed before it's let go, so no other chat takes it in between.
+            try InboxQueue.setAddress(Address(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
+        } catch {
+            hub.log("Couldn't address report \(source.reportID) to the Codex chat \(thread): \(error.localizedDescription)")
+        }
+        release(report)
         hub.log("The Codex app didn't take report \(source.reportID) (\(outcome)); it goes in with the chat's next message")
-        ReportDelivery.save(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread) ?? "Codex chat", kind: .nextMessage), in: report.folder)
-        Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Codex chat with your next message there.")
+        record(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread, in: CodexThreads.newestDatabase()) ?? "Codex chat", kind: .nextMessage), for: report)
+        Self.notify(title: Self.reportTitle(source), message: "Goes to the Codex chat with your next message there.")
     }
 
     /// Opens a terminal window in `folder` running `command`, with `arguments` and then `last`,
     /// through a `.command` file: it opens in the user's terminal and needs no permission to
     /// control one. `last` goes through a file, so no quoting can break it.
-    @discardableResult
-    static func openTerminal(in folder: String, running command: String, arguments: [String] = [], with last: String) -> Bool {
+    static func openTerminal(in folder: String, running command: String, arguments: [String] = [], with last: String) throws {
         let scripts = URL(fileURLWithPath: folder).appending(path: ".redline", directoryHint: .isDirectory)
         let name = "chat-\(UUID().uuidString.prefix(8))"
         let lastFile = scripts.appending(path: "\(name).txt")
         let script = scripts.appending(path: "\(name).command")
-        do {
-            try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
-            let ignore = scripts.appending(path: ".gitignore")
-            if !FileManager.default.fileExists(atPath: ignore.path) { try "*\n".write(to: ignore, atomically: true, encoding: .utf8) }
-            try last.write(to: lastFile, atomically: true, encoding: .utf8)
-            try terminalScript(folder: folder, command: command, arguments: arguments, lastFile: lastFile.path).write(to: script, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-        } catch {
-            return false
-        }
-        open(script.path)
-        return true
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let ignore = scripts.appending(path: ".gitignore")
+        if !FileManager.default.fileExists(atPath: ignore.path) { try "*\n".write(to: ignore, atomically: true, encoding: .utf8) }
+        try last.write(to: lastFile, atomically: true, encoding: .utf8)
+        try terminalScript(folder: folder, command: command, arguments: arguments, lastFile: lastFile.path).write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        try open(script.path)
     }
 
     /// The script a terminal runs: into the folder, read the last argument from its file, remove
@@ -214,8 +256,8 @@ final class Handoff: Sendable {
         ].joined(separator: "\n") + "\n"
     }
 
-    /// Runs a command in a folder and waits for it.
-    static func run(_ executable: String, _ arguments: [String], in folder: String) {
+    /// Runs a command in a folder and waits for it. Throws when it can't start.
+    static func run(_ executable: String, arguments: [String], in folder: String) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -223,44 +265,58 @@ final class Handoff: Sendable {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        try? process.run()
+        try process.run()
         process.waitUntilExit()
     }
 
     /// Opens a chat where the user works with its agent: in the Claude or Codex app when it's
-    /// installed, else in a terminal window in `folder` that resumes it. True when it opened.
-    @discardableResult
-    static func openChat(_ agent: Agent, id: String, in folder: String) -> Bool {
+    /// installed, else in a terminal window in `folder` that resumes it. Throws when it can't.
+    static func openChat(_ agent: Agent, id: String, in folder: String) throws {
         if let link = appLink(agent, id: id) {
-            open(link)
-            return true
+            try open(link)
+            return
         }
-        guard let command = AgentCommand.locate(agent) else { return false }
-        return openTerminal(in: folder, running: command.path, arguments: agent == .codex ? ["resume"] : ["--resume"], with: id)
+        guard let command = AgentCommand.locate(agent) else { throw OpenError.agentNotFound(agent) }
+        let resume = switch agent {
+        case .codex: ["resume"]
+        case .claude: ["--resume"]
+        }
+        try openTerminal(in: folder, running: command.path, arguments: resume, with: id)
+    }
+
+    enum OpenError: Error, LocalizedError {
+        case agentNotFound(Agent)
+
+        var errorDescription: String? {
+            switch self {
+            case .agentNotFound(let agent): "Neither \(agent.name)'s app nor its command is installed"
+            }
+        }
     }
 
     /// The link that opens a chat in its agent's app, when the app is installed. The Claude
     /// app's link is the one `claude --desktop --resume` opens: the app takes the chat over from
     /// the claude command.
-    static func appLink(_ agent: Agent, id: String, hasClaudeApp: Bool = AgentCommand.hasClaudeApp,
-                        hasCodexApp: Bool = AgentCommand.hasCodexApp) -> String? {
+    static func appLink(_ agent: Agent, id: String, isClaudeAppInstalled: Bool = AgentCommand.isClaudeAppInstalled(),
+                        isCodexAppInstalled: Bool = AgentCommand.isCodexAppInstalled()) -> String? {
         switch agent {
-        case .claude where hasClaudeApp:
+        case .claude:
+            guard isClaudeAppInstalled else { return nil }
             var link = URLComponents(string: "claude://resume")
             link?.queryItems = [URLQueryItem(name: "session", value: id)]
             return link?.string
-        case .codex where hasCodexApp:
+        case .codex:
+            guard isCodexAppInstalled else { return nil }
             return "codex://threads/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)"
-        default:
-            return nil
         }
     }
 
-    private static func open(_ link: String) {
+    /// Opens a link or file with /usr/bin/open and waits for it. Throws when open can't start.
+    private static func open(_ link: String) throws {
         let open = Process()
         open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         open.arguments = [link]
-        try? open.run()
+        try open.run()
         open.waitUntilExit()
     }
 
@@ -271,28 +327,40 @@ final class Handoff: Sendable {
     private func openClaude(_ id: String, in folder: String, thenSend text: String, for report: InboxReport) {
         let source = report.source
         guard let claude = AgentCommand.locate(.claude) else { return }
-        if AgentCommand.hasClaudeApp {
-            // claude --desktop refuses to run without a terminal; script gives it one.
-            Self.run("/usr/bin/script", ["-q", "/dev/null", claude.path, "--desktop", "--resume", id], in: folder)
-        } else {
-            Self.openTerminal(in: folder, running: claude.path, arguments: ["--resume"], with: id)
+        let hasApp = AgentCommand.isClaudeAppInstalled()
+        do {
+            if hasApp {
+                // claude --desktop refuses to run without a terminal; script gives it one.
+                try Self.run("/usr/bin/script", arguments: ["-q", "/dev/null", claude.path, "--desktop", "--resume", id], in: folder)
+            } else {
+                try Self.openTerminal(in: folder, running: claude.path, arguments: ["--resume"], with: id)
+            }
+            hub.log("Opened the Claude Code chat \(id) in \(hasApp ? "the Claude app" : "a terminal"), in \(folder)")
+        } catch {
+            // The report still goes in below: through the socket if the chat opens anyway, else
+            // with the claude command.
+            hub.log("Couldn't open the Claude Code chat \(id) in \(hasApp ? "the Claude app" : "a terminal"): \(error.localizedDescription)")
         }
         let place = Self.folderName(folder)
-        hub.log("Opened the Claude Code chat \(id) in \(AgentCommand.hasClaudeApp ? "the Claude app" : "a terminal"), in \(folder)")
         queue.async { [self] in
             for _ in 0..<60 {
                 if let session = ClaudeSessions.open().first(where: { $0.id == id }), ClaudeSessions.send(text, to: session) {
                     hub.log("Sent report \(source.reportID) to the Claude Code chat \(id), now open")
-                    ReportDelivery.save(.init(agent: .claude, chat: id, title: session.title ?? "New chat in \(place)", kind: .newChat), in: report.folder)
-                    Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code is looking into it in \(AgentCommand.hasClaudeApp ? "the Claude app" : "Terminal"), in worktree \(place).")
+                    record(.init(agent: .claude, chat: id, title: session.title ?? "New chat in \(place)", kind: .newChat), for: report)
+                    Self.notify(title: Self.reportTitle(source), message: "Claude Code is looking into it in \(hasApp ? "the Claude app" : "Terminal"), in worktree \(place).")
                     return
                 }
                 Thread.sleep(forTimeInterval: 1)
             }
             // Not open after a minute: the report goes in anyway, and shows when the chat is opened.
             hub.log("The Claude Code chat \(id) didn't open in time; giving it report \(source.reportID) with the claude command")
-            Self.run(claude.path, ["-p", text, "--resume", id, "--permission-mode", "plan"], in: folder)
-            Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code looked into it. Open the chat in worktree \(place) to see it.")
+            do {
+                try Self.run(claude.path, arguments: ["-p", text, "--resume", id, "--permission-mode", "plan"], in: folder)
+            } catch {
+                hub.log("Couldn't run the claude command for report \(source.reportID): \(error.localizedDescription)")
+                return
+            }
+            Self.notify(title: Self.reportTitle(source), message: "Claude Code looked into it. Open the chat in worktree \(place) to see it.")
         }
     }
 
@@ -301,56 +369,67 @@ final class Handoff: Sendable {
     private func waitForClaudeSignIn(_ report: InboxReport) {
         let source = report.source
         hub.log("Report \(source.reportID) waits: the claude command that starts new chats isn't signed in or is older than \(ClaudeCLI.desktopVersion.map(String.init).joined(separator: "."))")
-        ReportDelivery.save(.init(agent: .claude, chat: nil, title: "Waiting for claude auth login", kind: .waiting), in: report.folder)
-        Self.notify(title: "Report from \(source.deviceName)", message: "To start new Claude Code chats, run claude auth login once in Terminal. The report waits until then.")
+        record(.init(agent: .claude, chat: nil, title: "Waiting for claude auth login", kind: .waiting), for: report)
+        Self.notify(title: Self.reportTitle(source), message: "To start new Claude Code chats, run claude auth login once in Terminal. The report waits until then.")
     }
 
-    /// Starts a chat with the report. A new chat gets a worktree of its own made from `folder`,
-    /// the worktree the app was built from; `resuming` continues a chat the hub started before,
-    /// in its own worktree. `pick` is the phone's "New chat" pick, remembered with the new chat.
-    private func startChat(_ agent: Agent, in folder: String, for report: InboxReport, pick: String? = nil, resuming: String? = nil) {
+    /// Starts a chat with the report, in a worktree of its own made from `folder`, the worktree
+    /// the app was built from. `pick` is the phone's "New chat" pick, remembered with the new chat.
+    private func startChat(_ agent: Agent, in folder: String, for report: InboxReport, pick: String? = nil) {
         let source = report.source
         guard let executable = AgentCommand.locate(agent) else {
             hub.log("Couldn't find \(agent.name)'s command to start a chat for report \(source.reportID)")
-            Self.notify(title: "Report from \(source.deviceName)", message: "Couldn't find \(agent.name) to start a chat. The report waits in the inbox.")
+            Self.notify(title: Self.reportTitle(source), message: "Couldn't find \(agent.name) to start a chat. The report waits in the inbox.")
             return
         }
-        let chat = ChatRecord(id: "started-\(agent.rawValue)-\(report.folder.lastPathComponent)", agent: agent.rawValue, folder: folder,
-                              bundleIDs: [source.bundleID], pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
-        guard InboxQueue.claim(report, for: chat) else { return }
+        let chat = Self.claimant(id: ChatID.started(agent, report: report.folder), agent: agent, folder: folder, bundleID: source.bundleID)
+        guard claim(report, for: chat) else { return }
 
-        // A new chat works in a worktree of its own; a continued one is already in its own.
+        // A new chat works in a worktree of its own. Without one, such as for a folder that isn't
+        // in a git repository, it works in the folder itself, where it can only look.
         let workFolder: String
         var madeWorktree = false
-        if resuming == nil, let made = NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: agent) {
-            workFolder = made
+        do {
+            workFolder = try NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: agent)
             madeWorktree = true
-            hub.log("Made worktree \(made) for report \(source.reportID)")
-        } else {
+            hub.log("Made worktree \(workFolder) for report \(source.reportID)")
+        } catch {
             workFolder = folder
+            hub.log("Couldn't make a worktree for report \(source.reportID): \(error.localizedDescription); the chat starts in \(folder)")
         }
         let pictures = ReportContent.pictures(in: report.folder)
         var reportPrompt = ReportContent.text(for: report)
         // A Claude Code chat reads the pictures from a copy in its worktree, without asking.
-        if agent == .claude, resuming == nil, madeWorktree, let copy = NewWorktree.copyReport(report.folder, into: workFolder) {
-            reportPrompt = reportPrompt.replacingOccurrences(of: report.folder.path, with: copy)
+        if agent == .claude, madeWorktree {
+            do {
+                let copy = try NewWorktree.copyReport(report.folder, into: workFolder)
+                reportPrompt = reportPrompt.replacingOccurrences(of: report.folder.path, with: copy)
+            } catch {
+                hub.log("Couldn't copy report \(source.reportID) into \(workFolder): \(error.localizedDescription); the chat reads it from the inbox")
+            }
         }
         // A Claude Code chat is only opened by the claude command, with a line that takes
         // seconds; it moves into the desktop app at once and gets the report there, where the
         // user watches it work. The app doesn't move a chat that's still running.
         let reportText = reportPrompt
-        let prompt = agent == .claude ? "A UI report from the user's device comes in the next message. Reply with just: Ready." : reportPrompt
+        let prompt = switch agent {
+        case .claude: "A UI report from the user's device comes in the next message. Reply with just: Ready."
+        case .codex: reportPrompt
+        }
         let output = report.folder.appending(path: "new-chat-output.jsonl")
         FileManager.default.createFile(atPath: output.path, contents: nil)
         let process = Process()
         process.executableURL = executable
-        process.arguments = AgentCommand.arguments(agent, folder: workFolder, prompt: prompt, pictures: pictures, resuming: resuming)
+        process.arguments = AgentCommand.arguments(agent, folder: workFolder, prompt: prompt, pictures: pictures)
         process.currentDirectoryURL = URL(fileURLWithPath: workFolder)
         process.environment = ProcessInfo.processInfo.environment.merging([AgentHooks.startedByHub: "1"]) { $1 }
         process.standardInput = FileHandle.nullDevice
-        if let handle = try? FileHandle(forWritingTo: output) {
+        do {
+            let handle = try FileHandle(forWritingTo: output)
             process.standardOutput = handle
             process.standardError = handle
+        } catch {
+            hub.log("Couldn't keep what the \(agent.name) command prints for report \(source.reportID): \(error.localizedDescription)")
         }
         let paths = hub.paths
         let place = Self.folderName(workFolder)
@@ -360,7 +439,7 @@ final class Handoff: Sendable {
             let started = AgentCommand.startedChat(agent, in: text)
             guard finished.terminationStatus == 0, let started, !started.failed else {
                 // Free the report for a chat that opens later, and take back the unused worktree.
-                try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+                release(report)
                 if madeWorktreeForThis { NewWorktree.remove(workFolder) }
                 let reason = AgentCommand.failure(in: text)
                 hub.log("The \(agent.name) chat for report \(source.reportID) failed (\(finished.terminationStatus)): \(reason)")
@@ -368,28 +447,40 @@ final class Handoff: Sendable {
                 return
             }
             // Later reports with the same pick go to this chat.
-            if let pick { StartedChats.remember(StartedChat(chat: started.chat, folder: workFolder, at: Date()), for: pick, paths: paths) }
-            if let answer = started.answer {
-                try? answer.write(to: report.folder.appending(path: "answer.md"), atomically: true, encoding: .utf8)
+            if let pick {
+                do {
+                    try StartedChats.remember(StartedChat(chat: started.chat, folder: workFolder, at: Date()), for: pick, paths: paths)
+                } catch {
+                    hub.log("Couldn't remember the chat for the phone's pick \(pick); its next report starts another: \(error.localizedDescription)")
+                }
             }
-            if agent == .codex {
-                Handoff.openChat(.codex, id: started.chat, in: workFolder)
+            if let answer = started.answer {
+                do {
+                    try answer.write(to: report.folder.appending(path: "answer.md"), atomically: true, encoding: .utf8)
+                } catch {
+                    hub.log("Couldn't save the answer to report \(source.reportID): \(error.localizedDescription)")
+                }
+            }
+            switch agent {
+            case .codex:
+                do {
+                    try Handoff.openChat(.codex, id: started.chat, in: workFolder)
+                } catch {
+                    hub.log("Couldn't open the Codex chat \(started.chat): \(error.localizedDescription)")
+                }
                 hub.log("The Codex chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
-                ReportDelivery.save(.init(agent: .codex, chat: started.chat, title: "New chat in \(place)", kind: .newChat), in: report.folder)
+                record(.init(agent: .codex, chat: started.chat, title: "New chat in \(place)", kind: .newChat), for: report)
                 Handoff.notify(title: "Codex looked into a report", message: "Opened in Codex, in worktree \(place).")
-            } else if agent == .claude {
-                self.openClaude(started.chat, in: workFolder, thenSend: reportText, for: report)
-            } else {
-                hub.log("The \(agent.name) chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
-                Handoff.notify(title: "\(agent.name) looked into a report", message: "Its answer is in the report's folder, answer.md. Worktree \(place).")
+            case .claude:
+                openClaude(started.chat, in: workFolder, thenSend: reportText, for: report)
             }
         }
         do {
             try process.run()
-            hub.log("\(resuming == nil ? "Started" : "Continued") a \(agent.name) chat in \(workFolder) for report \(source.reportID)")
+            hub.log("Started a \(agent.name) chat in \(workFolder) for report \(source.reportID)")
             Self.notify(title: "\(agent.name) is looking into a report", message: "From \(source.deviceName), in worktree \(place).")
         } catch {
-            try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+            release(report)
             hub.log("Couldn't start a \(agent.name) chat for report \(source.reportID): \(error.localizedDescription)")
         }
     }
@@ -414,6 +505,7 @@ final class Handoff: Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", "display notification \(quoted(message)) with title \(quoted(title))"]
+        // A notification that can't be shown is left out; the log says what happened.
         try? process.run()
     }
 }
@@ -421,11 +513,13 @@ final class Handoff: Sendable {
 /// Starting a chat with each agent from the command line. Each runs without permission to
 /// change files, so the chat can only look and propose.
 enum AgentCommand {
-    /// Claude's desktop app, where new Claude Code chats open.
-    static var hasClaudeApp: Bool { FileManager.default.fileExists(atPath: "/Applications/Claude.app") }
+    /// Claude's desktop app, where new Claude Code chats open, is installed. Checks the disk.
+    static func isClaudeAppInstalled() -> Bool {
+        FileManager.default.fileExists(atPath: "/Applications/Claude.app")
+    }
 
-    /// Codex's desktop app, inside the ChatGPT app or on its own.
-    static var hasCodexApp: Bool {
+    /// Codex's desktop app, inside the ChatGPT app or on its own, is installed. Checks the disk.
+    static func isCodexAppInstalled() -> Bool {
         ["/Applications/ChatGPT.app/Contents/Resources/codex-cli", "/Applications/Codex.app"].contains { FileManager.default.fileExists(atPath: $0) }
     }
 
@@ -443,10 +537,10 @@ enum AgentCommand {
         return candidates.first(where: FileManager.default.isExecutableFile(atPath:)).map(URL.init(fileURLWithPath:))
     }
 
-    static func arguments(_ agent: Agent, folder: String, prompt: String, pictures: [URL] = [], resuming: String? = nil) -> [String] {
+    static func arguments(_ agent: Agent, folder: String, prompt: String, pictures: [URL] = []) -> [String] {
         switch agent {
         case .claude:
-            ["-p", prompt, "--permission-mode", "plan", "--output-format", "json"] + (resuming.map { ["--resume", $0] } ?? [])
+            ["-p", prompt, "--permission-mode", "plan", "--output-format", "json"]
         // Pictures go in with the prompt; "--" ends them, so the prompt isn't read as one.
         case .codex:
             ["exec", "-C", folder, "--sandbox", "read-only", "--skip-git-repo-check", "--json"]
@@ -460,11 +554,13 @@ enum AgentCommand {
     static func startedChat(_ agent: Agent, in output: String) -> (chat: String, answer: String?, failed: Bool)? {
         for line in output.split(separator: "\n") {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
-            if agent == .codex, object["type"] as? String == "thread.started", let thread = object["thread_id"] as? String {
-                return (thread, nil, false)
-            }
-            if agent != .codex, let session = object["session_id"] as? String ?? object["chatId"] as? String {
-                return (session, object["result"] as? String, object["is_error"] as? Bool ?? false)
+            switch agent {
+            case .codex:
+                if object["type"] as? String == "thread.started", let thread = object["thread_id"] as? String { return (thread, nil, false) }
+            case .claude:
+                if let session = object["session_id"] as? String ?? object["chatId"] as? String {
+                    return (session, object["result"] as? String, object["is_error"] as? Bool ?? false)
+                }
             }
         }
         return nil

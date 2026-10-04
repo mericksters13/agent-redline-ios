@@ -43,7 +43,7 @@ enum AgentHooks {
     static func run(_ agent: Agent, _ event: HookEvent, paths: HubPaths) -> Int32 {
         let input = HookInput(json: FileHandle.standardInput.readDataToEndOfFile())
         guard let input, ProcessInfo.processInfo.environment[startedByHub] == nil else { return answer(event, nil) }
-        let id = "\(agent.rawValue)-\(input.chat)"
+        let id = ChatID.make(agent, input.chat)
         let folder = URL(fileURLWithPath: input.folder)
 
         let session = ChatSession(paths: paths, folder: folder, extraApps: [], agent: agent.rawValue, id: id, pid: AgentProcess.find())

@@ -44,6 +44,22 @@ struct AgentHookTests {
         #expect(json(AgentSettings.removing(.codex, from: other)) == json(other))
     }
 
+    @Test func settingsThatDontChangeAreNotWritten() throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appending(path: "settings.json")
+        let original = Data("{\n  \"model\" : \"opus\",\n  \"hooks\" : {}\n}\n".utf8)
+        try original.write(to: file)
+        try AgentSettings.update(file) { AgentSettings.adding(.claude, to: $0, executable: executable) }
+        #expect(try Data(contentsOf: file) == original)
+        #expect(!FileManager.default.fileExists(atPath: file.path + ".before-redline"))
+        // A file that exists but can't be read stops the update; nothing is written over it.
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path) }
+        #expect(throws: (any Error).self) { try AgentSettings.update(file) { AgentSettings.adding(.codex, to: $0, executable: executable) } }
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        #expect(try Data(contentsOf: file) == original)
+    }
+
     @Test func eachAgentGetsItsOwnShape() {
         // Claude Code chats are found from their own records: no hooks, and the file is left as it was.
         #expect(json(AgentSettings.adding(.claude, to: ["model": "opus"], executable: executable)) == json(["model": "opus"]))
@@ -95,7 +111,7 @@ struct AgentHookTests {
         try Data([0xFF]).write(to: incoming.appending(path: "screen-1.jpg"))
         let source = ReportSource(kind: .phone, device: "D", deviceName: "Mark iPhone", bundleID: bundleID, reportID: id, receivedAt: Date())
         try Chats.coder.encode(source).write(to: incoming.appending(path: "source.json"))
-        if let address { InboxQueue.setAddress(address, of: incoming) }
+        if let address { try InboxQueue.setAddress(address, of: incoming) }
         let final = paths.inbox.appending(path: "\(bundleID)/\(id)", directoryHint: .isDirectory)
         try FileManager.default.moveItem(at: incoming, to: final)
         return final
@@ -167,7 +183,7 @@ struct AgentHookTests {
         #expect(NewWorktree.mainBranch(of: repository.path)?.name == "main")
 
         // The new chat's worktree starts from main.
-        let made = try #require(NewWorktree.create(from: repository.path, name: "report-1", agent: .claude))
+        let made = try NewWorktree.create(from: repository.path, name: "report-1", agent: .claude)
         #expect(made.hasSuffix("/.claude/worktrees/report-1"))
         let branch = Process()
         branch.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -179,14 +195,14 @@ struct AgentHookTests {
         #expect(String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == "report/1")
         #expect(try String(contentsOfFile: made + "/App.swift", encoding: .utf8) == "one\n")
         // The same name again gets a number rather than failing.
-        let again = try #require(NewWorktree.create(from: repository.path, name: "report-1", agent: .claude))
+        let again = try NewWorktree.create(from: repository.path, name: "report-1", agent: .claude)
         #expect(again.hasSuffix("/report-1-2"))
 
         // A report copied into the worktree is ignored by git there.
         let report = root.appending(path: "inbox-report", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: report, withIntermediateDirectories: true)
         try "# Report".write(to: report.appending(path: "report.md"), atomically: true, encoding: .utf8)
-        let copy = try #require(NewWorktree.copyReport(report, into: made))
+        let copy = try NewWorktree.copyReport(report, into: made)
         #expect(FileManager.default.fileExists(atPath: copy + "/report.md"))
         let status = Process()
         status.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -200,10 +216,10 @@ struct AgentHookTests {
         // A worktree for a chat that didn't start is taken back, with its branch.
         NewWorktree.remove(again)
         #expect(!FileManager.default.fileExists(atPath: again))
-        #expect(NewWorktree.create(from: root.appending(path: "not-a-repo").path, name: "x", agent: .claude) == nil)
+        #expect(throws: NewWorktree.Failure.self) { try NewWorktree.create(from: root.appending(path: "not-a-repo").path, name: "x", agent: .claude) }
 
         // The chat it started is found by the phone's pick while its worktree exists.
-        StartedChats.remember(StartedChat(chat: "s-1", folder: made, at: Date()), for: "N1", paths: paths)
+        try StartedChats.remember(StartedChat(chat: "s-1", folder: made, at: Date()), for: "N1", paths: paths)
         #expect(StartedChats.find("N1", paths: paths)?.chat == "s-1")
         #expect(StartedChats.find("N2", paths: paths) == nil)
         try FileManager.default.removeItem(atPath: made)
@@ -221,7 +237,7 @@ struct AgentHookTests {
         let notSignedIn = #"{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login","session_id":"s-1"}"#
         #expect(AgentCommand.startedChat(.claude, in: notSignedIn)?.failed == true)
         #expect(AgentCommand.failure(in: notSignedIn) == "Not logged in · Please run /login")
-        #expect(AgentCommand.arguments(.claude, folder: "/w", prompt: "p", resuming: "s-9").suffix(2) == ["--resume", "s-9"])
+        #expect(AgentCommand.arguments(.claude, folder: "/w", prompt: "p").contains("plan"))
         #expect(AgentCommand.arguments(.codex, folder: "/w", prompt: "p", pictures: [URL(fileURLWithPath: "/a.jpg")]).suffix(4) == ["-i", "/a.jpg", "--", "p"])
     }
 
@@ -308,6 +324,18 @@ struct AgentHookTests {
         #expect(threads.map(\.id) == ["t-user", "t-older"])
         // A chat without a name goes by its first message.
         #expect(threads.last?.title == "Why is the outline wide")
+    }
+
+    @Test func aClaimThatCantBeReadStillCountsAsTaken() throws {
+        let folder = try inboxReport("20261004-120200")
+        try Data("{\"chat\":\"cod".utf8).write(to: folder.appending(path: InboxQueue.claimFile))
+        #expect(InboxQueue.waiting(for: ["com.example.app"], paths: paths).isEmpty)
+        let chat = ChatRecord(id: "codex-A", agent: "codex", folder: "/w", bundleIDs: ["com.example.app"], pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
+        let report = try #require(InboxQueue.reports(for: ["com.example.app"], paths: paths).first)
+        guard case .takenByAnotherChat = InboxQueue.claim(report, for: chat) else {
+            Issue.record("A second claim should find the first")
+            return
+        }
     }
 
     @Test func onlyTheAddressedChatTakesAReport() throws {

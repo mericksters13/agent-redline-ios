@@ -154,8 +154,8 @@ final class HubWindowModel {
     private func apply(_ snapshot: Snapshot) {
         let last = Dictionary(snapshot.reports.map { ($0.deviceID, $0.row.receivedAt) }, uniquingKeysWith: max)
         let phones = snapshot.status.phones.map {
-            DeviceRow(id: $0.udid, name: $0.name, kind: $0.model ?? "iPhone", state: Self.phoneState($0.state),
-                      lastReport: last[$0.udid], active: $0.state.hasPrefix("Ready"))
+            DeviceRow(id: $0.udid, name: $0.name, kind: $0.model ?? "iPhone", state: Self.phoneState($0),
+                      lastReport: last[$0.udid], active: $0.phoneState?.isReady ?? $0.state.hasPrefix("Ready"))
         }
         let simulators = snapshot.simulators.map { DeviceRow(id: $0.udid, name: $0.name, kind: "Simulator", state: "Running", lastReport: last[$0.udid]) }
         // Ready phones and running simulators first, then paired phones that can't take reports now.
@@ -181,7 +181,10 @@ final class HubWindowModel {
     }
 
     /// A phone's state as the panel shows it, short.
-    nonisolated static func phoneState(_ state: String) -> String {
+    nonisolated static func phoneState(_ phone: HubStatus.Phone) -> String {
+        if let state = phone.phoneState { return state.shortDescription }
+        // Saved by an earlier hub, as text only.
+        let state = phone.state
         if state.hasPrefix("Ready") { return "Ready" }
         if state.hasPrefix("Not reachable") { return "Not reachable" }
         if state.hasPrefix("None of the watched apps") { return "No watched app installed" }
@@ -227,10 +230,10 @@ final class HubWindowModel {
     /// chat's title, "New chat in …" for one the hub started, else the chat's folder.
     nonisolated static func chatTitle(_ claim: Claim) -> String {
         let folder = claim.folder.isEmpty ? nil : URL(fileURLWithPath: claim.folder).lastPathComponent
-        if claim.chat.hasPrefix("codex-") {
-            return CodexThreads.title(of: String(claim.chat.dropFirst("codex-".count))) ?? folder ?? "Codex chat"
+        if let thread = ChatID.agentID(of: claim.chat, agent: .codex) {
+            return CodexThreads.title(of: thread, in: CodexThreads.newestDatabase()) ?? folder ?? "Codex chat"
         }
-        if claim.chat.hasPrefix("started-") { return "New chat" + (folder.map { " in \($0)" } ?? "") }
+        if ChatID.isStarted(claim.chat) { return "New chat" + (folder.map { " in \($0)" } ?? "") }
         return folder ?? "Chat"
     }
 

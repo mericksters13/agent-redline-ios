@@ -20,6 +20,28 @@ struct ChatRecord: Codable, Equatable, Sendable {
     var isWaiting: Bool { waiter.map(Chats.isRunning) ?? false }
 }
 
+/// The IDs chats go by in the hub's files: `claude-<session>` and `codex-<thread>` for an
+/// agent's own chat, `started-<agent>-<report folder>` for a chat the hub starts for a report.
+enum ChatID {
+    static func make(_ agent: Agent, _ id: String) -> String {
+        "\(agent.rawValue)-\(id)"
+    }
+
+    static func started(_ agent: Agent, report: URL) -> String {
+        "started-\(agent.rawValue)-\(report.lastPathComponent)"
+    }
+
+    static func isStarted(_ chat: String) -> Bool {
+        chat.hasPrefix("started-")
+    }
+
+    /// The agent's own ID for one of its chats; nil for any other ID, such as a started chat's.
+    static func agentID(of chat: String, agent: Agent) -> String? {
+        let prefix = "\(agent.rawValue)-"
+        return chat.hasPrefix(prefix) ? String(chat.dropFirst(prefix.count)) : nil
+    }
+}
+
 /// Which chat took a report.
 struct Claim: Codable, Equatable, Sendable {
     var chat: String
@@ -101,8 +123,8 @@ enum InboxQueue {
         (try? Data(contentsOf: report.appending(path: addressFile))).flatMap { try? Chats.decoder.decode(Address.self, from: $0) }
     }
 
-    static func setAddress(_ address: Address, of report: URL) {
-        try? Chats.coder.encode(address).write(to: report.appending(path: addressFile), options: .atomic)
+    static func setAddress(_ address: Address, of report: URL) throws {
+        try Chats.coder.encode(address).write(to: report.appending(path: addressFile), options: .atomic)
     }
 
     /// Reports for this chat that it hasn't taken yet, oldest first.
@@ -121,8 +143,7 @@ enum InboxQueue {
                 guard let data = try? Data(contentsOf: folder.appending(path: "source.json")),
                       let source = try? Chats.decoder.decode(ReportSource.self, from: data)
                 else { continue }
-                let claim = (try? Data(contentsOf: folder.appending(path: claimFile))).flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
-                reports.append(InboxReport(folder: folder, source: source, claim: claim))
+                reports.append(InboxReport(folder: folder, source: source, claim: claim(of: folder)))
             }
         }
         return reports.sorted { ($0.source.receivedAt, $0.folder.lastPathComponent) < ($1.source.receivedAt, $1.folder.lastPathComponent) }
@@ -133,17 +154,44 @@ enum InboxQueue {
         reports(for: bundleIDs, paths: paths).filter { $0.claim == nil }
     }
 
-    /// Takes a report for a chat. False when another chat took it first.
-    static func claim(_ report: InboxReport, for chat: ChatRecord) -> Bool {
+    /// The chat that took a report, nil when none has. A claim that exists but can't be read
+    /// still counts as taken: no other chat can take the report after it.
+    static func claim(of report: URL) -> Claim? {
+        let file = report.appending(path: claimFile)
+        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+        guard let data = try? Data(contentsOf: file), let claim = try? Chats.decoder.decode(Claim.self, from: data) else {
+            return Claim(chat: "unknown", agent: "unknown", folder: "", claimedAt: .distantPast)
+        }
+        return claim
+    }
+
+    enum ClaimResult {
+        case claimed
+        case takenByAnotherChat
+        /// The claim couldn't be written; the report stays free for another try.
+        case failed(any Error)
+    }
+
+    /// Takes a report for a chat, so no other chat gets it.
+    static func claim(_ report: InboxReport, for chat: ChatRecord) -> ClaimResult {
         let claim = Claim(chat: chat.id, agent: chat.agent, folder: chat.folder, claimedAt: Date())
-        guard let data = try? Chats.coder.encode(claim) else { return false }
-        // Created only if it doesn't exist yet, so two chats can't both take it.
-        let descriptor = open(report.folder.appending(path: claimFile).path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
-        guard descriptor >= 0 else { return false }
-        defer { close(descriptor) }
-        return data.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) } == data.count
+        let file = report.folder.appending(path: claimFile)
+        // Written whole under a name of its own, then linked into place: linking fails if a claim
+        // is already there, so two chats can't both take it, and no chat ever sees half a claim.
+        let draft = report.folder.appending(path: ".\(claimFile).\(UUID().uuidString)")
+        defer { unlink(draft.path) }
+        do {
+            try Chats.coder.encode(claim).write(to: draft)
+        } catch {
+            return .failed(error)
+        }
+        guard link(draft.path, file.path) == 0 else {
+            return errno == EEXIST ? .takenByAnotherChat : .failed(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
+        }
+        return .claimed
     }
 }
+
 /// Where the hub sent a report, saved next to it so the hub's window shows exactly what
 /// happened: the agent, its chat and the chat's title.
 struct ReportDelivery: Codable, Equatable, Sendable {
@@ -173,8 +221,8 @@ struct ReportDelivery: Codable, Equatable, Sendable {
 
     static let file = "delivery.json"
 
-    static func save(_ delivery: ReportDelivery, in report: URL) {
-        try? Chats.coder.encode(delivery).write(to: report.appending(path: file), options: .atomic)
+    static func save(_ delivery: ReportDelivery, in report: URL) throws {
+        try Chats.coder.encode(delivery).write(to: report.appending(path: file), options: .atomic)
     }
 
     static func load(from report: URL) -> ReportDelivery? {

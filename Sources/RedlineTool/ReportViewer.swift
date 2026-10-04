@@ -71,11 +71,11 @@ extension HubWindowModel {
             return ChatLink(agent: agent, id: id, folder: folder)
         }
         guard let claim, let agent = Agent(rawValue: claim.agent) else { return nil }
-        if claim.chat.hasPrefix("\(agent.rawValue)-") {
-            return ChatLink(agent: agent, id: String(claim.chat.dropFirst(agent.rawValue.count + 1)), folder: folder)
+        if let id = ChatID.agentID(of: claim.chat, agent: agent) {
+            return ChatLink(agent: agent, id: id, folder: folder)
         }
         // A chat the hub started: its ID is in what the agent's command printed.
-        if claim.chat.hasPrefix("started-"),
+        if ChatID.isStarted(claim.chat),
            let output = try? String(contentsOf: report.appending(path: "new-chat-output.jsonl"), encoding: .utf8),
            let started = AgentCommand.startedChat(agent, in: output), !started.failed {
             return ChatLink(agent: agent, id: started.chat, folder: folder)
@@ -251,8 +251,15 @@ struct ReportViewer: View {
                 if let chat {
                     Button("Open in \(chat.agent.name)") {
                         let folder = chat.folder ?? NSHomeDirectory()
+                        let hub = HubAppContext.hub
                         // Opening runs /usr/bin/open and waits for it, so not on the main thread.
-                        DispatchQueue.global(qos: .userInitiated).async { Handoff.openChat(chat.agent, id: chat.id, in: folder) }
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            do {
+                                try Handoff.openChat(chat.agent, id: chat.id, in: folder)
+                            } catch {
+                                hub?.log("Couldn't open the \(chat.agent.name) chat \(chat.id): \(error.localizedDescription)")
+                            }
+                        }
                     }
                     .buttonStyle(ViewerButtonStyle(prominent: true))
                     .help("Opens the chat this report went to")

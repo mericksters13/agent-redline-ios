@@ -44,7 +44,7 @@ enum ChatDirectory {
                 .map { chat(.claude, id: $0.id, title: $0.title ?? "Untitled", folder: $0.folder, lastActive: $0.updatedAt) }
         }
         if agents.contains(.codex) {
-            chats += CodexThreads.recent().filter { buildsApp($0.folder) }.prefix(15)
+            chats += CodexThreads.recent(in: CodexThreads.newestDatabase()).filter { buildsApp($0.folder) }.prefix(15)
                 .map { chat(.codex, id: $0.id, title: $0.title, folder: $0.folder, lastActive: $0.updated) }
         }
         chats.sort { ($0.sameWorktree ? 1 : 0, $0.lastActive) > ($1.sameWorktree ? 1 : 0, $1.lastActive) }
@@ -98,8 +98,9 @@ enum CodexThreads {
         var updated: Date
     }
 
-    /// The newest of Codex's own databases of chats.
-    static var database: URL? {
+    /// The newest of Codex's own databases of chats. Lists ~/.codex, so callers look it up once
+    /// and pass it on.
+    static func newestDatabase() -> URL? {
         let folder = URL(fileURLWithPath: NSHomeDirectory() + "/.codex")
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
             .filter { $0.hasPrefix("state_") && $0.hasSuffix(".sqlite") }
@@ -108,7 +109,7 @@ enum CodexThreads {
     }
 
     /// A Codex chat's title.
-    static func title(of thread: String, in database: URL? = database) -> String? {
+    static func title(of thread: String, in database: URL?) -> String? {
         guard let database else { return nil }
         var connection: OpaquePointer?
         guard sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
@@ -127,7 +128,7 @@ enum CodexThreads {
 
     /// Chats the user had, used in the last `days`, newest first: not archived, and not the
     /// reviews, subagents and automations Codex runs on its own.
-    static func recent(days: Double = 14, in database: URL? = database) -> [Thread] {
+    static func recent(days: Double = 14, in database: URL?) -> [Thread] {
         guard let database else { return [] }
         var connection: OpaquePointer?
         guard sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {

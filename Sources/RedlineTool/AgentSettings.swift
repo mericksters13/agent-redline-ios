@@ -52,8 +52,10 @@ enum AgentSettings {
     /// The settings with this tool's hooks in place, replacing any older copy of them.
     static func adding(_ agent: Agent, to settings: [String: Any], executable: String) -> [String: Any] {
         var settings = removing(agent, from: settings)
+        let hooks = self.hooks(agent, executable: executable)
+        guard !hooks.isEmpty else { return settings }
         var events = settings["hooks"] as? [String: Any] ?? [:]
-        for (event, matcher, hooks) in self.hooks(agent, executable: executable) {
+        for (event, matcher, hooks) in hooks {
             var entries = events[event] as? [Any] ?? []
             // Claude Code and Codex group hooks under a matcher.
             var group: [String: Any] = ["hooks": hooks]
@@ -69,6 +71,7 @@ enum AgentSettings {
     static func removing(_ agent: Agent, from settings: [String: Any]) -> [String: Any] {
         var settings = settings
         guard var events = settings["hooks"] as? [String: Any] else { return settings }
+        var removedAny = false
         for (event, value) in events {
             guard let entries = value as? [Any] else { continue }
             let kept: [Any] = entries.compactMap { entry in
@@ -79,8 +82,12 @@ enum AgentSettings {
                 group["hooks"] = others
                 return group
             }
+            guard kept.count != entries.count || !NSArray(array: kept).isEqual(to: entries) else { continue }
+            removedAny = true
             events[event] = kept.isEmpty ? nil : kept
         }
+        // Without any of this tool's hooks, the user's settings stay exactly as they were.
+        guard removedAny else { return settings }
         settings["hooks"] = events.isEmpty ? nil : events
         return settings
     }
@@ -88,20 +95,31 @@ enum AgentSettings {
     /// Reads, changes and writes an agent's settings, keeping a copy of the file as it was the
     /// first time this tool changed it.
     static func update(_ agent: Agent, _ change: ([String: Any]) -> [String: Any]) throws {
-        let file = file(agent)
+        try update(file(agent), change)
+    }
+
+    /// Changes a settings file. A change that leaves the settings as they were writes nothing,
+    /// not even the copy, so the file keeps its own formatting. A file that exists but can't be
+    /// read throws, so it's never written over as if it were empty.
+    static func update(_ file: URL, _ change: ([String: Any]) -> [String: Any]) throws {
         let files = FileManager.default
-        try files.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         var current: [String: Any] = [:]
-        if let data = try? Data(contentsOf: file) {
+        let data = try StoredFile.read(file)
+        if let data {
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw CocoaError(.fileReadCorruptFile, userInfo: [NSFilePathErrorKey: file.path])
             }
             current = object
+        }
+        let changed = change(current)
+        if data != nil, NSDictionary(dictionary: changed).isEqual(to: current) { return }
+        try files.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data {
             let backup = file.appendingPathExtension("before-redline")
             if !files.fileExists(atPath: backup.path) { try data.write(to: backup) }
         }
-        let data = try JSONSerialization.data(withJSONObject: change(current), options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        try data.write(to: file, options: .atomic)
+        let output = try JSONSerialization.data(withJSONObject: changed, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        try output.write(to: file, options: .atomic)
     }
 }
 #endif

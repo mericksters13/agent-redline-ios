@@ -6,12 +6,26 @@ import Foundation
 /// works without touching any other worktree. It goes where the agent keeps its own worktrees,
 /// so the chat looks like one it made.
 enum NewWorktree {
-    /// Returns the new worktree's path, or nil when the folder isn't in a git repository or
-    /// git refuses.
-    static func create(from source: String, name: String, agent: Agent) -> String? {
+    enum Failure: Error, LocalizedError {
+        /// The folder isn't in a git repository.
+        case notARepository(String)
+        /// Git refused or didn't finish in time.
+        case gitFailed(arguments: [String])
+
+        var errorDescription: String? {
+            switch self {
+            case .notARepository(let folder): "\(folder) isn't in a git repository"
+            case .gitFailed(let arguments): "git \(arguments.joined(separator: " ")) failed"
+            }
+        }
+    }
+
+    /// Makes the worktree and returns its path. Throws when the folder isn't in a git
+    /// repository or git refuses.
+    static func create(from source: String, name: String, agent: Agent) throws -> String {
         guard let top = git(source, ["rev-parse", "--show-toplevel"]),
               let common = git(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        else { return nil }
+        else { throw Failure.notARepository(source) }
         let commonURL = URL(fileURLWithPath: common)
         let repository = commonURL.lastPathComponent == ".git" ? commonURL.deletingLastPathComponent().path : top
         // The folder is named "report-<ID>", its branch "report/<ID>".
@@ -25,27 +39,25 @@ enum NewWorktree {
             path = folder(for: agent, repository: repository, name: "\(name)-\(attempt)")
             branch = "report/\(id)-\(attempt)"
         }
-        try? FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
         let base = mainBranch(of: top, fetching: true)?.ref ?? "HEAD"
-        guard git(top, ["worktree", "add", "-b", branch, path, base]) != nil else { return nil }
+        let add = ["worktree", "add", "-b", branch, path, base]
+        guard git(top, add) != nil else { throw Failure.gitFailed(arguments: add) }
         return path
     }
 
     /// Copies a report's files into `.redline/<report>` in a worktree, a folder git
     /// ignores there, so a chat in the worktree reads them without asking. Returns the copy.
-    static func copyReport(_ report: URL, into worktree: String) -> String? {
+    static func copyReport(_ report: URL, into worktree: String) throws -> String {
         let folder = URL(fileURLWithPath: worktree).appending(path: ".redline", directoryHint: .isDirectory)
         let copy = folder.appending(path: report.lastPathComponent, directoryHint: .isDirectory)
         let files = FileManager.default
-        do {
-            try files.createDirectory(at: folder, withIntermediateDirectories: true)
-            try? files.removeItem(at: copy)
-            try files.copyItem(at: report, to: copy)
-            // Ignored by git without touching the repository's own .gitignore.
-            try "*\n".write(to: folder.appending(path: ".gitignore"), atomically: true, encoding: .utf8)
-        } catch {
-            return nil
-        }
+        try files.createDirectory(at: folder, withIntermediateDirectories: true)
+        // An earlier copy of the same report is replaced.
+        try? files.removeItem(at: copy)
+        try files.copyItem(at: report, to: copy)
+        // Ignored by git without touching the repository's own .gitignore.
+        try "*\n".write(to: folder.appending(path: ".gitignore"), atomically: true, encoding: .utf8)
         return copy.path
     }
 
@@ -124,8 +136,10 @@ struct StartedChat: Codable, Equatable, Sendable {
 enum StartedChats {
     static func file(_ paths: HubPaths) -> URL { paths.hub.appending(path: "started-chats.json") }
 
+    /// Every remembered chat. A file that can't be read is moved aside, so remembering the next
+    /// one doesn't write over it.
     static func all(_ paths: HubPaths) -> [String: StartedChat] {
-        (try? Data(contentsOf: file(paths))).flatMap { try? Chats.decoder.decode([String: StartedChat].self, from: $0) } ?? [:]
+        StoredFile.load([String: StartedChat].self, from: file(paths), decoder: Chats.decoder) { printError($0) } ?? [:]
     }
 
     /// The chat started for this pick, while its worktree still exists.
@@ -133,11 +147,11 @@ enum StartedChats {
         all(paths)[pick].flatMap { FileManager.default.fileExists(atPath: $0.folder) ? $0 : nil }
     }
 
-    static func remember(_ chat: StartedChat, for pick: String, paths: HubPaths) {
+    static func remember(_ chat: StartedChat, for pick: String, paths: HubPaths) throws {
         var chats = all(paths)
         chats[pick] = chat
-        try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        try? Chats.coder.encode(chats).write(to: file(paths), options: .atomic)
+        try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
+        try Chats.coder.encode(chats).write(to: file(paths), options: .atomic)
     }
 }
 #endif

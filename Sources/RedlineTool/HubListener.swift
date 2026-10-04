@@ -24,15 +24,18 @@ final class HubListener: @unchecked Sendable {
     func start() {
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
-        guard let port = NWEndpoint.Port(rawValue: Self.port), let listener = try? NWListener(using: parameters, on: port) else {
-            hub.log("Couldn't listen on port \(Self.port)")
+        let listener: NWListener
+        do {
+            listener = try NWListener(using: parameters, on: NWEndpoint.Port(integerLiteral: Self.port))
+        } catch {
+            hub.log("Couldn't listen on port \(Self.port): \(error.localizedDescription)")
             return
         }
         listener.newConnectionHandler = { [weak self] connection in
             guard let self else { return }
             let lines = Lines(connection: connection)
             Task {
-                await self.serve(lines)
+                await serve(lines)
                 lines.close()
             }
         }
@@ -52,25 +55,44 @@ final class HubListener: @unchecked Sendable {
     private func serve(_ lines: Lines) async {
         guard await lines.open() else { return }
         guard let first = await lines.read() else { return }
-        // Before sending, the app asks where a report can go.
-        if let request = HubMessage.decode(HubMessage.ChatsRequest.self, from: first), request.kind == "chats" {
+        // Before sending, the app asks where a report can go. An offer has no kind.
+        if let request = try? HubMessage.decode(HubMessage.ChatsRequest.self, from: first), request.kind == "chats" {
             _ = await lines.send(HubMessage.encode(await hub.chats(request)))
             return
         }
-        guard let offer = HubMessage.decode(HubMessage.Offer.self, from: first) else {
-            hub.log("A connection didn't start with an offer from an app")
+        let offer: HubMessage.Offer
+        do {
+            offer = try HubMessage.decode(HubMessage.Offer.self, from: first)
+        } catch {
+            hub.log("A connection didn't start with an offer from an app: \(HubMessage.reason(error))")
             return
         }
         let answer = await hub.answer(offer)
         guard await lines.send(HubMessage.encode(answer)), !answer.want.isEmpty else { return }
         var waiting = Set(answer.want)
         while !waiting.isEmpty {
-            guard let line = await lines.read(), let upload = HubMessage.decode(HubMessage.Upload.self, from: line), waiting.contains(upload.id) else {
-                hub.log("\(offer.bundleID) stopped sending before \(waiting.count == 1 ? "a report" : "\(waiting.count) reports") arrived")
+            let stopped = "\(offer.bundleID) stopped sending before \(waiting.count == 1 ? "a report" : "\(waiting.count) reports") arrived"
+            guard let line = await lines.read() else {
+                hub.log(stopped)
+                break
+            }
+            let upload: HubMessage.Upload
+            do {
+                upload = try HubMessage.decode(HubMessage.Upload.self, from: line)
+            } catch {
+                hub.log("\(stopped): \(HubMessage.reason(error))")
+                break
+            }
+            guard waiting.contains(upload.id) else {
+                hub.log("\(stopped): it sent \(upload.id), which the hub didn't ask for")
                 break
             }
             waiting.remove(upload.id)
-            await hub.store(upload, offeredIn: offer)
+            do {
+                try await hub.store(upload, offeredIn: offer)
+            } catch {
+                // The hub logged why; the report isn't counted as delivered, so it's offered again.
+            }
         }
         let finished = offer.reports.map { FinishedReport(id: $0.id, finishedAt: $0.finishedAt) }
         let delivered = await hub.settled(device: offer.device, bundleID: offer.bundleID, finished: finished)

@@ -174,8 +174,10 @@ final class SimulatorWatcher: @unchecked Sendable {
         let finished = ReportFolder.finished(in: entries)
         guard !hub.toCopy(device: path.device, bundleID: bundleID, finished: finished).isEmpty else { return }
         let source = ReportSource(kind: .simulator, device: path.device, deviceName: name(of: path.device), bundleID: bundleID, reportID: reportID, receivedAt: Date())
-        hub.receive(source) { destination in
-            (try? files.copyItem(at: folder, to: destination)) != nil
+        do {
+            try hub.receive(source) { destination in try files.copyItem(at: folder, to: destination) }
+        } catch {
+            // The hub logged why; the report isn't counted as delivered, so it's taken at the next look.
         }
     }
 

@@ -45,7 +45,13 @@ enum ClaudeSessions {
     /// The line a chat's socket takes: one message, as if typed by another of the user's chats.
     static func line(_ text: String) -> Data {
         let message: [String: Any] = ["type": "user", "message": ["role": "user", "content": text]]
-        return ((try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes])) ?? Data()) + Data("\n".utf8)
+        do {
+            return try JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) + Data("\n".utf8)
+        } catch {
+            // Strings in nested dictionaries always serialize.
+            assertionFailure("Couldn't encode a chat message: \(error)")
+            return Data("\n".utf8)
+        }
     }
 
     /// Sends `text` to the chat. True once the chat's socket took it.
@@ -55,7 +61,11 @@ enum ClaudeSessions {
         let data = line(text)
         var sent = 0
         while sent < data.count {
-            let written = data.withUnsafeBytes { write(descriptor, $0.baseAddress! + sent, data.count - sent) }
+            let written = data.withUnsafeBytes { bytes in
+                // The line always holds at least its newline, so the buffer has an address.
+                guard let base = bytes.baseAddress else { return -1 }
+                return write(descriptor, base + sent, data.count - sent)
+            }
             guard written > 0 else { return false }
             sent += written
         }
@@ -82,7 +92,7 @@ enum ClaudeCLI {
         guard let claude = AgentCommand.locate(.claude) else { return false }
         let signedIn = output(claude, ["auth", "status"]) != nil
         let version = output(claude, ["--version"]).flatMap { version(in: $0) } ?? []
-        let ready = signedIn && (!AgentCommand.hasClaudeApp || !version.lexicographicallyPrecedes(desktopVersion))
+        let ready = signedIn && (!AgentCommand.isClaudeAppInstalled() || !version.lexicographicallyPrecedes(desktopVersion))
         lastCheck.withLock { $0 = ReadinessCheck(isReady: ready, checkedAt: Date()) }
         return ready
     }
@@ -97,7 +107,7 @@ enum ClaudeCLI {
             return false
         }
         let version = output(claude, ["--version"]).flatMap { version(in: $0) } ?? []
-        if AgentCommand.hasClaudeApp, version.lexicographicallyPrecedes(desktopVersion) {
+        if AgentCommand.isClaudeAppInstalled(), version.lexicographicallyPrecedes(desktopVersion) {
             print("Updating the claude command: opening new chats in the Claude app needs \(desktopVersion.map(String.init).joined(separator: ".")) or later.")
             _ = interactive(claude, ["update"])
         }
@@ -117,7 +127,12 @@ enum ClaudeCLI {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
-        guard (try? process.run()) != nil else { return false }
+        do {
+            try process.run()
+        } catch {
+            printError("Couldn't run \(executable.path): \(error.localizedDescription)")
+            return false
+        }
         process.waitUntilExit()
         return process.terminationStatus == 0
     }
@@ -136,7 +151,12 @@ enum ClaudeCLI {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
+        do {
+            try process.run()
+        } catch {
+            printError("Couldn't run \(executable.path): \(error.localizedDescription)")
+            return nil
+        }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil

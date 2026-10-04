@@ -53,7 +53,7 @@ final class ChatSession: Sendable {
     func takeAddressed() -> String? {
         let chat = self.chat
         let texts = InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths)
-            .filter { InboxQueue.claim($0, for: chat) }
+            .filter { if case .claimed = InboxQueue.claim($0, for: chat) { true } else { false } }
             .map(ReportContent.text(for:))
         return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
     }
@@ -68,7 +68,7 @@ final class ChatSession: Sendable {
         for report in InboxQueue.waiting(for: chat.bundleIDs, paths: paths) {
             if taken > 0, used >= budget { break }
             // Another chat may have taken it a moment ago.
-            guard InboxQueue.claim(report, for: chat) else { continue }
+            guard case .claimed = InboxQueue.claim(report, for: chat) else { continue }
             let content = ReportContent.items(for: report, budget: max(budget - used, 0))
             items += content.items
             used += content.bytes
@@ -183,7 +183,7 @@ final class ChatSession: Sendable {
         do {
             try Chats.register(chat, paths: paths)
         } catch {
-            FileHandle.standardError.write(Data("Couldn't register the chat: \(error.localizedDescription)\n".utf8))
+            printError("Couldn't register the chat: \(error.localizedDescription)")
         }
     }
 }
@@ -225,8 +225,8 @@ enum HubProcess {
         return Int32(String(decoding: bytes.prefix(count), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    /// The menu bar app, which is the hub, when it's installed.
-    static var app: URL? {
+    /// The menu bar app, which is the hub, when it's installed. Checks the disk.
+    static func installedApp() -> URL? {
         let app = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications/Redline.app")
         return FileManager.default.fileExists(atPath: app.path) ? app : nil
     }
@@ -236,29 +236,42 @@ enum HubProcess {
     /// to the chat's input and output.
     static func startIfNeeded(_ paths: HubPaths) {
         guard running(paths) == nil else { return }
-        if let app {
+        if let app = installedApp() {
             let open = Process()
             open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
             open.arguments = ["-g", app.path]
-            try? open.run()
+            do {
+                try open.run()
+            } catch {
+                printError("Couldn't open \(app.path): \(error.localizedDescription)")
+            }
             return
         }
-        guard let executable = Bundle.main.executablePath else { return }
+        guard let executable = Bundle.main.executablePath else {
+            printError("Couldn't start the hub: this command's own path is unknown")
+            return
+        }
+        func failed(_ step: String, _ status: Int32) -> Bool {
+            guard status != 0 else { return false }
+            printError("Couldn't start the hub (\(step)): \(String(cString: strerror(status)))")
+            return true
+        }
         var attributes: posix_spawnattr_t?
-        posix_spawnattr_init(&attributes)
+        guard !failed("attributes", posix_spawnattr_init(&attributes)) else { return }
         defer { posix_spawnattr_destroy(&attributes) }
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID))
+        guard !failed("new session", posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID))) else { return }
         var files: posix_spawn_file_actions_t?
-        posix_spawn_file_actions_init(&files)
+        guard !failed("file actions", posix_spawn_file_actions_init(&files)) else { return }
         defer { posix_spawn_file_actions_destroy(&files) }
         for descriptor in [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO] {
-            posix_spawn_file_actions_addopen(&files, descriptor, "/dev/null", descriptor == STDIN_FILENO ? O_RDONLY : O_WRONLY, 0)
+            let mode = descriptor == STDIN_FILENO ? O_RDONLY : O_WRONLY
+            guard !failed("/dev/null", posix_spawn_file_actions_addopen(&files, descriptor, "/dev/null", mode, 0)) else { return }
         }
         var pid: pid_t = 0
         let arguments = [executable, "hub"]
         var argv = arguments.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
-        posix_spawn(&pid, executable, &files, &attributes, &argv, environ)
+        _ = failed("spawn", posix_spawn(&pid, executable, &files, &attributes, &argv, environ))
     }
 }
 #endif

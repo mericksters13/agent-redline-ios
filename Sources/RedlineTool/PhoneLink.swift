@@ -83,16 +83,15 @@ final class PhoneLink: @unchecked Sendable {
                 continue
             }
             // Either the app isn't installed, or the phone can't be reached right now.
-            if hub.devicectl.isInstalled(bundleID, on: phone.udid) == false {
-                missing.insert(bundleID)
-            } else {
-                unreachable = true
+            switch hub.devicectl.installation(of: bundleID, on: phone.udid) {
+            case .notInstalled: missing.insert(bundleID)
+            case .installed, .unreachable: unreachable = true
             }
         }
         let ready = apps.filter { given[$0] == addresses[$0] }
         if unreachable {
             retryAt = Date().addingTimeInterval(retryDelay)
-            hub.phoneChanged(phone, state: "Not reachable, trying again in \(Int(retryDelay)) s or when a phone wakes")
+            hub.phoneChanged(phone, state: .unreachable(retryInSeconds: Int(retryDelay)))
             let delay = retryDelay
             retryDelay = min(retryDelay * 2, Self.longestRetry)
             queue.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -100,10 +99,10 @@ final class PhoneLink: @unchecked Sendable {
                 giveAddress()
             }
         } else if ready.isEmpty {
-            hub.phoneChanged(phone, state: "None of the watched apps installed")
+            hub.phoneChanged(phone, state: .noWatchedApps)
         } else {
             retryDelay = Self.firstRetry
-            hub.phoneChanged(phone, state: "Ready for \(ready.joined(separator: ", "))")
+            hub.phoneChanged(phone, state: .ready(apps: ready))
         }
     }
 }
