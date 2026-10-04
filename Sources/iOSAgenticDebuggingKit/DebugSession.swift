@@ -58,6 +58,8 @@ final class DebugSession {
     struct Toast: Equatable {
         var message: String
         var isError = false
+        /// Each showing is its own toast, so a repeated message gets its full time on screen.
+        let id = UUID()
     }
 
     private(set) var mode = Mode.idle
@@ -488,17 +490,20 @@ final class DebugSession {
         store.lastDelivery()
     }
 
-    func updateNote(_ id: UUID, to text: String) {
+    /// Saves an edited note. Returns false only when the change couldn't be saved, so the
+    /// viewer keeps the edit on screen and ending the edit, closing or moving on retries.
+    @discardableResult
+    func updateNote(_ id: UUID, to text: String) -> Bool {
         let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return }
+        guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return true }
         var updated = annotations
         updated[index].note = note
-        // On failure the viewer's field keeps the new text, so ending the edit again retries.
         guard persist(updated) else {
             showFailure("Couldn't save the change to the note")
-            return
+            return false
         }
         annotations = updated
+        return true
     }
 
     /// One of the item's images at full size: its screen's picture with every note on it
@@ -1170,8 +1175,12 @@ final class DebugSession {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
-    /// While the debugger is idle only the floating button and a suggested screenshot
-    /// take touches; the rest go to the app.
+    /// While the debugger is idle only the round floating button takes touches; the rest go to the app.
+    func setButtonFrame(_ frame: CGRect?) {
+        window?.buttonFrame = frame
+    }
+
+    /// Anything else that takes touches while the debugger is idle, such as a suggested screenshot.
     func setTouchableFrame(_ frame: CGRect?, for name: String) {
         window?.touchableRects[name] = frame
     }

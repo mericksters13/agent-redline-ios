@@ -62,6 +62,13 @@ struct ElementSelectionTests {
         #expect(levels == [icon])
     }
 
+    @Test func aNearMissBetweenTiedElementsPicksTheFrontOne() {
+        let back = element("Button", "Behind", CGRect(x: 100, y: 100, width: 100, height: 40))
+        let front = element("Button", "In front", CGRect(x: 100, y: 100, width: 100, height: 40))
+        let levels = ElementSelection.levels(at: CGPoint(x: 150, y: 160), in: [back, front], screenSize: screen)
+        #expect(levels == [front])
+    }
+
     @Test func aFarMissPicksNothing() {
         let icon = element("Image", "Close", CGRect(x: 350, y: 60, width: 24, height: 24))
         let levels = ElementSelection.levels(at: CGPoint(x: 100, y: 400), in: [icon], screenSize: screen)

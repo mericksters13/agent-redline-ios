@@ -775,12 +775,12 @@ struct OverlayView: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { session.enterPicking() }
             .accessibilityAction(named: "Sent reports") { session.openSentReports() }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setTouchableFrame($0, for: "button") }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setButtonFrame($0) }
             .onDisappear {
                 // A press that opened the sent reports never sees the finger lift here.
                 press?.hold.cancel()
                 press = nil
-                session.setTouchableFrame(nil, for: "button")
+                session.setButtonFrame(nil)
             }
             .position(center)
     }
