@@ -23,7 +23,7 @@ struct Report: Codable, Sendable {
 
     /// Where the user picked for the report to go, on the phone.
     struct Destination: Codable, Equatable, Sendable {
-        /// `claude`, `codex` or `cursor`.
+        /// `claude` or `codex`.
         var agent: String
         /// The agent's ID for the chat; nil for a new chat in the worktree the app was built from.
         var chat: String?

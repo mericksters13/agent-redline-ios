@@ -89,8 +89,10 @@ final class HubWindowModel {
         let hub = hub
         refreshing = Task {
             let snapshot = await Self.loadSnapshot(hub: hub)
-            refreshing = nil
+            // panelDidClose cancels this task and clears the handle itself; a cancelled task must not
+            // clear the handle of a newer refresh started after the panel reopened.
             guard !Task.isCancelled else { return }
+            refreshing = nil
             apply(snapshot)
         }
     }
@@ -184,7 +186,7 @@ final class HubWindowModel {
     nonisolated static func destination(of folder: URL, codexDatabase: URL?) -> (
         agent: String, chat: String, isWaiting: Bool
     ) {
-        if let delivery = ReportDelivery.load(from: folder) {
+        if let delivery = ChatDelivery.load(from: folder) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             return (agent, delivery.title, delivery.kind == .waiting)
         }

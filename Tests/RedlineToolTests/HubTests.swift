@@ -52,7 +52,7 @@ struct HubTests {
         hub.startTrackingIfNeeded(device: phone, bundleID: app)
         hub.flushWrites()
         let names = try FileManager.default.contentsOfDirectory(atPath: paths.hub.path)
-        let aside = try #require(names.first { $0.hasPrefix("state.json.unreadable-") })
+        let aside = try #require(names.first { $0.hasPrefix("state-unreadable-") && $0.hasSuffix(".json") })
         #expect(try Data(contentsOf: paths.hub.appending(path: aside)) == Data("not json".utf8))
         // A fresh state.json was written beside it.
         #expect(names.contains("state.json"))

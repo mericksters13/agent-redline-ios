@@ -105,9 +105,9 @@ final class Handoff: Sendable {
     }
 
     /// Saves where the report went, for the panel and the viewer.
-    private func record(_ delivery: ReportDelivery, for report: InboxReport) {
+    private func record(_ delivery: ChatDelivery, for report: InboxReport) {
         do {
-            try ReportDelivery.save(delivery, in: report.folder)
+            try ChatDelivery.save(delivery, in: report.folder)
         } catch {
             hub.log("Couldn't save where report \(report.source.reportID) went: \(error.localizedDescription)")
         }

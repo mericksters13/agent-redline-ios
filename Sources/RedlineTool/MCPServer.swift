@@ -35,8 +35,8 @@ final class MCPServer: Sendable {
 
     /// A parsed request, handed to the queue or thread that answers it.
     ///
-    /// JSONSerialization's dictionary isn't Sendable, but each request is read by one thread at a
-    /// time.
+    /// Thread safety: JSONSerialization's dictionary isn't Sendable, but each request is read by one
+    /// thread at a time.
     private struct Request: @unchecked Sendable {
         let message: [String: Any]
     }
@@ -95,6 +95,9 @@ final class MCPServer: Sendable {
         for waiter in waiters.withLock({ Array($0.values) }) {
             waiter.cancel()
         }
+        // Runs on redline mcp's main thread, never from a Task, after the chat closed its end. Parks it
+        // until the cancelled waits return (at once) and the requests already queued on `work` are
+        // answered.
         inFlight.wait()
         session.unregister()
     }

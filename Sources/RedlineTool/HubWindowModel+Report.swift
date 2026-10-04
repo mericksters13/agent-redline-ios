@@ -59,7 +59,7 @@ extension HubWindowModel {
             try? HubPaths.decoder.decode(Claim.self, from: $0)
         }
         let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
-        if let delivery = ReportDelivery.load(from: report) {
+        if let delivery = ChatDelivery.load(from: report) {
             guard delivery.kind != .waiting, let agent = delivery.agent.flatMap(Agent.init(rawValue:)),
                 let id = delivery.chat
             else { return nil }

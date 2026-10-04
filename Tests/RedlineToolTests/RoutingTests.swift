@@ -3,8 +3,8 @@ import Foundation
 import Testing
 @testable import RedlineTool
 
-struct ReportRoutingTests {
-    private let temporary = TemporaryFolder("ReportRoutingTests")
+struct RoutingTests {
+    private let temporary = TemporaryFolder("RoutingTests")
     private var root: URL { temporary.url }
     private var paths: HubPaths { HubPaths(root: root.appending(path: "hub-root", directoryHint: .isDirectory)) }
 

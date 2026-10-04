@@ -7,9 +7,9 @@ import Testing
 
 /// The phone's side of a whole exchange, against a hub on the loopback interface that answers
 /// each line with the next line of a script.
-struct HubConnectionTests {
+struct HubLinkExchangeTests {
     private let store = ReportStore(
-        root: FileManager.default.temporaryDirectory.appending(path: "HubConnectionTests-\(UUID().uuidString)")
+        root: FileManager.default.temporaryDirectory.appending(path: "HubLinkExchangeTests-\(UUID().uuidString)")
     )
 
     /// Files one finished report and returns its id.

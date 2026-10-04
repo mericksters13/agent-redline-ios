@@ -14,4 +14,4 @@ Status: early development. Debug builds only.
 
 - `Redline`, the iOS Swift package: the floating Redline button, element picker, notes and attachments.
 - Redline, the Mac menu bar app: takes reports off paired phones and simulators and hands each one to the agent chat picked on the phone. The `redline` command does the same from Terminal.
-- MCP server (`redline mcp`): lets an MCP-capable agent receive reports.
+- MCP server (`redline mcp`): lets a Claude Code or Codex chat receive reports.

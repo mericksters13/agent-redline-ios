@@ -27,8 +27,8 @@ struct HubWindowModelTests {
     @Test func reportsShowWhereTheyWentNewestFirst() throws {
         let older = try report("20261004-090000", at: Date(timeIntervalSince1970: 1_791_000_000))
         let newer = try report("20261004-120000", at: Date(timeIntervalSince1970: 1_791_010_000))
-        try ReportDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: newer)
-        try ReportDelivery.save(
+        try ChatDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: newer)
+        try ChatDelivery.save(
             .init(agent: nil, chat: nil, title: "2 chats work in wt; pick one on the phone", kind: .waiting),
             in: older
         )
@@ -144,7 +144,7 @@ struct HubWindowModelTests {
         // What the hub saved when it delivered it, with the folder of the chat that took it.
         let sent = try report("20261004-140000", at: Date.now)
         try claim("claude-s-1", agent: "claude", folder: "/repo", in: sent)
-        try ReportDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: sent)
+        try ChatDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: sent)
         let chat = try #require(HubWindowModel.chat(of: sent))
         #expect(chat.agent == .claude && chat.id == "s-1" && chat.folder == "/repo")
 
@@ -166,7 +166,7 @@ struct HubWindowModelTests {
 
         // Waiting: nothing to open.
         let waiting = try report("20261004-140300", at: Date.now)
-        try ReportDelivery.save(
+        try ChatDelivery.save(
             .init(agent: .claude, chat: nil, title: "Waiting for claude auth login", kind: .waiting),
             in: waiting
         )

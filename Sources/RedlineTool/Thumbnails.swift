@@ -7,7 +7,7 @@ enum Thumbnails {
     private static let queue = DispatchQueue(label: "Redline.panel.thumbnails", qos: .userInitiated)
     /// Keeps the panel's rows and a few more, evicting on its own.
     ///
-    /// NSCache is thread-safe, but the SDK doesn't mark it Sendable.
+    /// Thread safety: NSCache is thread-safe, but the SDK doesn't mark it Sendable.
     nonisolated(unsafe) private static let cache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 60

@@ -91,7 +91,7 @@ enum HubLink {
     /// An open chat a report can go to.
     struct Chat: Codable, Equatable, Sendable, Identifiable {
         var id: String
-        /// `claude`, `codex` or `cursor`.
+        /// `claude` or `codex`.
         var agent: String
         var title: String
         /// The last part of the chat's folder.
@@ -123,7 +123,6 @@ enum HubLink {
         switch agent {
         case "claude": "Claude Code"
         case "codex": "Codex"
-        case "cursor": "Cursor"
         default: agent
         }
     }

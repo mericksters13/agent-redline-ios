@@ -17,6 +17,8 @@ let package = Package(
     ],
     targets: [
         .target(name: "Redline", swiftSettings: debugOnly),
+        // The kit's tests compile only where the kit does. Run them in debug, the default; swift test
+        // -c release builds an empty test target and runs nothing.
         .testTarget(
             name: "RedlineTests",
             dependencies: ["Redline"],

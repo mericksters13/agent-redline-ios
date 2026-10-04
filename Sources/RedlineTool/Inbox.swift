@@ -64,11 +64,14 @@ enum Inbox {
         let files = FileManager.default
         let apps =
             bundleIDs
-            ?? ((try? files.contentsOfDirectory(atPath: paths.inbox.path)) ?? []).filter { !$0.hasPrefix(".") }
+            ?? ((try? files.contentsOfDirectory(atPath: paths.inbox.path)) ?? []).filter {
+                !$0.hasPrefix(".")
+            }
         var reports: [InboxReport] = []
         for bundleID in apps {
             let app = paths.inbox.appending(path: bundleID, directoryHint: .isDirectory)
-            for name in (try? files.contentsOfDirectory(atPath: app.path)) ?? [] where !name.hasPrefix(".") {
+            for name in (try? files.contentsOfDirectory(atPath: app.path)) ?? []
+            where !name.hasPrefix(".") {
                 let folder = app.appending(path: name, directoryHint: .isDirectory)
                 guard let data = try? Data(contentsOf: folder.appending(path: sourceFile)),
                     let source = try? HubPaths.decoder.decode(ReportSource.self, from: data)
@@ -124,49 +127,6 @@ enum Inbox {
             return errno == EEXIST ? .takenByAnotherChat : .failed(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
         }
         return .claimed
-    }
-}
-
-/// Where the hub sent a report, saved next to it so the hub's window shows exactly what
-/// happened: the agent, its chat and the chat's title.
-struct ReportDelivery: Codable, Equatable, Sendable {
-    enum Kind: String, Codable, Sendable {
-        /// Put into an open chat.
-        case sent
-        /// A chat the hub started for it.
-        case newChat
-        /// Waiting for the chat's next message or reply.
-        case nextMessage
-        /// Waiting in the inbox; `title` says why.
-        case waiting
-    }
-
-    var agent: String?
-    var chat: String?
-    var title: String
-    var kind: Kind
-    var deliveredAt = Date.now
-
-    private enum CodingKeys: String, CodingKey {
-        case agent, chat, title, kind
-        case deliveredAt = "at"
-    }
-
-    init(agent: Agent?, chat: String?, title: String, kind: Kind) {
-        self.agent = agent?.rawValue
-        self.chat = chat
-        self.title = title
-        self.kind = kind
-    }
-
-    static func save(_ delivery: ReportDelivery, in report: URL) throws {
-        try HubPaths.encoder.encode(delivery).write(to: report.appending(path: Inbox.deliveryFile), options: .atomic)
-    }
-
-    static func load(from report: URL) -> ReportDelivery? {
-        (try? Data(contentsOf: report.appending(path: Inbox.deliveryFile))).flatMap {
-            try? HubPaths.decoder.decode(ReportDelivery.self, from: $0)
-        }
     }
 }
 #endif

@@ -118,11 +118,17 @@ final class SimulatorWatcher: @unchecked Sendable {
         let file = URL(filePath: container).appending(path: HubMessage.addressPath)
         let data = HubMessage.encode(address)
         guard (try? Data(contentsOf: file)) != data else { return }
-        try? FileManager.default.createDirectory(
-            at: file.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try? data.write(to: file, options: .atomic)
+        do {
+            try FileManager.default.createDirectory(
+                at: file.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: file, options: .atomic)
+        } catch {
+            hub.log(
+                "Couldn't leave the hub's address for \(bundleID) in simulator \(device): \(error.localizedDescription)"
+            )
+        }
     }
 
     /// The kit's folder where it exists, so the app's own writes don't wake the hub; the whole

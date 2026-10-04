@@ -16,7 +16,7 @@ Replace the screenshot, AirDrop, and paste loop with pointing at the broken elem
 
 ## Positioning
 
-It points at real elements in the app's view hierarchy rather than drawing on screenshots, and it delivers into the agent chat already working on the app, with any MCP-capable agent.
+It points at real elements in the app's view hierarchy rather than drawing on screenshots, and it delivers into the agent chat already working on the app, with Claude Code or Codex.
 
 ## Operating Context
 
