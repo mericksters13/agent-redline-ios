@@ -18,6 +18,15 @@ struct ElementSnapshot: Codable, Equatable, Sendable {
     /// A new frame of it isn't a new state of the screen. Nil otherwise, which keeps it out of
     /// `report.json`.
     var updatesFrequently: Bool? = nil
+    /// Index of the nearest enclosing element in the same read of the screen, so a pick can step
+    /// up through real ancestors only.
+    ///
+    /// Not saved: it means nothing outside that read.
+    var parent: Int? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case role, label, value, identifier, className, isContainer, frame, updatesFrequently
+    }
 
     /// The role headers have, which marks a screen's title.
     static let headerRole = "Header"
@@ -44,44 +53,71 @@ enum ElementSelection {
     /// How far from an element a touch can land and still pick it, in points.
     static let nearbyDistance: CGFloat = 44
 
-    /// The elements under a point, innermost first, then each bigger element holding it.
+    /// The element under a point, then each bigger element holding it, innermost first.
     ///
-    /// A touch that misses every element picks the nearest one within `nearbyDistance`. Elements
-    /// covering almost the whole screen are left out, since "the whole screen" says nothing useful.
+    /// `elements` come back to front, each parent before its children, as `AccessibilityTree`
+    /// reads them, so the last one containing the point is the one the user sees there. A touch
+    /// that misses every element picks the nearest one within `nearbyDistance`, the frontmost of any
+    /// at the same distance. Elements covering almost the whole screen are left out, since "the
+    /// whole screen" says nothing useful.
     static func levels(at point: CGPoint, in elements: [ElementSnapshot], screenSize: CGSize) -> [ElementSnapshot] {
         let screenArea = screenSize.width * screenSize.height
-        let usable = elements.filter { !$0.frame.isEmpty && area($0.frame) < screenArea * 0.9 }
-
-        var containing = usable.filter { $0.frame.contains(point) }
-        if containing.isEmpty,
-            let nearest = usable.filter({ !$0.isContainer }).min(by: {
-                distance(from: point, to: $0.frame) < distance(from: point, to: $1.frame)
-            }),
-            distance(from: point, to: nearest.frame) <= nearbyDistance
-        {
-            containing = usable.filter { $0.frame.contains(nearest.frame) }
+        func isUsable(_ element: ElementSnapshot) -> Bool {
+            !element.frame.isEmpty && area(element.frame) < screenArea * 0.9
         }
 
-        var levels: [ElementSnapshot] = []
-        for element in containing.sorted(by: { area($0.frame) < area($1.frame) }) {
+        var hit = elements.indices.last { isUsable(elements[$0]) && elements[$0].frame.contains(point) }
+        if hit == nil,
+            let nearest = elements.indices
+                .filter({ isUsable(elements[$0]) && !elements[$0].isContainer })
+                .reversed()
+                .min(by: {
+                    distance(from: point, to: elements[$0].frame) < distance(from: point, to: elements[$1].frame)
+                }),
+            distance(from: point, to: elements[nearest].frame) <= nearbyDistance
+        {
+            hit = nearest
+        }
+        guard let hit else { return [] }
+
+        var levels = [elements[hit]]
+        var current = hit
+        // Parents come before their children, so each step moves to a lower index.
+        while let index = elements[current].parent, index >= 0, index < current, levels.count < 8 {
+            current = index
+            let element = elements[index]
             // A label and the row wrapping it at the same size are one level, not two.
-            if let innermost = levels.last, isSameBox(innermost.frame, element.frame) { continue }
+            guard isUsable(element), let innermost = levels.last, !isSameBox(innermost.frame, element.frame) else {
+                continue
+            }
             levels.append(element)
         }
-        return Array(levels.prefix(8))
+        return levels
     }
 
-    /// Finds the element a saved annotation points at on a fresh read of the
-    /// screen: by identifier first, then by role and label when that is unique.
+    /// Finds the element a saved annotation points at on a fresh read of the screen: by identifier
+    /// first, then by role and label.
+    ///
+    /// Look-alikes, such as repeated list rows, only match when exactly one is still where the saved
+    /// one was.
     static func match(_ target: ElementSnapshot, in elements: [ElementSnapshot]) -> ElementSnapshot? {
         if let identifier = target.identifier?.nonEmpty {
             let hits = elements.filter { $0.identifier == identifier }
             if hits.count == 1 { return hits[0] }
-            if let exact = hits.first(where: { $0.role == target.role && $0.label == target.label }) { return exact }
+            let exact = hits.filter { $0.role == target.role && $0.label == target.label }
+            if !exact.isEmpty { return unique(exact, for: target) }
         }
         guard let label = target.label?.nonEmpty else { return nil }
-        let hits = elements.filter { $0.role == target.role && $0.label == label }
-        return hits.count == 1 ? hits[0] : nil
+        return unique(elements.filter { $0.role == target.role && $0.label == label }, for: target)
+    }
+
+    /// The only hit, or the only one in the saved element's place.
+    ///
+    /// Nil when that is still ambiguous.
+    private static func unique(_ hits: [ElementSnapshot], for target: ElementSnapshot) -> ElementSnapshot? {
+        if hits.count == 1 { return hits[0] }
+        let inPlace = hits.filter { isSameBox($0.frame, target.frame) }
+        return inPlace.count == 1 ? inPlace[0] : nil
     }
 
     /// The label of the topmost header on screen, which is usually the screen's title.

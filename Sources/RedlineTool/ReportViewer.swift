@@ -135,10 +135,15 @@ struct ReportViewer: View {
             HStack(spacing: 8) {
                 if let chat {
                     Button("Open in \(chat.agent.name)") {
-                        let folder = chat.folder ?? URL.homeDirectory.path
                         let hub = HubAppContext.hub
                         // Opening runs /usr/bin/open and waits for it, so not on the main thread.
                         DispatchQueue.global(qos: .userInitiated).async {
+                            // A report sent to an existing Codex chat records no folder; Codex keeps
+                            // the chat's own, and `codex resume` reopens it there.
+                            let codexFolder =
+                                chat.agent == .codex
+                                ? CodexThreads.folder(of: chat.id, in: CodexThreads.newestDatabase()) : nil
+                            let folder = chat.folder ?? codexFolder ?? URL.homeDirectory.path
                             do {
                                 try Handoff.openChat(chat.agent, id: chat.id, in: folder)
                             } catch {

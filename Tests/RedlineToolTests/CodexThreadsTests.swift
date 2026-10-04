@@ -27,6 +27,7 @@ struct CodexThreadsTests {
                                   archived INTEGER, agent_role TEXT, thread_source TEXT, source TEXT);
             INSERT INTO threads VALUES ('t-user', 'Fix the paywall', 'Fix the paywall', 'fix it', '/p', \(now), 0, NULL, 'user', 'vscode');
             INSERT INTO threads VALUES ('t-older', '', '', 'Why is the outline wide', '/p', \(now - 1000), 0, NULL, NULL, 'vscode');
+            INSERT INTO threads VALUES ('t-no-source', 'Tidy the list', '', '', '/p', \(now - 2000), 0, NULL, NULL, NULL);
             INSERT INTO threads VALUES ('t-guardian', 'Guardian review', '', '', '/p', \(now), 0, NULL, 'guardian_review', '{"subagent":{"other":"guardian"}}');
             INSERT INTO threads VALUES ('t-auto', 'Nightly', '', '', '/p', \(now), 0, NULL, 'automation', 'vscode');
             INSERT INTO threads VALUES ('t-archived', 'Old', '', '', '/p', \(now), 1, NULL, 'user', 'vscode');
@@ -34,9 +35,13 @@ struct CodexThreadsTests {
             """
         try await runProcess("/usr/bin/sqlite3", [database.path, sql])
         let threads = CodexThreads.recent(in: database)
-        #expect(threads.map(\.id) == ["t-user", "t-older"])
+        #expect(threads.map(\.id) == ["t-user", "t-older", "t-no-source"])
         // A chat without a name goes by its first message.
-        #expect(threads.last?.title == "Why is the outline wide")
+        #expect(threads[1].title == "Why is the outline wide")
+        // The viewer reopens a Codex chat in the folder Codex keeps for it.
+        #expect(CodexThreads.folder(of: "t-user", in: database) == "/p")
+        #expect(CodexThreads.folder(of: "t-missing", in: database) == nil)
+        #expect(CodexThreads.title(of: "t-older", in: database) == "Why is the outline wide")
     }
 }
 #endif

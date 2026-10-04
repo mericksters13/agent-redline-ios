@@ -52,6 +52,12 @@ final class ChatSession: Sendable {
     func register(agent: String? = nil) {
         record.withLock { if let agent { $0.agent = agent } }
         guard !chat.bundleIDs.isEmpty else { return }
+        // Noted before the chat's file appears, so the hub sees both when it looks.
+        do {
+            try ProjectHistory.note(chat, paths: paths)
+        } catch {
+            printError("Couldn't note the chat's apps for the hub: \(error.localizedDescription)")
+        }
         save()
         if startsHub { HubProcess.startIfNeeded(paths) }
     }
@@ -78,14 +84,15 @@ final class ChatSession: Sendable {
         for report in Inbox.reportsAddressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths) {
             guard case .claimed = Inbox.claim(report, for: chat) else { continue }
             texts.append(ReportContent.text(for: report))
+            handedOver(report)
         }
         return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
     }
 
     /// Takes the reports waiting for this chat's apps, oldest first.
     ///
-    /// Always takes at least one waiting report; takes more while their snapshots fit in `budget`
-    /// bytes.
+    /// Always takes at least one waiting report; takes more while their text and snapshots fit in
+    /// `budget` bytes.
     func take(budget: Int) -> (items: [ReportContent.Item], taken: Int, remaining: Int) {
         let chat = self.chat
         var items: [ReportContent.Item] = []
@@ -94,11 +101,13 @@ final class ChatSession: Sendable {
         var lookedAt = 0
         let waiting = Inbox.unclaimedReports(for: chat.bundleIDs, paths: paths)
         for report in waiting {
-            if taken > 0, used >= budget { break }
+            // Another report's text, however long, must fit too.
+            if taken > 0, budget - used < ReportContent.longestText { break }
             lookedAt += 1
             // Another chat may have taken it a moment ago.
             guard case .claimed = Inbox.claim(report, for: chat) else { continue }
             let content = ReportContent.items(for: report, budget: max(budget - used, 0))
+            handedOver(report)
             items += content.items
             used += content.bytes
             taken += 1
@@ -213,12 +222,24 @@ final class ChatSession: Sendable {
         }
     }
 
+    /// Notes that the chat has a report it claimed, so the claim stands for good.
+    private func handedOver(_ report: InboxReport) {
+        do {
+            try Inbox.handedOver(report)
+        } catch {
+            printError(
+                "Couldn't note that report \(report.source.reportID) was handed over: \(error.localizedDescription)"
+            )
+        }
+    }
+
     /// Saves the record, keeping the waiter and first registration another process saved for
     /// the same chat: each hook runs in its own process.
     private func save() {
         var chat = self.chat
         if let saved = Chats.record(chat.id, paths: paths) {
-            chat.registeredAt = saved.registeredAt
+            // The first registration of this process: the hub checks the PID against it.
+            if saved.pid == chat.pid { chat.registeredAt = saved.registeredAt }
             if chat.waiter == nil { chat.waiter = saved.waiter }
         }
         do {

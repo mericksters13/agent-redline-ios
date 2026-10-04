@@ -1,9 +1,20 @@
 #!/bin/zsh
 # Builds "Redline.app", the hub as a menu bar app, from this package and signs it for
-# local use. Installs it in ~/Applications unless a destination folder is given.
+# local use. Installs it in ~/Applications unless a destination folder is given, and registers it
+# with Launch Services. A copy that is running is stopped to replace it and opened again. With
+# --no-start, it is neither opened again nor registered.
+#
+#   scripts/build-hub-app.sh [destination folder] [--no-start]
 set -euo pipefail
 cd "$(dirname "$0")/.."
-destination="${1:-$HOME/Applications}"
+destination="$HOME/Applications"
+reopen=true
+for argument in "$@"; do
+    case "$argument" in
+        --no-start) reopen=false ;;
+        *) destination="$argument" ;;
+    esac
+done
 swift build -c release --product redline
 binary="$(swift build -c release --show-bin-path)/redline"
 # The same as `version` in Sources/RedlineTool/main.swift, which the MCP server reports.
@@ -31,24 +42,52 @@ cat > "$staging/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key><string>$version</string>
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>LSUIElement</key><true/>
+    <key>NSLocalNetworkUsageDescription</key><string>Redline takes the reports your apps send from iPhones on this network, and notices when a paired iPhone wakes.</string>
+    <key>NSBonjourServices</key><array><string>_remotepairing._tcp</string></array>
 </dict>
 </plist>
 PLIST
 # Signed with the Mac's Apple Development certificate when there is one, so macOS remembers what
 # the user allowed the app to open, such as chat folders in Documents, across rebuilds. An ad hoc
-# signature is new with every build, so macOS would ask again each time.
+# signature is new with every build, so macOS would ask again each time. Signing with the
+# certificate fails over SSH or with the keychain locked; then it signs ad hoc.
 identity="$(security find-identity -v -p codesigning | awk '/"Apple Development/ { print $2; exit }')"
-codesign --force --sign "${identity:--}" "$staging"
+if [[ -n "$identity" ]] && codesign --force --sign "$identity" "$staging"; then
+    echo "Signed with the Apple Development certificate $identity"
+else
+    [[ -z "$identity" ]] || echo "Signing with the Apple Development certificate failed"
+    codesign --force --sign - "$staging"
+    echo "Signed ad hoc"
+fi
 mkdir -p "$destination"
-# A running copy is stopped first and opened again after: macOS may not match a running app to a
-# bundle replaced under it, and ask for permissions again. A stop signal, not an AppleScript quit,
-# which would need its own permission.
+# A running copy is stopped first and opened again after, unless --no-start was given: macOS may
+# not match a running app to a bundle replaced under it, and ask for permissions again. A stop
+# signal, not an AppleScript quit, which would need its own permission. The bundle is replaced
+# only once the old copy has exited, so the open below starts the new one: after about 15 seconds
+# the old copy is killed.
+# pgrep and pkill take a regular expression, so the path's special characters are escaped.
+processes="$(printf '%s' "$app/Contents/MacOS/" | sed 's/[][\.*^$+?(){}|]/\\&/g')"
 running=false
-if pkill -TERM -f "$app/Contents/MacOS/" 2>/dev/null; then
+if pkill -TERM -f "$processes" 2>/dev/null; then
     running=true
-    for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "$app/Contents/MacOS/" >/dev/null || break; sleep 0.3; done
+    for _ in {1..50}; do pgrep -f "$processes" >/dev/null || break; sleep 0.3; done
+    if pgrep -f "$processes" >/dev/null; then
+        pkill -KILL -f "$processes" 2>/dev/null || true
+        for _ in {1..20}; do pgrep -f "$processes" >/dev/null || break; sleep 0.1; done
+    fi
+    if pgrep -f "$processes" >/dev/null; then
+        echo "The running copy of $app did not exit; quit it and run this again." >&2
+        exit 1
+    fi
 fi
 rm -rf "$app"
 mv "$staging" "$app"
-if $running; then open -g "$app"; fi
+# Registered with Launch Services, so chats find the app by its identifier in any folder. Not with
+# --no-start, which leaves the rest of the system as it is, such as for a test install.
+if $reopen; then
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" || true
+fi
+if $running; then
+    if $reopen; then open -g "$app"; else echo "Stopped the running Redline to replace it; not opened again (--no-start)"; fi
+fi
 echo "Built $app"

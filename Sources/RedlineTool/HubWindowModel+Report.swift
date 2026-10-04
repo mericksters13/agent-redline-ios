@@ -65,13 +65,18 @@ extension HubWindowModel {
     /// The chat a report went to: from what the hub saved when it delivered the report, or else the
     /// chat that took it.
     ///
+    /// The same chat `destination(of:codexDatabase:)` names in the report's row: a report the hub
+    /// left waiting, or set to go with a chat's next message, opens the chat that took it once one
+    /// has. A claim whose hand-over was interrupted doesn't count, since that chat never got the
+    /// report.
+    ///
     /// Nil when the report went to no chat.
     nonisolated static func chat(of report: URL) -> ChatLink? {
-        let claim = (try? Data(contentsOf: report.appending(path: Inbox.claimFile))).flatMap {
-            try? HubPaths.decoder.decode(Claim.self, from: $0)
-        }
+        let claim = Inbox.claim(of: report).flatMap { $0.isInterrupted ? nil : $0 }
         let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
-        if let delivery = ChatDelivery.load(from: report) {
+        if let delivery = ChatDelivery.load(from: report),
+            !(delivery.isPending && claim.map { $0.claimedAt > delivery.deliveredAt } == true)
+        {
             guard delivery.kind != .waiting, let agent = delivery.agent.flatMap(Agent.init(rawValue:)),
                 let id = delivery.chat
             else { return nil }

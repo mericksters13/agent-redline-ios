@@ -56,6 +56,11 @@ final class Hub: @unchecked Sendable {
         var hosts: [String] = []
         /// Files with a write already queued on `writer`, which takes the newest state when it runs.
         var queuedWrites: Set<SavedFile> = []
+        /// Reports being moved into the inbox, by source key and report ID, so a second copy of one
+        /// that arrives at the same time isn't filed too.
+        var filing: Set<String> = []
+        /// Set once `stop()` has drained the inbox: no report is filed after the last writes.
+        var isStopping = false
     }
 
     private enum SavedFile: CustomStringConvertible {
@@ -80,7 +85,8 @@ final class Hub: @unchecked Sendable {
     /// hub.log is moved to hub.log.1 once it grows past this.
     static let largestLog = 5_000_000
 
-    /// The apps the hub takes reports from: those of the open chats, and any given on the command line.
+    /// The apps the hub takes reports from: those of the open chats and of chats before them, and
+    /// any given on the command line.
     var apps: [String] { state.withLock { $0.currentApps } }
 
     init(paths: HubPaths, devicectl: Devicectl, apps: [String]) {
@@ -123,6 +129,9 @@ final class Hub: @unchecked Sendable {
         state.withLock { $0.hosts = hosts }
 
         updateApps(isStarting: true)
+        // Before anything else, so the menu bar app taking over from this hub finds the apps it was
+        // given on the command line.
+        writeStatus()
         log(apps.isEmpty ? "Hub started; no chats open yet" : "Hub started for \(apps.joined(separator: ", "))")
         watchChats()
         ChatDirectory.warm(paths: paths)
@@ -150,6 +159,9 @@ final class Hub: @unchecked Sendable {
         network.cancel()
         listener?.stop()
         simulators?.stop()
+        // A connection the listener took can still be filing a report: it finishes, with its
+        // delivered ID queued to write, and later uploads are turned down.
+        inbox.sync { state.withLock { $0.isStopping = true } }
         log("Hub stopped")
         // Queued writes land before the process exits.
         flushWrites()
@@ -157,6 +169,14 @@ final class Hub: @unchecked Sendable {
         try? FileManager.default.removeItem(at: paths.pid)
         if pidLock >= 0 { close(pidLock) }
         pidLock = -1
+    }
+
+    /// The hub can't take reports without its listener: it stops, so the next chat starts a new
+    /// one.
+    func listenerFailed(_ reason: String) {
+        log(reason)
+        stop()
+        exit(1)
     }
 
     /// Waits until every file write queued so far has landed.
@@ -179,6 +199,7 @@ final class Hub: @unchecked Sendable {
             log("Couldn't list paired phones: \(error.localizedDescription)")
             return
         }
+        forgetPhones(except: Set(paired.map(\.udid)))
         for phone in paired {
             link(for: phone).update(hosts: hosts, port: HubListener.port, includingNewApps: includingNewApps)
         }
@@ -202,11 +223,15 @@ final class Hub: @unchecked Sendable {
         chatsWatcher = source
     }
 
-    /// Takes reports from the open chats' apps and the ones given on the command line.
+    /// Takes reports from the apps of the open chats and of chats before them, and the ones given on
+    /// the command line.
     ///
-    /// When they change after the start, looks for the new apps on phones and simulators.
+    /// Apps a chat worked on before stay watched after it closes, so their reports still arrive and
+    /// can start a new chat. When they change after the start, looks for the new apps on phones and
+    /// simulators.
     func updateApps(isStarting: Bool) {
-        let apps = Array(Set(fixedApps + Chats.removeClosedChats(paths).flatMap(\.bundleIDs))).sorted()
+        let open = Chats.removeClosedChats(paths).flatMap(\.bundleIDs)
+        let apps = Array(Set(fixedApps + open + ProjectHistory.all(paths).keys)).sorted()
         let changed = state.withLock { state in
             defer { state.currentApps = apps }
             return state.currentApps != apps
@@ -340,6 +365,8 @@ final class Hub: @unchecked Sendable {
     enum FilingError: Error {
         /// No report.json, a file name the hub can't use, or too big.
         case unusableUpload
+        /// The hub is stopping; the report is offered again to the next hub.
+        case stopping
     }
 
     // Connections are served from Swift tasks, which must never block their thread: these run
@@ -437,12 +464,13 @@ final class Hub: @unchecked Sendable {
     /// Starts tracking one app on one device the first time the hub looks at it, and saves that.
     ///
     /// The first look only takes reports finished from about then on, so old ones aren't delivered
-    /// as new.
-    func startTrackingIfNeeded(device: String, bundleID: String) {
+    /// as new. That's the time of the first look itself: an app first seen hours after the hub
+    /// started has no reason to send the reports made before then.
+    func startTrackingIfNeeded(device: String, bundleID: String, now: Date = .now) {
         state.withLock { state in
             let key = Self.key(device: device, bundleID: bundleID)
             guard state.sources[key] == nil else { return }
-            state.sources[key] = SourceState(since: startedAt.addingTimeInterval(-Self.firstLookMargin))
+            state.sources[key] = SourceState(since: now.addingTimeInterval(-Self.firstLookMargin))
             queueWrite(.state, in: &state)
         }
     }
@@ -466,42 +494,65 @@ final class Hub: @unchecked Sendable {
     /// Files a report in the inbox. `copy` fills a folder that doesn't exist yet; the report
     /// appears in the inbox only once it's complete, with its source.json.
     ///
+    /// The same report can arrive twice at once, such as from two offers sent back to back. Each
+    /// copy fills its own folder, and the first to finish is the one filed; the others are dropped.
+    ///
     /// Throws, after logging why, when it couldn't be filed; then nothing is left in the inbox and
     /// the report isn't counted as delivered, so it's offered again.
     func receive(_ source: ReportSource, copy: (_ destination: URL) throws -> Void) throws {
         let folder = paths.inbox.appending(path: source.bundleID, directoryHint: .isDirectory)
         let name = Inbox.folderName(reportID: source.reportID, device: source.device)
-        let incoming = folder.appending(path: Inbox.incomingPrefix + name, directoryHint: .isDirectory)
+        let incoming = folder.appending(
+            path: Inbox.incomingPrefix + name + "-" + UUID().uuidString,
+            directoryHint: .isDirectory
+        )
         let destination = folder.appending(path: name, directoryHint: .isDirectory)
+        let key = Self.key(device: source.device, bundleID: source.bundleID)
+        let filingKey = key + "|" + source.reportID
         let files = FileManager.default
         let started = Date.now
+        guard !state.withLock({ $0.isStopping }) else {
+            log("Didn't file report \(source.reportID) of \(source.bundleID): the hub is stopping")
+            throw FilingError.stopping
+        }
         // The menu bar app has no window, so App Nap would slow filing a report the user just sent.
         let activity = ProcessInfo.processInfo.beginActivity(
             options: .userInitiatedAllowingIdleSystemSleep,
             reason: "Filing a report from a device"
         )
         defer { ProcessInfo.processInfo.endActivity(activity) }
+        // Whatever happens, this attempt's own folder doesn't stay.
+        defer { try? files.removeItem(at: incoming) }
         do {
             try files.createDirectory(at: folder, withIntermediateDirectories: true)
-            // Left by an earlier try that didn't finish.
-            try? files.removeItem(at: incoming)
             try copy(incoming)
             try HubPaths.encoder.encode(source).write(to: incoming.appending(path: Inbox.sourceFile))
-            // The same report sent again replaces the earlier copy.
-            try? files.removeItem(at: destination)
+        } catch {
+            log(
+                "Couldn't file report \(source.reportID) of \(source.bundleID) from \(source.deviceName): \(error.localizedDescription)"
+            )
+            throw error
+        }
+        // Another copy of this report was filed, or is being filed, first.
+        let isFirst = state.withLock { state in
+            guard state.sources[key]?.delivered.contains(source.reportID) != true else { return false }
+            return state.filing.insert(filingKey).inserted
+        }
+        guard isFirst else { return }
+        do {
+            // Left by an attempt whose filing wasn't recorded, such as one cut short by a crash.
+            if files.fileExists(atPath: destination.path) { try files.removeItem(at: destination) }
             try files.moveItem(at: incoming, to: destination)
         } catch {
-            try? files.removeItem(at: incoming)
+            state.withLock { _ = $0.filing.remove(filingKey) }
             log(
                 "Couldn't file report \(source.reportID) of \(source.bundleID) from \(source.deviceName): \(error.localizedDescription)"
             )
             throw error
         }
         state.withLock { state in
-            state.sources[
-                Self.key(device: source.device, bundleID: source.bundleID),
-                default: SourceState(since: startedAt)
-            ].delivered.append(source.reportID)
+            state.filing.remove(filingKey)
+            state.sources[key, default: SourceState(since: .now)].delivered.append(source.reportID)
             queueWrite(.state, in: &state)
         }
         log(
@@ -544,6 +595,7 @@ final class Hub: @unchecked Sendable {
                 pid: getpid(),
                 startedAt: startedAt,
                 apps: state.currentApps,
+                fixedApps: fixedApps,
                 hosts: state.hosts,
                 port: HubListener.port,
                 phones: state.phoneStates.values.sorted { $0.name < $1.name },
@@ -555,6 +607,33 @@ final class Hub: @unchecked Sendable {
     /// The simulators with a watched app installed.
     func watchedSimulators() -> Set<String> {
         simulators?.simulatorIDs ?? []
+    }
+
+    /// Phones no longer paired leave the status, and their links stop giving them the address.
+    ///
+    /// A link's state goes once the try it has in progress is over, so that try can't bring it
+    /// back.
+    func forgetPhones(except paired: Set<String>) {
+        let unpaired = state.withLock { state in
+            let gone = state.links.filter { !paired.contains($0.key) }
+            for udid in gone.keys { state.links[udid] = nil }
+            for udid in state.phoneStates.keys where !paired.contains(udid) && gone[udid] == nil {
+                state.phoneStates[udid] = nil
+            }
+            return Array(gone.values)
+        }
+        for link in unpaired {
+            link.unpair { [weak self] in
+                guard let self else { return }
+                let udid = link.phone.udid
+                // Paired again meanwhile: the new link's state stays.
+                state.withLock { state in
+                    if state.links[udid] == nil { state.phoneStates[udid] = nil }
+                }
+                writeStatus()
+            }
+        }
+        writeStatus()
     }
 
     /// Saves the status for `redline status` and a panel in another process.

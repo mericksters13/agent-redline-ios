@@ -5,14 +5,15 @@ import Foundation
 ///
 /// - `inbox/<bundle ID>/<report>/`: reports taken off phones and simulators. Each holds the
 ///   report's own files (`report.json`, `report.md`, snapshots) and the hub's: `source.json`
-///   (where it came from), `claim.json` (the chat that took it), `to.json` (the chat it's
-///   addressed to), `delivery.json` (where the hub sent it), and for a chat the hub started,
-///   `new-chat-output.jsonl` and `answer.md`. A report is filled under `.incoming-<name>` and
-///   renamed into place whole.
+///   (where it came from), `claim.json` (the chat that took it, with `.claim.lock` held while one
+///   is taken), `to.json` (the chat it's addressed to), `delivery.json` (where the hub sent it),
+///   and for a chat the hub started, `new-chat-output.jsonl` and `answer.md`. A report is filled
+///   under `.incoming-<name>-<UUID>` and renamed into place whole.
 /// - `hub/chats/<chat>.json`: the open chats, written by their MCP copies, hooks and waits
 /// - `hub/state.json`: which reports each phone and simulator app has already given
 /// - `hub/tokens.json`: the token each app on each phone was given; secret
 /// - `hub/started-chats.json`: the chats the hub started for the phone's "New chat" picks
+/// - `hub/projects.json`: the apps chats have worked on, which the hub keeps watching
 /// - `hub/status.json`, `hub/hub.pid`, `hub/hub.log` (and `hub/hub.log.1`): for `redline status`
 ///   and the panel; the hub holds a lock on `hub.pid` while it runs
 struct HubPaths: Sendable {
@@ -33,17 +34,32 @@ struct HubPaths: Sendable {
 
     /// How the hub and the chats write their JSON files: ISO 8601 dates, pretty-printed with
     /// sorted keys, so people can read them.
+    ///
+    /// Dates keep their milliseconds: the menu bar panel orders a claim and a delivery saved in the
+    /// same second by them.
     static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(date.formatted(preciseDates))
+        }
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
     }()
 
+    /// Reads dates with or without milliseconds, so files saved before they were kept still load.
     static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let text = try container.decode(String.self)
+            if let date = try? preciseDates.parse(text) { return date }
+            if let date = try? Date.ISO8601FormatStyle().parse(text) { return date }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Not an ISO 8601 date: \(text)")
+        }
         return decoder
     }()
+
+    private static let preciseDates = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 }
 #endif

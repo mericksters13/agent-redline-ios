@@ -191,6 +191,41 @@ struct ReportStoreTests {
         #expect(try store.loadScreens() == screens)
     }
 
+    @Test func aMissingSnapshotStopsTheReportAndKeepsTheDraft() throws {
+        defer { removeStore() }
+        let kept = annotation("Cut off")
+        let lost = photos("Same bug", count: 2)
+        try store.saveDraftFile(Data([1]), named: kept.attachments[0])
+        try store.saveDraftFile(Data([1]), named: lost.attachments[0])
+        let capture = Capture(
+            id: UUID(),
+            file: "capture.png",
+            size: CGSize(width: 402, height: 874),
+            scroll: nil,
+            elements: [],
+            group: 0
+        )
+        try store.saveDraftFile(Data([1]), named: capture.file)
+        let screens = [
+            ScreenRecord(id: UUID(), info: ScreenInfo(title: "Today", viewController: "Home"), captures: [capture])
+        ]
+        var onCapture = annotation("Too faint")
+        onCapture.attachments = []
+        onCapture.captureID = capture.id
+        try store.saveDraft([kept, onCapture, lost])
+
+        try store.checkSnapshots(of: [kept, onCapture], screens: screens)
+        #expect(throws: ReportStore.MissingSnapshot(annotationID: lost.id)) {
+            try store.checkSnapshots(of: [kept, onCapture, lost], screens: screens)
+        }
+        // A note whose capture is no longer listed is missing its snapshot too.
+        #expect(throws: ReportStore.MissingSnapshot(annotationID: onCapture.id)) {
+            try store.checkSnapshots(of: [kept, onCapture], screens: [])
+        }
+        #expect(try store.loadDraft() == [kept, onCapture, lost])
+        #expect(!FileManager.default.fileExists(atPath: store.reportsDirectory.path(percentEncoded: false)))
+    }
+
     @Test func sentReportsAreListedNewestFirst() throws {
         defer { removeStore() }
         for (id, seconds) in [("older", 1_790_000_000.0), ("newer", 1_790_000_600.0)] {
@@ -365,5 +400,105 @@ struct ReportStoreTests {
         )
     }
 
+    @Test func aFailedStartLeavesNoReportBehind() throws {
+        defer { removeStore() }
+        // No draft on disk to move, so starting the report fails after its folder is made.
+        #expect(throws: (any Error).self) {
+            try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        }
+        let reports = try FileManager.default.contentsOfDirectory(
+            atPath: store.reportsDirectory.path(percentEncoded: false)
+        )
+        #expect(reports.isEmpty)
+    }
+
+    @Test func theDraftAndReportsUnderTheOldNameMoveOver() throws {
+        let files = FileManager.default
+        let parent = files.temporaryDirectory.appending(
+            path: "ReportStoreMove-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? files.removeItem(at: parent) }
+        let old = ReportStore(root: parent.appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
+        let new = ReportStore(root: parent.appending(path: "Redline", directoryHint: .isDirectory))
+        let draft = [annotation("Cut off")]
+        try old.saveDraft(draft)
+        try files.createDirectory(at: old.reportsDirectory.appending(path: "older"), withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: old.hubAddressFile)
+        // The hub has already left its address and a report under the new name.
+        try files.createDirectory(at: new.reportsDirectory.appending(path: "newer"), withIntermediateDirectories: true)
+        try Data("new".utf8).write(to: new.hubAddressFile)
+
+        new.moveFromOldName()
+
+        #expect(try new.loadDraft() == draft)
+        #expect(
+            try files.contentsOfDirectory(atPath: new.reportsDirectory.path(percentEncoded: false)).sorted() == [
+                "newer", "older",
+            ]
+        )
+        #expect(try Data(contentsOf: new.hubAddressFile) == Data("new".utf8))
+        #expect(!files.fileExists(atPath: old.root.path(percentEncoded: false)))
+    }
+
+    @Test func settingsUnderTheOldNameMoveOver() throws {
+        let domain = "ReportStoreSettings-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        defaults.set(true, forKey: "AgenticDebuggingHubReached")
+        defaults.set([0.2, 0.7], forKey: "AgenticDebuggingButtonPosition")
+        defaults.set(Data("old".utf8), forKey: "AgenticDebuggingDestination|com.example.app")
+        // Saved under the new name already: kept.
+        defaults.set(Data("new".utf8), forKey: "RedlineDestination|com.example.app")
+        defaults.set("other", forKey: "UnrelatedSetting")
+
+        ReportStore.moveSettingsFromOldName(in: defaults, domain: domain)
+
+        #expect(defaults.bool(forKey: "RedlineHubReached"))
+        #expect(defaults.array(forKey: "RedlineButtonPosition") as? [Double] == [0.2, 0.7])
+        #expect(defaults.data(forKey: "RedlineDestination|com.example.app") == Data("new".utf8))
+        #expect(defaults.string(forKey: "UnrelatedSetting") == "other")
+        let left = defaults.persistentDomain(forName: domain)?.keys.filter { $0.hasPrefix("AgenticDebugging") } ?? []
+        #expect(left.isEmpty)
+    }
+
+    @Test func aDraftThatCannotLeaveStopsTheReport() throws {
+        let kept = annotation("Cut off")
+        try store.saveDraft([kept])
+        try store.saveDraftFile(Data([1]), named: kept.attachments[0])
+        let files = FileManager.default
+        try files.createDirectory(at: store.reportsDirectory, withIntermediateDirectories: true)
+        // A read-only root lets the report folder be made but not the draft be moved out.
+        try files.setAttributes([.posixPermissions: 0o555], ofItemAtPath: store.root.path)
+        defer { try? files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: store.root.path) }
+
+        #expect(throws: (any Error).self) {
+            try store.beginReport(date: .now)
+        }
+        #expect(try store.loadDraft() == [kept])
+        #expect(files.fileExists(atPath: store.draftDirectory.appending(path: kept.attachments[0]).path))
+        let reports = try files.contentsOfDirectory(atPath: store.reportsDirectory.path)
+        #expect(reports.isEmpty)
+    }
+
+    @Test func anUnfinishedReportGivesItsSnapshotsBack() throws {
+        let sent = annotation("Cut off")
+        try store.saveDraft([sent])
+        try store.saveDraftFile(Data([1]), named: sent.attachments[0])
+        let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        // A note made while the report was being drawn.
+        let later = annotation("Wrong color")
+        try store.saveDraft([later])
+        try store.saveDraftFile(Data([2]), named: later.attachments[0])
+
+        try store.reclaimDraftFiles(from: started.folder)
+        let files = FileManager.default
+        #expect(files.fileExists(atPath: store.draftDirectory.appending(path: sent.attachments[0]).path))
+        #expect(try Data(contentsOf: store.draftDirectory.appending(path: later.attachments[0])) == Data([2]))
+        // The current draft's list stays; the session saves both lists together.
+        #expect(try store.loadDraft() == [later])
+        store.discardReport(started.folder)
+        #expect(try files.contentsOfDirectory(atPath: store.reportsDirectory.path).isEmpty)
+    }
 }
 #endif

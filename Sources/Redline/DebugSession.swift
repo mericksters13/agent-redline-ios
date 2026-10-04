@@ -87,6 +87,12 @@ final class DebugSession {
         var frame: CGRect
     }
 
+    /// A short message under the island, or at the top of the screen when idle.
+    struct Toast: Equatable {
+        var message: String
+        var isError = false
+    }
+
     private(set) var mode = Mode.idle
     private(set) var annotations: [Annotation] = []
     /// What's under the finger, innermost first. `levelIndex` picks one of them.
@@ -97,7 +103,7 @@ final class DebugSession {
     var noteText = ""
     /// The note showing in the full-screen viewer.
     private(set) var viewerID: UUID?
-    private(set) var toast: String?
+    private(set) var toast: Toast?
     private(set) var screenSize = CGSize.zero
     private(set) var safeAreaInsets = UIEdgeInsets.zero
     private(set) var keyboardTop = CGFloat.infinity
@@ -126,6 +132,14 @@ final class DebugSession {
     private(set) var nudges = 0
     /// A short reminder under the island after such a tap.
     private(set) var hint: String?
+    /// Why the last Add note failed, shown on the note card.
+    private(set) var noteError: String?
+    /// The window size when the screen was last read.
+    private(set) var readSize = CGSize.zero
+
+    /// False after the window changes size, such as on rotation, until the screen is read
+    /// again: element frames from the last read no longer line up with the screen.
+    var screenReadIsCurrent: Bool { readSize == screenSize }
 
     /// Where reports from this build go, as the user picked.
     ///
@@ -183,6 +197,11 @@ final class DebugSession {
     @ObservationIgnored private var trayReturnMode = Mode.idle
     /// Where Cancel or Add on the note card goes back to.
     @ObservationIgnored private var notingReturnMode = Mode.picking
+    /// Notes added since pick mode opened.
+    ///
+    /// The app can't move while the debugger takes every touch, so these are on the current
+    /// screen even when it has no title.
+    @ObservationIgnored private var notesThisVisit: Set<UUID> = []
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var thumbnails: [UUID: UIImage] = [:]
     /// Full-size images for the viewer, kept for the few around the one showing.
@@ -221,6 +240,9 @@ final class DebugSession {
     /// attachment's source file is the one reports carry.
     func install(in scene: UIWindowScene, sourceFile: String) {
         guard window == nil else { return }
+        if let bundleID = Bundle.main.bundleIdentifier {
+            ReportStore.moveSettingsFromOldName(in: .standard, domain: bundleID)
+        }
         self.sourceFile = sourceFile
         destination = savedDestination()
         refreshHubAddress()
@@ -350,6 +372,7 @@ final class DebugSession {
         // read, leaving every outline behind. Stop it, let it settle, then read.
         AppWindows.stopScrolling(in: appWindows())
         levels = []
+        notesThisVisit = []
         setMode(.picking)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         Task {
@@ -433,24 +456,44 @@ final class DebugSession {
         }
         guard let element = selected, let screenImage else { return }
         let id = UUID()
+        // Filing the capture can move earlier notes onto it, so keep what to put back if the
+        // draft can't be written.
+        let before = (annotations: annotations, screens: screens)
         let captureID = fileCapture(screenImage, for: element)
-        thumbnails[id] = Self.crop(screenImage, around: element.frame, screenWidth: screenSize.width)
-        annotations.append(
-            Annotation(
-                id: id,
-                createdAt: .now,
-                note: note,
-                kind: .element,
-                element: element,
-                ancestors: Array(levels.dropFirst(levelIndex + 1)),
-                screen: screen,
-                attachments: [],
-                captureID: captureID
-            )
+        let annotation = Annotation(
+            id: id,
+            createdAt: .now,
+            note: note,
+            kind: .element,
+            element: element,
+            ancestors: Array(levels.dropFirst(levelIndex + 1)),
+            screen: screen,
+            attachments: [],
+            captureID: captureID
         )
+        // A failed save keeps the card open with the text for another try: a note missing from
+        // the draft file would vanish on the next launch. Screens go first: a screens file
+        // listing a capture no note uses is harmless, while a note whose capture isn't listed
+        // would show blank.
+        do {
+            try persistScreens()
+            try persistAnnotations(annotations + [annotation])
+        } catch {
+            let kept = Set(before.screens.flatMap(\.captures).map(\.id))
+            let added = screens.flatMap(\.captures).filter { !kept.contains($0.id) }
+            annotations = before.annotations
+            screens = before.screens
+            for capture in added { captureImages[capture.id] = nil }
+            discardAfterWrites(added.map(\.file))
+            noteError = "Couldn't save the note. Try again."
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return
+        }
+        thumbnails[id] = Self.crop(screenImage, around: element.frame)
+        notesThisVisit.insert(id)
+        annotations.append(annotation)
         pruneCaptures()
         fullImages.removeAllObjects()
-        persist()
         levels = []
         refreshMarkers()
         endNoting(returningTo: notingReturnMode)
@@ -473,22 +516,30 @@ final class DebugSession {
         // The app's own screens keep every pixel sharp; photos are stored smaller.
         let isScreen = attachment.kind == .screen
         let files = attachment.images.indices.map { "\(id.uuidString)-\($0 + 1).\(isScreen ? "png" : "jpg")" }
-        thumbnails[id] = attachment.images.first.flatMap(Self.topSquare(of:))
         writeImages(attachment.images, named: files, asPNG: isScreen)
-        annotations.append(
-            Annotation(
-                id: id,
-                createdAt: .now,
-                note: note,
-                kind: attachment.kind,
-                element: nil,
-                ancestors: [],
-                screen: attachment.screen,
-                attachments: files
-            )
+        let annotation = Annotation(
+            id: id,
+            createdAt: .now,
+            note: note,
+            kind: attachment.kind,
+            element: nil,
+            ancestors: [],
+            screen: attachment.screen,
+            attachments: files
         )
-        // An attachment has no capture, so the screens are unchanged.
-        persistAnnotations()
+        // An attachment has no capture, so the screens are unchanged. A failed save keeps the
+        // note box open with the images and text for another try.
+        do {
+            try persistAnnotations(annotations + [annotation])
+        } catch {
+            discardAfterWrites(files)
+            self.pending?.isSaving = false
+            noteError = "Couldn't save the note. Try again."
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return
+        }
+        thumbnails[id] = attachment.images.first.flatMap(Self.topSquare(of:))
+        annotations.append(annotation)
         pending = nil
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         if attachment.sendsReport {
@@ -503,13 +554,21 @@ final class DebugSession {
 
     func delete(_ annotation: Annotation) {
         guard let index = annotations.firstIndex(where: { $0.id == annotation.id }) else { return }
-        annotations.remove(at: index)
+        var remaining = annotations
+        remaining.remove(at: index)
+        // The draft file goes first, so a failed write leaves the note and its files as they were.
+        do {
+            try persistAnnotations(remaining)
+        } catch {
+            showFailure("Couldn't delete the note")
+            return
+        }
+        annotations = remaining
         thumbnails[annotation.id] = nil
         // Other notes on the same screen show this one's outline, so their snapshots are redrawn.
         fullImages.removeAllObjects()
         annotation.attachments.forEach(store.deleteDraftFile(named:))
         pruneCaptures()
-        persist()
         refreshMarkers()
         if mode == .viewer {
             // Show the next note, or the one before when the last was deleted.
@@ -543,13 +602,26 @@ final class DebugSession {
         setMode(annotations.isEmpty ? trayReturnMode : .tray)
     }
 
-    func updateNote(_ id: UUID, to text: String) {
+    /// Saves an edited note.
+    ///
+    /// Returns false only when the change couldn't be saved, so the viewer keeps the edit on screen
+    /// and ending the edit, closing or moving on retries.
+    @discardableResult
+    func updateNote(_ id: UUID, to text: String) -> Bool {
         let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else {
-            return
+            return true
         }
-        annotations[index].note = note
-        persistAnnotations()
+        var updated = annotations
+        updated[index].note = note
+        do {
+            try persistAnnotations(updated)
+        } catch {
+            showFailure("Couldn't save the change to the note")
+            return false
+        }
+        annotations = updated
+        return true
     }
 
     /// One of the item's images at full size: its screen's snapshot with every note on it outlined
@@ -991,10 +1063,17 @@ final class DebugSession {
         let date = Date.now
         let started: (id: String, folder: URL, draft: URL)
         do {
+            try store.checkSnapshots(of: annotations, screens: screens)
             started = try store.beginReport(date: date)
+        } catch let missing as ReportStore.MissingSnapshot {
+            // Redline stays open on the draft, so the note can be deleted and the rest sent.
+            let number = (annotations.firstIndex { $0.id == missing.annotationID } ?? 0) + 1
+            logger.error("Couldn't send: the snapshot for note \(number) is missing")
+            showFailure("Note \(number) lost its snapshot. Delete it, then send.")
+            return
         } catch {
             logger.error("Couldn't start the report: \(error.localizedDescription, privacy: .public)")
-            show(toast: "Couldn't save the report")
+            showFailure("Couldn't save the report. Your notes are kept.")
             return
         }
         let destination = destination
@@ -1032,12 +1111,41 @@ final class DebugSession {
                     store: store,
                     logger: logger
                 )
-                show(toast: ReportDelivery.toast(for: outcome, notes: notes, to: destination?.title))
+                show(Toast(message: ReportDelivery.toast(for: outcome, notes: notes, to: destination?.title)))
             } catch {
                 logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
-                show(toast: "Couldn't save the report")
+                restoreDraft(from: input)
             }
         }
+    }
+
+    /// Puts the notes of a report that couldn't be finished back into the draft, ahead of any made
+    /// since, so they can be sent again.
+    private func restoreDraft(from input: ReportBuilder.Input) {
+        let before = screens
+        do {
+            try store.reclaimDraftFiles(from: input.folder)
+        } catch {
+            logger.error("Couldn't take back the report's snapshots: \(error.localizedDescription, privacy: .public)")
+            showFailure("Couldn't save the report or bring its notes back")
+            return
+        }
+        screens = input.screens + screens
+        let restored = input.annotations + annotations
+        do {
+            // Screens first: a screens file listing a capture no note uses is harmless, while a
+            // note whose capture isn't listed would show blank.
+            try persistScreens()
+            try persistAnnotations(restored)
+        } catch {
+            screens = before
+            showFailure("Couldn't save the report or bring its notes back")
+            return
+        }
+        annotations = restored
+        store.discardReport(input.folder)
+        refreshMarkers()
+        showFailure("Couldn't save the report. Its notes are back in the draft.")
     }
 
     /// Draws the report's snapshots, writes it, then hands every report the Mac hasn't confirmed to
@@ -1071,7 +1179,7 @@ final class DebugSession {
         let capture = Capture(
             id: UUID(),
             file: "capture-\(UUID().uuidString).png",
-            size: screenSize,
+            size: readSize,
             scroll: scrollState,
             elements: elements,
             group: 0
@@ -1114,8 +1222,11 @@ final class DebugSession {
     }
 
     /// Drops captures no note points at any more, and screens with no captures left.
+    ///
+    /// Called once the draft no longer refers to them.
     private func pruneCaptures() {
         let used = Set(annotations.compactMap(\.captureID))
+        let before = screens
         for index in screens.indices.reversed() {
             for capture in screens[index].captures where !used.contains(capture.id) {
                 store.deleteDraftFile(named: capture.file)
@@ -1123,6 +1234,12 @@ final class DebugSession {
             }
             screens[index].captures.removeAll { !used.contains($0.id) }
             if screens[index].captures.isEmpty { screens.remove(at: index) }
+        }
+        guard screens != before else { return }
+        do {
+            try persistScreens()
+        } catch {
+            // Logged. The screens file still lists the dropped captures, which no note uses.
         }
     }
 
@@ -1158,7 +1275,7 @@ final class DebugSession {
     /// when the element itself is hidden behind the keyboard or the card.
     func selectedElementPreview() -> UIImage? {
         guard let frame = selected?.frame, let image = screenImage else { return nil }
-        return Self.crop(image, around: frame, screenWidth: screenSize.width)
+        return Self.crop(image, around: frame)
     }
 
     // MARK: - Thumbnails and previews
@@ -1214,10 +1331,12 @@ final class DebugSession {
     /// A square crop for a thumbnail.
     ///
     /// A wide element keeps its leading end and a tall one its top, where the icon and title
-    /// usually are; the middle of a row is often empty.
-    private static func crop(_ image: UIImage, around frame: CGRect, screenWidth: CGFloat) -> UIImage? {
-        guard let cgImage = image.cgImage, screenWidth > 0 else { return nil }
-        let scale = CGFloat(cgImage.width) / screenWidth
+    /// usually are; the middle of a row is often empty. `frame` is in the points of the screen
+    /// the image was taken of, which may have been a different size or orientation from the
+    /// screen now.
+    private static func crop(_ image: UIImage, around frame: CGRect) -> UIImage? {
+        guard let cgImage = image.cgImage else { return nil }
+        let scale = AppWindows.screenshotScale
         var area = frame.insetBy(dx: -12, dy: -12)
         let side = min(area.width, area.height)
         area.size = CGSize(width: side, height: side)
@@ -1248,7 +1367,7 @@ final class DebugSession {
         if let cached = thumbnails[annotation.id] { return cached }
         if let captureID = annotation.captureID, let element = annotation.element {
             guard let (_, capture) = capture(withID: captureID), let image = captureImage(capture),
-                let thumbnail = Self.crop(image, around: element.frame, screenWidth: capture.size.width)
+                let thumbnail = Self.crop(image, around: element.frame)
             else { return nil }
             thumbnails[annotation.id] = thumbnail
             return thumbnail
@@ -1256,9 +1375,7 @@ final class DebugSession {
         guard let first = annotation.attachments.first,
             let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: first).path(percentEncoded: false))
         else { return nil }
-        let thumbnail =
-            annotation.element.map { Self.crop(image, around: $0.frame, screenWidth: screenSize.width) }
-            ?? Self.topSquare(of: image)
+        let thumbnail = annotation.element.map { Self.crop(image, around: $0.frame) } ?? Self.topSquare(of: image)
         guard let thumbnail else { return nil }
         thumbnails[annotation.id] = thumbnail
         return thumbnail
@@ -1276,14 +1393,25 @@ final class DebugSession {
 
     /// The note card's top edge.
     func noteCardTop(height: CGFloat, reservedHeight: CGFloat) -> CGFloat {
-        let keyboard = noteKeyboardTop
-        return NoteCardPlacement.top(
-            element: selected?.frame,
+        NoteCardPlacement.top(
+            // After a rotation the picked frame points at the wrong place; the card shows
+            // a crop of the element instead.
+            element: screenReadIsCurrent ? selected?.frame : nil,
             height: height,
             reservedHeight: reservedHeight,
             top: safeAreaTop,
-            bottom: min(keyboard, screenSize.height - safeAreaInsets.bottom)
+            bottom: noteCardBottom
         )
+    }
+
+    /// The tallest the note card can be and still fit whole above the keyboard.
+    var noteCardMaxHeight: CGFloat {
+        NoteCardPlacement.maxHeight(top: safeAreaTop, bottom: noteCardBottom)
+    }
+
+    /// The lowest the note card's bottom may go: the keyboard, or the home indicator without one.
+    private var noteCardBottom: CGFloat {
+        min(noteKeyboardTop, screenSize.height - safeAreaInsets.bottom)
     }
 
     private static let keyboardHeightKey = "RedlineKeyboardHeight"
@@ -1378,14 +1506,20 @@ final class DebugSession {
         }
     }
 
-    private func show(toast message: String) {
+    private func show(_ message: Toast) {
         toast = message
         toastTimer?.cancel()
         toastTimer = Task {
-            try? await Task.sleep(for: .seconds(2.5))
+            try? await Task.sleep(for: .seconds(message.isError ? 4 : 2.5))
             guard !Task.isCancelled else { return }
             toast = nil
         }
+    }
+
+    private func showFailure(_ message: String) {
+        show(Toast(message: message, isError: true))
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
+        UIAccessibility.post(notification: .announcement, argument: message)
     }
 
     // MARK: - Display
@@ -1422,6 +1556,7 @@ final class DebugSession {
     // MARK: - Noting
 
     private func beginNoting() {
+        noteError = nil
         isAwaitingKeyboard = keyboardTop == .infinity
         setMode(.noting)
         // A hardware keyboard never shows the on-screen one; stop waiting for it.
@@ -1438,6 +1573,7 @@ final class DebugSession {
         keyboardWait?.cancel()
         keyboardWait = nil
         isAwaitingKeyboard = false
+        noteError = nil
         setMode(next)
     }
 
@@ -1488,28 +1624,37 @@ final class DebugSession {
         }
     }
 
-    /// Saves the draft's notes and its screens.
+    /// Saves `updated` as the draft's notes.
     ///
-    /// Saving a note or deleting one can change both.
-    private func persist() {
-        persistAnnotations()
-        persistScreens()
-    }
-
-    private func persistAnnotations() {
+    /// Callers change `annotations` only once this succeeds, so the notes on screen always match
+    /// what the next launch loads.
+    private func persistAnnotations(_ updated: [Annotation]) throws {
         do {
-            try store.saveDraft(annotations)
+            try store.saveDraft(updated)
         } catch {
             logger.error("Couldn't save the draft's notes: \(error.localizedDescription, privacy: .public)")
+            throw error
         }
     }
 
     /// The screens hold every capture's elements, so they're written only when they change.
-    private func persistScreens() {
+    private func persistScreens() throws {
         do {
             try store.saveScreens(screens)
         } catch {
             logger.error("Couldn't save the draft's screens: \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
+    }
+
+    /// Deletes the images of a note that couldn't be saved, once they're written.
+    private func discardAfterWrites(_ files: [String]) {
+        guard !files.isEmpty else { return }
+        let pending = writes
+        let store = store
+        Task {
+            for write in pending { await write.value }
+            files.forEach(store.deleteDraftFile(named:))
         }
     }
 
@@ -1541,12 +1686,19 @@ final class DebugSession {
         )
         screenImage = AppWindows.screenshot(of: appWindows, bounds: window.bounds)
         scrollState = AppWindows.mainScrollState(under: roots, screenBounds: window.bounds)
+        readSize = window.bounds.size
         refreshMarkers()
     }
 
+    /// Markers go on notes made on this screen.
+    ///
+    /// Without a title, two screens of the same kind look alike (SwiftUI routes share one hosting
+    /// controller type), so only notes added since pick mode opened count as this screen's.
     private func refreshMarkers() {
         let found = annotations.enumerated().compactMap { index, annotation -> Marker? in
-            guard let element = annotation.element, annotation.screen == screen,
+            let sameScreen =
+                notesThisVisit.contains(annotation.id) || (screen.title != nil && annotation.screen == screen)
+            guard let element = annotation.element, sameScreen,
                 let match = ElementSelection.match(element, in: elements)
             else { return nil }
             return Marker(id: annotation.id, number: index + 1, frame: match.frame)

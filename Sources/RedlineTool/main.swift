@@ -23,9 +23,15 @@ let usage = """
           Waits for the next report for the project's apps, then prints it and takes it. Run in an
           agent's background, it wakes the chat when a report arrives. With several chats waiting,
           the one used most recently gets the report.
-      redline setup | remove
-          Adds to (or removes from) Codex's hook settings the hook that hands reports to a chat when
-          nothing else can. Claude Code needs none. Other hooks stay as they are.
+      redline setup [--no-input]
+          Checks that the claude command is installed, new enough and signed in, running claude
+          update and claude auth login in this terminal when needed, and adds the Codex hook that
+          hands reports to a chat when nothing else can. Claude Code needs no hooks, and Cursor's
+          from an earlier setup are removed. Other hooks stay as they are. With --no-input, or with
+          no terminal, it only prints what you need to run.
+      redline remove
+          Removes Redline's hooks from Codex and Claude Code settings, and Cursor's from an earlier
+          setup. Other hooks stay.
       redline hook <claude | codex> prompt
           Run by the agents' hooks, with the event's JSON on standard input.
       redline hub [--app <bundle ID> ...]
@@ -81,19 +87,43 @@ if arguments.isEmpty, Bundle.main.bundleURL.pathExtension == "app" { arguments =
 
 switch arguments.first {
 case "app":
-    // The menu bar app is the hub: one process. A hub already running steps aside.
+    // The menu bar app is the hub: one process. A hub already running steps aside, and the apps
+    // it was told to watch on the command line stay watched.
+    var keptApps: [String] = []
     if let running = HubProcess.running(paths), running != getpid() {
-        kill(running, SIGTERM)
-        for _ in 0..<20 where HubProcess.running(paths) != nil { usleep(100_000) }
+        // A hub saves its status, with those apps, as it starts; give one starting now a moment.
+        var status = savedStatus(paths)
+        var tries = 0
+        while status?.pid != running, HubProcess.running(paths) == running, tries < 50 {
+            usleep(100_000)
+            status = savedStatus(paths)
+            tries += 1
+        }
+        if HubProcess.running(paths) == running {
+            guard let status, status.pid == running else {
+                failToStart(
+                    "A hub is already running (pid \(running)) and didn't say which apps it watches, so it was left running."
+                )
+            }
+            keptApps = status.fixedApps ?? []
+            // Stopping can wait for a simulator scan to finish, and the PID file stays locked until it
+            // has. A hub that hasn't stopped in 30 seconds is ended, which frees the lock at once.
+            kill(running, SIGTERM)
+            tries = 0
+            while HubProcess.running(paths) == running {
+                if tries == 300 { kill(running, SIGKILL) }
+                if tries == 350 { break }
+                usleep(100_000)
+                tries += 1
+            }
+        }
     }
     guard let devicectl = Devicectl.locate() else {
-        print("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
-        exit(1)
+        failToStart("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
     }
-    let hub = Hub(paths: paths, devicectl: devicectl, apps: [])
+    let hub = Hub(paths: paths, devicectl: devicectl, apps: keptApps)
     guard hub.start() else {
-        print("Another hub is running and didn't stop. Quit it, then open Redline again.")
-        exit(1)
+        failToStart("Another hub is running and didn't stop. Quit it, then open Redline again.")
     }
     stopOnSignals { hub.stop() }
     HubAppContext.hub = hub
@@ -181,9 +211,16 @@ case "hook":
 case "setup", "remove":
     let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
     let adding = arguments.first == "setup"
-    // Before anything else: new Claude Code chats need the claude command signed in.
-    if adding, AgentSettings.isPresent(.claude) || AgentCommand.isClaudeAppInstalled() {
-        guard ClaudeCLI.prepare() else { exit(1) }
+    let options = arguments.dropFirst()
+    guard options.isEmpty || (adding && options == ["--no-input"]) else {
+        printError(usage)
+        exit(64)
+    }
+    // First: new Claude Code chats need the claude command signed in. What's still missing is
+    // printed for the user, and setup goes on.
+    if adding, AgentSettings.isPresent(.claude) || AgentCommand.isClaudeAppInstalled(),
+        ClaudeCLI.prepare(isAsking: options.isEmpty && isatty(STDIN_FILENO) != 0)
+    {
         print("Claude Code: the claude command is signed in and ready to start new chats.")
     }
     var failed = false
@@ -192,20 +229,26 @@ case "setup", "remove":
             if adding { print("\(agent.name): not used on this Mac, skipped.") }
             continue
         }
-        // An agent that needs no hooks is left alone: its settings file isn't touched.
-        if adding, AgentSettings.hooks(agent, executable: executable).isEmpty {
-            print("\(agent.name): no hooks needed")
-            continue
-        }
+        let needsNoHooks = adding && AgentSettings.hooks(agent, executable: executable).isEmpty
         do {
+            // An agent that needs no hooks is left alone, its settings file untouched, unless an
+            // earlier setup left hooks there: they go, so none runs a command the installer removes.
+            if needsNoHooks,
+                try !AgentSettings.containsHooks(inFile: AgentSettings.fileURL(for: agent), executable: executable)
+            {
+                print("\(agent.name): no hooks needed")
+                continue
+            }
             try AgentSettings.update(agent) {
                 adding
                     ? AgentSettings.adding(agent, to: $0, executable: executable)
-                    : AgentSettings.removing(agent, from: $0)
+                    : AgentSettings.removing(from: $0, executable: executable)
             }
-            print(
-                "\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.fileURL(for: agent).path)"
-            )
+            let change =
+                needsNoHooks
+                ? "no hooks needed; hooks from an earlier setup removed from"
+                : adding ? "hooks added to" : "hooks removed from"
+            print("\(agent.name): \(change) \(AgentSettings.fileURL(for: agent).path)")
             if adding, agent == .codex {
                 print(
                     "  Codex runs a new hook only once you trust it: open /hooks in Codex and trust \"Report delivery\"."
@@ -218,6 +261,18 @@ case "setup", "remove":
             failed = true
         }
     }
+    // Cursor isn't supported. Setup and remove both take out the hooks an earlier setup added
+    // for it, so none is left running a command that is later removed.
+    let cursorFile = AgentSettings.cursorFileURL()
+    do {
+        if try AgentSettings.containsHooks(inFile: cursorFile, executable: executable) {
+            try AgentSettings.update(cursorFile) { AgentSettings.removing(from: $0, executable: executable) }
+            print("Cursor: hooks from an earlier setup removed from \(cursorFile.path)")
+        }
+    } catch {
+        print("Cursor: couldn't update \(cursorFile.path): \(error.localizedDescription)")
+        failed = true
+    }
     if adding {
         print("Reports go to the chat picked on the phone, or else the chat in the worktree the app was built from.")
     }
@@ -228,6 +283,39 @@ case "status":
 
 default:
     print(usage, terminator: "")
+}
+
+/// The running hub's saved status, nil until it has saved one.
+///
+/// A status that can't be read counts as not saved yet: a hub writes it whole as it starts.
+@MainActor
+func savedStatus(_ paths: HubPaths) -> HubStatus? {
+    do {
+        return try HubPaths.decoder.decode(HubStatus.self, from: Data(contentsOf: paths.status))
+    } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+        return nil
+    } catch {
+        printError("Couldn't read the running hub's status: \(error.localizedDescription)")
+        return nil
+    }
+}
+
+/// Says why the menu bar app can't start, then exits.
+///
+/// Opened from Finder or by a chat, the app has no terminal to print to, so it shows the reason in
+/// an alert too.
+@MainActor
+func failToStart(_ reason: String) -> Never {
+    printError(reason)
+    if Bundle.main.bundleURL.pathExtension == "app" {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        NSApplication.shared.activate()
+        let alert = NSAlert()
+        alert.messageText = "Redline couldn't start"
+        alert.informativeText = reason
+        alert.runModal()
+    }
+    exit(1)
 }
 
 /// Writes a line to standard error.

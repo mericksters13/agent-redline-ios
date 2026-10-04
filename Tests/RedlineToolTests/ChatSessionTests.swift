@@ -77,6 +77,20 @@ struct ChatSessionTests {
         #expect(Chats.removeClosedChats(paths).isEmpty)
     }
 
+    @Test func aPIDTakenByALaterProcessDoesNotKeepAChatOpen() throws {
+        let started = try #require(Chats.startTime(of: getpid()))
+        #expect(started <= Date.now)
+        #expect(Chats.isRunning(getpid(), since: Date.now))
+        // Registered before this process started: the chat's process is gone and its PID reused.
+        #expect(!Chats.isRunning(getpid(), since: started.addingTimeInterval(-60)))
+
+        var chat = session(try project()).chat
+        chat.registeredAt = started.addingTimeInterval(-60)
+        try Chats.register(chat, paths: paths)
+        #expect(Chats.removeClosedChats(paths).isEmpty)
+        #expect(Chats.record(chat.id, paths: paths) == nil)
+    }
+
     @Test func onlyOneChatTakesAReport() throws {
         let folder = try project()
         _ = try inboxReport("20261003-223449")
@@ -86,6 +100,33 @@ struct ChatSessionTests {
         #expect(second.take(budget: 1_000_000).taken == 0)
         let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
         #expect(report.claim?.chat == first.chat.id)
+    }
+
+    @Test func aReportAnInterruptedHandOverClaimedIsFreeAgain() throws {
+        let folder = try project()
+        let inbox = try inboxReport("20261003-223449")
+        // A process that has ended stands in for a chat's server that crashed mid hand-over.
+        let ended = Process()
+        ended.executableURL = URL(filePath: "/usr/bin/true")
+        try ended.run()
+        ended.waitUntilExit()
+        let stranded = Claim(
+            chat: "gone",
+            agent: "test",
+            folder: folder.path,
+            claimedAt: .now,
+            handingOverIn: ended.processIdentifier
+        )
+        try HubPaths.encoder.encode(stranded).write(to: inbox.appending(path: Inbox.claimFile))
+        #expect(Inbox.unclaimedReports(for: ["com.example.app"], paths: paths).count == 1)
+
+        let chat = session(folder)
+        #expect(chat.take(budget: 1_000_000).taken == 1)
+        let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
+        #expect(report.claim?.chat == chat.chat.id)
+        // Handed over: the claim stands for good, and no other chat takes the report.
+        #expect(report.claim?.handingOverIn == nil)
+        #expect(session(folder).take(budget: 1_000_000).taken == 0)
     }
 
     @Test func aChatOnAnotherAppNeverGetsTheReport() throws {
@@ -179,6 +220,19 @@ struct ChatSessionTests {
         var gone = saved
         gone.waiter = Int32.max
         #expect(!gone.isWaiting)
+    }
+
+    @Test func anotherReportWaitsWhenItsTextMightNotFit() throws {
+        let folder = try inboxReport("20261003-223449")
+        try ("# UI report\n\n1. **Log**: " + String(repeating: "é", count: 200_000)).write(
+            to: folder.appending(path: "report.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try inboxReport("20261003-223500")
+        let taken = session(try project()).take(budget: ReportContent.longestText + 30)
+        #expect(taken.taken == 1)
+        #expect(taken.remaining == 1)
     }
 }
 #endif

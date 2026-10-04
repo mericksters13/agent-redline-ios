@@ -18,7 +18,7 @@ final class MCPServer: Sendable {
     private let outputQueue = DispatchQueue(label: "Redline.mcp.output")
     private let inFlight = DispatchGroup()
 
-    /// The most snapshot bytes in one reply.
+    /// The most bytes of text and snapshots in one reply.
     ///
     /// Agent apps cap a tool result's size; Claude's desktop app refuses results over 1 MB, and
     /// snapshots grow by a third when encoded.

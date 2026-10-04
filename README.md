@@ -31,7 +31,6 @@ Status: early development (version 0.1). Supported agents: Claude Code and Codex
 - [Privacy and security](#privacy-and-security)
 - [Troubleshooting](#troubleshooting)
 - [Command reference](#command-reference)
-- [Uninstall](#uninstall)
 
 ## How it works
 
@@ -136,65 +135,105 @@ A chat that calls the MCP tool `check_messages` gets `report.md` with the snapsh
 
 ## Install on the Mac
 
-There is no installer yet. These steps build Redline from source.
+There are three ways in, and all three run the same installer, [`install.sh`](install.sh). It builds Redline from source with your Xcode, so the first run takes a few minutes.
 
-1. **Clone the repository.**
+1. **Ask your agent.** In a Claude Code or Codex chat open in your app's project, paste:
 
-   ```sh
-   git clone https://github.com/mericksters13/agent-redline-ios.git
-   cd agent-redline-ios
+   ```text
+   Install Redline from https://github.com/mericksters13/agent-redline-ios and add it to this app.
    ```
 
-2. **Build and install the menu bar app.** This builds `Redline.app` and installs it in `~/Applications`. Keep that location: chats look for the app there to start it.
+   The agent follows [INSTALL.md](INSTALL.md): it runs the installer, adds the package and `.redline()` to your app, builds it, and tells you what is left for you to do.
+
+2. **npx** (needs Node.js 18 or later):
 
    ```sh
-   scripts/build-hub-app.sh
+   npx agent-redline-ios
    ```
 
-   The script signs the app with your Mac's Apple Development certificate when you have one, and ad hoc otherwise. If a copy of Redline is running, the script stops it and opens the new one.
+   If npm can't find the package yet, run it from GitHub: `npx github:mericksters13/agent-redline-ios`.
 
-3. **Open Redline.** A Redline icon appears in the menu bar. macOS asks once whether Redline may show notifications.
+3. **curl:**
 
    ```sh
-   open ~/Applications/Redline.app
+   curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "${TMPDIR:-/tmp}/redline-install.sh" && bash "${TMPDIR:-/tmp}/redline-install.sh"
    ```
 
-4. **Install the `redline` command.** Build it and copy that binary onto your `PATH`. Do not copy the executable out of `Redline.app`: macOS stops a copy taken out of the signed app bundle.
+   It saves the script first and runs it only when the download worked, so a failed download ends with an error instead of an empty run that exits 0. The script then downloads the `main` branch. To install a particular branch, tag or commit, set `REDLINE_REF`: `REDLINE_REF=<commit> bash "${TMPDIR:-/tmp}/redline-install.sh"`.
 
-   ```sh
-   swift build -c release --product redline
-   mkdir -p ~/.local/bin
-   cp "$(swift build -c release --show-bin-path)/redline" ~/.local/bin/redline
-   ```
+The installer asks for nothing it can do without: with `--no-input` (for example `npx agent-redline-ios --no-input`), or when a coding agent or CI runs it, it never waits for an answer and lists what is left for you.
 
-   If `~/.local/bin` is not on your `PATH`, add it, or use the full path in the next steps.
+### What the installer does
 
-5. **Run setup** with the installed copy. Hooks are written with the path of the command that runs setup.
+Each step is safe to run again: nothing is added twice, and a run that stopped partway can be run again.
 
-   ```sh
-   ~/.local/bin/redline setup
-   ```
+1. **Checks the Mac:** macOS 15 or later, not run as root, Xcode installed and selected with its license accepted and its first launch done, `devicectl`, Swift 6 or later, git, and 3 GB of free disk space. When something is missing it stops with the one command to fix it, such as `sudo xcodebuild -license accept`; run that, then run the same install command again. The installer never runs `sudo` itself.
+2. **Gets the source:** the checkout it runs from, or a copy of the npm package in `~/Library/Caches/Redline/source`, so the build lands in a folder you own and later versions reuse it. Run with curl, it downloads the `main` branch into that same folder and updates that copy on later runs. git is never allowed to ask for a sign-in: a repository or branch it can't reach stops the installer with the fix.
+3. **Builds the `redline` command** with `swift build -c release --product redline`. The build log is `~/Library/Application Support/Redline/install.log`; if the build fails, the installer shows the last errors and stops.
+4. **Installs the command** as `~/.local/bin/redline`, copied from the build output. If `~/.local/bin` is not on your `PATH` and your shell is zsh, it adds one line to `~/.zprofile`; for another shell, it gives you the line to add.
+5. **Builds and installs `Redline.app`** in `~/Applications` with `scripts/build-hub-app.sh`. Keep it there: chats look for the app there to start it. The app is signed with your Mac's Apple Development certificate when you have one and it can be used (it can't over SSH or with the keychain locked), and ad hoc otherwise. A running copy is stopped and opened again (with `--no-start`, it is stopped and not opened again).
+6. **Runs `redline setup`:**
+   - **Claude Code**, when `~/.claude` exists or the Claude app is installed. Setup checks that the `claude` command is installed, signed in, and, with the Claude app, version 2.1.285 or later. The `claude` command starts new chats for reports and has its own sign-in, separate from the Claude app's. In a terminal, setup runs `claude update` and `claude auth login` for you. With no terminal to ask in, with `--no-input`, or when an agent runs the installer, it runs neither and lists them for you instead. Either way it goes on with the rest.
+   - **Codex**, when `~/.codex` exists. Setup adds one hook, on `UserPromptSubmit`, named "Report delivery", to `~/.codex/hooks.json`. Your other hooks stay as they are, and the file is backed up once as `hooks.json.before-redline`.
+   - Claude Code needs no hooks, so setup leaves `~/.claude/settings.json` as it is.
+   - Cursor gets no hooks. Hooks an earlier setup added to `~/.cursor/hooks.json` are removed.
+   - **The earlier version**, Agentic Debugging, is replaced: its app in `~/Applications` is stopped and removed, its command `~/.local/bin/agentic-debugging` is removed once setup has moved its hooks to `redline`, and its data folder, `~/Library/Application Support/iOSAgenticDebuggingKit`, moves to `~/Library/Application Support/Redline`, so reports and paired phones carry over. The data moves only after the new command and app are installed, so a run that stops earlier leaves the earlier version working with its data; that run's log and checklist are in `~/Library/Caches/Redline`.
+7. **Adds the MCP server to Claude Code**, once, when the `claude` command is installed: `claude mcp add --scope user redline -- ~/.local/bin/redline mcp`. Each Claude Code chat then runs `redline mcp`, which registers the chat and the apps its project builds with the hub, and opens Redline when it is not running. In projects that build no iOS app it does nothing. It also gives the chat two tools, `check_messages` and `wait_for_message`, for taking reports that are waiting in the inbox. An entry left from Redline's earlier name, `agentic-debugging`, is removed.
+8. **Opens Redline at login and starts it:** a login item, `~/Library/LaunchAgents/com.agentredline.hub.plist`, opens Redline in the background at login. A Redline icon appears in the menu bar. `--no-start` skips this step, for tests and CI.
+9. **Ends with a checklist** of each step, marked Done, Needs you or Skipped, with the exact command or click for each Needs you. It is saved in `~/Library/Application Support/Redline/install-report.txt`.
 
-   What it does:
-   - **Claude Code first.** If Claude Code is used on this Mac, setup checks the `claude` command. If it is missing, setup prints the install command and stops. If the Claude app is installed and `claude` is older than 2.1.285, it runs `claude update`. If `claude` is not signed in, it runs `claude auth login` in your terminal. The `claude` command has its own sign-in, separate from the Claude app's.
-   - **Codex.** It adds one hook, on `UserPromptSubmit`, named "Report delivery", to `~/.codex/hooks.json`. Your other hooks stay as they are, and the file is backed up once as `hooks.json.before-redline`.
-   - Claude Code needs no hooks. When `~/.claude` exists, setup still rewrites `~/.claude/settings.json` in place (keys sorted, pretty-printed) and backs it up once as `settings.json.before-redline`, without adding anything. Running setup again changes nothing.
+### What may need you afterwards
 
-6. **Trust the Codex hook.** Codex runs a new hook only after you trust it. In Codex, open `/hooks` and trust "Report delivery".
+The checklist lists what only you can do. Depending on your Mac, that is:
 
-7. **Add the MCP server to Claude Code.** Each Claude Code chat then runs `redline mcp`, which registers the chat and the apps its project builds with the hub, and opens Redline when it is not running. In projects that build no iOS app it does nothing.
+- **Sign in the `claude` command:** `claude auth login`, or `claude update` when it is too old for the Claude app. Setup does this for you when it has a terminal to ask in.
+- **Trust the Codex hook:** Codex runs a new hook only after you trust it. In Codex, open `/hooks` and trust "Report delivery".
+- **Open a new terminal** when the installer added `~/.local/bin` to your `PATH`.
+- **Start a new Claude Code chat** in your project, or restart the open one: a chat loads its MCP servers when it starts.
 
-   ```sh
-   claude mcp add --scope user redline -- "$HOME/.local/bin/redline" mcp
-   ```
-
-   It also gives the chat two tools, `check_messages` and `wait_for_message`, for taking reports that are waiting in the inbox.
+The first time Redline runs, macOS asks once whether it may show notifications, and may say a background item was added: that is the login item.
 
 ### Update
 
-Update the Mac first. After you pull a newer Redline, rebuild and install the menu bar app and the `redline` command (steps 2 and 4), then rebuild your apps against the new package. A newer hub reads reports from older apps, but an older hub may not fully read a report whose format changed: it still delivers it, without the notes in its panel and with the snapshots out of order.
+Update the Mac first, then rebuild your apps against the new package. A newer hub reads reports from older apps, but an older hub may not fully read a report whose format changed: it still delivers it, without the notes in its panel and with the snapshots out of order.
+
+To update the Mac, run the install command again. It rebuilds the command and the app, replaces them, and restarts Redline. With npx, ask for the latest version, or npx may reuse the copy it downloaded before:
+
+```sh
+npx agent-redline-ios@latest
+```
+
+Run with curl, the installer downloads the latest `main`. From a checkout, it builds the checkout as it is, so `git pull` first.
+
+### Uninstall
+
+```sh
+npx agent-redline-ios uninstall
+```
+
+or
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "${TMPDIR:-/tmp}/redline-install.sh" && bash "${TMPDIR:-/tmp}/redline-install.sh" uninstall
+```
+
+It removes Redline's hooks (with `redline remove`, or by itself when the command is already gone; other hooks stay), the MCP entry in Claude Code, the login item, `Redline.app`, `~/.local/bin/redline`, the line it added to `~/.zprofile`, and its download cache. Reports stay in `~/Library/Application Support/Redline` until you delete that folder, and so do the `.before-redline` backups of your settings. If the app, the command or the login item can't be deleted, or Redline doesn't stop when asked, the checklist says so under Needs you and the uninstaller exits with status 1. In your app, remove the `.redline()` line and the package.
+
+### From source
+
+To work on Redline itself, clone the repository and run the installer from the checkout. It builds and installs that checkout instead of downloading one:
+
+```sh
+git clone https://github.com/mericksters13/agent-redline-ios.git
+cd agent-redline-ios
+bash install.sh
+```
+
+Run it again after each change. `swift test` runs the tests. To rebuild only the app, run `scripts/build-hub-app.sh`. Install the `redline` command from `swift build -c release --product redline`, as the installer does; do not copy the executable out of `Redline.app`, because macOS stops a copy taken out of the signed app bundle.
 
 ## Add Redline to your iOS app
+
+An agent asked to add Redline to your app does these steps for you, following [INSTALL.md](INSTALL.md).
 
 1. **Add the package.** In Xcode, choose File > Add Package Dependencies and enter:
 
@@ -277,7 +316,7 @@ Click the Redline icon in the menu bar to open the panel:
 
 - **Header:** the address and port apps reach the Mac at.
 - **Devices:** paired iPhones that are ready and running simulators with a watched app, with the time of each one's last report. Paired phones that can't take reports right now are dimmed, with the reason, such as Not reachable or No watched app installed.
-- **Reports:** the 30 newest, each with its first snapshot, the device, when it arrived, the agent and chat it went to (or why it is waiting), and its first notes. Click a report to open its folder. A report viewer window, with "Open in" to jump to the chat, is being added to the panel.
+- **Reports:** the 30 newest, each with its first snapshot, the device, when it arrived, the agent and chat it went to (or why it is waiting), and its first notes. Click a report to open it in a viewer window: its snapshots with the numbered outlines, and its notes beside them; click a note to bring its snapshot into view. **Open in Claude Code** or **Open in Codex** reopens the chat the report went to, and **Show in Finder** shows the report's folder.
 - **Open inbox** opens the inbox folder in Finder. **Quit** stops the hub.
 
 Each report also posts a Mac notification saying where it went.
@@ -324,7 +363,7 @@ The hub's log is at `~/Library/Application Support/Redline/hub/hub.log`.
 
 | Command | What it does |
 |---|---|
-| `redline setup` | Checks the `claude` command and adds the Codex hook. |
+| `redline setup` | Checks the `claude` command, adds the Codex hook and removes Cursor hooks from an earlier setup. With `--no-input`, or with no terminal, it lists what you need to run instead of running `claude update` or `claude auth login`. |
 | `redline remove` | Removes Redline's hooks. Other hooks stay. |
 | `redline status` | Shows what the hub is doing, each phone's state and what's in the inbox. |
 | `redline check` | Prints the reports waiting for the current project's apps and takes them. |
@@ -334,19 +373,6 @@ The hub's log is at `~/Library/Application Support/Redline/hub/hub.log`.
 | `redline app` | The menu bar app; opening `Redline.app` does the same. |
 
 `check`, `wait` and `mcp` take `--project <folder>`, and `--app <bundle ID>` for a bundle ID that can't be read from the project.
-
-## Uninstall
-
-Quit Redline from its panel, then:
-
-```sh
-~/.local/bin/redline remove
-claude mcp remove --scope user redline
-rm ~/.local/bin/redline
-rm -rf ~/Applications/Redline.app
-```
-
-Reports stay in `~/Library/Application Support/Redline` until you delete that folder. In your app, remove the `.redline()` line and the package.
 
 ## Contributing
 

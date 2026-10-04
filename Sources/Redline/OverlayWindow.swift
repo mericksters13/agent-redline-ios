@@ -17,11 +17,18 @@ enum TouchableArea: Hashable {
 final class OverlayWindow: UIWindow {
     var claimsAllTouches = false
     /// Where each area that takes touches while Redline is idle sits.
+    ///
+    /// Only the round button inside the floating button's frame takes touches, so a tap in a
+    /// corner of the frame reaches the app underneath.
     var touchableRects: [TouchableArea: CGRect] = [:]
     var onLayout: ((_ window: OverlayWindow) -> Void)?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard claimsAllTouches || touchableRects.values.contains(where: { $0.contains(point) }) else { return nil }
+        let isTouchable = touchableRects.contains { area, frame in
+            area == .floatingButton
+                ? FloatingButtonPlacement.buttonContains(point, frame: frame) : frame.contains(point)
+        }
+        guard claimsAllTouches || isTouchable else { return nil }
         return super.hitTest(point, with: event)
     }
 

@@ -35,20 +35,21 @@ enum AccessibilityTree {
         windows.flatMap(visibleRoots(of:))
     }
 
-    /// Every element and named group under `roots`, in screen points.
+    /// Every element and named group under `roots`, in screen points: back to front, each
+    /// parent before its children, with `parent` set to the enclosing one.
     ///
     /// With `stopAtFirst`, the walk ends at the first element found, to tell whether there are any.
     static func elements(under roots: [UIView], screenBounds: CGRect, stopAtFirst: Bool = false) -> [ElementSnapshot] {
         var result: [ElementSnapshot] = []
         var visited = Set<ObjectIdentifier>()
 
-        func append(_ object: NSObject, isContainer: Bool) {
+        func append(_ object: NSObject, isContainer: Bool, parent: Int?) -> Int? {
             var frame = object.accessibilityFrame
             if frame.isEmpty, let view = object as? UIView, let window = view.window {
                 frame = view.convert(view.bounds, to: window.screen.coordinateSpace)
             }
             frame = frame.intersection(screenBounds)
-            guard !frame.isNull, !frame.isEmpty else { return }
+            guard !frame.isNull, !frame.isEmpty else { return nil }
             result.append(
                 ElementSnapshot(
                     role: role(of: object, isContainer: isContainer),
@@ -58,42 +59,45 @@ enum AccessibilityTree {
                     className: String(describing: type(of: object)),
                     isContainer: isContainer,
                     frame: frame,
-                    updatesFrequently: updatesFrequently(object) ? true : nil
+                    updatesFrequently: updatesFrequently(object) ? true : nil,
+                    parent: parent
                 )
             )
+            return result.count - 1
         }
 
-        func visit(_ object: NSObject, depth: Int) {
+        func visit(_ object: NSObject, depth: Int, parent: Int?) {
             if stopAtFirst, !result.isEmpty { return }
             guard depth < 80, visited.insert(ObjectIdentifier(object)).inserted else { return }
             if let view = object as? UIView, view.isHidden || view.alpha < 0.01 { return }
 
+            var parent = parent
             if object.isAccessibilityElement {
-                append(object, isContainer: false)
+                parent = append(object, isContainer: false, parent: parent) ?? parent
             } else if identifier(of: object) != nil || object.accessibilityLabel?.nonEmpty != nil {
                 // Named groups let the note box step up from a leaf to its card or section.
-                append(object, isContainer: true)
+                parent = append(object, isContainer: true, parent: parent) ?? parent
             }
 
             if let children = object.accessibilityElements {
-                for case let child as NSObject in children { visit(child, depth: depth + 1) }
+                for case let child as NSObject in children { visit(child, depth: depth + 1, parent: parent) }
             } else {
                 // SwiftUI hosting views expose their tree through the container methods.
                 let count = object.accessibilityElementCount()
                 if count > 0, count != NSNotFound {
                     for index in 0..<min(count, 500) {
                         if let child = object.accessibilityElement(at: index) as? NSObject {
-                            visit(child, depth: depth + 1)
+                            visit(child, depth: depth + 1, parent: parent)
                         }
                     }
                 }
             }
             if let view = object as? UIView {
-                for subview in view.subviews { visit(subview, depth: depth + 1) }
+                for subview in view.subviews { visit(subview, depth: depth + 1, parent: parent) }
             }
         }
 
-        for root in roots { visit(root, depth: 0) }
+        for root in roots { visit(root, depth: 0, parent: nil) }
         return result
     }
 

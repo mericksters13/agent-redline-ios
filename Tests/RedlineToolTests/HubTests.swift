@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import Synchronization
 import Testing
 @testable import RedlineTool
 
@@ -32,6 +33,18 @@ struct HubTests {
         #expect(!Hub.constantTimeEquals("abc123", "abc124"))
         #expect(!Hub.constantTimeEquals("abc", "abc123"))
         #expect(Hub.constantTimeEquals("", ""))
+    }
+
+    @Test func anAppStaysWatchedAfterItsLastChatCloses() throws {
+        let hub = try hub()
+        let other = "com.example.other"
+        let chat = ChatSession(paths: paths, folder: paths.root, extraApps: [other], agent: "test", startsHub: false)
+        chat.register()
+        hub.updateApps(isStarting: true)
+        #expect(hub.apps.contains(other))
+        chat.unregister()
+        hub.updateApps(isStarting: true)
+        #expect(hub.apps.contains(other))
     }
 
     @Test func aTokenOutlivesTheHub() throws {
@@ -92,6 +105,76 @@ struct HubTests {
         hub.flushWrites()
     }
 
+    @Test func aPhoneNoLongerPairedLeavesTheStatus() async throws {
+        let hub = try hub()
+        let kept = Devicectl.Phone(udid: phone, name: "Test iPhone", model: "iPhone 17 Pro")
+        let unpaired = Devicectl.Phone(udid: "00000000-0000000000000002", name: "Old iPhone", model: "iPhone 15")
+        hub.phoneDidChange(kept, state: .ready(apps: [app]))
+        hub.phoneDidChange(unpaired, state: .ready(apps: [app]))
+        hub.forgetPhones(except: [phone])
+        #expect(hub.statusSnapshot().phones.map(\.udid) == [phone])
+
+        // A link whose phone was unpaired stops trying, and so never reports the phone again.
+        let link = PhoneLink(phone: unpaired, hub: hub)
+        await withCheckedContinuation { done in link.unpair { done.resume() } }
+        link.update(hosts: ["192.168.1.2"], port: 47361, includingNewApps: true)
+        link.phoneDidWake()
+        await withCheckedContinuation { done in link.unpair { done.resume() } }
+        #expect(hub.statusSnapshot().phones.map(\.udid) == [phone])
+        hub.flushWrites()
+    }
+
+    @Test func aSourceFirstSeenLaterTakesOnlyReportsFromThen() throws {
+        let hub = try hub()
+        let firstLook = Date.now.addingTimeInterval(3 * 3600)
+        let before = FinishedReport(id: "20261004-120000", finishedAt: firstLook.addingTimeInterval(-3600))
+        let fresh = FinishedReport(id: "20261004-145930", finishedAt: firstLook.addingTimeInterval(-30))
+        hub.startTrackingIfNeeded(device: phone, bundleID: app, now: firstLook)
+        #expect(hub.reportIDsToCopy(device: phone, bundleID: app, finished: [before, fresh]) == [fresh.id])
+        #expect(hub.settledReportIDs(device: phone, bundleID: app, finished: [before, fresh]) == [before.id])
+        hub.flushWrites()
+    }
+
+    @Test func aReportArrivingTwiceAtOnceIsFiledOnce() throws {
+        let hub = try hub()
+        let source = ReportSource(
+            kind: .phone,
+            device: phone,
+            deviceName: "Test iPhone",
+            bundleID: app,
+            reportID: "20261004-031600",
+            receivedAt: .now
+        )
+        let failures = Mutex(0)
+        DispatchQueue.concurrentPerform(iterations: 8) { attempt in
+            do {
+                try hub.receive(source) { destination in
+                    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+                    try Data("{\"attempt\":\(attempt)}".utf8).write(to: destination.appending(path: "report.json"))
+                }
+            } catch {
+                failures.withLock { $0 += 1 }
+            }
+        }
+        #expect(failures.withLock { $0 } == 0)
+        let folder = paths.inbox.appending(path: app, directoryHint: .isDirectory)
+        let name = Inbox.folderName(reportID: source.reportID, device: phone)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path) == [name])
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: folder.appending(path: name).path).sorted() == [
+                "report.json", "source.json",
+            ]
+        )
+        hub.flushWrites()
+        let state = try HubPaths.decoder.decode([String: SourceState].self, from: Data(contentsOf: paths.state))
+        #expect(state["\(phone)|\(app)"]?.delivered == [source.reportID])
+    }
+
+    @Test func theStatusNamesTheAppsGivenOnTheCommandLine() throws {
+        // The menu bar app taking over from this hub reads these and keeps watching them.
+        #expect(try hub().statusSnapshot().fixedApps == [app])
+    }
+
     @Test func anOfferWithoutTheRightTokenIsTurnedDown() throws {
         let hub = try hub()
         _ = hub.issueToken(device: phone, bundleID: app)
@@ -144,6 +227,28 @@ struct HubTests {
         #expect(Set(again.delivered) == ["20261002-135144", "20261004-031600"])
         // Queued writes land before the test's folder is removed.
         hub.flushWrites()
+    }
+
+    @Test func aStoppedHubHasSavedWhatItFiledAndTakesNoMore() throws {
+        let hub = try hub()
+        let token = hub.issueToken(device: phone, bundleID: app)
+        let first = HubMessage.Offer.Report(id: "20261004-031600", finishedAt: .now)
+        let second = HubMessage.Offer.Report(id: "20261004-031700", finishedAt: .now)
+        let offered = offer(token: token, reports: [first, second])
+        _ = hub.answerNow(offered)
+        try hub.storeNow(HubMessage.Upload(id: first.id, files: ["report.json": Data("{}".utf8)]), offeredIn: offered)
+        hub.stop()
+        let saved = try HubPaths.decoder.decode([String: SourceState].self, from: Data(contentsOf: paths.state))
+        #expect(saved.values.flatMap(\.delivered) == [first.id])
+        // An upload that arrives after the stop is offered again to the next hub.
+        #expect(throws: Hub.FilingError.stopping) {
+            try hub.storeNow(
+                HubMessage.Upload(id: second.id, files: ["report.json": Data("{}".utf8)]),
+                offeredIn: offered
+            )
+        }
+        let folder = paths.inbox.appending(path: "\(app)/20261004-031700-00000001", directoryHint: .isDirectory)
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
     }
 }
 #endif

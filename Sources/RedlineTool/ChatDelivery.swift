@@ -33,6 +33,9 @@ struct ChatDelivery: Codable, Equatable, Sendable {
         self.kind = kind
     }
 
+    /// Not in a chat yet: a chat that takes the report later records a claim.
+    var isPending: Bool { kind == .waiting || kind == .nextMessage }
+
     static func save(_ delivery: ChatDelivery, in report: URL) throws {
         try HubPaths.encoder.encode(delivery).write(to: report.appending(path: Inbox.deliveryFile), options: .atomic)
     }

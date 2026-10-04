@@ -12,7 +12,7 @@ import Foundation
 ///   It is written in this order, and the order is load-bearing:
 ///   1. `beginReport` moves the draft into `reports/<id>/draft`.
 ///   2. The report's snapshots are written beside it.
-///   3. `report.json`, then `report.md`, are written.
+///   3. `report.md`, then `report.json`, are written.
 ///   4. `reports/<id>/draft` is removed.
 ///
 ///   A report is finished once `report.json` exists and `draft/` is gone; the Mac takes only
@@ -22,11 +22,68 @@ import Foundation
 /// - `hub.json`: written by the Mac's hub, once, with its addresses and a token.
 /// - `delivery.json`: written by the phone after each attempt to hand reports to the Mac.
 struct ReportStore: Sendable {
+    /// A draft note whose snapshot or attached image is gone.
+    ///
+    /// Sending stops so the draft stays for recovery instead of producing a report that points at a
+    /// missing file.
+    struct MissingSnapshot: Error, Equatable {
+        var annotationID: UUID
+    }
+
     let root: URL
 
-    static let standard = ReportStore(
-        root: URL.applicationSupportDirectory.appending(path: "Redline", directoryHint: .isDirectory)
-    )
+    static let standard: ReportStore = {
+        let store = ReportStore(
+            root: URL.applicationSupportDirectory.appending(path: "Redline", directoryHint: .isDirectory)
+        )
+        store.moveFromOldName()
+        return store
+    }()
+
+    /// Moves what an earlier version kept under its old name, iOSAgenticDebuggingKit, here, so the
+    /// draft and the reports the Mac hasn't collected carry over a rebuild with the new name.
+    ///
+    /// The hub may already have left its address here, so each item moves on its own, and only
+    /// when nothing of that name is here yet.
+    func moveFromOldName() {
+        let old = root.deletingLastPathComponent()
+            .appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory)
+        let files = FileManager.default
+        guard files.fileExists(atPath: old.path(percentEncoded: false)) else { return }
+        try? files.createDirectory(at: root, withIntermediateDirectories: true)
+        func move(from source: URL, to destination: URL) {
+            for item in (try? files.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)) ?? [] {
+                let target = destination.appending(path: item.lastPathComponent)
+                if !files.fileExists(atPath: target.path(percentEncoded: false)) {
+                    try? files.moveItem(at: item, to: target)
+                }
+            }
+        }
+        move(from: old, to: root)
+        // Reports were already here: the old ones join them, each in its own folder.
+        move(from: old.appending(path: "reports"), to: reportsDirectory)
+        // An older hub address is the only thing left that a newer one replaces. The folders go
+        // only when empty (rmdir), so anything else left stays where it is.
+        try? files.removeItem(at: old.appending(path: "hub.json"))
+        rmdir(old.appending(path: "reports").path(percentEncoded: false))
+        rmdir(old.path(percentEncoded: false))
+    }
+
+    /// Moves the settings an earlier version saved under its old prefix, AgenticDebugging, to
+    /// Redline's, so a report waiting to reach the Mac is still offered again, and the button stays
+    /// where it was put.
+    ///
+    /// Only what the app saved moves, not launch arguments, and a setting already saved under the
+    /// new name is kept.
+    static func moveSettingsFromOldName(in defaults: UserDefaults, domain: String) {
+        let oldPrefix = "AgenticDebugging"
+        guard let saved = defaults.persistentDomain(forName: domain) else { return }
+        for (key, value) in saved where key.hasPrefix(oldPrefix) {
+            let renamed = "Redline" + key.dropFirst(oldPrefix.count)
+            if saved[renamed] == nil { defaults.set(value, forKey: renamed) }
+            defaults.removeObject(forKey: key)
+        }
+    }
 
     var draftDirectory: URL { root.appending(path: "draft", directoryHint: .isDirectory) }
     var reportsDirectory: URL { root.appending(path: "reports", directoryHint: .isDirectory) }
@@ -95,36 +152,109 @@ struct ReportStore: Sendable {
         try? FileManager.default.removeItem(at: draftDirectory.appending(path: name))
     }
 
+    /// Throws `MissingSnapshot` for the first note whose image isn't on disk: a capture that's
+    /// gone or no longer listed, or an attached image.
+    ///
+    /// Checked before a report takes the draft, so the draft stays for the note to be deleted and
+    /// the rest sent.
+    func checkSnapshots(of annotations: [Annotation], screens: [ScreenRecord]) throws {
+        let files = FileManager.default
+        let captures = Dictionary(
+            screens.flatMap(\.captures).map { ($0.id, $0.file) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for annotation in annotations {
+            var needed = annotation.attachments
+            if let captureID = annotation.captureID {
+                guard let file = captures[captureID] else { throw MissingSnapshot(annotationID: annotation.id) }
+                needed.append(file)
+            }
+            if needed.contains(where: {
+                !files.fileExists(atPath: draftDirectory.appending(path: $0).path(percentEncoded: false))
+            }) {
+                throw MissingSnapshot(annotationID: annotation.id)
+            }
+        }
+    }
+
     /// Starts a report: moves the whole draft into a new report folder, so new notes go into a
     /// fresh draft while the report's snapshots are drawn from the old one.
     ///
-    /// Returns the report's id, its folder and where the draft now is.
+    /// If the move fails, the draft stays as it was and no report folder is left behind. Returns
+    /// the report's id, its folder and where the draft now is.
     func beginReport(date: Date) throws -> (id: String, folder: URL, draft: URL) {
         let files = FileManager.default
         let stamp = Self.timestampFormatter.string(from: date)
+        try files.createDirectory(at: reportsDirectory, withIntermediateDirectories: true)
+
+        // Creating the folder itself fails when it exists, so two reports in the same second, or a
+        // clock set back, get their own folders instead of sharing one.
         var id = stamp
-        var suffix = 2
-        while files.fileExists(atPath: reportsDirectory.appending(path: id).path(percentEncoded: false)) {
-            id = stamp + "-\(suffix)"
-            suffix += 1
+        var folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+        var attempt = 1
+        while true {
+            do {
+                try files.createDirectory(at: folder, withIntermediateDirectories: false)
+                break
+            } catch CocoaError.fileWriteFileExists where attempt < 100 {
+                attempt += 1
+                id = "\(stamp)-\(attempt)"
+                folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+            }
         }
-        let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
         let draft = folder.appending(path: "draft", directoryHint: .isDirectory)
-        try files.createDirectory(at: folder, withIntermediateDirectories: true)
-        try files.moveItem(at: draftDirectory, to: draft)
+        do {
+            try files.moveItem(at: draftDirectory, to: draft)
+        } catch {
+            try? files.removeItem(at: folder)
+            throw error
+        }
         return (id, folder, draft)
     }
 
-    /// Finishes a report: writes `report.json` and `report.md` and removes the old draft.
+    /// Finishes a report: writes `report.md` and `report.json` and removes the old draft.
+    ///
+    /// `report.json` goes last, so a report is listed as sent only once it is complete.
     func finishReport(_ report: Report, in folder: URL) throws {
-        try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)
         try Data(ReportSummary.markdown(report).utf8).write(to: folder.appending(path: "report.md"), options: .atomic)
+        try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)
         do {
             try FileManager.default.removeItem(at: folder.appending(path: "draft"))
         } catch {
             // The report stays unfinished for the hub until its draft is gone.
             Log.store.error(
                 "Couldn't remove the draft of \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    /// Takes back the draft files of a report that couldn't be finished, so its notes can go back
+    /// into the draft and be sent again.
+    ///
+    /// Copies every image of the report's old draft into the current one, next to any made since;
+    /// their names are unique, so none collide. The report folder stays until `discardReport`, once
+    /// the notes are saved in the draft again.
+    func reclaimDraftFiles(from folder: URL) throws {
+        let files = FileManager.default
+        let old = folder.appending(path: "draft", directoryHint: .isDirectory)
+        let lists = [draftFile.lastPathComponent, screensFile.lastPathComponent]
+        try files.createDirectory(at: draftDirectory, withIntermediateDirectories: true)
+        for name in try files.contentsOfDirectory(atPath: old.path) where !lists.contains(name) {
+            let target = draftDirectory.appending(path: name)
+            guard !files.fileExists(atPath: target.path) else { continue }
+            try files.copyItem(at: old.appending(path: name), to: target)
+        }
+    }
+
+    /// Removes a report that was never finished.
+    ///
+    /// Best effort: a folder left behind still has its draft, so it never counts as finished.
+    func discardReport(_ folder: URL) {
+        do {
+            try FileManager.default.removeItem(at: folder)
+        } catch {
+            Log.store.error(
+                "Couldn't remove the unfinished report \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
         }
     }

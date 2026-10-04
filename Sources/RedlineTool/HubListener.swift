@@ -28,7 +28,7 @@ final class HubListener: @unchecked Sendable {
         do {
             listener = try NWListener(using: parameters, on: NWEndpoint.Port(integerLiteral: Self.port))
         } catch {
-            hub.log("Couldn't listen on port \(Self.port): \(error.localizedDescription)")
+            hub.listenerFailed("Couldn't listen on port \(Self.port): \(error.localizedDescription)")
             return
         }
         listener.newConnectionHandler = { [weak self] connection in
@@ -40,7 +40,10 @@ final class HubListener: @unchecked Sendable {
             }
         }
         listener.stateUpdateHandler = { [weak self] state in
-            if case .failed(let error) = state { self?.hub.log("Stopped listening: \(error)") }
+            // Such as when another process has the port.
+            if case .failed(let error) = state {
+                self?.hub.listenerFailed("Stopped listening on port \(Self.port): \(error)")
+            }
         }
         listener.start(queue: queue)
         self.listener = listener
