@@ -262,6 +262,24 @@ struct ChatTests {
         #expect(!Claim(chat: "here", agent: "test", folder: folder.path, claimedAt: Date(), handingOverIn: getpid()).isInterrupted)
     }
 
+    @Test func reportsWaitingForClaudeGoOnlyIfNoChatTookThemMeanwhile() throws {
+        let folder = try project()
+        _ = try inboxReport("20261003-223449")
+        _ = try inboxReport("20261003-223450")
+        let other = try inboxReport("20261003-223451", bundleID: "com.markbuot.TinyTally")
+        let waited = InboxQueue.waiting(for: ["com.markbuot.AthenaTracker", "com.markbuot.TinyTally"], paths: paths)
+        #expect(waited.count == 3)
+        // While the claude command wasn't ready, a chat took the oldest and the other app's report was removed.
+        let chat = session(folder)
+        let taken = chat.take(budget: 1)
+        #expect(taken.reports.map(\.folder.lastPathComponent) == ["20261003-223449-0CF3C01C"])
+        ChatSession.settle(taken.reports, delivered: true)
+        try FileManager.default.removeItem(at: other)
+
+        let still = Handoff.stillWaiting(waited, paths: paths)
+        #expect(still.map(\.folder.lastPathComponent) == ["20261003-223450-0CF3C01C"])
+    }
+
     @Test func aTrailChatNeverGetsATinyTallyReport() throws {
         _ = try inboxReport("20261003-223449")
         let trail = root.appending(path: "Trail", directoryHint: .isDirectory)
