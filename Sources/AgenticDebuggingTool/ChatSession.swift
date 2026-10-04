@@ -229,11 +229,13 @@ enum HubProcess {
 
     /// The copy whose program was built last. Every build has the same version, so a copy left
     /// in one folder by an earlier install would otherwise be as likely to open as the one
-    /// installed since in another. Copies in the Trash don't count.
+    /// installed since in another. Copies in the Trash don't count: ~/.Trash, or .Trashes on
+    /// another volume.
     static func newestApp(among copies: [URL]) -> URL? {
         let dated = copies.compactMap { app -> (app: URL, built: Date)? in
             let program = app.appending(path: "Contents/MacOS/agentic-debugging")
-            guard !app.standardizedFileURL.pathComponents.contains(".Trash"),
+            let folders = app.standardizedFileURL.pathComponents
+            guard !folders.contains(".Trash"), !folders.contains(".Trashes"),
                   let built = (try? FileManager.default.attributesOfItem(atPath: program.path))?[.modificationDate] as? Date
             else { return nil }
             return (app, built)
@@ -243,15 +245,20 @@ enum HubProcess {
 
     /// Starts the hub in its own session, so it keeps running after the chat that started it
     /// closes, with nothing attached to the chat's input and output. The menu bar app is the
-    /// hub when it's installed.
+    /// hub when it's installed. When it can't be opened, such as over SSH with no one logged
+    /// in, the command-line hub starts instead.
     static func startIfNeeded(_ paths: HubPaths) {
         guard running(paths) == nil else { return }
         if let app {
             let open = Process()
             open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
             open.arguments = ["-g", app.path]
-            try? open.run()
-            return
+            open.standardOutput = FileHandle.nullDevice
+            open.standardError = FileHandle.nullDevice
+            if (try? open.run()) != nil {
+                open.waitUntilExit()
+                if open.terminationStatus == 0 { return }
+            }
         }
         guard let executable = Bundle.main.executablePath else { return }
         var attributes: posix_spawnattr_t?
