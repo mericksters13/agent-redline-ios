@@ -20,9 +20,8 @@ enum ClaudeSessions {
 
     /// The interactive chats that are still running.
     static func open() -> [Session] {
-        let folders = [ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], NSHomeDirectory() + "/.claude"].compactMap { $0 }
         var sessions: [Session] = []
-        for folder in Set(folders) {
+        for folder in configFolders {
             let files = (try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: folder).appending(path: "sessions"), includingPropertiesForKeys: nil)) ?? []
             for file in files where file.pathExtension == "json" {
                 guard let data = try? Data(contentsOf: file), let session = session(from: data) else { continue }
@@ -32,12 +31,20 @@ enum ClaudeSessions {
         return sessions
     }
 
+    /// Where Claude Code keeps its chats: the configured folder, and the default one.
+    static var configFolders: Set<String> {
+        Set([ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], NSHomeDirectory() + "/.claude"].compactMap { $0 })
+    }
+
     static func session(from data: Data) -> Session? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let id = object["sessionId"] as? String, let folder = object["cwd"] as? String,
               let socket = object["messagingSocketPath"] as? String, let pid = object["pid"] as? Int,
-              object["kind"] as? String == "interactive", Chats.isRunning(Int32(pid))
+              object["kind"] as? String == "interactive"
         else { return nil }
+        // A process that started after the chat did only reuses the chat's PID.
+        let started = (object["startedAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
+        guard started.map({ Chats.isRunning(Int32(pid), since: $0) }) ?? Chats.isRunning(Int32(pid)) else { return nil }
         let updated = (object["updatedAt"] as? Double) ?? (object["startedAt"] as? Double) ?? 0
         return Session(id: id, folder: folder, socket: socket, updatedAt: Date(timeIntervalSince1970: updated / 1000),
                        isIdle: object["status"] as? String == "idle", title: object["name"] as? String)
@@ -54,6 +61,9 @@ enum ClaudeSessions {
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { return false }
         defer { close(descriptor) }
+        // A chat closing mid-write fails the write instead of ending the hub with SIGPIPE.
+        var on: Int32 = 1
+        setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let path = Array(session.socket.utf8CString)

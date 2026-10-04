@@ -203,5 +203,19 @@ struct ChatTests {
         // Nothing more: a short wait ends with no report.
         #expect(!chat.waitForReport(timeout: 0.2, waiter: ChatSession.Waiter()))
     }
+
+    @Test func aPIDTakenByALaterProcessDoesNotKeepAChatOpen() throws {
+        let started = try #require(Chats.startTime(of: getpid()))
+        #expect(started <= Date())
+        #expect(Chats.isRunning(getpid(), since: Date()))
+        // Registered before this process started: the chat's process is gone and its PID reused.
+        #expect(!Chats.isRunning(getpid(), since: started.addingTimeInterval(-60)))
+
+        var chat = session(try project()).chat
+        chat.registeredAt = started.addingTimeInterval(-60)
+        try Chats.register(chat, paths: paths)
+        #expect(Chats.live(paths).isEmpty)
+        #expect(Chats.record(chat.id, paths: paths) == nil)
+    }
 }
 #endif

@@ -73,6 +73,9 @@ enum CodexApp {
             }
             var wait = timeval(tv_sec: Int(timeout), tv_usec: 0)
             setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+            // The app closing mid-write fails the write instead of ending the hub with SIGPIPE.
+            var on: Int32 = 1
+            setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
             self.descriptor = descriptor
         }
 

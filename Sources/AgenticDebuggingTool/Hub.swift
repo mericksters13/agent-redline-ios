@@ -330,12 +330,14 @@ final class Hub: @unchecked Sendable {
     // MARK: - Delivery
 
     /// The reports from one app on one device still to copy. The first look at a source only
-    /// takes reports finished from about then on, so old ones aren't delivered as new.
-    func toCopy(device: String, bundleID: String, finished: [FinishedReport]) -> [String] {
+    /// takes reports finished from about then on, so old ones aren't delivered as new. That's
+    /// the time of the first look itself: an app first seen hours after the hub started has
+    /// no reason to send the reports made before then.
+    func toCopy(device: String, bundleID: String, finished: [FinishedReport], now: Date = Date()) -> [String] {
         lock.withLock {
             let key = "\(device)|\(bundleID)"
             if state[key] == nil {
-                state[key] = SourceState(since: startedAt.addingTimeInterval(-Self.firstLookMargin))
+                state[key] = SourceState(since: now.addingTimeInterval(-Self.firstLookMargin))
                 saveState()
             }
             return state[key]!.toCopy(from: finished)
@@ -369,7 +371,13 @@ final class Hub: @unchecked Sendable {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? encoder.encode(source).write(to: incoming.appending(path: "source.json"))
+        // The inbox lists a report only by its source.json, so without one it isn't filed.
+        do {
+            try encoder.encode(source).write(to: incoming.appending(path: "source.json"))
+        } catch {
+            log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
+            return false
+        }
         let key = "\(source.device)|\(source.bundleID)"
         let filed: Bool? = lock.withLock {
             if state[key]?.delivered.contains(source.reportID) == true { return nil }
@@ -381,7 +389,7 @@ final class Hub: @unchecked Sendable {
                 log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
                 return false
             }
-            state[key, default: SourceState(since: startedAt)].delivered.append(source.reportID)
+            state[key, default: SourceState(since: Date())].delivered.append(source.reportID)
             saveState()
             return true
         }
