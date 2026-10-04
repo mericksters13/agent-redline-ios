@@ -29,7 +29,11 @@ cat > "$staging/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-codesign --force --sign - "$staging"
+# Signed with the Mac's Apple Development certificate when there is one, so macOS remembers what
+# the user allowed the app to open, such as chat folders in Documents, across rebuilds. An ad hoc
+# signature is new with every build, so macOS would ask again each time.
+identity="$(security find-identity -v -p codesigning | awk '/"Apple Development/ { print $2; exit }')"
+codesign --force --sign "${identity:--}" "$staging"
 mkdir -p "$destination"
 rm -rf "$app"
 mv "$staging" "$app"
