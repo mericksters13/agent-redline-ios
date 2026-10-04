@@ -88,7 +88,7 @@ struct SentReportsView: View {
             show(sent)
         } label: {
             HStack(spacing: 12) {
-                ReportSnapshot(url: sent.cover, pointWidth: 52, alignment: .top)
+                SnapshotImage(url: sent.cover, pointWidth: 52, alignment: .top)
                     .frame(width: 52, height: 52)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay(
@@ -255,7 +255,7 @@ private struct ReportDetail: View {
         let outlined = report.items.compactMap { item in
             item.snapshot == snapshot.file ? item.outline.map { (number: item.number, box: $0) } : nil
         }
-        return ReportSnapshot(url: sent.folder.appending(path: snapshot.file), pointWidth: width, alignment: .top)
+        return SnapshotImage(url: sent.folder.appending(path: snapshot.file), pointWidth: width, alignment: .top)
             .frame(width: width, height: CGFloat(snapshot.height) * scale)
             .overlay(alignment: .topLeading) {
                 ZStack(alignment: .topLeading) {
@@ -339,7 +339,7 @@ private struct ReportDetail: View {
                 VStack(alignment: .leading, spacing: 10) {
                     notes([item], jump: nil)
                     ForEach(item.attachments, id: \.self) { file in
-                        ReportSnapshot(
+                        SnapshotImage(
                             url: sent.folder.appending(path: file),
                             pointWidth: width,
                             alignment: .top,
@@ -403,7 +403,7 @@ private struct ViewerBar: View {
 ///
 /// It fills the frame it's given, or, with `fits`, takes its own aspect ratio, for attachments
 /// whose size the report doesn't record.
-private struct ReportSnapshot: View {
+private struct SnapshotImage: View {
     let url: URL?
     let pointWidth: CGFloat
     let alignment: Alignment

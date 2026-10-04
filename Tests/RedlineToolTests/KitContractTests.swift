@@ -201,7 +201,7 @@ struct KitContractTests {
                     kind: .photo,
                     note: "",
                     createdAt: date,
-                    title: "Image from Photos",
+                    title: "Photo",
                     element: nil,
                     ancestors: [],
                     screen: nil,
@@ -226,8 +226,8 @@ struct KitContractTests {
 
         // Every reader gets the whole report, not its fallback.
         #expect(ReportContent.snapshots(in: folder).map(\.lastPathComponent) == ["screen-1.jpg", "note-2.jpg"])
-        #expect(HubWindowModel.snapshots(in: folder).map(\.title) == ["Editor", "Image from Photos"])
-        #expect(HubWindowModel.notes(in: folder).map(\.text) == ["Save: Too small", "Image from Photos: No note"])
+        #expect(HubWindowModel.snapshots(in: folder).map(\.title) == ["Editor", "Photo"])
+        #expect(HubWindowModel.notes(in: folder).map(\.text) == ["Save: Too small", "Photo: No note"])
         #expect(
             Routing.destination(of: folder, bundleID: "com.example.app") { _, _ in
                 HubMessage.ChatList(agents: [], chats: [])
@@ -245,7 +245,8 @@ struct KitContractTests {
         #expect(text.hasPrefix("UI report from Test iPhone · Example"))
         #expect(text.contains("1. Save (Button, editor.save): Too small"))
     }
-    @Test func everyReaderUsesTheImageNamesTheReportGives() throws {
+
+    @Test func everyReaderUsesTheSnapshotNamesTheReportGives() throws {
         let root = FileManager.default.temporaryDirectory.appending(
             path: "KitContractTests-\(UUID().uuidString)",
             directoryHint: .isDirectory
@@ -256,7 +257,7 @@ struct KitContractTests {
         // As the kit names them: two parts of a stitched screen, its earlier state, two photos.
         let files = (0..<5).map { _ in Report.makeSnapshotFileName() }
         for file in files { try Data([0xFF, 0xD8]).write(to: folder.appending(path: file)) }
-        func image(_ index: Int, part: Int, parts: Int, earlier: Bool, notes: [Int]) -> Report.Snapshot {
+        func snapshot(_ index: Int, part: Int, parts: Int, earlier: Bool, notes: [Int]) -> Report.Snapshot {
             Report.Snapshot(
                 file: files[index],
                 part: part,
@@ -296,9 +297,9 @@ struct KitContractTests {
                     viewController: nil,
                     notes: [1, 2, 3],
                     snapshots: [
-                        image(2, part: 1, parts: 1, earlier: true, notes: [3]),
-                        image(0, part: 1, parts: 2, earlier: false, notes: [1]),
-                        image(1, part: 2, parts: 2, earlier: false, notes: [2]),
+                        snapshot(2, part: 1, parts: 1, earlier: true, notes: [3]),
+                        snapshot(0, part: 1, parts: 2, earlier: false, notes: [1]),
+                        snapshot(1, part: 2, parts: 2, earlier: false, notes: [2]),
                     ]
                 )
             ],
@@ -329,6 +330,20 @@ struct KitContractTests {
         let order = [files[2], files[0], files[1], files[3], files[4]]
         #expect(ReportContent.snapshots(in: folder).map(\.lastPathComponent) == order)
         #expect(HubWindowModel.snapshots(in: folder).map(\.file.lastPathComponent) == order)
+
+        // The names say nothing, so the agent and the viewer are told which snapshot is an earlier
+        // state and which is a part.
+        func path(_ index: Int) -> String { folder.appending(path: files[index]).path }
+        #expect(message.contains(path(2) + "\nPatterns, earlier state, before the screen changed\n3. Item 3: Note 3"))
+        #expect(message.contains(path(0) + "\nPatterns, part 1 of 2\n1. Item 1: Note 1"))
+        #expect(message.contains(path(1) + "\nPatterns, part 2 of 2\n2. Item 2: Note 2"))
+        #expect(message.contains(path(3) + "\n" + path(4) + "\n4. Item 4: Note 4"))
+        #expect(
+            HubWindowModel.snapshots(in: folder).map(\.title) == [
+                "Patterns, earlier state, before the screen changed", "Patterns, part 1 of 2", "Patterns, part 2 of 2",
+                "Item 4", "Item 4",
+            ]
+        )
 
         // Only version 2's keys are written.
         let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
@@ -383,7 +398,9 @@ struct KitContractTests {
         )
         #expect(ReportContent.snapshots(in: inbox).map(\.lastPathComponent) == VersionOneReport.files)
         #expect(
-            HubWindowModel.snapshots(in: inbox).map(\.title) == ["Patterns", "Patterns", "History", "Today"]
+            HubWindowModel.snapshots(in: inbox).map(\.title) == [
+                "Patterns, earlier state, before the screen changed", "Patterns", "History", "Today",
+            ]
         )
         #expect(
             HubWindowModel.snapshot(showing: 1, in: HubWindowModel.snapshots(in: inbox))?.lastPathComponent
@@ -401,7 +418,12 @@ struct KitContractTests {
         let inboxReport = InboxReport(folder: inbox, source: source, claim: nil)
         let text = ReportContent.text(for: inboxReport)
         #expect(text.hasPrefix("UI report from Test iPhone · Tiny Tally"))
-        #expect(text.contains(inbox.appending(path: "screen-1-earlier-1.jpg").path + "\n1. Weight in kg by age"))
+        #expect(
+            text.contains(
+                inbox.appending(path: "screen-1-earlier-1.jpg").path
+                    + "\nPatterns, earlier state, before the screen changed\n1. Weight in kg by age"
+            )
+        )
         #expect(text.contains(inbox.appending(path: "note-5.jpg").path + "\n5. Today: Same bug in another app"))
         let attached = ReportContent.items(for: inboxReport, budget: 1_000_000).items.compactMap { item -> String? in
             if case .image(let file, _) = item { file.lastPathComponent } else { nil }

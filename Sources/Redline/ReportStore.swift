@@ -86,12 +86,12 @@ struct ReportStore: Sendable {
         try Self.draftEncoder.encode(screens).write(to: screensFile, options: .atomic)
     }
 
-    func saveScreenshot(_ data: Data, named name: String) throws {
+    func saveDraftFile(_ data: Data, named name: String) throws {
         try FileManager.default.createDirectory(at: draftDirectory, withIntermediateDirectories: true)
         try data.write(to: draftDirectory.appending(path: name), options: .atomic)
     }
 
-    func deleteScreenshot(named name: String) {
+    func deleteDraftFile(named name: String) {
         try? FileManager.default.removeItem(at: draftDirectory.appending(path: name))
     }
 

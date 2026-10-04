@@ -14,7 +14,8 @@ enum ReportContent {
     /// The snapshots a report refers to, in the order its summary lists them: each screen's
     /// snapshots, then attachments.
     ///
-    /// Without a report.json that lists them, the folder's snapshots by name.
+    /// Without a report.json that lists them, the folder's snapshots in name order, which for
+    /// UUID names says nothing about the report's order.
     static func snapshots(in folder: URL) -> [URL] {
         snapshots(in: folder, listing: ReportListing.load(from: folder))
     }
@@ -33,15 +34,24 @@ enum ReportContent {
         return names.map { folder.appending(path: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    /// The report as an agent reads it in a chat: each snapshot's path, then the notes on it,
-    /// numbered like the outlines drawn in the snapshot, with the element each note is about.
+    /// The report as an agent reads it in a chat: each snapshot's path, then, for an earlier state
+    /// of a screen or a part of a tall snapshot, the screen and what the snapshot shows, then the
+    /// notes on it, numbered like the outlines drawn in the snapshot, with the element each note is
+    /// about.
     ///
     /// Nothing else. Without a complete report.json, the header and report.md.
     static func text(for report: InboxReport) -> String {
         guard let listing = ReportListing.load(from: report.folder), let app = listing.app,
             let screens = listing.screens,
-            let snapshots = screens.flatMap(\.snapshots).map({ snapshot in
-                snapshot.notes.map { (file: snapshot.file, notes: $0) }
+            let snapshots = screens.flatMap({ screen in
+                screen.snapshots.map { snapshot in
+                    snapshot.notes.map { notes in
+                        (
+                            file: snapshot.file, detail: snapshot.detail.map { "\(screen.title ?? "Screen"), \($0)" },
+                            notes: notes
+                        )
+                    }
+                }
             }).allPresent(),
             let items = listing.items?.map(Note.init).allPresent()
         else { return header(for: report) + "\n" + summary(of: report).trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -49,7 +59,8 @@ enum ReportContent {
         var blocks: [String] = []
         for snapshot in snapshots {
             let notes = snapshot.notes.compactMap { byNumber[$0] }.map(line)
-            blocks.append(([report.folder.appending(path: snapshot.file).path] + notes).joined(separator: "\n"))
+            let path = report.folder.appending(path: snapshot.file).path
+            blocks.append(([path] + [snapshot.detail].compactMap { $0 } + notes).joined(separator: "\n"))
         }
         for item in items where !item.attachments.isEmpty {
             blocks.append(

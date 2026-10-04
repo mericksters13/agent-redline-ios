@@ -83,6 +83,17 @@ final class KitPerformanceTests: XCTestCase {
         }
     }
 
+    /// The slowest element check that still matches, which runs when a note is saved: a
+    /// full-screen element, such as a list's container, with every label smoothed differently.
+    func testElementComparisonOnAFullScreenElement() throws {
+        let before = try GrowthScreen(segment: .weight).image()
+        let smoothed = try GrowthScreen(segment: .weight, textOffset: 0.5).image()
+        let screen = CGRect(x: 0, y: 0, width: before.width, height: before.height)
+        measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            _ = SnapshotComparison.differingPixels(before, in: screen, smoothed, in: screen, upTo: 8)
+        }
+    }
+
     func testPlanForAStitchedScreen() {
         let captures = (0..<4).map { index -> Capture in
             let offset = CGFloat(index) * 500 - 62

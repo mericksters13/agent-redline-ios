@@ -27,6 +27,28 @@ struct ReportListing: Decodable {
         struct ListedSnapshot: Decodable {
             var file: String
             var notes: [Int]?
+            /// Which part of a tall snapshot this is, counting from 1, and how many parts.
+            var part: Int?
+            var parts: Int?
+            /// True for a snapshot of the screen before its content changed.
+            var isEarlierState: Bool?
+
+            private enum CodingKeys: String, CodingKey {
+                case file, notes, part, parts
+                case isEarlierState = "earlierState"
+            }
+
+            /// What the snapshot shows besides the screen as it was last, such as "earlier state,
+            /// before the screen changed" or "part 2 of 3".
+            ///
+            /// Nil for the whole screen as it was last. Snapshot file names say nothing, so this is
+            /// how a reader tells an earlier state or a part from another screen.
+            var detail: String? {
+                var details: [String] = []
+                if isEarlierState == true { details.append("earlier state, before the screen changed") }
+                if let part, let parts, parts > 1 { details.append("part \(part) of \(parts)") }
+                return details.isEmpty ? nil : details.joined(separator: ", ")
+            }
         }
 
         var title: String?

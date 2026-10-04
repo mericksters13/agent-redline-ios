@@ -14,7 +14,7 @@ struct Annotation: Codable, Equatable, Identifiable, Sendable {
         case element
         /// The whole screen, captured by Redline or when a screenshot was taken in the app.
         case screen
-        /// Images picked from Photos.
+        /// Photos picked from the photo library.
         case photo
     }
 
@@ -30,12 +30,12 @@ struct Annotation: Codable, Equatable, Identifiable, Sendable {
     var ancestors: [ElementSnapshot]
     /// The screen it was made on.
     ///
-    /// Nil for images from Photos, which can come from anywhere.
+    /// Nil for photos, which can come from anywhere.
     var screen: ScreenInfo?
-    /// Attached snapshots, in order: the captured screen or the photos picked from Photos.
+    /// The draft's files attached to the item, in order: the captured screen or the photos picked.
     ///
     /// Element notes made before screens shared one snapshot keep theirs here, outlined.
-    var screenshots: [String]
+    var attachments: [String]
     /// For an element note, the capture of its screen it was made on.
     ///
     /// Every note on a screen shares the screen's snapshot; outlines are drawn when it's shown or
@@ -43,12 +43,14 @@ struct Annotation: Codable, Equatable, Identifiable, Sendable {
     var captureID: UUID? = nil
 
     /// How many snapshots the note shows in the viewer.
-    var snapshotCount: Int { captureID != nil ? 1 : screenshots.count }
+    var snapshotCount: Int { captureID != nil ? 1 : attachments.count }
 }
 
 extension Annotation {
     private enum CodingKeys: String, CodingKey {
-        case id, createdAt, note, kind, element, ancestors, screen, screenshots, captureID
+        case id, createdAt, note, kind, element, ancestors, screen, captureID
+        /// The draft's name for `attachments`, kept so drafts stay readable.
+        case attachments = "screenshots"
         /// The single snapshot of drafts saved before attachments existed.
         case screenshot
     }
@@ -65,10 +67,10 @@ extension Annotation {
         kind = kindName.flatMap(Kind.init(rawValue:)) ?? (element == nil ? .screen : .element)
         ancestors = try container.decodeIfPresent([ElementSnapshot].self, forKey: .ancestors) ?? []
         screen = try container.decodeIfPresent(ScreenInfo.self, forKey: .screen)
-        if let files = try container.decodeIfPresent([String].self, forKey: .screenshots) {
-            screenshots = files
+        if let files = try container.decodeIfPresent([String].self, forKey: .attachments) {
+            attachments = files
         } else {
-            screenshots = [try container.decode(String.self, forKey: .screenshot)]
+            attachments = [try container.decode(String.self, forKey: .screenshot)]
         }
         captureID = try container.decodeIfPresent(UUID.self, forKey: .captureID)
     }
@@ -82,7 +84,7 @@ extension Annotation {
         try container.encodeIfPresent(element, forKey: .element)
         try container.encode(ancestors, forKey: .ancestors)
         try container.encodeIfPresent(screen, forKey: .screen)
-        try container.encode(screenshots, forKey: .screenshots)
+        try container.encode(attachments, forKey: .attachments)
         try container.encodeIfPresent(captureID, forKey: .captureID)
     }
 
@@ -91,7 +93,7 @@ extension Annotation {
         switch kind {
         case .element: element?.shortName ?? element?.role ?? "Unnamed element"
         case .screen: screen?.title ?? "This screen"
-        case .photo: snapshotCount == 1 ? "Snapshot from Photos" : "\(snapshotCount) snapshots from Photos"
+        case .photo: snapshotCount == 1 ? "Photo" : "\(snapshotCount) photos"
         }
     }
 

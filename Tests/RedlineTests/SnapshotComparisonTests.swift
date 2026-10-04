@@ -86,6 +86,11 @@ struct SnapshotComparisonTests {
         height: GrowthScreen.sleepCard.height * GrowthScreen.scale
     )
 
+    /// A frame in points, in a capture's pixels.
+    private func pixels(_ frame: CGRect) -> CGRect {
+        frame.applying(CGAffineTransform(scaleX: GrowthScreen.scale, y: GrowthScreen.scale))
+    }
+
     @Test func aSegmentSwitchChangesTheCard() throws {
         // About 25,000 of the card's 427,000 pixels; the old small copy saw 5%.
         let length = try GrowthScreen(segment: .length).image()
@@ -137,9 +142,58 @@ struct SnapshotComparisonTests {
     @Test func anElementUnderADimmedPopupChanges() throws {
         let weight = try GrowthScreen(segment: .weight).image()
         let popup = try GrowthScreen(segment: .weight, showsPopup: true).image()
-        // Nearly every pixel, under the popup or only under its dimmed backdrop.
-        #expect(SnapshotComparison.differingPixels(weight, in: card, popup, in: card) > 400_000)
-        #expect(SnapshotComparison.differingPixels(weight, in: sleepCard, popup, in: sleepCard) > 250_000)
+        // Under the popup, or only under its dimmed backdrop.
+        let limit = SnapshotComparison.sameElementPixels
+        #expect(SnapshotComparison.differingPixels(weight, in: card, popup, in: card, upTo: limit) > limit)
+        #expect(SnapshotComparison.differingPixels(weight, in: sleepCard, popup, in: sleepCard, upTo: limit) > limit)
+    }
+
+    @Test func aDarkPlainElementUnderALightBackdropChanges() throws {
+        // A 20% dim over the sleep card's empty strip moves no pixel past the tolerance, only the
+        // average.
+        let weight = try GrowthScreen(segment: .weight).image()
+        let dimmed = try GrowthScreen(segment: .weight, showsPopup: true, backdropAlpha: 0.2).image()
+        let strip = pixels(GrowthScreen.sleepCardStrip)
+        #expect(SnapshotComparison.differingPixels(weight, in: strip, dimmed, in: strip) > 8)
+    }
+
+    @Test func aColorChangeAtTheSameBrightnessChanges() throws {
+        // Orange to teal: the same gray level, so a gray copy saw nothing.
+        let orange = try GrowthScreen(segment: .weight).image()
+        let teal = try GrowthScreen(segment: .weight, iconColor: (red: 0.1, green: 0.56, blue: 0.6)).image()
+        let icon = pixels(CGRect(x: 36, y: 176, width: 44, height: 44))
+        #expect(SnapshotComparison.difference(orange, teal) == 0)
+        #expect(SnapshotComparison.differingPixels(orange, in: icon, teal, in: icon) > 5_000)
+    }
+
+    @Test func ignoredPartsAreLeftOut() throws {
+        let first = try GrowthScreen(segment: .length, spinnerPhase: 0).image()
+        let later = try GrowthScreen(segment: .length, spinnerPhase: 3).image()
+        let spinner = pixels(GrowthScreen.spinner).offsetBy(dx: -card.minX, dy: -card.minY)
+        #expect(SnapshotComparison.differingPixels(first, in: card, later, in: card) > 8)
+        #expect(SnapshotComparison.differingPixels(first, in: card, later, in: card, ignoring: [spinner]) == 0)
+    }
+
+    @Test func areasThatCannotBeComparedChange() throws {
+        let weight = try GrowthScreen(segment: .weight).image()
+        // Outside the capture, and cut off by its edge in only one of the two.
+        let outside = CGRect(x: 2000, y: 3000, width: 2, height: 2)
+        #expect(SnapshotComparison.differingPixels(weight, in: outside, weight, in: outside) == .max)
+        let cut = CGRect(x: 700, y: 100, width: 200, height: 40)
+        let inside = CGRect(x: 500, y: 100, width: 200, height: 40)
+        #expect(SnapshotComparison.differingPixels(weight, in: cut, weight, in: inside) == .max)
+    }
+
+    /// An iPad-wide card, shrunk to the widest size compared, with its labels smoothed differently.
+    @Test func aWideElementShrunkForTheComparisonStillLooksIdentical() throws {
+        let scale: CGFloat = 6
+        let wide = try GrowthScreen(segment: .weight, pixelsPerPoint: scale).image()
+        let smoothed = try GrowthScreen(segment: .weight, textOffset: 0.5, pixelsPerPoint: scale).image()
+        let area = GrowthScreen.card.applying(CGAffineTransform(scaleX: scale, y: scale))
+        #expect(area.width > 2_000)
+        #expect(SnapshotComparison.differingPixels(wide, in: area, smoothed, in: area) <= 8)
+        let switched = try GrowthScreen(segment: .length, pixelsPerPoint: scale).image()
+        #expect(SnapshotComparison.differingPixels(wide, in: area, switched, in: area, upTo: 8) > 8)
     }
 
     @Test func anElementThatChangedSizeChanges() throws {

@@ -29,9 +29,9 @@ struct AnnotationTests {
         #expect(Annotation.title(kind: .element, element: unnamed, screen: today, snapshotCount: 0) == "Image")
         #expect(Annotation.title(kind: .screen, element: nil, screen: today, snapshotCount: 1) == "Today")
         #expect(Annotation.title(kind: .screen, element: nil, screen: nil, snapshotCount: 1) == "This screen")
-        #expect(Annotation.title(kind: .photo, element: nil, screen: nil, snapshotCount: 1) == "Snapshot from Photos")
+        #expect(Annotation.title(kind: .photo, element: nil, screen: nil, snapshotCount: 1) == "Photo")
         #expect(
-            Annotation.title(kind: .photo, element: nil, screen: nil, snapshotCount: 3) == "3 snapshots from Photos"
+            Annotation.title(kind: .photo, element: nil, screen: nil, snapshotCount: 3) == "3 photos"
         )
     }
 
@@ -51,7 +51,7 @@ struct AnnotationTests {
         decoder.dateDecodingStrategy = .iso8601
         let loaded = try decoder.decode([Annotation].self, from: Data(legacy.utf8))
         #expect(loaded.map(\.kind) == [.element, .screen])
-        #expect(loaded.map(\.screenshots) == [["a.png"], ["b.png"]])
+        #expect(loaded.map(\.attachments) == [["a.png"], ["b.png"]])
         #expect(loaded.allSatisfy { $0.ancestors.isEmpty })
     }
 }

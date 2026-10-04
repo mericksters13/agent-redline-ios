@@ -57,7 +57,8 @@ enum AccessibilityTree {
                     identifier: identifier(of: object),
                     className: String(describing: type(of: object)),
                     isContainer: isContainer,
-                    frame: frame
+                    frame: frame,
+                    updatesFrequently: updatesFrequently(object) ? true : nil
                 )
             )
         }
@@ -147,6 +148,11 @@ enum AccessibilityTree {
     }
 
     // MARK: - Element details
+
+    /// Content that changes on its own, such as a spinner or a running timer.
+    private static func updatesFrequently(_ object: NSObject) -> Bool {
+        object is UIActivityIndicatorView || object.accessibilityTraits.contains(.updatesFrequently)
+    }
 
     private static func role(of object: NSObject, isContainer: Bool) -> String {
         if object is UISearchBar { return "Search field" }

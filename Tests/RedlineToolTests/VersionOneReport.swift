@@ -17,7 +17,7 @@ enum VersionOneReport {
         {
          "app": {
           "build": "41",
-          "bundleIdentifier": "com.markbuot.AthenaTracker",
+          "bundleIdentifier": "com.example.TinyTally",
           "name": "Tiny Tally",
           "sourceFile": "/w/TinyTally/App/TinyTallyApp.swift",
           "version": "1.0.9"

@@ -172,7 +172,7 @@ final class DebugSession {
     /// once, when the overlay is installed.
     @ObservationIgnored private var sourceFile: String?
     @ObservationIgnored private var elements: [ElementSnapshot] = []
-    @ObservationIgnored private var screenshot: UIImage?
+    @ObservationIgnored private var screenImage: UIImage?
     /// The main scroll view's position when the screen was read.
     @ObservationIgnored private var scrollState: ScrollState?
     /// Every screen notes were made on, with its captures: one snapshot per state of a screen.
@@ -364,7 +364,7 @@ final class DebugSession {
         levels = []
         markers = []
         elements = []
-        screenshot = nil
+        screenImage = nil
         setMode(.idle)
     }
 
@@ -431,10 +431,10 @@ final class DebugSession {
             }
             return
         }
-        guard let element = selected, let screenshot else { return }
+        guard let element = selected, let screenImage else { return }
         let id = UUID()
-        let captureID = fileCapture(screenshot, for: element)
-        thumbnails[id] = Self.crop(screenshot, around: element.frame, screenWidth: screenSize.width)
+        let captureID = fileCapture(screenImage, for: element)
+        thumbnails[id] = Self.crop(screenImage, around: element.frame, screenWidth: screenSize.width)
         annotations.append(
             Annotation(
                 id: id,
@@ -444,7 +444,7 @@ final class DebugSession {
                 element: element,
                 ancestors: Array(levels.dropFirst(levelIndex + 1)),
                 screen: screen,
-                screenshots: [],
+                attachments: [],
                 captureID: captureID
             )
         )
@@ -484,7 +484,7 @@ final class DebugSession {
                 element: nil,
                 ancestors: [],
                 screen: attachment.screen,
-                screenshots: files
+                attachments: files
             )
         )
         // An attachment has no capture, so the screens are unchanged.
@@ -507,7 +507,7 @@ final class DebugSession {
         thumbnails[annotation.id] = nil
         // Other notes on the same screen show this one's outline, so their snapshots are redrawn.
         fullImages.removeAllObjects()
-        annotation.screenshots.forEach(store.deleteScreenshot(named:))
+        annotation.attachments.forEach(store.deleteDraftFile(named:))
         pruneCaptures()
         persist()
         refreshMarkers()
@@ -558,10 +558,10 @@ final class DebugSession {
     /// Cached with the few around it; the oldest are dropped first.
     func fullImage(for annotation: Annotation, at index: Int) -> UIImage? {
         if let captureID = annotation.captureID { return screenSnapshot(for: annotation, on: captureID) }
-        guard annotation.screenshots.indices.contains(index) else { return nil }
+        guard annotation.attachments.indices.contains(index) else { return nil }
         let key = "\(annotation.id.uuidString)-\(index)" as NSString
         if let cached = fullImages.object(forKey: key) { return cached }
-        let url = store.draftDirectory.appending(path: annotation.screenshots[index])
+        let url = store.draftDirectory.appending(path: annotation.attachments[index])
         guard let image = UIImage(contentsOfFile: url.path(percentEncoded: false)) else { return nil }
         fullImages.setObject(image, forKey: key)
         return image
@@ -1018,7 +1018,7 @@ final class DebugSession {
         levels = []
         markers = []
         elements = []
-        screenshot = nil
+        screenImage = nil
         setMode(.idle)
 
         let store = store
@@ -1063,7 +1063,7 @@ final class DebugSession {
 
     // MARK: - One snapshot per screen state
 
-    /// Files the screen as just read under its screen (see `CaptureMerge.file`): one snapshot per
+    /// Files the screen as just read under its screen (see `CaptureMerge.place`): one snapshot per
     /// state of the screen.
     ///
     /// Returns the capture the new note belongs to.
@@ -1076,7 +1076,7 @@ final class DebugSession {
             elements: elements,
             group: 0
         )
-        let filing = CaptureMerge.file(
+        let filing = CaptureMerge.place(
             capture,
             image: image.cgImage,
             element: element,
@@ -1118,7 +1118,7 @@ final class DebugSession {
         let used = Set(annotations.compactMap(\.captureID))
         for index in screens.indices.reversed() {
             for capture in screens[index].captures where !used.contains(capture.id) {
-                store.deleteScreenshot(named: capture.file)
+                store.deleteDraftFile(named: capture.file)
                 captureImages[capture.id] = nil
             }
             screens[index].captures.removeAll { !used.contains($0.id) }
@@ -1154,10 +1154,10 @@ final class DebugSession {
         return snapshot
     }
 
-    /// A close crop of the picked element from the current screenshot, for the note card
+    /// A close crop of the picked element from the screen as last read, for the note card
     /// when the element itself is hidden behind the keyboard or the card.
     func selectedElementPreview() -> UIImage? {
-        guard let frame = selected?.frame, let image = screenshot else { return nil }
+        guard let frame = selected?.frame, let image = screenImage else { return nil }
         return Self.crop(image, around: frame, screenWidth: screenSize.width)
     }
 
@@ -1253,7 +1253,7 @@ final class DebugSession {
             thumbnails[annotation.id] = thumbnail
             return thumbnail
         }
-        guard let first = annotation.screenshots.first,
+        guard let first = annotation.attachments.first,
             let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: first).path(percentEncoded: false))
         else { return nil }
         let thumbnail =
@@ -1481,7 +1481,7 @@ final class DebugSession {
                 continue
             }
             do {
-                try store.saveScreenshot(data, named: name)
+                try store.saveDraftFile(data, named: name)
             } catch {
                 logger.error("Couldn't save a snapshot: \(error.localizedDescription, privacy: .public)")
             }
@@ -1528,7 +1528,7 @@ final class DebugSession {
         return (AppWindows.screenshot(of: windows, bounds: bounds), screen)
     }
 
-    /// Reads every element's position, the screen's name and a screenshot, all at the same moment.
+    /// Reads every element's position, the screen's name and an image of the screen, all at the same moment.
     private func readScreen() {
         guard let window else { return }
         let appWindows = self.appWindows()
@@ -1539,7 +1539,7 @@ final class DebugSession {
             of: appWindows.first(where: \.isKeyWindow) ?? appWindows.last,
             elements: elements
         )
-        screenshot = AppWindows.screenshot(of: appWindows, bounds: window.bounds)
+        screenImage = AppWindows.screenshot(of: appWindows, bounds: window.bounds)
         scrollState = AppWindows.mainScrollState(under: roots, screenBounds: window.bounds)
         refreshMarkers()
     }

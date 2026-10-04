@@ -13,6 +13,11 @@ struct ElementSnapshot: Codable, Equatable, Sendable {
     var isContainer: Bool
     /// Position on screen, in points.
     var frame: CGRect
+    /// True for content that changes on its own, such as a spinner or a running timer.
+    ///
+    /// A new frame of it isn't a new state of the screen. Nil otherwise, which keeps it out of
+    /// `report.json`.
+    var updatesFrequently: Bool? = nil
 
     /// The role headers have, which marks a screen's title.
     static let headerRole = "Header"

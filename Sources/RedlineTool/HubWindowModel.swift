@@ -40,7 +40,7 @@ final class HubWindowModel {
     }
 
     /// Everything one refresh reads, off the main actor.
-    struct Snapshot: Sendable {
+    struct HubState: Sendable {
         var status: HubStatus
         var reports: [(deviceID: String, row: ReportRow)]
         var simulators: [(udid: String, name: String)]
@@ -88,18 +88,18 @@ final class HubWindowModel {
         guard refreshing == nil else { return }
         let hub = hub
         refreshing = Task {
-            let snapshot = await Self.loadSnapshot(hub: hub)
+            let state = await Self.loadState(hub: hub)
             // panelDidClose cancels this task and clears the handle itself; a cancelled task must not
             // clear the handle of a newer refresh started after the panel reopened.
             guard !Task.isCancelled else { return }
             refreshing = nil
-            apply(snapshot)
+            apply(state)
         }
     }
 
-    private func apply(_ snapshot: Snapshot) {
-        let last = Dictionary(snapshot.reports.map { ($0.deviceID, $0.row.receivedAt) }, uniquingKeysWith: max)
-        let phones = snapshot.status.phones.map {
+    private func apply(_ state: HubState) {
+        let last = Dictionary(state.reports.map { ($0.deviceID, $0.row.receivedAt) }, uniquingKeysWith: max)
+        let phones = state.status.phones.map {
             DeviceRow(
                 id: $0.udid,
                 name: $0.name,
@@ -109,17 +109,17 @@ final class HubWindowModel {
                 isActive: $0.phoneState?.isReady ?? $0.state.hasPrefix("Ready")
             )
         }
-        let simulators = snapshot.simulators.map {
+        let simulators = state.simulators.map {
             DeviceRow(id: $0.udid, name: $0.name, kind: "Simulator", state: "Running", lastReport: last[$0.udid])
         }
         // Ready phones and running simulators first, then paired phones that can't take reports now.
         // Only what changed is set, so the panel redraws only when something did.
         let newDevices = phones.filter(\.isActive) + simulators + phones.filter { !$0.isActive }
         if newDevices != devices { devices = newDevices }
-        let newReports = snapshot.reports.map(\.row)
+        let newReports = state.reports.map(\.row)
         if newReports != reports { reports = newReports }
         let newReach =
-            snapshot.status.hosts.first.map { "Apps reach it at \($0) · port \(snapshot.status.port)" }
+            state.status.hosts.first.map { "Apps reach it at \($0) · port \(state.status.port)" }
             ?? "No local network"
         if newReach != reach { reach = newReach }
     }
@@ -130,14 +130,14 @@ final class HubWindowModel {
     /// Runs off the main actor.
     ///
     /// Add @concurrent when the tools version reaches 6.2.
-    nonisolated static func loadSnapshot(hub: Hub) async -> Snapshot {
+    nonisolated static func loadState(hub: Hub) async -> HubState {
         await withCheckedContinuation { continuation in
             loader.async {
                 let status = hub.statusSnapshot()
                 let watched = hub.watchedSimulators()
                 let reports = readReports(paths: hub.paths)
                 let simulators = fetchBootedSimulators().filter { watched.contains($0.udid) }
-                continuation.resume(returning: Snapshot(status: status, reports: reports, simulators: simulators))
+                continuation.resume(returning: HubState(status: status, reports: reports, simulators: simulators))
             }
         }
     }

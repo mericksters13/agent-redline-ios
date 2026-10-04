@@ -25,12 +25,12 @@ struct CaptureMergeTests {
                 id: UUID(),
                 file: "capture.png",
                 size: GrowthScreen.size,
-                scroll: nil,
+                scroll: state.scroll,
                 elements: elements,
                 group: 0
             )
             let images = self.images
-            let filing = CaptureMerge.file(
+            let filing = CaptureMerge.place(
                 capture,
                 image: image,
                 element: element,
@@ -49,7 +49,7 @@ struct CaptureMergeTests {
                     element: element,
                     ancestors: [],
                     screen: ScreenInfo(title: "Patterns", viewController: "NavigationStackHostingController"),
-                    screenshots: [],
+                    attachments: [],
                     captureID: filing.captureID
                 )
             )
@@ -132,6 +132,82 @@ struct CaptureMergeTests {
         let second = try draft.addNote(on: GrowthScreen(segment: .weight), label: "Add")
         #expect(draft.captureID(of: first) == draft.captureID(of: second))
         #expect(draft.screens.first?.captures.count == 1)
+    }
+
+    // MARK: - Scrolling
+
+    /// The case stitching used to get wrong: a segment switch, then a scroll, then a note on another
+    /// card.
+    ///
+    /// The scrolled capture would draw the card behind note 1 in the Head state.
+    @Test func aSegmentSwitchThenAScrollStartsANewSnapshot() throws {
+        var draft = Draft()
+        try draft.addNote(on: GrowthScreen(segment: .length), identifier: "growth.card")
+        try draft.addNote(on: GrowthScreen(segment: .head, scrollOffset: 100), identifier: "sleep.card")
+        #expect(draft.snapshots == [[1], [2]])
+    }
+
+    @Test func aScrollWithoutAChangeIsStitched() throws {
+        var draft = Draft()
+        try draft.addNote(on: GrowthScreen(segment: .length), identifier: "growth.card")
+        try draft.addNote(on: GrowthScreen(segment: .length, scrollOffset: 100), identifier: "sleep.card")
+        #expect(draft.snapshots == [[1, 2]])
+        #expect(draft.screens.first?.captures.count == 2)
+    }
+
+    /// On a 3x phone, layout moves by thirds of a point, which a 2x capture shows as two thirds of
+    /// a pixel.
+    @Test(arguments: [1.0 / 3, 2.0 / 3, 1.5])
+    func anElementThatMovedALittleStillSharesItsSnapshot(by distance: Double) throws {
+        var draft = Draft()
+        try draft.addNote(on: GrowthScreen(segment: .weight), identifier: "growth.card")
+        try draft.addNote(on: GrowthScreen(segment: .weight, scrollOffset: distance), identifier: "growth.card")
+        #expect(draft.snapshots == [[1, 2]])
+        // The screen's snapshot is reused, not replaced.
+        #expect(draft.screens.first?.captures.count == 1)
+    }
+
+    @Test func anEarlierNoteMovedByAThirdOfAPointMovesOntoTheNewSnapshot() throws {
+        // The banner replaces the screen's snapshot; the card under it only moved.
+        var draft = Draft()
+        try draft.addNote(on: GrowthScreen(segment: .weight), identifier: "growth.card")
+        try draft.addNote(
+            on: GrowthScreen(segment: .weight, showsBanner: true, scrollOffset: 1.0 / 3),
+            label: "Back up your data"
+        )
+        #expect(draft.snapshots == [[1, 2]])
+        #expect(draft.screens.first?.captures.count == 2)
+    }
+
+    // MARK: - What counts as a new state
+
+    @Test func aColorChangeAtTheSameBrightnessIsANewState() throws {
+        var draft = Draft()
+        try draft.addNote(on: GrowthScreen(segment: .weight), identifier: "growth.card")
+        try draft.addNote(
+            on: GrowthScreen(segment: .weight, iconColor: (red: 0.1, green: 0.56, blue: 0.6)),
+            identifier: "growth.card"
+        )
+        #expect(draft.snapshots == [[1], [2]])
+    }
+
+    @Test func aTurningSpinnerInsideTheElementIsNotANewState() throws {
+        var draft = Draft()
+        try draft.addNote(on: GrowthScreen(segment: .length, spinnerPhase: 0), identifier: "growth.card")
+        try draft.addNote(on: GrowthScreen(segment: .length, spinnerPhase: 3), identifier: "growth.card")
+        #expect(draft.snapshots == [[1, 2]])
+    }
+
+    /// A caret isn't an element, so it can't be told from a changed character.
+    ///
+    /// The note keeps the snapshot it was made on: an extra snapshot costs less than a note shown on
+    /// the wrong state.
+    @Test func aBlinkingCaretInsideTheElementKeepsEachNoteOnItsOwnSnapshot() throws {
+        var draft = Draft()
+        try draft.addNote(on: GrowthScreen(segment: .length), identifier: "growth.card")
+        try draft.addNote(on: GrowthScreen(segment: .length, showsCaret: true), identifier: "growth.card")
+        try draft.addNote(on: GrowthScreen(segment: .length, showsCaret: true), label: "Add")
+        #expect(draft.snapshots == [[1], [2, 3]])
     }
 
     private func capture(_ state: GrowthScreen) -> Capture {

@@ -85,7 +85,7 @@ enum Fixtures {
                     kind: .photo,
                     note: "Same bug",
                     createdAt: Date(timeIntervalSince1970: 1_790_000_000),
-                    title: "2 snapshots from Photos",
+                    title: "2 photos",
                     element: nil,
                     ancestors: [],
                     screen: nil,
@@ -117,10 +117,22 @@ struct GrowthScreen {
     var showsPopup = false
     /// A banner across the top of the screen, which changes the screen around the card.
     var showsBanner = false
+    /// How dark the popup's backdrop is.
+    var backdropAlpha: CGFloat = 0.4
     /// Moves every label by a fraction of a pixel, which changes only how its edges are smoothed.
     var textOffset: CGFloat = 0
     var weightText = "4.1 kg"
     var countText = "3"
+    /// The color of the card's icon.
+    var iconColor = (red: CGFloat(0.8), green: CGFloat(0.45), blue: CGFloat(0.2))
+    /// A text caret, 2 by 22 points, blinking in the card's empty message.
+    var showsCaret = false
+    /// A spinner in the card, at one of two moments of its turn, or none.
+    var spinnerPhase: Int?
+    /// How far the content is scrolled under the tab bar, in points.
+    var scrollOffset: CGFloat = 0
+    /// Pixels per point: 2 for a phone's capture; more draws a capture the size of a wide iPad one.
+    var pixelsPerPoint = Self.scale
 
     static let size = CGSize(width: 393, height: 852)
     static let scale: CGFloat = 2
@@ -130,6 +142,21 @@ struct GrowthScreen {
     static let sleepCard = CGRect(x: 20, y: 520, width: 362, height: 200)
     static let popupButton = CGRect(x: 80, y: 420, width: 233, height: 50)
     static let banner = CGRect(x: 0, y: 50, width: 393, height: 96)
+    static let spinner = CGRect(x: 300, y: 330, width: 40, height: 40)
+    /// The part of the sleep card with nothing drawn in it.
+    static let sleepCardStrip = CGRect(x: 20, y: 660, width: 362, height: 50)
+
+    /// The screen's scroll view: under the status bar and over the tab bar, scrolled by
+    /// `scrollOffset`.
+    var scroll: ScrollState {
+        ScrollState(
+            frame: CGRect(origin: .zero, size: Self.size),
+            offsetY: scrollOffset,
+            insetTop: 50,
+            insetBottom: 90,
+            contentHeight: 1500
+        )
+    }
 
     /// What the accessibility tree reads in this state.
     var elements: [ElementSnapshot] {
@@ -146,7 +173,7 @@ struct GrowthScreen {
                 frame: frame
             )
         }
-        var list = [
+        var content = [
             element("Group", nil, "growth.card", Self.card, container: true),
             element("Text", "Growth", nil, CGRect(x: 92, y: 186, width: 80, height: 24)),
             element("Button", "Add", nil, CGRect(x: 300, y: 176, width: 66, height: 44)),
@@ -156,13 +183,24 @@ struct GrowthScreen {
             element("Button", "All measurements", nil, CGRect(x: 36, y: 420, width: 330, height: 24)),
             element("Header", "Patterns", nil, CGRect(x: 20, y: 476, width: 120, height: 30)),
             element("Group", nil, "sleep.card", Self.sleepCard, container: true),
-            element("Button", "Insights", nil, CGRect(x: 160, y: 780, width: 80, height: 50)),
         ]
         switch segment {
         case .weight:
-            list.append(element("Group", "Weight in kg by age", "growth.card.chart", Self.chart, container: true))
-        case .length, .head: list.append(element("Text", emptyText, nil, CGRect(x: 36, y: 340, width: 300, height: 20)))
+            content.append(element("Group", "Weight in kg by age", "growth.card.chart", Self.chart, container: true))
+        case .length, .head:
+            content.append(element("Text", emptyText, nil, CGRect(x: 36, y: 340, width: 300, height: 20)))
         }
+        if spinnerPhase != nil {
+            var spinner = element("Image", "In progress", nil, Self.spinner)
+            spinner.updatesFrequently = true
+            content.append(spinner)
+        }
+        var list = content.map { item in
+            var moved = item
+            moved.frame.origin.y -= scrollOffset
+            return moved
+        }
+        list.append(element("Button", "Insights", nil, CGRect(x: 160, y: 780, width: 80, height: 50)))
         if showsPopup { list.append(element("Button", "Keep editing", nil, Self.popupButton)) }
         if showsBanner { list.append(element("Button", "Back up your data", nil, Self.banner)) }
         return list
@@ -174,10 +212,10 @@ struct GrowthScreen {
         CGRect(x: 38 + CGFloat(segment.rawValue) * 110, y: 238, width: 106, height: 32)
     }
 
-    /// The capture, 786 by 1704 pixels.
+    /// The capture, 786 by 1704 pixels at 2 pixels per point.
     func image() throws -> CGImage {
-        let width = Int(Self.size.width * Self.scale)
-        let height = Int(Self.size.height * Self.scale)
+        let width = Int(Self.size.width * pixelsPerPoint)
+        let height = Int(Self.size.height * pixelsPerPoint)
         guard
             let context = CGContext(
                 data: nil,
@@ -189,16 +227,27 @@ struct GrowthScreen {
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             )
         else { throw DrawingError() }
+        // iOS smooths text in gray, never with the Mac's colored subpixel edges.
+        context.setShouldSmoothFonts(false)
         // Points from the top left, as UIKit lays out.
         context.translateBy(x: 0, y: CGFloat(height))
-        context.scaleBy(x: Self.scale, y: -Self.scale)
+        context.scaleBy(x: pixelsPerPoint, y: -pixelsPerPoint)
 
         fill(context, CGRect(origin: .zero, size: Self.size), gray: 0.07)
+        context.saveGState()
+        context.translateBy(x: 0, y: -scrollOffset)
         text(context, "Athena", at: CGPoint(x: 90, y: 110), size: 22, gray: 1)
         text(context, "1 month, 14 days", at: CGPoint(x: 90, y: 134), size: 15, gray: 0.6)
 
         fill(context, Self.card, gray: 0.17, radius: 24)
-        fill(context, CGRect(x: 36, y: 176, width: 44, height: 44), red: 0.8, green: 0.45, blue: 0.2, radius: 10)
+        fill(
+            context,
+            CGRect(x: 36, y: 176, width: 44, height: 44),
+            red: iconColor.red,
+            green: iconColor.green,
+            blue: iconColor.blue,
+            radius: 10
+        )
         text(context, "Growth", at: CGPoint(x: 92, y: 206), size: 20, gray: 1)
         fill(context, CGRect(x: 300, y: 176, width: 66, height: 44), gray: 0.25, radius: 22)
         text(context, "+ Add", at: CGPoint(x: 312, y: 204), size: 16, red: 0.7, green: 0.65, blue: 1)
@@ -222,6 +271,22 @@ struct GrowthScreen {
         case .length, .head:
             text(context, emptyText, at: CGPoint(x: 36, y: 355), size: 15, gray: 0.75)
         }
+        if showsCaret { fill(context, CGRect(x: 280, y: 338, width: 2, height: 22), gray: 1) }
+        if let spinnerPhase {
+            // Eight spokes, the brightest one moving round as the spinner turns.
+            context.setLineWidth(3)
+            context.setLineCap(.round)
+            for spoke in 0..<8 {
+                let angle = CGFloat(spoke) * .pi / 4
+                let gray = spoke == spinnerPhase % 8 ? 1 : 0.4
+                context.setStrokeColor(red: gray, green: gray, blue: gray, alpha: 1)
+                context.move(to: CGPoint(x: Self.spinner.midX + 8 * cos(angle), y: Self.spinner.midY + 8 * sin(angle)))
+                context.addLine(
+                    to: CGPoint(x: Self.spinner.midX + 16 * cos(angle), y: Self.spinner.midY + 16 * sin(angle))
+                )
+                context.strokePath()
+            }
+        }
         text(context, "All measurements", at: CGPoint(x: 36, y: 438), size: 17, red: 0.7, green: 0.65, blue: 1)
         text(context, countText, at: CGPoint(x: 340, y: 438), size: 17, gray: 0.6)
 
@@ -230,6 +295,7 @@ struct GrowthScreen {
         text(context, "Sleep", at: CGPoint(x: 92, y: 560), size: 20, gray: 1)
         text(context, "0m      0m      0", at: CGPoint(x: 36, y: 620), size: 20, gray: 1)
         text(context, "Total   Longest   Sessions", at: CGPoint(x: 36, y: 646), size: 15, gray: 0.6)
+        context.restoreGState()
 
         fill(context, CGRect(x: 30, y: 770, width: 333, height: 64), gray: 0.2, radius: 32)
         text(context, "Today   History   Insights   Settings", at: CGPoint(x: 52, y: 810), size: 13, gray: 1)
@@ -239,7 +305,7 @@ struct GrowthScreen {
             text(context, "Back up your data", at: CGPoint(x: 24, y: 106), size: 22, gray: 0)
         }
         if showsPopup {
-            fill(context, CGRect(origin: .zero, size: Self.size), gray: 0, alpha: 0.4)
+            fill(context, CGRect(origin: .zero, size: Self.size), gray: 0, alpha: backdropAlpha)
             fill(context, CGRect(x: 40, y: 300, width: 313, height: 200), gray: 0.22, radius: 20)
             text(context, "Discard this measurement?", at: CGPoint(x: 70, y: 360), size: 17, gray: 1)
             fill(context, Self.popupButton, gray: 0.35, radius: 25)
@@ -290,7 +356,7 @@ struct GrowthScreen {
         context.saveGState()
         // Core Text draws upward; flip back around the baseline.
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        context.textPosition = CGPoint(x: baseline.x + textOffset / Self.scale, y: baseline.y)
+        context.textPosition = CGPoint(x: baseline.x + textOffset / pixelsPerPoint, y: baseline.y)
         CTLineDraw(line, context)
         context.restoreGState()
     }

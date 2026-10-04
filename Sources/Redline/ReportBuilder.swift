@@ -172,7 +172,7 @@ enum ReportBuilder {
         for annotation in input.annotations where annotation.captureID == nil {
             guard let number = numbers[annotation.id] else { continue }
             var files: [String] = []
-            for name in annotation.screenshots {
+            for name in annotation.attachments {
                 guard let image = UIImage(contentsOfFile: input.draft.appending(path: name).path(percentEncoded: false))
                 else {
                     Log.report.error("Couldn't load attachment \(name, privacy: .public); it's left out of the report")

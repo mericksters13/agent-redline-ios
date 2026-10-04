@@ -31,7 +31,7 @@ struct ReportStoreTests {
             ),
             ancestors: [],
             screen: ScreenInfo(title: "Settings", viewController: "SettingsController"),
-            screenshots: ["\(id.uuidString).png"]
+            attachments: ["\(id.uuidString).png"]
         )
     }
 
@@ -44,7 +44,7 @@ struct ReportStoreTests {
             element: nil,
             ancestors: [],
             screen: nil,
-            screenshots: (0..<count).map { _ in "\(UUID().uuidString).jpg" }
+            attachments: (0..<count).map { _ in "\(UUID().uuidString).jpg" }
         )
     }
 
@@ -63,7 +63,7 @@ struct ReportStoreTests {
         #expect(loaded == items)
         #expect(loaded.map(\.kind) == [.element, .photo, .element])
         #expect(loaded[1].element == nil)
-        #expect(loaded[1].screenshots.count == 3)
+        #expect(loaded[1].attachments.count == 3)
     }
 
     @Test func aDraftSavedBeforeAttachmentsStillLoads() throws {
@@ -81,7 +81,7 @@ struct ReportStoreTests {
         #expect(loaded.first?.kind == .element)
         #expect(loaded.first?.element?.identifier == "milk.home.urgency")
         #expect(loaded.first?.screen?.title == "Today")
-        #expect(loaded.first?.screenshots == ["8FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC.png"])
+        #expect(loaded.first?.attachments == ["8FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC.png"])
     }
 
     @Test func missingDraftIsEmpty() throws {
@@ -122,15 +122,15 @@ struct ReportStoreTests {
     @Test func aReportTakesTheWholeDraftAndLeavesAFreshOne() throws {
         defer { removeStore() }
         let items = [annotation("Cut off"), photos("Same bug on another screen", count: 2)]
-        for name in items.flatMap(\.screenshots) {
-            try store.saveScreenshot(Data([1, 2, 3]), named: name)
+        for name in items.flatMap(\.attachments) {
+            try store.saveDraftFile(Data([1, 2, 3]), named: name)
         }
         try store.saveDraft(items)
 
         let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
         #expect(try store.loadDraft().isEmpty)
         #expect(!FileManager.default.fileExists(atPath: store.draftDirectory.path))
-        for name in items.flatMap(\.screenshots) {
+        for name in items.flatMap(\.attachments) {
             #expect(FileManager.default.fileExists(atPath: started.draft.appending(path: name).path))
         }
 

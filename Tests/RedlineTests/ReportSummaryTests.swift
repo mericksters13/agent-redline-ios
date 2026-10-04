@@ -27,7 +27,7 @@ struct ReportSummaryTests {
         #expect(text.contains("Notes 1 and 2 are outlined and numbered on it."))
         #expect(text.contains("1. **Save** (Button, identifier `save`): Cut off. See \(files[0])."))
         #expect(text.contains("## Attachments"))
-        #expect(text.contains("3. **2 snapshots from Photos**: Same bug. Snapshots: \(files[2]), \(files[3])."))
+        #expect(text.contains("3. **2 photos**: Same bug. Snapshots: \(files[2]), \(files[3])."))
     }
 
     @Test func anEarlierStateAndContentScrolledPastAreExplained() {
@@ -57,7 +57,7 @@ struct ReportSummaryTests {
         )
     }
 
-    @Test func newImageFilesAreNamedByUUID() throws {
+    @Test func newSnapshotFilesAreNamedByUUID() throws {
         let name = Report.makeSnapshotFileName()
         #expect(name.hasSuffix(".jpg"))
         #expect(UUID(uuidString: String(name.dropLast(4))) != nil)

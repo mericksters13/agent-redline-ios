@@ -59,8 +59,8 @@ struct ScreenCompositionTests {
                 previous: first,
                 new: second,
                 snapshotsMatch: true,
-                isElementUnchanged: true,
-                overlap: .tooSmallToTell
+                overlap: .tooSmallToTell,
+                isElementUnchanged: { true }
             )
                 == .reuse(first.id)
         )
@@ -76,8 +76,8 @@ struct ScreenCompositionTests {
                 previous: first,
                 new: withMenu,
                 snapshotsMatch: true,
-                isElementUnchanged: true,
-                overlap: .tooSmallToTell
+                overlap: .tooSmallToTell,
+                isElementUnchanged: { true }
             )
                 == .replace
         )
@@ -94,8 +94,8 @@ struct ScreenCompositionTests {
                 previous: first,
                 new: second,
                 snapshotsMatch: true,
-                isElementUnchanged: true,
-                overlap: .tooSmallToTell
+                overlap: .tooSmallToTell,
+                isElementUnchanged: { true }
             )
                 == .reuse(first.id)
         )
@@ -107,8 +107,8 @@ struct ScreenCompositionTests {
                 previous: capture(-62),
                 new: capture(-62),
                 snapshotsMatch: false,
-                isElementUnchanged: true,
-                overlap: .tooSmallToTell
+                overlap: .tooSmallToTell,
+                isElementUnchanged: { true }
             ) == .replace
         )
         #expect(
@@ -116,8 +116,8 @@ struct ScreenCompositionTests {
                 previous: capture(nil),
                 new: capture(nil),
                 snapshotsMatch: false,
-                isElementUnchanged: true,
-                overlap: .tooSmallToTell
+                overlap: .tooSmallToTell,
+                isElementUnchanged: { true }
             ) == .replace
         )
     }
@@ -128,8 +128,8 @@ struct ScreenCompositionTests {
                 previous: capture(-62),
                 new: capture(400),
                 snapshotsMatch: false,
-                isElementUnchanged: true,
-                overlap: .matches
+                overlap: .matches,
+                isElementUnchanged: { true }
             )
                 == .stitch
         )
@@ -139,8 +139,8 @@ struct ScreenCompositionTests {
                 previous: capture(-62),
                 new: capture(1500),
                 snapshotsMatch: false,
-                isElementUnchanged: true,
-                overlap: .tooSmallToTell
+                overlap: .tooSmallToTell,
+                isElementUnchanged: { true }
             ) == .stitch
         )
     }
@@ -151,8 +151,8 @@ struct ScreenCompositionTests {
                 previous: capture(-62),
                 new: capture(400),
                 snapshotsMatch: false,
-                isElementUnchanged: true,
-                overlap: .differs
+                overlap: .differs,
+                isElementUnchanged: { true }
             )
                 == .replace
         )
@@ -166,8 +166,8 @@ struct ScreenCompositionTests {
                 previous: capture(-62),
                 new: turned,
                 snapshotsMatch: true,
-                isElementUnchanged: true,
-                overlap: .tooSmallToTell
+                overlap: .tooSmallToTell,
+                isElementUnchanged: { true }
             )
                 == .replace
         )
@@ -191,8 +191,8 @@ struct ScreenCompositionTests {
                 previous: before,
                 new: after,
                 snapshotsMatch: false,
-                isElementUnchanged: true,
-                overlap: .matches
+                overlap: .matches,
+                isElementUnchanged: { true }
             ) == .stitch
         )
     }
@@ -224,8 +224,8 @@ struct ScreenCompositionTests {
                 previous: before,
                 new: after,
                 snapshotsMatch: false,
-                isElementUnchanged: true,
-                overlap: .tooSmallToTell
+                overlap: .tooSmallToTell,
+                isElementUnchanged: { true }
             )
                 == .replace
         )
@@ -240,8 +240,8 @@ struct ScreenCompositionTests {
                 previous: capture(-62),
                 new: other,
                 snapshotsMatch: false,
-                isElementUnchanged: true,
-                overlap: .tooSmallToTell
+                overlap: .tooSmallToTell,
+                isElementUnchanged: { true }
             )
                 == .replace
         )
@@ -323,7 +323,7 @@ struct ScreenCompositionTests {
     /// Two phone screens: the most a snapshot can be before it's split.
     private let twoScreens: CGFloat = 874 * ScreenComposition.screensPerSnapshot
 
-    @Test func aScreenScrolledOnceIsSentAsOneImage() {
+    @Test func aScreenScrolledOnceIsSentAsOneSnapshot() {
         // The stitched Today screen from the simulator: about one and a half screens.
         #expect(ScreenComposition.parts(height: 1307, maxHeight: twoScreens, keepingWhole: []) == [0...1307])
         #expect(
