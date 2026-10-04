@@ -109,7 +109,7 @@ final class MCPServer: Sendable {
             return response(id: id, result: [
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": [String: Any]()],
-                "serverInfo": ["name": "redline", "version": "0.1.0"],
+                "serverInfo": ["name": "redline", "version": version],
                 "instructions": Self.instructions,
             ])
         case "ping":

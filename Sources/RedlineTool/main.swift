@@ -6,6 +6,10 @@ import UserNotifications
 // `redline`: the Mac side of Redline. It takes reports off paired phones and simulators and
 // keeps them in an inbox on the Mac for agent chats.
 
+/// The tool's version, which the MCP server reports. scripts/build-hub-app.sh writes the same
+/// into the app bundle.
+let version = "0.1.0"
+
 /// The help text printed for `redline` with no or unknown arguments.
 let usage = """
 Usage:
