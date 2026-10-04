@@ -7,9 +7,9 @@ import Foundation
 /// Whole captures are compared small: small enough to ignore a ticking clock or a blinking cursor,
 /// large enough to notice a scroll, new data or another screen. One element is compared in detail,
 /// because a note belongs to the state its element was in.
-enum PictureComparison {
-    /// Below this share of differing pixels, two whole captures count as the same picture.
-    static let samePicture = 0.02
+enum SnapshotComparison {
+    /// Below this share of differing pixels, two whole captures count as the same snapshot.
+    static let sameSnapshot = 0.02
     /// Below this, the stretch two scrolled captures share counts as the same content.
     static let sameOverlap = 0.05
 
@@ -18,7 +18,7 @@ enum PictureComparison {
     private static let tolerance = 24
 
     /// The share of pixels that differ noticeably, from 0 (identical) to 1.
-    /// `rowsA` and `rowsB` pick the rows to compare, in pixels; whole pictures by default.
+    /// `rowsA` and `rowsB` pick the rows to compare, in pixels; whole snapshots by default.
     static func difference(_ a: CGImage, rows rowsA: Range<Int>? = nil, _ b: CGImage, rows rowsB: Range<Int>? = nil)
         -> Double
     {

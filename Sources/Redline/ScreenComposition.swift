@@ -1,8 +1,8 @@
 #if REDLINE
 import Foundation
 
-/// Puts a screen's picture together from its captures: where content scrolls, how the
-/// captures are stitched, and where a tall picture is cut into parts.
+/// Puts a screen's snapshot together from its captures: where content scrolls, how the
+/// captures are stitched, and where a tall snapshot is cut into parts.
 enum ScreenComposition {
     /// Height of the band that marks content scrolled past without a capture.
     static let gapHeight: CGFloat = 32
@@ -38,7 +38,7 @@ enum ScreenComposition {
     }
 
     /// The plan for one group of captures: the newest capture whole, or, when the group scrolled,
-    /// one tall picture with the top bars once, the scrolled content in between, newest capture
+    /// one tall snapshot with the top bars once, the scrolled content in between, newest capture
     /// first where they overlap, and the bottom bars once.
     ///
     /// Bars are often see-through, so the top ones come from the capture scrolled highest and the
@@ -159,23 +159,23 @@ enum ScreenComposition {
         return moved.midY >= band.lowerBound && moved.midY <= band.upperBound ? moved : nil
     }
 
-    /// How many screens tall a picture can be and still be sent whole.
+    /// How many screens tall a snapshot can be and still be sent whole.
     ///
     /// Agents shrink large images (Claude to about 1,568 pixels on the long side); at two screens
     /// the text stays readable.
-    static let screensPerPicture: CGFloat = 2
+    static let screensPerSnapshot: CGFloat = 2
 
-    /// Splits a picture taller than `maxHeight` into parts, so agents that shrink large images can
+    /// Splits a snapshot taller than `maxHeight` into parts, so agents that shrink large images can
     /// still read them.
     ///
-    /// A picture that fits is sent whole. Each cut goes in a gap between rows or sections, so no
+    /// A snapshot that fits is sent whole. Each cut goes in a gap between rows or sections, so no
     /// outline, row or card is sliced; only when there is no such gap in the lower half of a part
     /// does it cut at the limit.
     /// - Parameters:
-    ///   - height: the picture's height.
+    ///   - height: the snapshot's height.
     ///   - maxHeight: the tallest a part may be.
     ///   - outlines: the notes' outlines, never cut.
-    ///   - elements: everything on screen, in picture coordinates, cut through only when unavoidable.
+    ///   - elements: everything on screen, in snapshot coordinates, cut through only when unavoidable.
     ///   - preferred: rows to cut at first when one falls in range, such as a "Scrolled past" band.
     /// - Returns: The parts' vertical ranges, top to bottom.
     static func parts(

@@ -2,30 +2,30 @@
 import Foundation
 
 /// What a chat gets for one report: who sent it and where its files are, the summary to read first,
-/// then every picture.
+/// then every snapshot.
 ///
-/// Pictures also go by path, for agents that don't show images.
+/// Snapshots also go by path, for agents that don't show images.
 enum ReportContent {
     enum Item: Equatable {
         case text(String)
         case image(file: URL, data: Data)
     }
 
-    /// The pictures a report refers to, in the order its summary lists them: each screen's
-    /// pictures, then attachments.
+    /// The snapshots a report refers to, in the order its summary lists them: each screen's
+    /// snapshots, then attachments.
     ///
-    /// Without a report.json that lists them, the folder's pictures by name.
-    static func pictures(in folder: URL) -> [URL] {
-        pictures(in: folder, listing: ReportListing.load(from: folder))
+    /// Without a report.json that lists them, the folder's snapshots by name.
+    static func snapshots(in folder: URL) -> [URL] {
+        snapshots(in: folder, listing: ReportListing.load(from: folder))
     }
 
     /// The same, from a listing already read; nil when the report has none.
-    static func pictures(in folder: URL, listing: ReportListing?) -> [URL] {
+    static func snapshots(in folder: URL, listing: ReportListing?) -> [URL] {
         let names: [String]
         if let listing, let screens = listing.screens, let items = listing.items,
             let attachments = items.map(\.attachments).allPresent()
         {
-            names = screens.flatMap { $0.images.map(\.file) } + attachments.flatMap { $0 }
+            names = screens.flatMap { $0.snapshots.map(\.file) } + attachments.flatMap { $0 }
         } else {
             names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
                 .filter { $0.hasSuffix(".jpg") || $0.hasSuffix(".png") }.sorted()
@@ -33,22 +33,23 @@ enum ReportContent {
         return names.map { folder.appending(path: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    /// The report as an agent reads it in a chat: each picture's path, then the notes on it,
-    /// numbered like the outlines drawn in the picture, with the element each note is about.
+    /// The report as an agent reads it in a chat: each snapshot's path, then the notes on it,
+    /// numbered like the outlines drawn in the snapshot, with the element each note is about.
     ///
     /// Nothing else. Without a complete report.json, the header and report.md.
     static func text(for report: InboxReport) -> String {
         guard let listing = ReportListing.load(from: report.folder), let app = listing.app,
             let screens = listing.screens,
-            let images = screens.flatMap(\.images).map({ image in image.notes.map { (file: image.file, notes: $0) } })
-                .allPresent(),
+            let snapshots = screens.flatMap(\.snapshots).map({ snapshot in
+                snapshot.notes.map { (file: snapshot.file, notes: $0) }
+            }).allPresent(),
             let items = listing.items?.map(Note.init).allPresent()
         else { return header(for: report) + "\n" + summary(of: report).trimmingCharacters(in: .whitespacesAndNewlines) }
         let byNumber = Dictionary(items.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
         var blocks: [String] = []
-        for image in images {
-            let notes = image.notes.compactMap { byNumber[$0] }.map(line)
-            blocks.append(([report.folder.appending(path: image.file).path] + notes).joined(separator: "\n"))
+        for snapshot in snapshots {
+            let notes = snapshot.notes.compactMap { byNumber[$0] }.map(line)
+            blocks.append(([report.folder.appending(path: snapshot.file).path] + notes).joined(separator: "\n"))
         }
         for item in items where !item.attachments.isEmpty {
             blocks.append(
@@ -91,30 +92,30 @@ enum ReportContent {
         return "\(item.number). \(name)\(details.isEmpty ? "" : " (\(details))"): \(note)"
     }
 
-    /// The report's items, with pictures attached while `budget` bytes allow; the rest are named by
+    /// The report's items, with snapshots attached while `budget` bytes allow; the rest are named by
     /// path.
     ///
-    /// Returns the items and the bytes of pictures attached.
+    /// Returns the items and the bytes of snapshots attached.
     static func items(for report: InboxReport, budget: Int) -> (items: [Item], bytes: Int) {
-        let pictures = pictures(in: report.folder)
+        let snapshots = snapshots(in: report.folder)
         var header = header(for: report)
-        if !pictures.isEmpty {
-            header += "Pictures: " + pictures.map(\.lastPathComponent).joined(separator: ", ") + ", attached below.\n"
+        if !snapshots.isEmpty {
+            header += "Snapshots: " + snapshots.map(\.lastPathComponent).joined(separator: ", ") + ", attached below.\n"
         }
         var items: [Item] = [.text(header + "\n" + summary(of: report))]
         var used = 0
-        for picture in pictures {
-            guard let data = try? Data(contentsOf: picture) else { continue }
+        for snapshot in snapshots {
+            guard let data = try? Data(contentsOf: snapshot) else { continue }
             if used + data.count > budget {
                 items.append(
                     .text(
-                        "\(picture.lastPathComponent) isn't attached, to keep this reply small. Open it at \(picture.path)."
+                        "\(snapshot.lastPathComponent) isn't attached, to keep this reply small. Open it at \(snapshot.path)."
                     )
                 )
                 continue
             }
-            items.append(.text(picture.lastPathComponent + ":"))
-            items.append(.image(file: picture, data: data))
+            items.append(.text(snapshot.lastPathComponent + ":"))
+            items.append(.image(file: snapshot, data: data))
             used += data.count
         }
         return (items, used)

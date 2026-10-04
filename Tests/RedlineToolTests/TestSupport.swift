@@ -65,7 +65,7 @@ func fileInboxReport(
     bundleID: String = "com.example.app",
     in paths: HubPaths,
     listing: [String: Any],
-    pictures: [String: Data] = ["screen-1.jpg": Data([0xFF, 0xD8])],
+    snapshots: [String: Data] = ["screen-1.jpg": Data([0xFF, 0xD8])],
     summary: String? = nil,
     deviceName: String = "Test iPhone",
     receivedAt: Date = .now,
@@ -78,7 +78,7 @@ func fileInboxReport(
     try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
     if let summary { try summary.write(to: incoming.appending(path: "report.md"), atomically: true, encoding: .utf8) }
     try JSONSerialization.data(withJSONObject: listing).write(to: incoming.appending(path: "report.json"))
-    for (file, data) in pictures { try data.write(to: incoming.appending(path: file)) }
+    for (file, data) in snapshots { try data.write(to: incoming.appending(path: file)) }
     let reportID = String(name.prefix(15))
     let source = ReportSource(
         kind: .phone,

@@ -51,14 +51,14 @@ struct ScreenCompositionTests {
 
     // MARK: - Reuse, stitch or replace
 
-    @Test func anUnchangedScreenReusesItsPicture() {
+    @Test func anUnchangedScreenReusesItsSnapshot() {
         let first = capture(-62)
         let second = capture(-62)
         #expect(
             CaptureMerge.decision(
                 previous: first,
                 new: second,
-                picturesMatch: true,
+                snapshotsMatch: true,
                 isElementUnchanged: true,
                 overlap: .tooSmallToTell
             )
@@ -66,8 +66,8 @@ struct ScreenCompositionTests {
         )
     }
 
-    @Test func aMenuOverALookalikePictureIsNotReused() {
-        // A light menu over a light screen: the small pictures match, the elements don't.
+    @Test func aMenuOverALookalikeSnapshotIsNotReused() {
+        // A light menu over a light screen: the small copies match, the elements don't.
         let row = element("Milk", y: 252, identifier: "glance.milk")
         let first = capture(-62, elements: [row])
         let withMenu = capture(-62, elements: [row, element("PDF report", y: 100), element("CSV file", y: 178)])
@@ -75,7 +75,7 @@ struct ScreenCompositionTests {
             CaptureMerge.decision(
                 previous: first,
                 new: withMenu,
-                picturesMatch: true,
+                snapshotsMatch: true,
                 isElementUnchanged: true,
                 overlap: .tooSmallToTell
             )
@@ -83,7 +83,7 @@ struct ScreenCompositionTests {
         )
     }
 
-    @Test func changedTextStillReusesThePicture() {
+    @Test func changedTextStillReusesTheSnapshot() {
         // "Last feed 2:08 PM" becomes "2:09 PM" between two notes: same element, same place.
         let first = capture(-62, elements: [element("Last feed 2:08 PM", y: 252)])
         var later = element("Last feed 2:09 PM", y: 252)
@@ -93,7 +93,7 @@ struct ScreenCompositionTests {
             CaptureMerge.decision(
                 previous: first,
                 new: second,
-                picturesMatch: true,
+                snapshotsMatch: true,
                 isElementUnchanged: true,
                 overlap: .tooSmallToTell
             )
@@ -101,12 +101,12 @@ struct ScreenCompositionTests {
         )
     }
 
-    @Test func aChangedScreenReplacesItsPicture() {
+    @Test func aChangedScreenReplacesItsSnapshot() {
         #expect(
             CaptureMerge.decision(
                 previous: capture(-62),
                 new: capture(-62),
-                picturesMatch: false,
+                snapshotsMatch: false,
                 isElementUnchanged: true,
                 overlap: .tooSmallToTell
             ) == .replace
@@ -115,7 +115,7 @@ struct ScreenCompositionTests {
             CaptureMerge.decision(
                 previous: capture(nil),
                 new: capture(nil),
-                picturesMatch: false,
+                snapshotsMatch: false,
                 isElementUnchanged: true,
                 overlap: .tooSmallToTell
             ) == .replace
@@ -127,7 +127,7 @@ struct ScreenCompositionTests {
             CaptureMerge.decision(
                 previous: capture(-62),
                 new: capture(400),
-                picturesMatch: false,
+                snapshotsMatch: false,
                 isElementUnchanged: true,
                 overlap: .matches
             )
@@ -138,7 +138,7 @@ struct ScreenCompositionTests {
             CaptureMerge.decision(
                 previous: capture(-62),
                 new: capture(1500),
-                picturesMatch: false,
+                snapshotsMatch: false,
                 isElementUnchanged: true,
                 overlap: .tooSmallToTell
             ) == .stitch
@@ -150,7 +150,7 @@ struct ScreenCompositionTests {
             CaptureMerge.decision(
                 previous: capture(-62),
                 new: capture(400),
-                picturesMatch: false,
+                snapshotsMatch: false,
                 isElementUnchanged: true,
                 overlap: .differs
             )
@@ -165,7 +165,7 @@ struct ScreenCompositionTests {
             CaptureMerge.decision(
                 previous: capture(-62),
                 new: turned,
-                picturesMatch: true,
+                snapshotsMatch: true,
                 isElementUnchanged: true,
                 overlap: .tooSmallToTell
             )
@@ -190,7 +190,7 @@ struct ScreenCompositionTests {
             CaptureMerge.decision(
                 previous: before,
                 new: after,
-                picturesMatch: false,
+                snapshotsMatch: false,
                 isElementUnchanged: true,
                 overlap: .matches
             ) == .stitch
@@ -223,7 +223,7 @@ struct ScreenCompositionTests {
             CaptureMerge.decision(
                 previous: before,
                 new: after,
-                picturesMatch: false,
+                snapshotsMatch: false,
                 isElementUnchanged: true,
                 overlap: .tooSmallToTell
             )
@@ -239,7 +239,7 @@ struct ScreenCompositionTests {
             CaptureMerge.decision(
                 previous: capture(-62),
                 new: other,
-                picturesMatch: false,
+                snapshotsMatch: false,
                 isElementUnchanged: true,
                 overlap: .tooSmallToTell
             )
@@ -264,7 +264,7 @@ struct ScreenCompositionTests {
 
     // MARK: - Stitching
 
-    @Test func oneCaptureIsThePictureAsItIs() throws {
+    @Test func oneCaptureIsTheSnapshotAsItIs() throws {
         let only = capture(-62)
         let plan = try #require(ScreenComposition.plan(for: [only]))
         #expect(plan.size == size)
@@ -273,7 +273,7 @@ struct ScreenCompositionTests {
         #expect(plan.position(of: note, from: only.id) == note)
     }
 
-    @Test func overlappingCapturesStitchIntoOneTallPicture() throws {
+    @Test func overlappingCapturesStitchIntoOneTallSnapshot() throws {
         let top = capture(-62)
         let lower = capture(400)
         let plan = try #require(ScreenComposition.plan(for: [top, lower]))
@@ -288,7 +288,7 @@ struct ScreenCompositionTests {
         // Notes keep their place in the content.
         #expect(plan.position(of: CGRect(x: 20, y: 100, width: 100, height: 40), from: top.id)?.minY == 100)
         #expect(plan.position(of: CGRect(x: 20, y: 500, width: 100, height: 40), from: lower.id)?.minY == 962)
-        // A note on the bottom bars sits at the bottom of the picture.
+        // A note on the bottom bars sits at the bottom of the snapshot.
         #expect(
             plan.position(of: CGRect(x: 20, y: 850, width: 100, height: 20), from: top.id)?.minY == plan.footerY + 11
         )
@@ -320,8 +320,8 @@ struct ScreenCompositionTests {
 
     // MARK: - Parts
 
-    /// Two phone screens: the most a picture can be before it's split.
-    private let twoScreens: CGFloat = 874 * ScreenComposition.screensPerPicture
+    /// Two phone screens: the most a snapshot can be before it's split.
+    private let twoScreens: CGFloat = 874 * ScreenComposition.screensPerSnapshot
 
     @Test func aScreenScrolledOnceIsSentAsOneImage() {
         // The stitched Today screen from the simulator: about one and a half screens.
@@ -366,7 +366,7 @@ struct ScreenCompositionTests {
         #expect(parts.first?.upperBound == 1200)
     }
 
-    @Test func partsCoverThePictureWithoutGapsOrOverlap() {
+    @Test func partsCoverTheSnapshotWithoutGapsOrOverlap() {
         let parts = ScreenComposition.parts(height: 6000, maxHeight: twoScreens, keepingWhole: [])
         #expect(parts.first?.lowerBound == 0)
         #expect(parts.last?.upperBound == 6000)

@@ -32,24 +32,24 @@ struct Annotation: Codable, Equatable, Identifiable, Sendable {
     ///
     /// Nil for images from Photos, which can come from anywhere.
     var screen: ScreenInfo?
-    /// Attached images, in order: the captured screen or the images picked from Photos.
+    /// Attached snapshots, in order: the captured screen or the photos picked from Photos.
     ///
-    /// Element notes made before screens shared one screenshot keep theirs here, outlined.
+    /// Element notes made before screens shared one snapshot keep theirs here, outlined.
     var screenshots: [String]
     /// For an element note, the capture of its screen it was made on.
     ///
-    /// Every note on a screen shares the screen's picture; outlines are drawn when it's shown or
+    /// Every note on a screen shares the screen's snapshot; outlines are drawn when it's shown or
     /// sent.
     var captureID: UUID? = nil
 
-    /// How many pictures the note shows in the viewer.
-    var imageCount: Int { captureID != nil ? 1 : screenshots.count }
+    /// How many snapshots the note shows in the viewer.
+    var snapshotCount: Int { captureID != nil ? 1 : screenshots.count }
 }
 
 extension Annotation {
     private enum CodingKeys: String, CodingKey {
         case id, createdAt, note, kind, element, ancestors, screen, screenshots, captureID
-        /// The single screenshot of drafts saved before attachments existed.
+        /// The single snapshot of drafts saved before attachments existed.
         case screenshot
     }
 
@@ -87,11 +87,11 @@ extension Annotation {
     }
 
     /// What the item shows as its name in Redline.
-    static func title(kind: Kind, element: ElementSnapshot?, screen: ScreenInfo?, imageCount: Int) -> String {
+    static func title(kind: Kind, element: ElementSnapshot?, screen: ScreenInfo?, snapshotCount: Int) -> String {
         switch kind {
         case .element: element?.shortName ?? element?.role ?? "Unnamed element"
         case .screen: screen?.title ?? "This screen"
-        case .photo: imageCount == 1 ? "Image from Photos" : "\(imageCount) images from Photos"
+        case .photo: snapshotCount == 1 ? "Snapshot from Photos" : "\(snapshotCount) snapshots from Photos"
         }
     }
 
@@ -104,7 +104,7 @@ extension Annotation {
         }
     }
 
-    var title: String { Self.title(kind: kind, element: element, screen: screen, imageCount: imageCount) }
+    var title: String { Self.title(kind: kind, element: element, screen: screen, snapshotCount: snapshotCount) }
     var subtitle: String { Self.subtitle(kind: kind, element: element, screen: screen) }
 }
 #endif

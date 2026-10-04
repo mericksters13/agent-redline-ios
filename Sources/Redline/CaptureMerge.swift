@@ -2,17 +2,17 @@
 import CoreGraphics
 import Foundation
 
-/// What a new note's capture does to its screen's picture.
+/// What a new note's capture does to its screen's snapshot.
 ///
 /// A note keeps the capture of the state it was made on, unless its element looks identical in a
 /// newer capture of the screen.
 enum CaptureMerge {
     enum Decision: Equatable {
-        /// Nothing changed: the note uses the screen's existing picture.
+        /// Nothing changed: the note uses the screen's existing snapshot.
         case reuse(UUID)
-        /// The screen scrolled: the new capture is stitched into the screen's picture.
+        /// The screen scrolled: the new capture is stitched into the screen's snapshot.
         case stitch
-        /// The content changed: the new capture becomes the screen's picture, and earlier
+        /// The content changed: the new capture becomes the screen's snapshot, and earlier
         /// notes move onto it when their elements can be found there and look identical.
         case replace
     }
@@ -35,13 +35,13 @@ enum CaptureMerge {
         case tooSmallToTell
     }
 
-    /// Files a new note's capture under its screen, so each state of a screen gets its own picture.
+    /// Files a new note's capture under its screen, so each state of a screen gets its own snapshot.
     ///
-    /// Reuses the screen's picture when nothing changed, stitches the new capture in when the screen
-    /// scrolled, and otherwise makes the new capture the screen's picture and moves each earlier
+    /// Reuses the screen's snapshot when nothing changed, stitches the new capture in when the screen
+    /// scrolled, and otherwise makes the new capture the screen's snapshot and moves each earlier
     /// note onto it only when its element is still there and looks identical. Under a popup, a
     /// dimmed backdrop, or after a segment switch inside it, the element doesn't, and the note keeps
-    /// the picture of the state it was made on.
+    /// the snapshot of the state it was made on.
     /// - Parameters:
     ///   - capture: the capture just taken, in group 0.
     ///   - image: its pixels.
@@ -67,11 +67,11 @@ enum CaptureMerge {
             return Filing(captureID: capture.id, isNewCapture: true, movedNotes: [])
         }
         let before = imageOf(previous)
-        var picturesMatch = false
+        var snapshotsMatch = false
         var isElementUnchanged = false
         if let before, let image {
-            picturesMatch = PictureComparison.difference(before, image) < PictureComparison.samePicture
-            // The new note's element must look identical in the picture it would share.
+            snapshotsMatch = SnapshotComparison.difference(before, image) < SnapshotComparison.sameSnapshot
+            // The new note's element must look identical in the snapshot it would share.
             isElementUnchanged = looksIdentical(
                 element.frame,
                 in: before,
@@ -86,7 +86,7 @@ enum CaptureMerge {
         switch decision(
             previous: previous,
             new: capture,
-            picturesMatch: picturesMatch,
+            snapshotsMatch: snapshotsMatch,
             isElementUnchanged: isElementUnchanged,
             overlap: overlap
         ) {
@@ -130,8 +130,8 @@ enum CaptureMerge {
         in newImage: CGImage,
         of newCapture: Capture
     ) -> Bool {
-        func pixels(_ rect: CGRect, of picture: CGImage, width: CGFloat) -> CGRect {
-            let ratio = CGFloat(picture.width) / width
+        func pixels(_ rect: CGRect, of snapshot: CGImage, width: CGFloat) -> CGRect {
+            let ratio = CGFloat(snapshot.width) / width
             return CGRect(
                 x: rect.minX * ratio,
                 y: rect.minY * ratio,
@@ -139,13 +139,13 @@ enum CaptureMerge {
                 height: rect.height * ratio
             )
         }
-        return PictureComparison.differingPixels(
+        return SnapshotComparison.differingPixels(
             image,
             in: pixels(frame, of: image, width: capture.size.width),
             newImage,
             in: pixels(newFrame, of: newImage, width: newCapture.size.width),
-            upTo: PictureComparison.sameElementPixels
-        ) <= PictureComparison.sameElementPixels
+            upTo: SnapshotComparison.sameElementPixels
+        ) <= SnapshotComparison.sameElementPixels
     }
 
     /// Whether the content two captures of a scrolled screen share looks the same.
@@ -163,28 +163,28 @@ enum CaptureMerge {
                 (scroll.screenY(ofContentY: low) * ratio).rounded()
             )..<Int((scroll.screenY(ofContentY: high) * ratio).rounded())
         }
-        let difference = PictureComparison.difference(
+        let difference = SnapshotComparison.difference(
             old,
             rows: pixelRows(from, in: old, width: previous.size.width),
             current,
             rows: pixelRows(to, in: current, width: new.size.width)
         )
-        return difference < PictureComparison.sameOverlap ? .matches : .differs
+        return difference < SnapshotComparison.sameOverlap ? .matches : .differs
     }
 
-    /// Whether a new capture reuses, extends or replaces the screen's picture.
+    /// Whether a new capture reuses, extends or replaces the screen's snapshot.
     /// - Parameters:
     ///   - previous: the screen's capture so far.
     ///   - new: the capture just taken.
-    ///   - picturesMatch: the two pictures look the same.
+    ///   - snapshotsMatch: the two snapshots look the same.
     ///   - isElementUnchanged: the new note's element looks identical in both. A segment switch
-    ///     inside a card barely changes the whole picture, but the note belongs to the new state.
+    ///     inside a card barely changes the whole snapshot, but the note belongs to the new state.
     ///   - overlap: how the content compares where a scrolled capture overlaps the previous one.
     /// - Returns: What to do with the new capture.
     static func decision(
         previous: Capture,
         new: Capture,
-        picturesMatch: Bool,
+        snapshotsMatch: Bool,
         isElementUnchanged: Bool,
         overlap: OverlapCheck
     ) -> Decision {
@@ -196,12 +196,12 @@ enum CaptureMerge {
             guard overlap != .differs, isScroll(from: previous, to: new) else { return .replace }
             return .stitch
         }
-        return picturesMatch && isElementUnchanged && isSameLayout(previous, as: new) ? .reuse(previous.id) : .replace
+        return snapshotsMatch && isElementUnchanged && isSameLayout(previous, as: new) ? .reuse(previous.id) : .replace
     }
 
     /// Whether two captures hold the same elements in the same places.
     ///
-    /// A light menu over a light screen can look almost unchanged in a small picture, but its items
+    /// A light menu over a light screen can look almost unchanged in a small copy, but its items
     /// are new elements. Text may change, like a time stamp, and a label's width with it.
     static func isSameLayout(_ a: Capture, as b: Capture) -> Bool {
         guard a.elements.count == b.elements.count else { return false }

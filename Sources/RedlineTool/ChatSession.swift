@@ -68,7 +68,7 @@ final class ChatSession: Sendable {
         save()
     }
 
-    /// Takes the reports sent to this chat, as text with pictures named by path, for agents that
+    /// Takes the reports sent to this chat, as text with snapshots named by path, for agents that
     /// get reports through hooks.
     ///
     /// Nil when there's none.
@@ -84,7 +84,7 @@ final class ChatSession: Sendable {
 
     /// Takes the reports waiting for this chat's apps, oldest first.
     ///
-    /// Always takes at least one waiting report; takes more while their pictures fit in `budget`
+    /// Always takes at least one waiting report; takes more while their snapshots fit in `budget`
     /// bytes.
     func take(budget: Int) -> (items: [ReportContent.Item], taken: Int, remaining: Int) {
         let chat = self.chat

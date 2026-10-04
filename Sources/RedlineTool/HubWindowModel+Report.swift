@@ -2,22 +2,23 @@
 import Foundation
 
 extension HubWindowModel {
-    /// A picture as the agent gets it, with the numbered outlines already drawn in, and the
+    /// A snapshot as the agent gets it, with the numbered outlines already drawn in, and the
     /// notes it shows.
-    struct Picture: Equatable, Sendable {
+    struct ReportSnapshot: Equatable, Sendable {
         var file: URL
-        /// The screen's title, or the title of the note the picture is attached to.
+        /// The screen's title, or the title of the note the snapshot is attached to.
         var title: String
         var notes: [Int]
     }
 
-    /// The report's pictures in the order the agent gets them: each screen's pictures, then the
-    /// pictures attached to notes.
-    nonisolated static func pictures(in folder: URL) -> [Picture] {
+    /// The report's snapshots in the order the agent gets them: each screen's snapshots, then the
+    /// snapshots attached to notes.
+    nonisolated static func snapshots(in folder: URL) -> [ReportSnapshot] {
         let listing = ReportListing.load(from: folder)
         guard let screens = listing?.screens,
-            let images = screens.map({ screen in
-                screen.images.map { image in image.notes.map { (screen.title, image.file, $0) } }.allPresent()
+            let shownSnapshots = screens.map({ screen in
+                screen.snapshots.map { snapshot in snapshot.notes.map { (screen.title, snapshot.file, $0) } }
+                    .allPresent()
             }).allPresent(),
             let items = listing?.items?.map({ item in
                 item.number.flatMap { number in
@@ -25,22 +26,22 @@ extension HubWindowModel {
                 }
             }).allPresent()
         else {
-            return ReportContent.pictures(in: folder).map {
-                Picture(file: $0, title: $0.deletingPathExtension().lastPathComponent, notes: [])
+            return ReportContent.snapshots(in: folder).map {
+                ReportSnapshot(file: $0, title: "Snapshot", notes: [])
             }
         }
-        let shown = images.flatMap { $0 }.map { title, file, notes in
-            Picture(file: folder.appending(path: file), title: title ?? "Screen", notes: notes)
+        let shown = shownSnapshots.flatMap { $0 }.map { title, file, notes in
+            ReportSnapshot(file: folder.appending(path: file), title: title ?? "Screen", notes: notes)
         }
         let attached = items.flatMap { number, title, attachments in
-            attachments.map { Picture(file: folder.appending(path: $0), title: title, notes: [number]) }
+            attachments.map { ReportSnapshot(file: folder.appending(path: $0), title: title, notes: [number]) }
         }
         return (shown + attached).filter { FileManager.default.fileExists(atPath: $0.file.path) }
     }
 
-    /// The first picture that shows a note.
-    nonisolated static func picture(showing note: Int, in pictures: [Picture]) -> URL? {
-        pictures.first { $0.notes.contains(note) }?.file
+    /// The first snapshot that shows a note.
+    nonisolated static func snapshot(showing note: Int, in snapshots: [ReportSnapshot]) -> URL? {
+        snapshots.first { $0.notes.contains(note) }?.file
     }
 
     /// A chat a report went to, to open it again. `folder` is where that chat works, when known.

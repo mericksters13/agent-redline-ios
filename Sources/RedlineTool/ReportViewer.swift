@@ -2,30 +2,30 @@
 import AppKit
 import SwiftUI
 
-/// A report as the agent got it: its pictures, with the numbered outlines drawn in, and its notes.
+/// A report as the agent got it: its snapshots, with the numbered outlines drawn in, and its notes.
 ///
-/// Clicking a note brings the picture that shows it into view.
+/// Clicking a note brings the snapshot that shows it into view.
 struct ReportViewer: View {
     /// What the viewer reads from the report's folder, before its window shows.
     struct Contents: Sendable {
-        var pictures: [HubWindowModel.Picture]
+        var snapshots: [HubWindowModel.ReportSnapshot]
         var chat: HubWindowModel.ChatLink?
     }
 
     let report: HubWindowModel.ReportRow
-    private let pictures: [HubWindowModel.Picture]
+    private let snapshots: [HubWindowModel.ReportSnapshot]
     private let chat: HubWindowModel.ChatLink?
     @State private var selected: Int?
 
     init(report: HubWindowModel.ReportRow, contents: Contents) {
         self.report = report
-        pictures = contents.pictures
+        snapshots = contents.snapshots
         chat = contents.chat
     }
 
     private nonisolated static let loader = DispatchQueue(label: "Redline.viewer.loader", qos: .userInitiated)
 
-    /// Reads the report's pictures and chat.
+    /// Reads the report's snapshots and chat.
     ///
     /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
     nonisolated static func load(_ folder: URL) async -> Contents {
@@ -33,7 +33,7 @@ struct ReportViewer: View {
             loader.async {
                 continuation.resume(
                     returning: Contents(
-                        pictures: HubWindowModel.pictures(in: folder),
+                        snapshots: HubWindowModel.snapshots(in: folder),
                         chat: HubWindowModel.chat(of: folder)
                     )
                 )
@@ -49,7 +49,7 @@ struct ReportViewer: View {
     var body: some View {
         ScrollViewReader { proxy in
             HStack(spacing: 0) {
-                pictureStrip
+                snapshotStrip
                 Divider().overlay(Color.white.opacity(0.12))
                 sidebar(proxy).frame(width: 340)
             }
@@ -58,28 +58,28 @@ struct ReportViewer: View {
         .background(Color.black)
     }
 
-    /// Room in the strip's height for its padding (48) and each picture's caption (28).
-    private static let pictureMargin: CGFloat = 76
+    /// Room in the strip's height for its padding (48) and each snapshot's caption (28).
+    private static let snapshotMargin: CGFloat = 76
 
-    /// The pictures side by side, each as tall as the window allows.
+    /// The snapshots side by side, each as tall as the window allows.
     ///
     /// The strip measures its own height: inside a horizontal scroll view, containerRelativeFrame
-    /// doesn't get it (a render showed the pictures shrunk to their minimum), and a picture's width
+    /// doesn't get it (a render showed the snapshots shrunk to their minimum), and a snapshot's width
     /// follows its height.
-    private var pictureStrip: some View {
+    private var snapshotStrip: some View {
         GeometryReader { geometry in
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 20) {
-                    ForEach(pictures, id: \.file) { picture in
-                        pictureView(picture, height: max(geometry.size.height - Self.pictureMargin, 120))
-                            .id(picture.file)
+                    ForEach(snapshots, id: \.file) { snapshot in
+                        snapshotView(snapshot, height: max(geometry.size.height - Self.snapshotMargin, 120))
+                            .id(snapshot.file)
                     }
                 }
                 .padding(24)
             }
             .overlay {
-                if pictures.isEmpty {
-                    Text("This report has no pictures.")
+                if snapshots.isEmpty {
+                    Text("This report has no snapshots.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -88,33 +88,33 @@ struct ReportViewer: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func pictureView(_ picture: HubWindowModel.Picture, height: CGFloat) -> some View {
-        let showsSelected = selected.map(picture.notes.contains) ?? false
+    private func snapshotView(_ snapshot: HubWindowModel.ReportSnapshot, height: CGFloat) -> some View {
+        let showsSelected = selected.map(snapshot.notes.contains) ?? false
         return VStack(alignment: .leading, spacing: 8) {
-            PictureImage(file: picture.file, height: height)
+            SnapshotImage(file: snapshot.file, height: height)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .strokeBorder(Color.white.opacity(showsSelected ? 0.9 : 0.16), lineWidth: showsSelected ? 2 : 1)
                 )
             HStack(spacing: 6) {
-                Text(picture.title)
+                Text(snapshot.title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                ForEach(picture.notes, id: \.self) { NoteNumber(number: $0) }
+                ForEach(snapshot.notes, id: \.self) { NoteNumber(number: $0) }
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            picture.notes.isEmpty
-                ? picture.title : "\(picture.title), notes \(picture.notes.map(String.init).joined(separator: ", "))"
+            snapshot.notes.isEmpty
+                ? snapshot.title : "\(snapshot.title), notes \(snapshot.notes.map(String.init).joined(separator: ", "))"
         )
     }
 
-    /// Brings the picture that shows a note into view, every time the note is clicked.
+    /// Brings the snapshot that shows a note into view, every time the note is clicked.
     private func scroll(to note: Int, _ proxy: ScrollViewProxy) {
-        guard let file = HubWindowModel.picture(showing: note, in: pictures) else { return }
+        guard let file = HubWindowModel.snapshot(showing: note, in: snapshots) else { return }
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) { proxy.scrollTo(file, anchor: .center) }
     }
 
@@ -196,15 +196,15 @@ struct ReportViewer: View {
     }
 }
 
-/// One of the viewer's pictures, as tall as `height`, decoded off the main actor.
+/// One of the viewer's snapshots, as tall as `height`, decoded off the main actor.
 ///
 /// A placeholder of a phone screen's shape shows until it's ready.
-private struct PictureImage: View {
+private struct SnapshotImage: View {
     let file: URL
     let height: CGFloat
     @State private var image: NSImage?
 
-    /// Big enough for the picture to stay sharp in a full-screen window on a Retina display.
+    /// Big enough for the snapshot to stay sharp in a full-screen window on a Retina display.
     private static let maxPixels = 3000
 
     var body: some View {

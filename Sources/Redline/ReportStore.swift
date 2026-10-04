@@ -11,7 +11,7 @@ import Foundation
 /// - `reports/<id>/`: one sent report, named by when it was sent, such as `20261003-215826`.
 ///   It is written in this order, and the order is load-bearing:
 ///   1. `beginReport` moves the draft into `reports/<id>/draft`.
-///   2. The report's pictures are written beside it.
+///   2. The report's snapshots are written beside it.
 ///   3. `report.json`, then `report.md`, are written.
 ///   4. `reports/<id>/draft` is removed.
 ///
@@ -96,7 +96,7 @@ struct ReportStore: Sendable {
     }
 
     /// Starts a report: moves the whole draft into a new report folder, so new notes go into a
-    /// fresh draft while the report's pictures are drawn from the old one.
+    /// fresh draft while the report's snapshots are drawn from the old one.
     ///
     /// Returns the report's id, its folder and where the draft now is.
     func beginReport(date: Date) throws -> (id: String, folder: URL, draft: URL) {

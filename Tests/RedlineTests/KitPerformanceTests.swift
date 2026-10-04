@@ -40,7 +40,7 @@ final class KitPerformanceTests: XCTestCase {
         }
     }
 
-    func testPictureComparisonOnFullCaptures() throws {
+    func testSnapshotComparisonOnFullCaptures() throws {
         func capture(shift: Int) throws -> CGImage {
             let context = try XCTUnwrap(
                 CGContext(
@@ -64,12 +64,12 @@ final class KitPerformanceTests: XCTestCase {
         let before = try capture(shift: 0)
         let after = try capture(shift: 40)
         measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
-            _ = PictureComparison.difference(before, after)
-            _ = PictureComparison.difference(before, rows: 400..<1400, after, rows: 360..<1360)
+            _ = SnapshotComparison.difference(before, after)
+            _ = SnapshotComparison.difference(before, rows: 400..<1400, after, rows: 360..<1360)
         }
     }
 
-    /// The element check each earlier note gets when its screen's picture is replaced, on a
+    /// The element check each earlier note gets when its screen's snapshot is replaced, on a
     /// full-width card: labels smoothed differently, the slowest case that still matches, and a
     /// segment switch, which stops at the first few differences.
     func testElementComparisonOnACard() throws {
@@ -78,8 +78,8 @@ final class KitPerformanceTests: XCTestCase {
         let switched = try GrowthScreen(segment: .length).image()
         let card = GrowthScreen.card.applying(CGAffineTransform(scaleX: GrowthScreen.scale, y: GrowthScreen.scale))
         measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
-            _ = PictureComparison.differingPixels(before, in: card, smoothed, in: card, upTo: 8)
-            _ = PictureComparison.differingPixels(before, in: card, switched, in: card, upTo: 8)
+            _ = SnapshotComparison.differingPixels(before, in: card, smoothed, in: card, upTo: 8)
+            _ = SnapshotComparison.differingPixels(before, in: card, switched, in: card, upTo: 8)
         }
     }
 

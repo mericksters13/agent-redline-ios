@@ -174,7 +174,7 @@ final class HubWindowModel {
                     agent: agent,
                     chat: chat,
                     isWaiting: isWaiting,
-                    thumbnail: ReportContent.pictures(in: folder, listing: listing).first,
+                    thumbnail: ReportContent.snapshots(in: folder, listing: listing).first,
                     notes: notes(of: listing)
                 )
             )

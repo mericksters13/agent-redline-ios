@@ -4,7 +4,7 @@ import UIKit
 
 /// The colors of marking the app itself, the only color Redline draws over the app.
 ///
-/// Red is the usual color for markup and matches the outlines in sent screenshots.
+/// Red is the usual color for markup and matches the outlines in sent snapshots.
 private enum Markup {
     /// What is marked: the element under the finger and notes already made.
     static let red = Color(uiColor: .systemRed)
@@ -235,7 +235,7 @@ struct OverlayView: View {
         let y = max(frame.minY - badge / 2, islandBottom + 4)
         return ZStack(alignment: .topLeading) {
             outline(frame, weight: 1.5)
-            // Red with a white number, like the notes in sent screenshots.
+            // Red with a white number, like the notes in sent snapshots.
             Text("\(number)")
                 .font(.caption.weight(.bold).monospacedDigit())
                 .foregroundStyle(Color.white)
@@ -400,7 +400,7 @@ struct OverlayView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(
                         pending.map {
-                            Annotation.title(kind: $0.kind, element: nil, screen: $0.screen, imageCount: $0.count)
+                            Annotation.title(kind: $0.kind, element: nil, screen: $0.screen, snapshotCount: $0.count)
                         }
                             ?? session.selected?.shortName ?? "Unnamed element"
                     )
@@ -661,8 +661,8 @@ struct OverlayView: View {
         .onTapGesture { session.openViewer(annotation) }
         .accessibilityAddTraits(.isButton)
         .accessibilityHint(
-            annotation.imageCount > 1
-                ? "Opens the \(annotation.imageCount) images and the note" : "Opens the screenshot and note"
+            annotation.snapshotCount > 1
+                ? "Opens the \(annotation.snapshotCount) snapshots and the note" : "Opens the snapshot and note"
         )
     }
 
@@ -677,9 +677,9 @@ struct OverlayView: View {
                 .clipShape(shape)
                 .overlay(shape.strokeBorder(Mono.hairline, lineWidth: 1))
                 .overlay(alignment: .bottomTrailing) {
-                    if annotation.imageCount > 1 {
-                        // More images travel with this note.
-                        Text("\(annotation.imageCount)")
+                    if annotation.snapshotCount > 1 {
+                        // More snapshots travel with this note.
+                        Text("\(annotation.snapshotCount)")
                             .font(.caption2.weight(.bold).monospacedDigit())
                             .foregroundStyle(Mono.text)
                             .padding(.horizontal, 5)
@@ -878,7 +878,7 @@ struct OverlayView: View {
     }
 }
 
-/// A capture shown the way iOS shows a screenshot: a white flash, then the picture of the
+/// A capture shown the way iOS shows a screenshot: a white flash, then the snapshot of the
 /// screen shrinks from full size and lands in the note box's first image slot.
 private struct CaptureFlight: View {
     let image: UIImage
@@ -924,7 +924,7 @@ private struct CaptureFlight: View {
         .accessibilityHidden(true)
         .onAppear {
             withAnimation(.easeOut(duration: reduceMotion ? 0.1 : 0.3)) { flash = 0 }
-            // Hold the full-size picture for a beat, as a screenshot does, then send it to the note box.
+            // Hold the full-size snapshot for a beat, as a screenshot does, then send it to the note box.
             withAnimation(
                 reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.55, bounce: 0.12).delay(0.2),
                 completionCriteria: .logicallyComplete

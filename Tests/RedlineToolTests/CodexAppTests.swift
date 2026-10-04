@@ -95,17 +95,17 @@ struct CodexAppTests {
         return app
     }
 
-    @Test func aTurnGoesToTheChatWithItsPictures() async throws {
+    @Test func aTurnGoesToTheChatWithItsSnapshots() async throws {
         let app = try fakeApp(answer: [
             "resultType": "success", "result": ["result": ["turn": ["status": "inProgress"]]],
         ])
-        let picture = URL(filePath: "/tmp/screen-1.jpg")
+        let snapshot = URL(filePath: "/tmp/screen-1.jpg")
         #expect(
             await offPool {
                 CodexApp.startTurn(
                     thread: "t-1",
                     text: "A report",
-                    pictures: [picture],
+                    snapshots: [snapshot],
                     socketPath: app.path,
                     timeout: 5
                 )
@@ -123,7 +123,7 @@ struct CodexAppTests {
         let input = request?["input"] as? [[String: Any]]
         #expect(input?.first?["text"] as? String == "A report")
         #expect(input?.last?["type"] as? String == "localImage")
-        #expect(input?.last?["path"] as? String == picture.path)
+        #expect(input?.last?["path"] as? String == snapshot.path)
         // This client handles nothing for the app.
         #expect(
             requests.contains {
@@ -171,7 +171,7 @@ struct CodexAppTests {
         let started = Date.now
         #expect(
             await offPool {
-                CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [], socketPath: path, timeout: 1)
+                CodexApp.startTurn(thread: "t-1", text: "A report", snapshots: [], socketPath: path, timeout: 1)
             } == .failed("The Codex app didn't answer")
         )
         #expect(Date.now.timeIntervalSince(started) < 2.5)
@@ -183,14 +183,14 @@ struct CodexAppTests {
         ])
         #expect(
             await offPool {
-                CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [], socketPath: app.path, timeout: 5)
+                CodexApp.startTurn(thread: "t-1", text: "A report", snapshots: [], socketPath: app.path, timeout: 5)
             } == .notOpen
         )
         #expect(
             CodexApp.startTurn(
                 thread: "t-1",
                 text: "A report",
-                pictures: [],
+                snapshots: [],
                 socketPath: "/tmp/no-such-\(UUID().uuidString.prefix(6)).sock",
                 timeout: 1
             )

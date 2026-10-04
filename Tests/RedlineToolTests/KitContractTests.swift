@@ -167,7 +167,7 @@ struct KitContractTests {
                     title: "Editor",
                     viewController: nil,
                     notes: [1],
-                    images: [
+                    snapshots: [
                         .init(
                             file: "screen-1.jpg",
                             part: 1,
@@ -192,7 +192,7 @@ struct KitContractTests {
                     ancestors: [],
                     screen: "s1",
                     screenTitle: "Editor",
-                    picture: "screen-1.jpg",
+                    snapshot: "screen-1.jpg",
                     outline: nil,
                     attachments: []
                 ),
@@ -206,7 +206,7 @@ struct KitContractTests {
                     ancestors: [],
                     screen: nil,
                     screenTitle: nil,
-                    picture: nil,
+                    snapshot: nil,
                     outline: nil,
                     attachments: ["note-2.jpg"]
                 ),
@@ -220,13 +220,13 @@ struct KitContractTests {
         #expect(listing.app?.sourceFile == "/w/App/AppMain.swift")
         #expect(listing.destination?.agent == "codex" && listing.destination?.chat == "t-1")
         #expect(listing.screens?.first?.title == "Editor")
-        #expect(listing.screens?.first?.images.first?.notes == [1])
+        #expect(listing.screens?.first?.snapshots.first?.notes == [1])
         #expect(listing.items?.first?.element?.identifier == "editor.save")
         #expect(listing.items?.last?.attachments == ["note-2.jpg"])
 
         // Every reader gets the whole report, not its fallback.
-        #expect(ReportContent.pictures(in: folder).map(\.lastPathComponent) == ["screen-1.jpg", "note-2.jpg"])
-        #expect(HubWindowModel.pictures(in: folder).map(\.title) == ["Editor", "Image from Photos"])
+        #expect(ReportContent.snapshots(in: folder).map(\.lastPathComponent) == ["screen-1.jpg", "note-2.jpg"])
+        #expect(HubWindowModel.snapshots(in: folder).map(\.title) == ["Editor", "Image from Photos"])
         #expect(HubWindowModel.notes(in: folder).map(\.text) == ["Save: Too small", "Image from Photos: No note"])
         #expect(
             Routing.destination(of: folder, bundleID: "com.example.app") { _, _ in
@@ -256,8 +256,8 @@ struct KitContractTests {
         // As the kit names them: two parts of a stitched screen, its earlier state, two photos.
         let files = (0..<5).map { _ in Report.makeSnapshotFileName() }
         for file in files { try Data([0xFF, 0xD8]).write(to: folder.appending(path: file)) }
-        func image(_ index: Int, part: Int, parts: Int, earlier: Bool, notes: [Int]) -> Report.Picture {
-            Report.Picture(
+        func image(_ index: Int, part: Int, parts: Int, earlier: Bool, notes: [Int]) -> Report.Snapshot {
+            Report.Snapshot(
                 file: files[index],
                 part: part,
                 parts: parts,
@@ -279,7 +279,7 @@ struct KitContractTests {
                 ancestors: [],
                 screen: file == nil ? nil : "screen-1",
                 screenTitle: file == nil ? nil : "Patterns",
-                picture: file,
+                snapshot: file,
                 outline: nil,
                 attachments: attachments
             )
@@ -295,7 +295,7 @@ struct KitContractTests {
                     title: "Patterns",
                     viewController: nil,
                     notes: [1, 2, 3],
-                    images: [
+                    snapshots: [
                         image(2, part: 1, parts: 1, earlier: true, notes: [3]),
                         image(0, part: 1, parts: 2, earlier: false, notes: [1]),
                         image(1, part: 2, parts: 2, earlier: false, notes: [2]),
@@ -327,8 +327,8 @@ struct KitContractTests {
             #expect(named == Set(files))
         }
         let order = [files[2], files[0], files[1], files[3], files[4]]
-        #expect(ReportContent.pictures(in: folder).map(\.lastPathComponent) == order)
-        #expect(HubWindowModel.pictures(in: folder).map(\.file.lastPathComponent) == order)
+        #expect(ReportContent.snapshots(in: folder).map(\.lastPathComponent) == order)
+        #expect(HubWindowModel.snapshots(in: folder).map(\.file.lastPathComponent) == order)
     }
 }
 #endif

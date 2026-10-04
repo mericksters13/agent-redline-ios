@@ -2,7 +2,7 @@
 import Foundation
 
 /// The report as text the agent reads first: what was reported, on which screen, and
-/// which picture shows each note.
+/// which snapshot shows each note.
 enum ReportSummary {
     static func markdown(_ report: Report) -> String {
         var lines: [String] = []
@@ -19,7 +19,7 @@ enum ReportSummary {
             ? "" : " on " + countPhrase(report.screens.count, singular: "screen", plural: "screens")
         lines.append(
             "\(report.device.model), \(report.device.systemName) \(report.device.systemVersion). "
-                + "\(notes)\(screens). Numbers match the red numbered outlines in the pictures."
+                + "\(notes)\(screens). Numbers match the red numbered outlines in the snapshots."
         )
         let items = Dictionary(uniqueKeysWithValues: report.items.map { ($0.number, $0) })
 
@@ -27,9 +27,9 @@ enum ReportSummary {
             lines.append("")
             lines.append("## Screen: \(screen.title ?? screen.viewController ?? "Untitled")")
             lines.append("")
-            let current = screen.images.filter { !$0.isEarlierState }
+            let current = screen.snapshots.filter { !$0.isEarlierState }
             if let first = current.first {
-                var description = "One screenshot of this screen"
+                var description = "One snapshot of this screen"
                 if first.stitchedFrom > 1 { description += ", stitched from \(first.stitchedFrom) scroll positions" }
                 if current.count > 1 {
                     description += ", in \(current.count) parts: " + current.map(\.file).joined(separator: ", ")
@@ -46,7 +46,7 @@ enum ReportSummary {
                     )
                 }
             }
-            for earlier in screen.images where earlier.isEarlierState {
+            for earlier in screen.snapshots where earlier.isEarlierState {
                 lines.append(
                     "An earlier state of the same screen, before its content changed: \(earlier.file), with \(earlier.notes.count == 1 ? "note" : "notes") \(list(earlier.notes))."
                 )
@@ -84,8 +84,8 @@ enum ReportSummary {
             let ended = item.note.last.map { ".!?".contains($0) } ?? false
             text += ": \(item.note)\(ended ? "" : ".")"
         }
-        if let picture = item.picture { text += " See \(picture)." }
-        if !item.attachments.isEmpty { text += " Images: \(item.attachments.joined(separator: ", "))." }
+        if let snapshot = item.snapshot { text += " See \(snapshot)." }
+        if !item.attachments.isEmpty { text += " Snapshots: \(item.attachments.joined(separator: ", "))." }
         return text
     }
 

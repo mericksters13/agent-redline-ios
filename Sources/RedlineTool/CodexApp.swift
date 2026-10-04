@@ -2,7 +2,7 @@
 import Darwin
 import Foundation
 
-/// Starts a turn in a chat open in the Codex app, with the report's pictures attached the way the
+/// Starts a turn in a chat open in the Codex app, with the report's snapshots attached the way the
 /// app attaches a screenshot the user adds.
 ///
 /// It goes through the app's own socket, so the app runs the turn: the chat wakes even when idle
@@ -19,10 +19,10 @@ enum CodexApp {
         case failed(String)
     }
 
-    /// The input the app takes for a turn: the text, then each picture by path.
-    static func input(text: String, pictures: [URL]) -> [[String: Any]] {
+    /// The input the app takes for a turn: the text, then each snapshot by path.
+    static func input(text: String, snapshots: [URL]) -> [[String: Any]] {
         [["type": "text", "text": text, "text_elements": [Any]()]]
-            + pictures.map { ["type": "localImage", "path": $0.path] }
+            + snapshots.map { ["type": "localImage", "path": $0.path] }
     }
 
     /// Starts the turn, giving up once `timeout` seconds have passed in all, however much else
@@ -30,7 +30,7 @@ enum CodexApp {
     static func startTurn(
         thread: String,
         text: String,
-        pictures: [URL],
+        snapshots: [URL],
         socketPath: String = socketPath,
         timeout: TimeInterval = 30
     ) -> Outcome {
@@ -55,7 +55,7 @@ enum CodexApp {
             "params": [
                 "conversationId": thread,
                 "turnStart": [
-                    "request": ["threadId": thread, "input": input(text: text, pictures: pictures)],
+                    "request": ["threadId": thread, "input": input(text: text, snapshots: snapshots)],
                     "context": [String: Any](),
                 ],
             ],

@@ -2,16 +2,16 @@
 import SwiftUI
 import UIKit
 
-/// The saved notes, full screen: each note's screenshot with its note underneath.
+/// The saved notes, full screen: each note's snapshot with its note underneath.
 ///
-/// Every image is a page, so a note with several attached images pages through them. Swipe or use
-/// the strip to move between notes. A tap on the screenshot hides or shows the details, and zooming
+/// Every snapshot is a page, so a note with several attached snapshots pages through them. Swipe or use
+/// the strip to move between notes. A tap on the snapshot hides or shows the details, and zooming
 /// in hides them, as in the Photos viewer.
 struct NoteViewer: View {
     let session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// One image of one note.
+    /// One snapshot of one note.
     private struct Page: Identifiable {
         struct ID: Hashable {
             let annotation: UUID
@@ -30,10 +30,10 @@ struct NoteViewer: View {
             self.index = index
         }
 
-        /// Every image of every note, in order.
+        /// Every snapshot of every note, in order.
         static func all(in annotations: [Annotation]) -> [Page] {
             annotations.enumerated().flatMap { number, annotation in
-                (0..<annotation.imageCount).map { Page(annotation: annotation, number: number + 1, index: $0) }
+                (0..<annotation.snapshotCount).map { Page(annotation: annotation, number: number + 1, index: $0) }
             }
         }
     }
@@ -46,9 +46,9 @@ struct NoteViewer: View {
     /// The note the draft belongs to, so moving to another note saves it against the right one.
     @State private var draftOwner: UUID?
     @State private var isConfirmingDelete = false
-    /// The details panel's height, which sets where the screenshot ends.
+    /// The details panel's height, which sets where the snapshot ends.
     ///
-    /// Kept from before a zoom, so the screenshot never resizes under the finger while the details
+    /// Kept from before a zoom, so the snapshot never resizes under the finger while the details
     /// are hidden.
     @State private var detailsHeight: CGFloat = 0
     @FocusState private var isEditingNote: Bool
@@ -66,10 +66,10 @@ struct NoteViewer: View {
     private var size: CGSize { session.screenSize }
     /// The details panel rises with the keyboard while a note is edited.
     private var panelBottom: CGFloat { min(session.keyboardTop, size.height - session.safeAreaInsets.bottom) - 8 }
-    /// The screenshot sits between the top bar and the details panel, so the outlined
-    /// element is never under the panel and the picture never reads as the live app.
+    /// The snapshot sits between the top bar and the details panel, so the outlined
+    /// element is never under the panel and the snapshot never reads as the live app.
     private var imageTop: CGFloat { session.safeAreaTop + 56 }
-    /// While a note is edited the screenshot shrinks to the space above the panel,
+    /// While a note is edited the snapshot shrinks to the space above the panel,
     /// so the outlined element stays in view next to what is being written about it.
     private var imageHeight: CGFloat {
         let reserve = detailsHeight == 0 ? 200 : detailsHeight
@@ -158,7 +158,7 @@ struct NoteViewer: View {
     private func page(_ page: Page, isNear: Bool) -> some View {
         let number = page.number
         if isNear, let image = session.fullImage(for: page.annotation, at: page.index) {
-            ZoomableScreenshot(
+            ZoomableSnapshot(
                 image: image,
                 onZoomChange: { isZoomed = $0 },
                 onTap: {
@@ -171,9 +171,9 @@ struct NoteViewer: View {
             )
             .accessibilityElement()
             .accessibilityLabel(
-                page.annotation.imageCount > 1
-                    ? "Image \(page.index + 1) of \(page.annotation.imageCount) for note \(number)"
-                    : "Screenshot for note \(number)"
+                page.annotation.snapshotCount > 1
+                    ? "Snapshot \(page.index + 1) of \(page.annotation.snapshotCount) for note \(number)"
+                    : "Snapshot for note \(number)"
             )
             .accessibilityValue(isZoomed ? "Zoomed in" : "")
             .accessibilityHint("Double-tap with two fingers to zoom")
@@ -259,7 +259,7 @@ struct NoteViewer: View {
                     }
                 }
 
-                // Typed right here; the panel rises with the keyboard and the screenshot fits above it.
+                // Typed right here; the panel rises with the keyboard and the snapshot fits above it.
                 TextField("What's wrong?", text: $draft, axis: .vertical)
                     .font(.body)
                     .foregroundStyle(Mono.text)
@@ -293,10 +293,10 @@ struct NoteViewer: View {
         }
     }
 
-    /// What the note is, and which of its images is showing when it has several.
+    /// What the note is, and which of its snapshots is showing when it has several.
     private func subtitle(for annotation: Annotation, shown: Page?) -> String {
-        guard annotation.imageCount > 1, let page = shown else { return annotation.subtitle }
-        return "\(annotation.subtitle) · \(page.index + 1) of \(annotation.imageCount)"
+        guard annotation.snapshotCount > 1, let page = shown else { return annotation.subtitle }
+        return "\(annotation.subtitle) · \(page.index + 1) of \(annotation.snapshotCount)"
     }
 
     private var strip: some View {
@@ -355,12 +355,12 @@ struct NoteViewer: View {
     }
 }
 
-/// A screenshot that can be pinched, double-tapped and dragged, built on the system
+/// A snapshot that can be pinched, double-tapped and dragged, built on the system
 /// scroll view so zooming, bouncing and handing a sideways swipe to the pager behave
 /// the way Photos does.
-private struct ZoomableScreenshot: UIViewRepresentable {
+private struct ZoomableSnapshot: UIViewRepresentable {
     let image: UIImage
-    /// Reports whether the screenshot is zoomed in, so the details can step out of the way.
+    /// Reports whether the snapshot is zoomed in, so the details can step out of the way.
     let onZoomChange: (_ isZoomed: Bool) -> Void
     let onTap: () -> Void
 
@@ -469,7 +469,7 @@ private struct ZoomableScreenshot: UIViewRepresentable {
             super.layoutSubviews()
             guard bounds.size != laidOutSize, bounds.width > 0, bounds.height > 0, let image = photo.image else {
                 // The system nudges a scroll view for the keyboard and doesn't always put it back.
-                // A screenshot that isn't zoomed belongs in the middle of the screen.
+                // A snapshot that isn't zoomed belongs in the middle of the screen.
                 if zoomScale <= minimumZoomScale + 0.01, !isDragging, !isZooming { settleInCenter() }
                 return
             }
@@ -490,7 +490,7 @@ private struct ZoomableScreenshot: UIViewRepresentable {
             if contentOffset != resting { contentOffset = resting }
         }
 
-        /// Keeps a screenshot smaller than the screen in the middle instead of pinned to the top left.
+        /// Keeps a snapshot smaller than the screen in the middle instead of pinned to the top left.
         func centerPhoto() {
             let horizontal = max((bounds.width - contentSize.width) / 2, 0)
             let vertical = max((bounds.height - contentSize.height) / 2, 0)

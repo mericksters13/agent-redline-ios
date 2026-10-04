@@ -24,13 +24,18 @@ struct ReportListing: Decodable {
     }
 
     struct Screen: Decodable {
-        struct Image: Decodable {
+        struct ListedSnapshot: Decodable {
             var file: String
             var notes: [Int]?
         }
 
         var title: String?
-        var images: [Image]
+        var snapshots: [ListedSnapshot]
+
+        private enum CodingKeys: String, CodingKey {
+            case title
+            case snapshots = "images"
+        }
     }
 
     struct Item: Decodable {

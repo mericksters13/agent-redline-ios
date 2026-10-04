@@ -1,9 +1,9 @@
 #if REDLINE
 import Foundation
 
-/// How one picture of a screen is put together from its captures, in screen points.
+/// How one snapshot of a screen is put together from its captures, in screen points.
 struct ImagePlan: Equatable, Sendable {
-    /// Rows copied from a capture into the picture.
+    /// Rows copied from a capture into the snapshot.
     struct Segment: Equatable, Sendable {
         var captureID: UUID
         var sourceMinY: CGFloat
@@ -11,7 +11,7 @@ struct ImagePlan: Equatable, Sendable {
         var destinationY: CGFloat
     }
 
-    /// A stretch of scrolled content and where it starts in the picture.
+    /// A stretch of scrolled content and where it starts in the snapshot.
     struct Run: Equatable, Sendable {
         var contentStart: CGFloat
         var contentEnd: CGFloat
@@ -20,7 +20,7 @@ struct ImagePlan: Equatable, Sendable {
 
     /// A stretch of the screen scrolled past without a capture, marked "Scrolled past".
     struct Gap: Equatable, Sendable {
-        /// Where the mark goes in the picture.
+        /// Where the mark goes in the snapshot.
         var rect: CGRect
         /// How much content it stands for, in points.
         var skippedHeight: CGFloat
@@ -32,14 +32,14 @@ struct ImagePlan: Equatable, Sendable {
     var stitchedFrom: Int
     /// Where content scrolls, in screen points.
     ///
-    /// Nil for a picture of one capture.
+    /// Nil for a snapshot of one capture.
     var band: ClosedRange<CGFloat>?
     var runs: [Run]
-    /// Where the bottom bars start in the picture.
+    /// Where the bottom bars start in the snapshot.
     var footerY: CGFloat
     var captures: [UUID: Capture]
 
-    /// Where a note made on `capture` sits in this picture.
+    /// Where a note made on `capture` sits in this snapshot.
     func position(of frame: CGRect, from captureID: UUID) -> CGRect? {
         guard let capture = captures[captureID] else { return nil }
         guard let band, let scroll = capture.scroll else { return frame }

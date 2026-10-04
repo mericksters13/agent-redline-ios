@@ -4,7 +4,7 @@ import SwiftUI
 import UIKit
 
 /// The reports already sent from this phone, opened with a long press on the floating button: a
-/// list, newest first, and each report the way the agent gets it, with every screen's pictures and
+/// list, newest first, and each report the way the agent gets it, with every screen's snapshots and
 /// their numbered outlines, then the notes.
 ///
 /// Tap a note to jump to its outline.
@@ -88,7 +88,7 @@ struct SentReportsView: View {
             show(sent)
         } label: {
             HStack(spacing: 12) {
-                ReportPicture(url: sent.cover, pointWidth: 52, alignment: .top)
+                ReportSnapshot(url: sent.cover, pointWidth: 52, alignment: .top)
                     .frame(width: 52, height: 52)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay(
@@ -117,7 +117,7 @@ struct SentReportsView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityHint("Opens the pictures and notes as sent")
+        .accessibilityHint("Opens the snapshots and notes as sent")
     }
 
     private var empty: some View {
@@ -146,7 +146,7 @@ struct SentReportsView: View {
     }
 }
 
-/// One sent report: each screen's pictures as the agent got them, then the notes made on it.
+/// One sent report: each screen's snapshots as the agent got them, then the notes made on it.
 ///
 /// A note scrolls to its outline when tapped.
 private struct ReportDetail: View {
@@ -218,19 +218,19 @@ private struct ReportDetail: View {
 
     private func section(_ screen: Report.Screen, items: [Int: Report.Item], proxy: ScrollViewProxy) -> some View {
         // The screen as it was last, then any earlier state kept for notes it no longer showed.
-        let pictures = screen.images.filter { !$0.isEarlierState } + screen.images.filter(\.isEarlierState)
+        let snapshots = screen.snapshots.filter { !$0.isEarlierState } + screen.snapshots.filter(\.isEarlierState)
         return VStack(alignment: .leading, spacing: 12) {
             Text(screen.title ?? screen.viewController ?? "Untitled")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Mono.text)
-            ForEach(pictures, id: \.file) { picture in
+            ForEach(snapshots, id: \.file) { snapshot in
                 VStack(alignment: .leading, spacing: 6) {
-                    if let caption = caption(for: picture) {
+                    if let caption = caption(for: snapshot) {
                         Text(caption)
                             .font(.caption)
                             .foregroundStyle(Mono.secondary)
                     }
-                    pictureView(picture)
+                    snapshotView(snapshot)
                 }
             }
             notes(screen.notes.compactMap { items[$0] }) { number in
@@ -239,24 +239,24 @@ private struct ReportDetail: View {
         }
     }
 
-    private func caption(for picture: Report.Picture) -> String? {
+    private func caption(for snapshot: Report.Snapshot) -> String? {
         var parts: [String] = []
-        if picture.isEarlierState { parts.append("Earlier state, before the screen changed") }
-        if picture.stitchedFrom > 1, picture.part == 1 {
-            parts.append("Stitched from \(picture.stitchedFrom) scroll positions")
+        if snapshot.isEarlierState { parts.append("Earlier state, before the screen changed") }
+        if snapshot.stitchedFrom > 1, snapshot.part == 1 {
+            parts.append("Stitched from \(snapshot.stitchedFrom) scroll positions")
         }
-        if picture.parts > 1 { parts.append("Part \(picture.part) of \(picture.parts)") }
+        if snapshot.parts > 1 { parts.append("Part \(snapshot.part) of \(snapshot.parts)") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// A picture at full width, with an invisible mark over each outline so a note can scroll to it.
-    private func pictureView(_ picture: Report.Picture) -> some View {
-        let scale = width / CGFloat(max(picture.width, 1))
+    /// A snapshot at full width, with an invisible mark over each outline so a note can scroll to it.
+    private func snapshotView(_ snapshot: Report.Snapshot) -> some View {
+        let scale = width / CGFloat(max(snapshot.width, 1))
         let outlined = report.items.compactMap { item in
-            item.picture == picture.file ? item.outline.map { (number: item.number, box: $0) } : nil
+            item.snapshot == snapshot.file ? item.outline.map { (number: item.number, box: $0) } : nil
         }
-        return ReportPicture(url: sent.folder.appending(path: picture.file), pointWidth: width, alignment: .top)
-            .frame(width: width, height: CGFloat(picture.height) * scale)
+        return ReportSnapshot(url: sent.folder.appending(path: snapshot.file), pointWidth: width, alignment: .top)
+            .frame(width: width, height: CGFloat(snapshot.height) * scale)
             .overlay(alignment: .topLeading) {
                 ZStack(alignment: .topLeading) {
                     ForEach(outlined, id: \.number) { entry in
@@ -274,9 +274,9 @@ private struct ReportDetail: View {
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
             .accessibilityElement()
             .accessibilityLabel(
-                picture.notes.isEmpty
-                    ? "Screenshot"
-                    : "Screenshot with notes \(picture.notes.map(String.init).joined(separator: ", ")) outlined"
+                snapshot.notes.isEmpty
+                    ? "Snapshot"
+                    : "Snapshot with notes \(snapshot.notes.map(String.init).joined(separator: ", ")) outlined"
             )
             .accessibilityAddTraits(.isImage)
     }
@@ -339,7 +339,7 @@ private struct ReportDetail: View {
                 VStack(alignment: .leading, spacing: 10) {
                     notes([item], jump: nil)
                     ForEach(item.attachments, id: \.self) { file in
-                        ReportPicture(
+                        ReportSnapshot(
                             url: sent.folder.appending(path: file),
                             pointWidth: width,
                             alignment: .top,
@@ -353,7 +353,7 @@ private struct ReportDetail: View {
                                 lineWidth: 1
                             )
                         )
-                        .accessibilityLabel("Image for note \(item.number)")
+                        .accessibilityLabel("Snapshot for note \(item.number)")
                         .accessibilityAddTraits(.isImage)
                     }
                 }
@@ -399,11 +399,11 @@ private struct ViewerBar: View {
     }
 }
 
-/// A picture from a sent report, decoded off the main thread at the size it's shown.
+/// A snapshot from a sent report, decoded off the main thread at the size it's shown.
 ///
 /// It fills the frame it's given, or, with `fits`, takes its own aspect ratio, for attachments
 /// whose size the report doesn't record.
-private struct ReportPicture: View {
+private struct ReportSnapshot: View {
     let url: URL?
     let pointWidth: CGFloat
     let alignment: Alignment
@@ -439,14 +439,14 @@ private struct ReportPicture: View {
                 return
             }
             let loaded = await Self.load(url, pixelWidth: pixelWidth)
-            // A row scrolled away, or a newer picture asked for: an older load mustn't replace it.
+            // A row scrolled away, or a newer snapshot asked for: an older load mustn't replace it.
             guard !Task.isCancelled else { return }
             if let loaded { Self.cache.setObject(loaded, forKey: key) }
             image = loaded
         }
     }
 
-    /// Decoded pictures, so reopening the list doesn't decode every cover again.
+    /// Decoded snapshots, so reopening the list doesn't decode every cover again.
     ///
     /// Touched only from the main actor, in `.task`.
     private static let cache: NSCache<NSString, UIImage> = {
@@ -481,12 +481,12 @@ private struct ReportPicture: View {
 }
 
 extension SentReport {
-    /// The picture shown in the list: the first screen as it was last, or the first attachment.
+    /// The snapshot shown in the list: the first screen as it was last, or the first attachment.
     fileprivate var cover: URL? {
-        let picture = report.screens.first.flatMap { screen in
-            screen.images.first { !$0.isEarlierState } ?? screen.images.first
+        let snapshot = report.screens.first.flatMap { screen in
+            screen.snapshots.first { !$0.isEarlierState } ?? screen.snapshots.first
         }
-        let file = picture?.file ?? report.items.lazy.flatMap(\.attachments).first
+        let file = snapshot?.file ?? report.items.lazy.flatMap(\.attachments).first
         return file.map { folder.appending(path: $0) }
     }
 }

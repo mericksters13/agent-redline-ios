@@ -28,7 +28,7 @@ final class InboxPerformanceTests: XCTestCase {
                 String(format: "20261004-%06d-00000001", index),
                 in: paths,
                 listing: listing,
-                pictures: ["screen-1.jpg": Data(repeating: 0xFF, count: 100_000)],
+                snapshots: ["screen-1.jpg": Data(repeating: 0xFF, count: 100_000)],
                 receivedAt: start.addingTimeInterval(Double(index))
             )
         }

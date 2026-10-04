@@ -105,13 +105,13 @@ struct CaptureMergeTests {
     }
 
     /// The report this came from: three notes on the growth card, one per segment, gave two
-    /// pictures.
+    /// snapshots.
     @Test func threeNotesInThreeSegmentStatesGetThreeSnapshots() throws {
         // Length and Head look alike on the whole screen and have the same layout, so the old rule
         // put the Head note on the Length capture.
         let length = try GrowthScreen(segment: .length).image()
         let head = try GrowthScreen(segment: .head).image()
-        #expect(PictureComparison.difference(length, head) < PictureComparison.samePicture)
+        #expect(SnapshotComparison.difference(length, head) < SnapshotComparison.sameSnapshot)
         #expect(
             CaptureMerge.isSameLayout(
                 capture(GrowthScreen(segment: .length)),

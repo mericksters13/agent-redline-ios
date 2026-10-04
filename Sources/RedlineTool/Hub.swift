@@ -377,7 +377,7 @@ final class Hub: @unchecked Sendable {
         }
     }
 
-    /// A report bigger than this isn't taken: a phone screen's picture is about 100 KB.
+    /// A report bigger than this isn't taken: a phone screen's snapshot is about 100 KB.
     static let largestReport = 50_000_000
 
     private func phoneName(_ udid: String) -> String {

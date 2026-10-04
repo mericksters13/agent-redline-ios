@@ -18,7 +18,7 @@ struct AgentCommandTests {
         #expect(AgentCommand.failure(in: notSignedIn) == "Not logged in · Please run /login")
         #expect(AgentCommand.arguments(.claude, folder: "/w", prompt: "p").contains("plan"))
         #expect(
-            AgentCommand.arguments(.codex, folder: "/w", prompt: "p", pictures: [URL(filePath: "/a.jpg")]).suffix(4)
+            AgentCommand.arguments(.codex, folder: "/w", prompt: "p", snapshots: [URL(filePath: "/a.jpg")]).suffix(4)
                 == ["-i", "/a.jpg", "--", "p"]
         )
     }

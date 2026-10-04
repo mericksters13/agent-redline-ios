@@ -8,7 +8,7 @@ import UserNotifications
 /// worktree the app was built from.
 ///
 /// A Claude Code chat gets it through its socket, which starts a turn even when the chat is idle. A
-/// Codex chat gets it through the Codex app with its pictures attached. A new chat starts in the
+/// Codex chat gets it through the Codex app with its snapshots attached. A new chat starts in the
 /// worktree and looks into the report without changing code.
 final class Handoff: Sendable {
     private unowned let hub: Hub
@@ -179,7 +179,7 @@ final class Handoff: Sendable {
 
     // MARK: - Codex
 
-    /// Starts a turn with the report, pictures attached, in a Codex chat.
+    /// Starts a turn with the report, snapshots attached, in a Codex chat.
     ///
     /// A chat no Codex window has open is opened first. If the app can't take it, the chat's own
     /// hook hands it over with the next message.
@@ -187,9 +187,9 @@ final class Handoff: Sendable {
         let source = report.source
         let chat = Self.claimant(id: ChatID.make(.codex, thread), agent: .codex, folder: "", bundleID: source.bundleID)
         guard claim(report, for: chat) else { return }
-        let pictures = ReportContent.pictures(in: report.folder)
+        let snapshots = ReportContent.snapshots(in: report.folder)
         let text = ReportContent.text(for: report)
-        var outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
+        var outcome = CodexApp.startTurn(thread: thread, text: text, snapshots: snapshots)
         if outcome == .notOpen {
             hub.log("The Codex chat for report \(source.reportID) isn't open; opening it")
             do {
@@ -201,10 +201,10 @@ final class Handoff: Sendable {
                 hub.log("Couldn't open the Codex chat \(thread): \(error.localizedDescription)")
             }
             Thread.sleep(forTimeInterval: 5)
-            outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
+            outcome = CodexApp.startTurn(thread: thread, text: text, snapshots: snapshots)
         }
         if outcome == .started {
-            hub.log("Sent report \(source.reportID) with \(pictures.count) pictures to the Codex chat \(thread)")
+            hub.log("Sent report \(source.reportID) with \(snapshots.count) snapshots to the Codex chat \(thread)")
             record(
                 .init(
                     agent: .codex,
@@ -214,7 +214,7 @@ final class Handoff: Sendable {
                 ),
                 for: report
             )
-            Self.notify(title: Self.reportTitle(source), message: "Sent to the Codex chat, with its pictures.")
+            Self.notify(title: Self.reportTitle(source), message: "Sent to the Codex chat, with its snapshots.")
             return
         }
         do {
@@ -361,9 +361,9 @@ final class Handoff: Sendable {
                 "Couldn't make a worktree for report \(source.reportID): \(error.localizedDescription); the chat starts in \(folder)"
             )
         }
-        let pictures = ReportContent.pictures(in: report.folder)
+        let snapshots = ReportContent.snapshots(in: report.folder)
         var reportPrompt = ReportContent.text(for: report)
-        // A Claude Code chat reads the pictures from a copy in its worktree, without asking.
+        // A Claude Code chat reads the snapshots from a copy in its worktree, without asking.
         if agent == .claude, madeWorktree {
             do {
                 let copy = try NewWorktree.copyReport(report.folder, into: workFolder)
@@ -387,7 +387,7 @@ final class Handoff: Sendable {
         FileManager.default.createFile(atPath: output.path, contents: nil)
         let process = Process()
         process.executableURL = executable
-        process.arguments = AgentCommand.arguments(agent, folder: workFolder, prompt: prompt, pictures: pictures)
+        process.arguments = AgentCommand.arguments(agent, folder: workFolder, prompt: prompt, snapshots: snapshots)
         process.currentDirectoryURL = URL(filePath: workFolder)
         process.environment = ProcessInfo.processInfo.environment.merging([AgentHooks.startedByHub: "1"]) { $1 }
         process.standardInput = FileHandle.nullDevice

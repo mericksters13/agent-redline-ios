@@ -12,7 +12,7 @@ iOS developers, designers, and QA testers checking a Debug build of an app on a 
 
 ## Product Purpose
 
-Replace the screenshot, AirDrop, and paste loop with pointing at the broken element on the phone. A report carries each element's details, a screenshot with the element outlined, and a note, and lands in the agent chat already working on that app's project. The agent can answer back on the phone. Success: reporting an issue takes seconds and the agent can find the exact view without guessing.
+Replace the screenshot, AirDrop, and paste loop with pointing at the broken element on the phone. A report carries each element's details, a snapshot with the element outlined, and a note, and lands in the agent chat already working on that app's project. The agent can answer back on the phone. Success: reporting an issue takes seconds and the agent can find the exact view without guessing.
 
 ## Positioning
 
@@ -25,7 +25,7 @@ Used mid-test, one-handed, on a physical iPhone, on top of whatever app is being
 ## Capabilities and Constraints
 
 - A debug-only Swift package attached once at the app root. Release and TestFlight builds compile it out.
-- Lives in its own window above the host app. Annotation screenshots are taken from the app's windows only, so Redline never appears in them.
+- Lives in its own window above the host app. Snapshots are taken from the app's windows only, so Redline never appears in them.
 - Element details come from the accessibility tree; SwiftUI exposes roles, labels, and identifiers, not source file names.
 - Confirmed structure: a draggable floating button that snaps to screen edges opens pick mode; pick-mode controls sit in a top island; the note box opens next to the picked element; a review tray lists waiting notes.
 - A double knock on the back was tried and dropped because it could not be told apart from normal taps.

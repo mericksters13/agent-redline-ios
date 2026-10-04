@@ -1,10 +1,10 @@
 #if REDLINE
 import Foundation
 
-/// What Send produces, for the agent: one picture per screen with every note on it outlined and
+/// What Send produces, for the agent: one snapshot per screen with every note on it outlined and
 /// numbered, and every note and attachment in the order the phone numbered them.
 ///
-/// Screens, pictures and notes point at each other, so the agent can go either way.
+/// Screens, snapshots and notes point at each other, so the agent can go either way.
 struct Report: Codable, Sendable {
     /// The app the report came from.
     struct App: Codable, Sendable {
@@ -46,37 +46,42 @@ struct Report: Codable, Sendable {
         var systemVersion: String
     }
 
-    /// A screen notes were made on, and its pictures.
+    /// A screen notes were made on, and its snapshots.
     struct Screen: Codable, Equatable, Sendable {
         var id: String
         var title: String?
         var viewController: String?
         /// The numbers of the notes made on this screen.
         var notes: [Int]
-        /// Usually one picture.
+        /// Usually one snapshot.
         ///
-        /// A screen that scrolled may be stitched into one tall picture sent in parts; a screen
-        /// whose content changed between notes keeps a picture of its earlier state for the notes
+        /// A screen that scrolled may be stitched into one tall snapshot sent in parts; a screen
+        /// whose content changed between notes keeps a snapshot of its earlier state for the notes
         /// that weren't on the newer one.
-        var images: [Picture]
+        var snapshots: [Snapshot]
+
+        private enum CodingKeys: String, CodingKey {
+            case id, title, viewController, notes
+            case snapshots = "images"
+        }
     }
 
-    /// One picture of a screen, or one part of a tall one.
-    struct Picture: Codable, Equatable, Sendable {
+    /// One snapshot of a screen, or one part of a tall one.
+    struct Snapshot: Codable, Equatable, Sendable {
         var file: String
-        /// Which part of the screen's picture this is, counting from 1, and how many parts.
+        /// Which part of the screen's snapshot this is, counting from 1, and how many parts.
         var part: Int
         var parts: Int
-        /// How many captures at different scroll positions were stitched into the picture.
+        /// How many captures at different scroll positions were stitched into the snapshot.
         var stitchedFrom: Int
-        /// True for a picture of the screen before its content changed.
+        /// True for a snapshot of the screen before its content changed.
         var isEarlierState: Bool
         /// The notes outlined on this part.
         var notes: [Int]
         var width: Int
         var height: Int
         /// Points of content scrolled past between captures and not shown, marked "Scrolled past"
-        /// in the picture.
+        /// in the snapshot.
         ///
         /// Nil when nothing was skipped.
         var scrolledPast: Int? = nil
@@ -87,7 +92,7 @@ struct Report: Codable, Sendable {
         }
     }
 
-    /// A box in a picture's pixels.
+    /// A box in a snapshot's pixels.
     struct Box: Codable, Equatable, Sendable {
         var x: Int
         var y: Int
@@ -107,11 +112,16 @@ struct Report: Codable, Sendable {
         /// The screen it was made on, matching a `Screen.id`.
         var screen: String?
         var screenTitle: String?
-        /// The picture its outline is drawn on, and where.
-        var picture: String?
+        /// The snapshot its outline is drawn on, and where.
+        var snapshot: String?
         var outline: Box?
-        /// Attached images, for whole-screen captures and photos.
+        /// Attached snapshots, for whole-screen captures and photos.
         var attachments: [String]
+
+        private enum CodingKeys: String, CodingKey {
+            case number, kind, note, createdAt, title, element, ancestors, screen, screenTitle, outline, attachments
+            case snapshot = "picture"
+        }
     }
 
     var id: String
@@ -129,7 +139,7 @@ struct Report: Codable, Sendable {
 }
 
 extension Report {
-    /// A name for a new image file in a report: a UUID, so no reader depends on what a name says.
+    /// A name for a new snapshot file in a report: a UUID, so no reader depends on what a name says.
     ///
     /// The report's JSON and summary say what each file shows.
     static func makeSnapshotFileName() -> String {

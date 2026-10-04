@@ -2,7 +2,7 @@
 import AppKit
 import SwiftUI
 
-/// Pictures decoded at the size they're shown, off the main actor, kept in a bounded cache.
+/// Snapshots decoded at the size they're shown, off the main actor, kept in a bounded cache.
 enum Thumbnails {
     private static let queue = DispatchQueue(label: "Redline.panel.thumbnails", qos: .userInitiated)
     /// Keeps the panel's rows and a few more, evicting on its own.
@@ -14,7 +14,7 @@ enum Thumbnails {
         return cache
     }()
 
-    /// The picture at `url`, no more than `maxPixels` on its longer side.
+    /// The snapshot at `url`, no more than `maxPixels` on its longer side.
     ///
     /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
     static func load(_ url: URL, maxPixels: Int) async -> NSImage? {
@@ -31,7 +31,7 @@ enum Thumbnails {
         }
     }
 
-    /// Decodes the picture at `url` straight to `maxPixels`, upright, without keeping the full-size
+    /// Decodes the snapshot at `url` straight to `maxPixels`, upright, without keeping the full-size
     /// image around.
     static func thumbnail(_ url: URL, maxPixels: Int) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)

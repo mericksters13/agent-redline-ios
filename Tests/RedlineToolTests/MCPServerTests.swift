@@ -45,9 +45,10 @@ struct MCPServerTests {
         return folder
     }
 
-    /// A report in the inbox with a screen picture and one attached to a note, `pictureBytes` each.
+    /// A report in the inbox with a screen snapshot and one attached to a note, `snapshotBytes` each.
     @discardableResult
-    private func inboxReport(_ id: String, bundleID: String = "com.example.app", pictureBytes: Int = 10) throws -> URL {
+    private func inboxReport(_ id: String, bundleID: String = "com.example.app", snapshotBytes: Int = 10) throws -> URL
+    {
         let listing: [String: Any] = [
             "screens": [["images": [["file": "screen-1.jpg"]]]],
             "items": [["attachments": [String]()], ["attachments": ["note-2.jpg"]]],
@@ -57,9 +58,9 @@ struct MCPServerTests {
             bundleID: bundleID,
             in: paths,
             listing: listing,
-            pictures: [
-                "screen-1.jpg": Data(repeating: 0xFF, count: pictureBytes),
-                "note-2.jpg": Data(repeating: 0xD8, count: pictureBytes),
+            snapshots: [
+                "screen-1.jpg": Data(repeating: 0xFF, count: snapshotBytes),
+                "note-2.jpg": Data(repeating: 0xD8, count: snapshotBytes),
             ],
             summary: "# UI report: Example\n\n1. **Milk stash**: Test.\n",
             receivedAt: Date(timeIntervalSince1970: 1_791_000_000)
@@ -99,7 +100,7 @@ struct MCPServerTests {
         String(decoding: try JSONSerialization.data(withJSONObject: message), as: UTF8.self)
     }
 
-    @Test func theMCPServerHandsOverReportsWithTheirPictures() throws {
+    @Test func theMCPServerHandsOverReportsWithTheirSnapshots() throws {
         let server = MCPServer(session: session(try project()))
         let initialized = server.respond(to: [
             "jsonrpc": "2.0", "id": 1, "method": "initialize",

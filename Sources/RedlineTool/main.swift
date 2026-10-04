@@ -263,7 +263,7 @@ enum SignalSources {
 
 /// Prints the reports waiting for the session's apps and takes them.
 ///
-/// Pictures are named by path; an agent opens them with its own tools. True when it printed any.
+/// Snapshots are named by path; an agent opens them with its own tools. True when it printed any.
 @discardableResult
 func printReports(_ session: ChatSession, isQuietWhenNone: Bool = false) -> Bool {
     let taken = session.take(budget: Int.max)
@@ -280,7 +280,7 @@ func printReports(_ session: ChatSession, isQuietWhenNone: Bool = false) -> Bool
     for item in taken.items {
         switch item {
         case .text(let text): print(text)
-        case .image(let file, _): print("Picture: \(file.path)")
+        case .image(let file, _): print("Snapshot: \(file.path)")
         }
     }
     return true

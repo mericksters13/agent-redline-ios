@@ -4,7 +4,7 @@ import Foundation
 /// A report already sent, read back to show on the phone.
 struct SentReport: Identifiable, Sendable {
     var report: Report
-    /// Where its pictures are.
+    /// Where its snapshots are.
     var folder: URL
     /// The Mac has confirmed it has the report.
     var isDelivered = false

@@ -40,14 +40,14 @@ enum AgentCommand {
     }
 
     /// The arguments that start a chat in `folder` with `prompt`, read-only, printing JSON.
-    static func arguments(_ agent: Agent, folder: String, prompt: String, pictures: [URL] = []) -> [String] {
+    static func arguments(_ agent: Agent, folder: String, prompt: String, snapshots: [URL] = []) -> [String] {
         switch agent {
         case .claude:
             ["-p", prompt, "--permission-mode", "plan", "--output-format", "json"]
-        // Pictures go in with the prompt; "--" ends them, so the prompt isn't read as one.
+        // Snapshots go in with the prompt; "--" ends them, so the prompt isn't read as one.
         case .codex:
             ["exec", "-C", folder, "--sandbox", "read-only", "--skip-git-repo-check", "--json"]
-                + pictures.flatMap { ["-i", $0.path] } + ["--", prompt]
+                + snapshots.flatMap { ["-i", $0.path] } + ["--", prompt]
         }
     }
 

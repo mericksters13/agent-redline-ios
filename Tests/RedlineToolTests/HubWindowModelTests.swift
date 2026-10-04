@@ -73,8 +73,8 @@ struct HubWindowModelTests {
             encoding: .utf8
         )
         #expect(HubWindowModel.notes(in: folder) == [.init(number: 1, text: "Save: No note")])
-        // Without screens, pictures come from the folder; without an app, routing has no worktree.
-        #expect(ReportContent.pictures(in: folder).isEmpty)
+        // Without screens, snapshots come from the folder; without an app, routing has no worktree.
+        #expect(ReportContent.snapshots(in: folder).isEmpty)
         #expect(Routing.worktree(of: folder) == nil)
     }
 
@@ -118,21 +118,21 @@ struct HubWindowModelTests {
         )
     }
 
-    @Test func theViewerShowsEachPictureWithTheNotesItShows() throws {
+    @Test func theViewerShowsEachSnapshotWithTheNotesItShows() throws {
         let folder = try report("20261004-130000", at: Date.now)
         try Data([0xFF, 0xD8]).write(to: folder.appending(path: "note-2.jpg"))
-        let pictures = HubWindowModel.pictures(in: folder)
-        // Screens' pictures first, then pictures attached to notes, as the agent gets them.
+        let snapshots = HubWindowModel.snapshots(in: folder)
+        // Screens' snapshots first, then snapshots attached to notes, as the agent gets them.
         #expect(
-            pictures == [
+            snapshots == [
                 .init(file: folder.appending(path: "screen-1.jpg"), title: "Screen", notes: [1]),
                 .init(file: folder.appending(path: "note-2.jpg"), title: "History", notes: [2]),
             ]
         )
-        #expect(pictures.map(\.file) == ReportContent.pictures(in: folder))
-        #expect(HubWindowModel.picture(showing: 1, in: pictures) == folder.appending(path: "screen-1.jpg"))
-        #expect(HubWindowModel.picture(showing: 2, in: pictures) == folder.appending(path: "note-2.jpg"))
-        #expect(HubWindowModel.picture(showing: 3, in: pictures) == nil)
+        #expect(snapshots.map(\.file) == ReportContent.snapshots(in: folder))
+        #expect(HubWindowModel.snapshot(showing: 1, in: snapshots) == folder.appending(path: "screen-1.jpg"))
+        #expect(HubWindowModel.snapshot(showing: 2, in: snapshots) == folder.appending(path: "note-2.jpg"))
+        #expect(HubWindowModel.snapshot(showing: 3, in: snapshots) == nil)
     }
 
     @Test func theViewerOpensTheChatAReportWentTo() throws {

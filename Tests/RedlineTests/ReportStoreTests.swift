@@ -150,8 +150,8 @@ struct ReportStoreTests {
             Report.self,
             from: Data(contentsOf: started.folder.appending(path: "report.json"))
         )
-        #expect(report.screens.first?.images.first?.notes == [1, 2])
-        #expect(report.items.first?.picture == Fixtures.snapshotFiles[0])
+        #expect(report.screens.first?.snapshots.first?.notes == [1, 2])
+        #expect(report.items.first?.snapshot == Fixtures.snapshotFiles[0])
     }
 
     @Test func aReportIsNamedByWhenItWasSent() throws {

@@ -3,7 +3,7 @@ import AppKit
 import SwiftUI
 
 /// Redline's red: the color it marks elements and numbers notes with on the phone, and the
-/// only color in the panel besides the screenshots.
+/// only color in the panel besides the snapshots.
 private enum Mark {
     static let red = Color(red: 1, green: 0.271, blue: 0.227)
 }
@@ -168,7 +168,7 @@ private struct DeviceRowView: View {
     }
 }
 
-/// A report: its first picture, where it went and its first notes.
+/// A report: its first snapshot, where it went and its first notes.
 ///
 /// Clicking opens it.
 private struct ReportRowView: View {
@@ -244,7 +244,7 @@ struct NoteNumber: View {
     }
 }
 
-/// A report's first screenshot, small, decoded off the main actor.
+/// A report's first snapshot, small, decoded off the main actor.
 private struct Thumbnail: View {
     let url: URL?
     @State private var image: NSImage?

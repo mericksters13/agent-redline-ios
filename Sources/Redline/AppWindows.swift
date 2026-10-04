@@ -1,7 +1,7 @@
 #if REDLINE && canImport(UIKit)
 import UIKit
 
-/// The app's own windows, without Redline's: which ones are showing, a picture of them, and
+/// The app's own windows, without Redline's: which ones are showing, a snapshot of them, and
 /// their scroll views.
 @MainActor
 enum AppWindows {
@@ -36,7 +36,7 @@ enum AppWindows {
         for window in windows { visit(window) }
     }
 
-    /// A picture of the app's windows, without Redline's own window.
+    /// A snapshot of the app's windows, without Redline's own window.
     static func screenshot(of windows: [UIWindow], bounds: CGRect) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 2

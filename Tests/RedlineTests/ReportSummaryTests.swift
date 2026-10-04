@@ -15,27 +15,27 @@ struct ReportSummaryTests {
         #expect(attachmentsOnly.contents == "1 note")
     }
 
-    @Test func theSummaryTellsTheAgentWhichPictureShowsEachNote() {
+    @Test func theSummaryTellsTheAgentWhichSnapshotShowsEachNote() {
         let text = ReportSummary.markdown(Fixtures.report(id: "r"))
         let files = Fixtures.snapshotFiles
         #expect(text.contains("## Screen: Today"))
         #expect(
             text.contains(
-                "One screenshot of this screen, stitched from 2 scroll positions, in 2 parts: \(files[0]), \(files[1])."
+                "One snapshot of this screen, stitched from 2 scroll positions, in 2 parts: \(files[0]), \(files[1])."
             )
         )
         #expect(text.contains("Notes 1 and 2 are outlined and numbered on it."))
         #expect(text.contains("1. **Save** (Button, identifier `save`): Cut off. See \(files[0])."))
         #expect(text.contains("## Attachments"))
-        #expect(text.contains("3. **2 images from Photos**: Same bug. Images: \(files[2]), \(files[3])."))
+        #expect(text.contains("3. **2 snapshots from Photos**: Same bug. Snapshots: \(files[2]), \(files[3])."))
     }
 
     @Test func anEarlierStateAndContentScrolledPastAreExplained() {
         var report = Fixtures.report(id: "r")
         let earlier = Report.makeSnapshotFileName()
-        report.screens[0].images[0].scrolledPast = 786
-        report.screens[0].images.append(
-            Report.Picture(
+        report.screens[0].snapshots[0].scrolledPast = 786
+        report.screens[0].snapshots.append(
+            Report.Snapshot(
                 file: earlier,
                 part: 1,
                 parts: 1,
@@ -66,8 +66,8 @@ struct ReportSummaryTests {
 
     @Test func threeOrMoreNotesAreListedWithAnd() {
         var report = Fixtures.report(id: "r")
-        report.screens[0].images[0].notes = [1, 2, 3]
-        report.screens[0].images.removeLast()
+        report.screens[0].snapshots[0].notes = [1, 2, 3]
+        report.screens[0].snapshots.removeLast()
         #expect(ReportSummary.markdown(report).contains("Notes 1, 2 and 3 are outlined and numbered on it."))
     }
 

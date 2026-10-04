@@ -51,7 +51,7 @@ final class DebugSession {
         ///
         /// Saved with the note.
         var images: [UIImage]
-        /// The note box's small pictures of the first few images, at the size they're shown.
+        /// The note box's thumbnails of the first few images, at the size they're shown.
         var previews: [UIImage]
         var screen: ScreenInfo?
         /// True for a suggested screenshot: its note box sends the report.
@@ -72,7 +72,7 @@ final class DebugSession {
     struct Suggestion: Identifiable {
         let id = UUID()
         var image: UIImage
-        /// The card's picture, at the size it's shown.
+        /// The card's preview, at the size it's shown.
         ///
         /// The full image is kept for sending.
         var preview: UIImage
@@ -175,7 +175,7 @@ final class DebugSession {
     @ObservationIgnored private var screenshot: UIImage?
     /// The main scroll view's position when the screen was read.
     @ObservationIgnored private var scrollState: ScrollState?
-    /// Every screen notes were made on, with its captures: one picture per screen.
+    /// Every screen notes were made on, with its captures: one snapshot per state of a screen.
     @ObservationIgnored private var screens: [ScreenRecord] = []
     /// Captures loaded from disk, kept while they're in use.
     @ObservationIgnored private var captureImages: [UUID: UIImage] = [:]
@@ -372,7 +372,7 @@ final class DebugSession {
         guard mode == .picking else { return }
         if !isTouchDown {
             // Each new touch reads the screen again, so positions, saved-note markers
-            // and the report screenshot match what is on screen right now.
+            // and the report snapshot match what is on screen right now.
             isTouchDown = true
             readScreen()
         }
@@ -505,7 +505,7 @@ final class DebugSession {
         guard let index = annotations.firstIndex(where: { $0.id == annotation.id }) else { return }
         annotations.remove(at: index)
         thumbnails[annotation.id] = nil
-        // Other notes on the same screen show this one's outline, so their pictures are redrawn.
+        // Other notes on the same screen show this one's outline, so their snapshots are redrawn.
         fullImages.removeAllObjects()
         annotation.screenshots.forEach(store.deleteScreenshot(named:))
         pruneCaptures()
@@ -552,12 +552,12 @@ final class DebugSession {
         persistAnnotations()
     }
 
-    /// One of the item's images at full size: its screen's picture with every note on it outlined
+    /// One of the item's images at full size: its screen's snapshot with every note on it outlined
     /// and this one standing out, or an attached image.
     ///
     /// Cached with the few around it; the oldest are dropped first.
     func fullImage(for annotation: Annotation, at index: Int) -> UIImage? {
-        if let captureID = annotation.captureID { return screenPicture(for: annotation, on: captureID) }
+        if let captureID = annotation.captureID { return screenSnapshot(for: annotation, on: captureID) }
         guard annotation.screenshots.indices.contains(index) else { return nil }
         let key = "\(annotation.id.uuidString)-\(index)" as NSString
         if let cached = fullImages.object(forKey: key) { return cached }
@@ -742,7 +742,7 @@ final class DebugSession {
 
     /// A screenshot was just taken in the app.
     ///
-    /// The system's picture includes Redline, so the app's own windows are captured instead, at the
+    /// The system's screenshot includes Redline, so the app's own windows are captured instead, at the
     /// same moment, without it.
     private func offerInAppScreenshot() {
         guard window != nil, mode == .idle || mode == .picking else { return }
@@ -970,7 +970,7 @@ final class DebugSession {
             openDestinations(thenSend: true)
             return
         }
-        // The report takes the draft's files with it, so every image must be on disk first.
+        // The report takes the draft's files with it, so every snapshot must be on disk first.
         // Notes added while waiting add writes of their own; wait for those too.
         sending = Task {
             while !writes.isEmpty {
@@ -985,7 +985,7 @@ final class DebugSession {
     }
 
     /// Moves the draft into a report folder at once, so new notes start a fresh draft, then
-    /// draws the report's pictures in the background.
+    /// draws the report's snapshots in the background.
     private func saveReport() {
         guard !annotations.isEmpty else { return }
         let date = Date.now
@@ -1040,7 +1040,7 @@ final class DebugSession {
         }
     }
 
-    /// Draws the report's pictures, writes it, then hands every report the Mac hasn't confirmed to
+    /// Draws the report's snapshots, writes it, then hands every report the Mac hasn't confirmed to
     /// its hub.
     ///
     /// Returns how that went. Runs off the main actor. Add @concurrent when the tools version
@@ -1061,9 +1061,9 @@ final class DebugSession {
         )
     }
 
-    // MARK: - One picture per screen
+    // MARK: - One snapshot per screen state
 
-    /// Files the screen as just read under its screen (see `CaptureMerge.file`): one picture per
+    /// Files the screen as just read under its screen (see `CaptureMerge.file`): one snapshot per
     /// state of the screen.
     ///
     /// Returns the capture the new note belongs to.
@@ -1094,7 +1094,7 @@ final class DebugSession {
         writeImages([image], named: [capture.file], asPNG: true)
     }
 
-    /// A capture's picture, loaded from the draft the first time and kept while it's in use.
+    /// A capture's image, loaded from the draft the first time and kept while it's in use.
     private func captureImage(_ capture: Capture) -> UIImage? {
         if let cached = captureImages[capture.id] { return cached }
         guard
@@ -1130,7 +1130,7 @@ final class DebugSession {
     /// numbered, the note itself standing out.
     ///
     /// Cached like `fullImage(for:at:)`.
-    private func screenPicture(for annotation: Annotation, on captureID: UUID) -> UIImage? {
+    private func screenSnapshot(for annotation: Annotation, on captureID: UUID) -> UIImage? {
         let key = "\(annotation.id.uuidString)-screen" as NSString
         if let cached = fullImages.object(forKey: key) { return cached }
         guard let (record, capture) = capture(withID: captureID), let image = captureImage(capture),
@@ -1149,9 +1149,9 @@ final class DebugSession {
                 style: other.id == annotation.id ? .current : .quiet
             )
         }
-        let picture = ReportRenderer.render(plan, pictures: [capture.id: image], outlines: outlines, scale: 2)
-        fullImages.setObject(picture, forKey: key)
-        return picture
+        let snapshot = ReportRenderer.render(plan, captures: [capture.id: image], outlines: outlines, scale: 2)
+        fullImages.setObject(snapshot, forKey: key)
+        return snapshot
     }
 
     /// A close crop of the picked element from the current screenshot, for the note card
@@ -1184,24 +1184,24 @@ final class DebugSession {
         )
     }
 
-    /// The suggestion card's picture of an image.
+    /// The suggestion card's preview of an image.
     private static func cardPreview(of image: UIImage) -> UIImage {
         image.preparingThumbnail(of: cardPreviewSize(of: image)) ?? image
     }
 
-    /// The note box's picture of an image.
+    /// The note box's thumbnail of an image.
     private static func preview(of image: UIImage) -> UIImage {
         image.preparingThumbnail(of: notePreviewSize(of: image)) ?? image
     }
 
-    /// The note box's picture of an image, made off the main thread.
+    /// The note box's thumbnail of an image, made off the main thread.
     private static func preparedPreview(of image: UIImage) async -> UIImage {
         await image.byPreparingThumbnail(ofSize: notePreviewSize(of: image)) ?? image
     }
 
     /// A bitmap of its own, no bigger than a thumbnail is shown.
     ///
-    /// A cropped image keeps the whole picture it was cut from alive; this one doesn't.
+    /// A cropped image keeps the whole image it was cut from alive; this one doesn't.
     private static func thumbnailBitmap(_ image: CGImage) -> UIImage? {
         let scale = min(thumbnailSide / CGFloat(max(image.width, 1)), thumbnailSide / CGFloat(max(image.height, 1)), 1)
         let size = CGSize(
@@ -1240,7 +1240,7 @@ final class DebugSession {
         return cgImage.cropping(to: crop).flatMap(thumbnailBitmap)
     }
 
-    /// A small picture of the item for the notes list: a close crop around its element, or the top
+    /// A thumbnail of the item for the notes list: a close crop around its element, or the top
     /// of its first image.
     ///
     /// Cached for the life of the draft.
@@ -1477,13 +1477,13 @@ final class DebugSession {
     ) async {
         for (image, name) in zip(images, names) {
             guard let data = asPNG ? image.pngData() : image.jpegData(compressionQuality: 0.85) else {
-                logger.error("Couldn't encode image \(name, privacy: .public)")
+                logger.error("Couldn't encode snapshot \(name, privacy: .public)")
                 continue
             }
             do {
                 try store.saveScreenshot(data, named: name)
             } catch {
-                logger.error("Couldn't save an image: \(error.localizedDescription, privacy: .public)")
+                logger.error("Couldn't save a snapshot: \(error.localizedDescription, privacy: .public)")
             }
         }
     }

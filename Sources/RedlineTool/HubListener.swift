@@ -128,7 +128,7 @@ final class HubListener: @unchecked Sendable {
         private let queue = DispatchQueue(label: "Redline.hub.connection", target: HubListener.network)
         private var buffer = LineBuffer()
 
-        /// The longest line taken: one report, its pictures encoded in the line.
+        /// The longest line taken: one report, its snapshots encoded in the line.
         static let longestLine = Hub.largestReport * 4 / 3 + 65_536
 
         init(connection: NWConnection) {

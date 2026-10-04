@@ -1,9 +1,9 @@
 #if REDLINE && canImport(UIKit)
 import UIKit
 
-/// Turns a draft into the report the agent reads: one picture per screen with every note on it
+/// Turns a draft into the report the agent reads: one snapshot per screen with every note on it
 /// outlined and numbered (stitched, and sent in parts, when the screen scrolled), each attachment,
-/// and the links between screens, pictures and notes.
+/// and the links between screens, snapshots and notes.
 ///
 /// Runs off the main thread.
 enum ReportBuilder {
@@ -16,7 +16,7 @@ enum ReportBuilder {
         var screens: [ScreenRecord]
         /// Where the draft's captures and images are.
         var draft: URL
-        /// Where the report's pictures go.
+        /// Where the report's snapshots go.
         var folder: URL
         var destination: Report.Destination? = nil
     }
@@ -39,7 +39,7 @@ enum ReportBuilder {
                         ancestors: annotation.ancestors,
                         screen: nil,
                         screenTitle: annotation.screen?.title,
-                        picture: nil,
+                        snapshot: nil,
                         outline: nil,
                         attachments: []
                     )
@@ -60,7 +60,7 @@ enum ReportBuilder {
         for (screenIndex, entry) in ordered.enumerated() {
             let screenID = "screen-\(screenIndex + 1)"
             let groups = entry.record.groups
-            var pictures: [Report.Picture] = []
+            var snapshots: [Report.Snapshot] = []
             var screenNotes: [Int] = []
             for (groupIndex, group) in groups.enumerated() {
                 let ids = Set(group.map(\.id))
@@ -73,7 +73,7 @@ enum ReportBuilder {
                                 contentsOfFile: input.draft.appending(path: capture.file).path(percentEncoded: false)
                             )
                         else {
-                            // Its rows come out white in the picture.
+                            // Its rows come out white in the snapshot.
                             Log.report.error("Couldn't load capture \(capture.file, privacy: .public)")
                             return nil
                         }
@@ -91,13 +91,13 @@ enum ReportBuilder {
 
                 // The newest group is the screen as it is; older groups are its earlier states.
                 let earlier = groupIndex < groups.count - 1
-                // Everything that was on screen, where it sits in the picture, so cuts fall between rows and sections.
+                // Everything that was on screen, where it sits in the snapshot, so cuts fall between rows and sections.
                 let onScreen = group.flatMap { capture in
                     capture.elements.compactMap { plan.position(of: $0.frame, from: capture.id) }
                 }
                 let parts = ScreenComposition.parts(
                     height: plan.size.height,
-                    maxHeight: group[0].size.height * ScreenComposition.screensPerPicture,
+                    maxHeight: group[0].size.height * ScreenComposition.screensPerSnapshot,
                     keepingWhole: outlines.map(\.rect),
                     avoiding: onScreen,
                     preferring: plan.gaps.map(\.rect.midY)
@@ -108,7 +108,7 @@ enum ReportBuilder {
                     let file = Report.makeSnapshotFileName()
                     let image = ReportRenderer.render(
                         plan,
-                        pictures: images,
+                        captures: images,
                         outlines: outlines,
                         rows: rows,
                         scale: scale
@@ -127,8 +127,8 @@ enum ReportBuilder {
                         height: rows.upperBound - rows.lowerBound
                     )
                     let skipped = plan.gaps.filter { shown.intersects($0.rect) }.map(\.skippedHeight).reduce(0, +)
-                    pictures.append(
-                        Report.Picture(
+                    snapshots.append(
+                        Report.Snapshot(
                             file: file,
                             part: partIndex + 1,
                             parts: parts.count,
@@ -148,7 +148,7 @@ enum ReportBuilder {
                     guard files.indices.contains(best), let file = files[best] else { continue }
                     let rect = outline.rect.offsetBy(dx: 0, dy: -parts[best].lowerBound)
                     items[outline.number]?.screen = screenID
-                    items[outline.number]?.picture = file
+                    items[outline.number]?.snapshot = file
                     items[outline.number]?.outline = Report.Box(
                         x: Int((rect.minX * scale).rounded()),
                         y: Int((rect.minY * scale).rounded()),
@@ -163,12 +163,12 @@ enum ReportBuilder {
                     title: entry.record.info.title,
                     viewController: entry.record.info.viewController,
                     notes: Array(Set(screenNotes)).sorted(),
-                    images: pictures
+                    snapshots: snapshots
                 )
             )
         }
 
-        // Attachments, and element notes made before screens shared one picture, keep their own images.
+        // Attachments, and element notes made before screens shared one snapshot, keep their own snapshots.
         for annotation in input.annotations where annotation.captureID == nil {
             guard let number = numbers[annotation.id] else { continue }
             var files: [String] = []
@@ -178,7 +178,7 @@ enum ReportBuilder {
                     Log.report.error("Couldn't load attachment \(name, privacy: .public); it's left out of the report")
                     continue
                 }
-                // Captures of the app's own screen are sent at the same size as screen pictures.
+                // Captures of the app's own screen are sent at the same size as screen snapshots.
                 let pointWidth = image.size.width * image.scale / 2
                 let sized =
                     annotation.kind == .photo
@@ -192,7 +192,7 @@ enum ReportBuilder {
                 files.append(file)
             }
             if annotation.kind == .element, let file = files.first, let frame = annotation.element?.frame {
-                items[number]?.picture = file
+                items[number]?.snapshot = file
                 items[number]?.outline = Report.Box(
                     x: Int((frame.minX * scale).rounded()),
                     y: Int((frame.minY * scale).rounded()),

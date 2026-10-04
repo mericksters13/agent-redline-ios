@@ -18,18 +18,18 @@ final class MCPServer: Sendable {
     private let outputQueue = DispatchQueue(label: "Redline.mcp.output")
     private let inFlight = DispatchGroup()
 
-    /// The most picture bytes in one reply.
+    /// The most snapshot bytes in one reply.
     ///
     /// Agent apps cap a tool result's size; Claude's desktop app refuses results over 1 MB, and
-    /// pictures grow by a third when encoded.
+    /// snapshots grow by a third when encoded.
     static let budget = 700_000
     static let defaultWait: TimeInterval = 50
     static let longestWait: TimeInterval = 600
 
     static let instructions = """
         Delivers UI reports the user sends from their iPhone or a simulator with Redline, for the app this project builds. \
-        A report has numbered notes about elements on screen, and screenshots where each note's element is outlined in red with the same number. \
-        Call check_messages when the user mentions a report, notes or screenshots from their phone, or asks you to check. \
+        A report has numbered notes about elements on screen, and snapshots where each note's element is outlined in red with the same number. \
+        Call check_messages when the user mentions a report, notes, snapshots or screenshots from their phone, or asks you to check. \
         Find the code for a note by the element's identifier or label, and its parents.
         """
 
@@ -158,7 +158,7 @@ final class MCPServer: Sendable {
                 "name": "check_messages",
                 "description": """
                 Returns the UI reports waiting for the app this project builds, sent from the user's iPhone or a simulator, \
-                and marks them as taken by this chat. Each has numbered notes and screenshots with matching numbered outlines. \
+                and marks them as taken by this chat. Each has numbered notes and snapshots with matching numbered outlines. \
                 Call it when the user mentions a report or notes from their phone, or asks you to check.
                 """,
                 "inputSchema": ["type": "object", "properties": [String: Any]()],

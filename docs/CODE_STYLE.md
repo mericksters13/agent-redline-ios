@@ -326,7 +326,7 @@ Don't: Add swift-subprocess to Package.swift to run git.
 
 **Rule:** Keep geometry, placement, selection, comparison, composition and storage logic in files that import only Foundation, CoreGraphics or other cross-platform frameworks, so `swift test` runs it on the Mac.
 
-**Why:** AGENTS.md requires this, so that logic can be tested without a simulator. These include `AttachmentPlacement`, `ElementSelection`, `FloatingButtonPlacement`, `HubLink`, `NoteCardPlacement`, `PictureComparison`, `ReportDelivery`, `ReportStore`, `ReportSummary`, `ScreenComposition` and `ScreenshotSuggestion`, and each has a test file.
+**Why:** AGENTS.md requires this, so that logic can be tested without a simulator. These include `AttachmentPlacement`, `ElementSelection`, `FloatingButtonPlacement`, `HubLink`, `NoteCardPlacement`, `SnapshotComparison`, `ReportDelivery`, `ReportStore`, `ReportSummary`, `ScreenComposition` and `ScreenshotSuggestion`, and each has a test file.
 
 ```swift
 // Do (FloatingButtonPlacement.swift)
@@ -1226,7 +1226,7 @@ func makeRow() -> AnyView { AnyView(row) }
 
 **Rule:** Solve layout with layout tools first (`containerRelativeFrame`, `ViewThatFits`, `fixedSize`), and when you must measure, use `onGeometryChange` with the narrowest `Equatable` value and write the result to local `@State`, an `@ObservationIgnored` property or a UIKit sink, never to an observed model property that large views read and never to the environment.
 
-**Why:** Geometry can change on every frame. Writing it into observed model state re-renders everything that reads the model. The Mac report viewer keeps one `GeometryReader`, with a comment, because `containerRelativeFrame` shrank its pictures inside a horizontal scroll view. `attachAnchor` and `attachmentSlot` are still observed `DebugSession` properties written from `onGeometryChange`, which this rule asks to change.
+**Why:** Geometry can change on every frame. Writing it into observed model state re-renders everything that reads the model. The Mac report viewer keeps one `GeometryReader`, with a comment, because `containerRelativeFrame` shrank its snapshots inside a horizontal scroll view. `attachAnchor` and `attachmentSlot` are still observed `DebugSession` properties written from `onGeometryChange`, which this rule asks to change.
 
 ```swift
 // Do
@@ -1405,7 +1405,7 @@ Text("All Photos")
 
 **Rule:** Do all one-time setup in `makeUIView`, keep `updateUIView` idempotent by comparing before assigning, refresh the coordinator's closures on every update, never set the root view's frame, bounds, center or transform, and remove observers in `dismantleUIView`.
 
-**Why:** SwiftUI controls the layout of the wrapped view, and setting its geometry yourself is undefined behavior. `updateUIView` runs for any relevant change, so anything it creates piles up. `ZoomableScreenshot` is the reference implementation.
+**Why:** SwiftUI controls the layout of the wrapped view, and setting its geometry yourself is undefined behavior. `updateUIView` runs for any relevant change, so anything it creates piles up. `ZoomableSnapshot` is the reference implementation.
 
 ```swift
 // Do
@@ -1693,7 +1693,7 @@ let newest = try files.contentsOfDirectory(at: appFolder, includingPropertiesFor
 
 // Don't
 for name in try files.contentsOfDirectory(atPath: appFolder.path) {  // Every report, every tick.
-    let pictures = ReportContent.pictures(in: folder)                 // Decodes report.json.
+    let snapshots = ReportContent.snapshots(in: folder)               // Decodes report.json.
     let notes = notes(in: folder)                                     // Decodes it again.
 }
 ```

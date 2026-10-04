@@ -4,7 +4,7 @@ import Foundation
 /// Where the tool keeps things on the Mac.
 ///
 /// - `inbox/<bundle ID>/<report>/`: reports taken off phones and simulators. Each holds the
-///   report's own files (`report.json`, `report.md`, pictures) and the hub's: `source.json`
+///   report's own files (`report.json`, `report.md`, snapshots) and the hub's: `source.json`
 ///   (where it came from), `claim.json` (the chat that took it), `to.json` (the chat it's
 ///   addressed to), `delivery.json` (where the hub sent it), and for a chat the hub started,
 ///   `new-chat-output.jsonl` and `answer.md`. A report is filled under `.incoming-<name>` and

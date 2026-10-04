@@ -1,17 +1,17 @@
 #if REDLINE && canImport(UIKit)
 import UIKit
 
-/// Draws a screen's picture from its captures, with each note's outline and number.
+/// Draws a screen's snapshot from its captures, with each note's outline and number.
 ///
 /// Safe to use off the main thread.
 enum ReportRenderer {
-    /// Pixels per point in sent pictures.
+    /// Pixels per point in sent snapshots.
     ///
     /// A phone screen comes out about 1,200 pixels tall: sharp enough to read every label, small
     /// enough that agents don't shrink it and its JPEG stays near 90 KB.
     static let sendScale: CGFloat = 1.4
 
-    /// A note's outline and number, drawn on a picture.
+    /// A note's outline and number, drawn on a snapshot.
     struct Outline: Sendable {
         enum Style: Sendable {
             /// In a sent report: every note drawn the same.
@@ -27,14 +27,14 @@ enum ReportRenderer {
         var style: Style
     }
 
-    /// Draws the rows `rows` of the plan's picture, all of it by default.
+    /// Draws the rows `rows` of the plan's snapshot, all of it by default.
     ///
     /// The pieces are placed on whole pixels. A piece that starts or ends partway through a
     /// pixel leaves that pixel row or column partly uncovered, and the background shows
     /// through as a faint line.
     static func render(
         _ plan: ImagePlan,
-        pictures: [UUID: UIImage],
+        captures images: [UUID: UIImage],
         outlines: [Outline],
         rows: ClosedRange<CGFloat>? = nil,
         scale: CGFloat
@@ -63,11 +63,11 @@ enum ReportRenderer {
                     width: size.width,
                     height: pixel(segment.destinationY + segment.height) - top - minY
                 )
-                guard destination.maxY > 0, destination.minY < size.height, let picture = pictures[segment.captureID],
+                guard destination.maxY > 0, destination.minY < size.height, let source = images[segment.captureID],
                     let capture = plan.captures[segment.captureID]
                 else { continue }
                 draw(
-                    picture,
+                    source,
                     pointWidth: capture.size.width,
                     rowsFrom: segment.sourceMinY,
                     height: segment.height,
@@ -111,15 +111,15 @@ enum ReportRenderer {
         }
     }
 
-    /// Copies rows of a capture, given in points, into the picture, on whole pixels of both.
+    /// Copies rows of a capture, given in points, into the snapshot, on whole pixels of both.
     private static func draw(
-        _ picture: UIImage,
+        _ capture: UIImage,
         pointWidth: CGFloat,
         rowsFrom minY: CGFloat,
         height: CGFloat,
         into destination: CGRect
     ) {
-        guard let image = picture.cgImage, pointWidth > 0 else { return }
+        guard let image = capture.cgImage, pointWidth > 0 else { return }
         let ratio = CGFloat(image.width) / pointWidth
         let first = (minY * ratio).rounded()
         let source = CGRect(

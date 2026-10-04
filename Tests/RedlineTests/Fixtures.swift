@@ -26,7 +26,7 @@ enum Fixtures {
             isContainer: false,
             frame: CGRect(x: 1, y: 2, width: 3, height: 4)
         )
-        func item(_ number: Int, _ note: String, picture: String) -> Report.Item {
+        func item(_ number: Int, _ note: String, snapshot: String) -> Report.Item {
             Report.Item(
                 number: number,
                 kind: .element,
@@ -37,7 +37,7 @@ enum Fixtures {
                 ancestors: [],
                 screen: "screen-1",
                 screenTitle: "Today",
-                picture: picture,
+                snapshot: snapshot,
                 outline: Report.Box(x: 10, y: 20, width: 30, height: 40),
                 attachments: []
             )
@@ -53,8 +53,8 @@ enum Fixtures {
                     title: "Today",
                     viewController: "Home",
                     notes: [1, 2],
-                    images: [
-                        Report.Picture(
+                    snapshots: [
+                        Report.Snapshot(
                             file: snapshotFiles[0],
                             part: 1,
                             parts: 2,
@@ -64,7 +64,7 @@ enum Fixtures {
                             width: 563,
                             height: 1224
                         ),
-                        Report.Picture(
+                        Report.Snapshot(
                             file: snapshotFiles[1],
                             part: 2,
                             parts: 2,
@@ -78,19 +78,19 @@ enum Fixtures {
                 )
             ],
             items: [
-                item(1, "Cut off", picture: snapshotFiles[0]),
-                item(2, "Too faint", picture: snapshotFiles[1]),
+                item(1, "Cut off", snapshot: snapshotFiles[0]),
+                item(2, "Too faint", snapshot: snapshotFiles[1]),
                 Report.Item(
                     number: 3,
                     kind: .photo,
                     note: "Same bug",
                     createdAt: Date(timeIntervalSince1970: 1_790_000_000),
-                    title: "2 images from Photos",
+                    title: "2 snapshots from Photos",
                     element: nil,
                     ancestors: [],
                     screen: nil,
                     screenTitle: nil,
-                    picture: nil,
+                    snapshot: nil,
                     outline: nil,
                     attachments: [snapshotFiles[2], snapshotFiles[3]]
                 ),

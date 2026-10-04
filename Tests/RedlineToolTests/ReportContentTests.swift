@@ -8,9 +8,10 @@ struct ReportContentTests {
     private var root: URL { temporary.url }
     private var paths: HubPaths { HubPaths(root: root.appending(path: "hub-root", directoryHint: .isDirectory)) }
 
-    /// A report in the inbox with a screen picture and one attached to a note, `pictureBytes` each.
+    /// A report in the inbox with a screen snapshot and one attached to a note, `snapshotBytes` each.
     @discardableResult
-    private func inboxReport(_ id: String, bundleID: String = "com.example.app", pictureBytes: Int = 10) throws -> URL {
+    private func inboxReport(_ id: String, bundleID: String = "com.example.app", snapshotBytes: Int = 10) throws -> URL
+    {
         let listing: [String: Any] = [
             "screens": [["images": [["file": "screen-1.jpg"]]]],
             "items": [["attachments": [String]()], ["attachments": ["note-2.jpg"]]],
@@ -20,16 +21,16 @@ struct ReportContentTests {
             bundleID: bundleID,
             in: paths,
             listing: listing,
-            pictures: [
-                "screen-1.jpg": Data(repeating: 0xFF, count: pictureBytes),
-                "note-2.jpg": Data(repeating: 0xD8, count: pictureBytes),
+            snapshots: [
+                "screen-1.jpg": Data(repeating: 0xFF, count: snapshotBytes),
+                "note-2.jpg": Data(repeating: 0xD8, count: snapshotBytes),
             ],
             summary: "# UI report: Example\n\n1. **Milk stash**: Test.\n",
             receivedAt: Date(timeIntervalSince1970: 1_791_000_000)
         )
     }
 
-    @Test func aReportReadsAsPicturesAndTheirNotes() throws {
+    @Test func aReportReadsAsSnapshotsAndTheirNotes() throws {
         let report = paths.inbox.appending(
             path: "com.example.app/20261004-120950-00000001",
             directoryHint: .isDirectory
@@ -79,12 +80,12 @@ struct ReportContentTests {
         )
     }
 
-    @Test func picturesFollowTheSummaryInItsOrderWithinTheBudget() throws {
-        let folder = try inboxReport("20261003-223449", pictureBytes: 600)
-        #expect(ReportContent.pictures(in: folder).map(\.lastPathComponent) == ["screen-1.jpg", "note-2.jpg"])
+    @Test func snapshotsFollowTheSummaryInItsOrderWithinTheBudget() throws {
+        let folder = try inboxReport("20261003-223449", snapshotBytes: 600)
+        #expect(ReportContent.snapshots(in: folder).map(\.lastPathComponent) == ["screen-1.jpg", "note-2.jpg"])
         let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
         let content = ReportContent.items(for: report, budget: 1_000)
-        // The summary, then the first picture; the second doesn't fit and is named by path.
+        // The summary, then the first snapshot; the second doesn't fit and is named by path.
         #expect(content.bytes == 600)
         guard case .text(let summary) = content.items[0] else {
             Issue.record("No summary first")

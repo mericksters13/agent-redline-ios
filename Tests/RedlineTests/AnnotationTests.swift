@@ -16,7 +16,7 @@ struct AnnotationTests {
     private let today = ScreenInfo(title: "Today", viewController: "Home")
 
     @Test func eachKindHasItsOwnTitle() {
-        #expect(Annotation.title(kind: .element, element: button, screen: today, imageCount: 0) == "Save")
+        #expect(Annotation.title(kind: .element, element: button, screen: today, snapshotCount: 0) == "Save")
         let unnamed = ElementSnapshot(
             role: "Image",
             label: nil,
@@ -26,11 +26,13 @@ struct AnnotationTests {
             isContainer: false,
             frame: .zero
         )
-        #expect(Annotation.title(kind: .element, element: unnamed, screen: today, imageCount: 0) == "Image")
-        #expect(Annotation.title(kind: .screen, element: nil, screen: today, imageCount: 1) == "Today")
-        #expect(Annotation.title(kind: .screen, element: nil, screen: nil, imageCount: 1) == "This screen")
-        #expect(Annotation.title(kind: .photo, element: nil, screen: nil, imageCount: 1) == "Image from Photos")
-        #expect(Annotation.title(kind: .photo, element: nil, screen: nil, imageCount: 3) == "3 images from Photos")
+        #expect(Annotation.title(kind: .element, element: unnamed, screen: today, snapshotCount: 0) == "Image")
+        #expect(Annotation.title(kind: .screen, element: nil, screen: today, snapshotCount: 1) == "Today")
+        #expect(Annotation.title(kind: .screen, element: nil, screen: nil, snapshotCount: 1) == "This screen")
+        #expect(Annotation.title(kind: .photo, element: nil, screen: nil, snapshotCount: 1) == "Snapshot from Photos")
+        #expect(
+            Annotation.title(kind: .photo, element: nil, screen: nil, snapshotCount: 3) == "3 snapshots from Photos"
+        )
     }
 
     @Test func theSubtitleSaysWhatKindOfItemItIs() {

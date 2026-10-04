@@ -6,7 +6,7 @@ Point at UI on an iPhone, add a note, and send it to the coding agent chat worki
 
 Redline marks up what you see, the way a designer redlines a screen. Tap the floating
 button, tap the elements that look wrong, write a note for each, and send. The report
-lands in the agent chat you picked for the app, with one screenshot per screen and every
+lands in the agent chat you picked for the app, with one snapshot per screen and every
 note outlined and numbered on it.
 
 ### Set up the app
