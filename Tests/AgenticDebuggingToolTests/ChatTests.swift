@@ -109,6 +109,27 @@ struct ChatTests {
         #expect(report.claim?.chat == first.chat.id)
     }
 
+    @Test func aReportAnInterruptedHandOverClaimedIsFreeAgain() throws {
+        let folder = try project()
+        let inbox = try inboxReport("20261003-223449")
+        // A process that has ended stands in for a chat's server that crashed mid hand-over.
+        let ended = Process()
+        ended.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try ended.run()
+        ended.waitUntilExit()
+        let stranded = Claim(chat: "gone", agent: "test", folder: folder.path, claimedAt: Date(), handingOverIn: ended.processIdentifier)
+        try Chats.coder.encode(stranded).write(to: inbox.appending(path: InboxQueue.claimFile))
+        #expect(InboxQueue.waiting(for: ["com.markbuot.AthenaTracker"], paths: paths).count == 1)
+
+        let chat = session(folder)
+        #expect(chat.take(budget: 1_000_000).taken == 1)
+        let report = try #require(InboxQueue.reports(for: ["com.markbuot.AthenaTracker"], paths: paths).first)
+        #expect(report.claim?.chat == chat.chat.id)
+        // Handed over: the claim stands for good, and no other chat takes the report.
+        #expect(report.claim?.handingOverIn == nil)
+        #expect(session(folder).take(budget: 1_000_000).taken == 0)
+    }
+
     @Test func aTrailChatNeverGetsATinyTallyReport() throws {
         _ = try inboxReport("20261003-223449")
         let trail = root.appending(path: "Trail", directoryHint: .isDirectory)

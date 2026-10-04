@@ -91,7 +91,8 @@ final class Hub: @unchecked Sendable {
     /// Mac's network are noticed as they happen.
     static let discoveryInterval: TimeInterval = 1800
 
-    /// The apps the hub takes reports from: those of the open chats, and any given on the command line.
+    /// The apps the hub takes reports from: those of the open chats and of chats before them,
+    /// and any given on the command line.
     var apps: [String] { lock.withLock { currentApps } }
 
     init(paths: HubPaths, devicectl: Devicectl, apps: [String]) {
@@ -184,7 +185,9 @@ final class Hub: @unchecked Sendable {
     }
 
     func updateApps(starting: Bool) {
-        let apps = Array(Set(fixedApps + Chats.live(paths).flatMap(\.bundleIDs))).sorted()
+        // Apps a chat worked on before stay watched after it closes, so their reports still
+        // arrive and can start a new chat.
+        let apps = Array(Set(fixedApps + Chats.live(paths).flatMap(\.bundleIDs) + ProjectHistory.all(paths).keys)).sorted()
         let changed = lock.withLock {
             defer { currentApps = apps }
             return currentApps != apps

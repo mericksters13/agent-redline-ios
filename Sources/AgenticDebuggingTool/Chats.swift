@@ -26,6 +26,12 @@ struct Claim: Codable, Equatable, Sendable {
     var agent: String
     var folder: String
     var claimedAt: Date
+    /// The process handing the report over, until the chat has it; nil once it has.
+    var handingOverIn: Int32? = nil
+
+    /// True when the process handing the report over ended before the chat had it, such as
+    /// when it crashed: the report is free for another chat to take.
+    var isInterrupted: Bool { handingOverIn.map { !Chats.isRunning($0) } ?? false }
 }
 
 /// A report in the inbox.
@@ -179,20 +185,48 @@ enum InboxQueue {
         return reports.sorted { ($0.source.receivedAt, $0.folder.lastPathComponent) < ($1.source.receivedAt, $1.folder.lastPathComponent) }
     }
 
-    /// Reports for these apps that no chat has taken yet, oldest first.
+    /// Reports for these apps that no chat has taken yet, oldest first, including those whose
+    /// hand-over was interrupted.
     static func waiting(for bundleIDs: [String], paths: HubPaths) -> [InboxReport] {
-        reports(for: bundleIDs, paths: paths).filter { $0.claim == nil }
+        reports(for: bundleIDs, paths: paths).filter { $0.claim.map(\.isInterrupted) ?? true }
     }
 
-    /// Takes a report for a chat. False when another chat took it first.
+    /// Takes a report for a chat, to be handed over by this process. False when another chat
+    /// took it first. A claim left by a hand-over that was interrupted is replaced.
     static func claim(_ report: InboxReport, for chat: ChatRecord) -> Bool {
-        let claim = Claim(chat: chat.id, agent: chat.agent, folder: chat.folder, claimedAt: Date())
+        let claim = Claim(chat: chat.id, agent: chat.agent, folder: chat.folder, claimedAt: Date(), handingOverIn: getpid())
         guard let data = try? Chats.coder.encode(claim) else { return false }
-        // Created only if it doesn't exist yet, so two chats can't both take it.
-        let descriptor = open(report.folder.appending(path: claimFile).path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+        // One process at a time decides who takes the report, so two can't both replace the
+        // same interrupted claim. The lock is released when the descriptor closes.
+        let lock = open(report.folder.appending(path: ".claim.lock").path, O_RDWR | O_CREAT, 0o600)
+        guard lock >= 0 else { return false }
+        defer { close(lock) }
+        guard flock(lock, LOCK_EX) == 0 else { return false }
+        let file = report.folder.appending(path: claimFile)
+        if FileManager.default.fileExists(atPath: file.path) {
+            // A claim that can't be read was cut off mid-write, which only an interrupted process leaves.
+            if let existing = (try? Data(contentsOf: file)).flatMap({ try? Chats.decoder.decode(Claim.self, from: $0) }),
+               !existing.isInterrupted { return false }
+            try? FileManager.default.removeItem(at: file)
+        }
+        let descriptor = open(file.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
         guard descriptor >= 0 else { return false }
         defer { close(descriptor) }
         return data.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) } == data.count
+    }
+
+    /// Notes that the chat has a report this process claimed, so the claim stands for good.
+    static func handedOver(_ report: InboxReport) {
+        let file = report.folder.appending(path: claimFile)
+        guard var claim = (try? Data(contentsOf: file)).flatMap({ try? Chats.decoder.decode(Claim.self, from: $0) }),
+              claim.handingOverIn == getpid() else { return }
+        claim.handingOverIn = nil
+        try? Chats.coder.encode(claim).write(to: file, options: .atomic)
+    }
+
+    /// Frees a report this process claimed but couldn't hand over, for another chat to take.
+    static func release(_ report: InboxReport) {
+        try? FileManager.default.removeItem(at: report.folder.appending(path: claimFile))
     }
 }
 /// Where the hub sent a report, saved next to it so the hub's window shows exactly what

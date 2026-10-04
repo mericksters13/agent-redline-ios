@@ -196,6 +196,15 @@ struct AgentHookTests {
         branch.waitUntilExit()
         #expect(String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == "report/1")
         #expect(try String(contentsOfFile: made + "/App.swift", encoding: .utf8) == "one\n")
+        // The main checkout shows only its own change, not the folder the worktree is in.
+        let mainStatus = Process()
+        mainStatus.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        mainStatus.arguments = ["-C", repository.path, "status", "--porcelain"]
+        let mainStatusPipe = Pipe()
+        mainStatus.standardOutput = mainStatusPipe
+        try mainStatus.run()
+        mainStatus.waitUntilExit()
+        #expect(String(decoding: mainStatusPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == " M App.swift\n")
         // The same name again gets a number rather than failing.
         let again = try #require(NewWorktree.create(from: repository.path, name: "report-1", agent: .claude))
         #expect(again.hasSuffix("/report-1-2"))
@@ -222,6 +231,11 @@ struct AgentHookTests {
         NewWorktree.remove(again)
         #expect(!FileManager.default.fileExists(atPath: again))
         #expect(NewWorktree.create(from: root.appending(path: "not-a-repo").path, name: "x", agent: .claude) == nil)
+        // With no main branch to start from, no worktree is made from the checkout's own branch.
+        try git("branch", "-q", "-m", "main", "trunk")
+        #expect(NewWorktree.mainBranch(of: repository.path, fetching: true) == nil)
+        #expect(NewWorktree.create(from: repository.path, name: "report-2", agent: .claude) == nil)
+        try git("branch", "-q", "-m", "trunk", "main")
 
         // The chat it started is found by the phone's pick while its worktree exists.
         StartedChats.remember(StartedChat(chat: "s-1", folder: made, at: Date()), for: "N1", paths: paths)

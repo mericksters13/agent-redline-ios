@@ -6,8 +6,8 @@ import Foundation
 /// works without touching any other worktree. It goes where the agent keeps its own worktrees,
 /// so the chat looks like one it made.
 enum NewWorktree {
-    /// Returns the new worktree's path, or nil when the folder isn't in a git repository or
-    /// git refuses.
+    /// Returns the new worktree's path, or nil when the folder isn't in a git repository, its
+    /// main branch can't be told, or git refuses.
     static func create(from source: String, name: String, agent: Agent) -> String? {
         guard let top = git(source, ["rev-parse", "--show-toplevel"]),
               let common = git(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
@@ -25,10 +25,30 @@ enum NewWorktree {
             path = folder(for: agent, repository: repository, name: "\(name)-\(attempt)")
             branch = "report/\(id)-\(attempt)"
         }
+        // Never the checkout's own branch: a report's chat starts from main, not from whatever
+        // the app was built from.
+        guard let base = mainBranch(of: top, fetching: true)?.ref else { return nil }
         try? FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
-        let base = mainBranch(of: top, fetching: true)?.ref ?? "HEAD"
+        excludeWorktrees(of: agent, in: common)
         guard git(top, ["worktree", "add", "-b", branch, path, base]) != nil else { return nil }
         return path
+    }
+
+    /// Keeps the agent's worktrees folder inside the repository out of `git status` in the main
+    /// checkout, through the repository's own exclude file rather than any tracked file.
+    private static func excludeWorktrees(of agent: Agent, in commonDirectory: String) {
+        let pattern: String
+        switch agent {
+        case .claude: pattern = "/.claude/worktrees/"
+        case .cursor: pattern = "/.cursor/worktrees/"
+        case .codex: return
+        }
+        let exclude = URL(fileURLWithPath: commonDirectory).appending(path: "info/exclude")
+        let existing = (try? String(contentsOf: exclude, encoding: .utf8)) ?? ""
+        guard !existing.split(separator: "\n").contains(Substring(pattern)) else { return }
+        try? FileManager.default.createDirectory(at: exclude.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let separator = existing.isEmpty || existing.hasSuffix("\n") ? "" : "\n"
+        try? (existing + separator + pattern + "\n").write(to: exclude, atomically: true, encoding: .utf8)
     }
 
     /// Copies a report's files into `.agentic-debugging/<report>` in a worktree, a folder git
@@ -67,13 +87,22 @@ enum NewWorktree {
     }
 
     /// The repository's main branch: origin's default branch, fetched first when `fetching`,
-    /// else a local main or master. `name` is what the phone shows.
+    /// else a local main or master. `name` is what the phone shows. Nil when none of these
+    /// can be told.
     static func mainBranch(of folder: String, fetching: Bool = false) -> (ref: String, name: String)? {
-        if let remote = git(folder, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]), remote.hasPrefix("origin/") {
-            let name = String(remote.dropFirst("origin/".count))
+        func originDefault() -> String? {
+            git(folder, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+                .flatMap { $0.hasPrefix("origin/") ? String($0.dropFirst("origin/".count)) : nil }
+        }
+        var name = originDefault()
+        // A clone can lack origin's default branch locally; origin says which it is.
+        if name == nil, fetching, git(folder, ["remote", "set-head", "origin", "--auto"], timeout: 20) != nil {
+            name = originDefault()
+        }
+        if let name {
             // Best effort, and never waiting for a password: without the network, the last fetch is used.
             if fetching { _ = git(folder, ["fetch", "--quiet", "origin", name], timeout: 20) }
-            return (remote, name)
+            return ("origin/\(name)", name)
         }
         for name in ["main", "master"] where git(folder, ["rev-parse", "--verify", "--quiet", "refs/heads/\(name)"]) != nil {
             return (name, name)
