@@ -13,20 +13,23 @@ enum ReportWindows {
     private static var windows: [URL: OpenWindow] = [:]
     /// Where the next new window goes, so each opens below and right of the last, not on top of it.
     private static var cascadePoint = NSPoint.zero
-    /// Reports whose files are being read before their window shows; a second click waits for it.
-    private static var loading: [URL: Task<Void, Never>] = [:]
+    /// Reports whose files are being read before their window shows, and whether the last click
+    /// only refreshes a window that was open then; a second click waits for the same read.
+    private static var loading: [URL: Bool] = [:]
 
     /// Opens the report's window, or brings it forward, in front of the other apps: Redline is a
     /// menu bar app, so it isn't active when the panel is clicked.
     ///
     /// An open window reads the report again, since it may have gone to a chat since it opened. The
-    /// report's files are read off the main actor first.
+    /// report's files are read off the main actor first. A window closed while it was being
+    /// refreshed stays closed.
     static func show(_ report: HubWindowModel.ReportRow) {
         let folder = report.folder
-        guard loading[folder] == nil else { return }
-        loading[folder] = Task {
+        guard loading.updateValue(windows[folder] != nil, forKey: folder) == nil else { return }
+        Task {
             let contents = await ReportViewer.load(folder)
-            loading[folder] = nil
+            let isRefresh = loading.removeValue(forKey: folder) == true
+            guard !isRefresh || windows[folder] != nil else { return }
             present(report, contents)
         }
     }

@@ -186,5 +186,27 @@ struct HubTests {
         // Queued writes land before the test's folder is removed.
         hub.flushWrites()
     }
+
+    @Test func aStoppedHubHasSavedWhatItFiledAndTakesNoMore() throws {
+        let hub = try hub()
+        let token = hub.issueToken(device: phone, bundleID: app)
+        let first = HubMessage.Offer.Report(id: "20261004-031600", finishedAt: .now)
+        let second = HubMessage.Offer.Report(id: "20261004-031700", finishedAt: .now)
+        let offered = offer(token: token, reports: [first, second])
+        _ = hub.answerNow(offered)
+        try hub.storeNow(HubMessage.Upload(id: first.id, files: ["report.json": Data("{}".utf8)]), offeredIn: offered)
+        hub.stop()
+        let saved = try HubPaths.decoder.decode([String: SourceState].self, from: Data(contentsOf: paths.state))
+        #expect(saved.values.flatMap(\.delivered) == [first.id])
+        // An upload that arrives after the stop is offered again to the next hub.
+        #expect(throws: Hub.FilingError.stopping) {
+            try hub.storeNow(
+                HubMessage.Upload(id: second.id, files: ["report.json": Data("{}".utf8)]),
+                offeredIn: offered
+            )
+        }
+        let folder = paths.inbox.appending(path: "\(app)/20261004-031700-00000001", directoryHint: .isDirectory)
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
+    }
 }
 #endif

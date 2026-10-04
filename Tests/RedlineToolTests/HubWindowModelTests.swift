@@ -223,6 +223,11 @@ struct HubWindowModelTests {
             in: waiting
         )
         #expect(HubWindowModel.chat(of: waiting) == nil)
+        // A chat took it later: that chat, as the panel shows it.
+        try HubPaths.encoder.encode(Claim(chat: "claude-s-2", agent: "claude", folder: "/repo", claimedAt: .now + 5))
+            .write(to: waiting.appending(path: Inbox.claimFile))
+        let later = try #require(HubWindowModel.chat(of: waiting))
+        #expect(later.agent == .claude && later.id == "s-2" && later.folder == "/repo")
         #expect(HubWindowModel.chat(of: try report("20261004-140500", at: Date.now)) == nil)
     }
 }
