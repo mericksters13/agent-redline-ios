@@ -25,11 +25,11 @@ Used mid-test, one-handed, on a physical iPhone, on top of whatever app is being
 ## Capabilities and Constraints
 
 - A debug-only Swift package attached once at the app root. Release and TestFlight builds compile it out.
-- Lives in its own window above the host app. Annotation screenshots are taken from the app's windows only, so the debugger never appears in them.
+- Lives in its own window above the host app. Annotation screenshots are taken from the app's windows only, so Redline never appears in them.
 - Element details come from the accessibility tree; SwiftUI exposes roles, labels, and identifiers, not source file names.
 - Confirmed structure: a draggable floating button that snaps to screen edges opens pick mode; pick-mode controls sit in a top island; the note box opens next to the picked element; a review tray lists waiting notes.
 - A double knock on the back was tried and dropped because it could not be told apart from normal taps.
-- Undecided: Mac hub, pairing, MCP server, glance bubble, and full chat are designed but not built.
+- Built on the Mac: Redline, the menu bar app and `redline` command that take reports off paired phones and simulators and hand each to the agent chat picked on the phone, and the MCP server. Designed but not built: the glance bubble and full chat for agent replies on the phone.
 
 ## Brand Commitments
 
@@ -45,7 +45,7 @@ Real host apps for testing: Tiny Tally and Trail. No users, metrics, or testimon
 
 ## Product Principles
 
-- The app under test is the subject; the debugger stays out of its way.
+- The app under test is the subject; Redline stays out of its way.
 - Point, note, send: every extra step is a cost.
 - Speak plainly, so a designer or QA tester never needs to know the code.
 - Never mistakable for the host app.

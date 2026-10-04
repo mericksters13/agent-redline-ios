@@ -1,5 +1,5 @@
 // Draws the hub app's icon into an .iconset folder for iconutil: a phone with one element marked
-// in red and its note number, as the debugger marks it on the device. The smallest sizes drop the
+// in red and its note number, as Redline marks it on the device. The smallest sizes drop the
 // phone's other rows and use heavier lines, so they stay readable.
 //
 //   swift scripts/hub-app-icon.swift <folder>.iconset
