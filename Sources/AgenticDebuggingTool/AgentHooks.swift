@@ -160,8 +160,9 @@ enum AgentHooks {
     static func reportPrompt(_ report: String) -> String {
         """
         A UI report arrived from the user's device through iOSAgenticDebuggingKit, from the build of the app this chat made. \
-        Open its pictures, find the code for each noted element by its identifier or label, then tell the user what you \
-        found and propose a fix before changing code.
+        Open its pictures and show them to the user in this chat, with your tool for sending files to the user if you have \
+        one. Then find the code for each noted element by its identifier or label, tell the user what you found and \
+        propose a fix before changing code.
 
         \(report)
         """
