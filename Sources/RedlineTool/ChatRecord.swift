@@ -52,6 +52,12 @@ struct Claim: Codable, Equatable, Sendable {
     var agent: String
     var folder: String
     var claimedAt: Date
+    /// The process handing the report over, until the chat has it; nil once it has.
+    var handingOverIn: Int32? = nil
+
+    /// True when the process handing the report over ended before the chat had it, such as when it
+    /// crashed: the report is free for another chat to take.
+    var isInterrupted: Bool { handingOverIn.map { !Chats.isRunning($0) } ?? false }
 }
 
 /// Open chats, each as a file under `hub/chats/`, written by its MCP copy.

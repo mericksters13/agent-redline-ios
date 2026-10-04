@@ -347,5 +347,45 @@ struct ReportStoreTests {
         )
     }
 
+    @Test func aFailedStartLeavesNoReportBehind() throws {
+        defer { removeStore() }
+        // No draft on disk to move, so starting the report fails after its folder is made.
+        #expect(throws: (any Error).self) {
+            try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        }
+        let reports = try FileManager.default.contentsOfDirectory(
+            atPath: store.reportsDirectory.path(percentEncoded: false)
+        )
+        #expect(reports.isEmpty)
+    }
+
+    @Test func theDraftAndReportsUnderTheOldNameMoveOver() throws {
+        let files = FileManager.default
+        let parent = files.temporaryDirectory.appending(
+            path: "ReportStoreMove-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? files.removeItem(at: parent) }
+        let old = ReportStore(root: parent.appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
+        let new = ReportStore(root: parent.appending(path: "Redline", directoryHint: .isDirectory))
+        let draft = [annotation("Cut off")]
+        try old.saveDraft(draft)
+        try files.createDirectory(at: old.reportsDirectory.appending(path: "older"), withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: old.hubAddressFile)
+        // The hub has already left its address and a report under the new name.
+        try files.createDirectory(at: new.reportsDirectory.appending(path: "newer"), withIntermediateDirectories: true)
+        try Data("new".utf8).write(to: new.hubAddressFile)
+
+        new.moveFromOldName()
+
+        #expect(try new.loadDraft() == draft)
+        #expect(
+            try files.contentsOfDirectory(atPath: new.reportsDirectory.path(percentEncoded: false)).sorted() == [
+                "newer", "older",
+            ]
+        )
+        #expect(try Data(contentsOf: new.hubAddressFile) == Data("new".utf8))
+        #expect(!files.fileExists(atPath: old.root.path(percentEncoded: false)))
+    }
 }
 #endif

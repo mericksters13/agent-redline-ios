@@ -85,7 +85,8 @@ final class Hub: @unchecked Sendable {
     /// hub.log is moved to hub.log.1 once it grows past this.
     static let largestLog = 5_000_000
 
-    /// The apps the hub takes reports from: those of the open chats, and any given on the command line.
+    /// The apps the hub takes reports from: those of the open chats and of chats before them, and
+    /// any given on the command line.
     var apps: [String] { state.withLock { $0.currentApps } }
 
     init(paths: HubPaths, devicectl: Devicectl, apps: [String]) {
@@ -218,11 +219,15 @@ final class Hub: @unchecked Sendable {
         chatsWatcher = source
     }
 
-    /// Takes reports from the open chats' apps and the ones given on the command line.
+    /// Takes reports from the apps of the open chats and of chats before them, and the ones given on
+    /// the command line.
     ///
-    /// When they change after the start, looks for the new apps on phones and simulators.
+    /// Apps a chat worked on before stay watched after it closes, so their reports still arrive and
+    /// can start a new chat. When they change after the start, looks for the new apps on phones and
+    /// simulators.
     func updateApps(isStarting: Bool) {
-        let apps = Array(Set(fixedApps + Chats.removeClosedChats(paths).flatMap(\.bundleIDs))).sorted()
+        let open = Chats.removeClosedChats(paths).flatMap(\.bundleIDs)
+        let apps = Array(Set(fixedApps + open + ProjectHistory.all(paths).keys)).sorted()
         let changed = state.withLock { state in
             defer { state.currentApps = apps }
             return state.currentApps != apps

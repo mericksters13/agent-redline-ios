@@ -36,10 +36,14 @@ enum AppWindows {
         for window in windows { visit(window) }
     }
 
+    /// Pixels per point in every screenshot, whatever the screen size, so a saved one can
+    /// be cropped around its element's frame after the screen has rotated.
+    static let screenshotScale: CGFloat = 2
+
     /// A picture of the app's windows, without Redline's own window.
     static func screenshot(of windows: [UIWindow], bounds: CGRect) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
-        format.scale = 2
+        format.scale = screenshotScale
         format.opaque = true
         return UIGraphicsImageRenderer(bounds: bounds, format: format).image { _ in
             for window in windows {

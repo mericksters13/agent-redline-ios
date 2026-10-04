@@ -1,6 +1,6 @@
 #if os(macOS)
+import AppKit
 import Darwin
-import Foundation
 
 /// Starting the hub from a chat, so nothing has to be started by hand.
 enum HubProcess {
@@ -43,12 +43,19 @@ enum HubProcess {
         )
     }
 
-    /// The menu bar app, which is the hub, when it's installed.
+    /// The menu bar app's bundle identifier, as scripts/build-hub-app.sh sets it.
+    static let appBundleID = "com.agentredline.hub"
+
+    /// The menu bar app, which is the hub, when it's installed: in ~/Applications, where
+    /// scripts/build-hub-app.sh puts it by default, or wherever else Launch Services knows it by its
+    /// identifier, such as /Applications.
     ///
     /// Checks the disk.
     static func installedApp() -> URL? {
-        let app = URL.homeDirectory.appending(path: "Applications/Redline.app")
-        return FileManager.default.fileExists(atPath: app.path) ? app : nil
+        let home = URL.homeDirectory.appending(path: "Applications/Redline.app")
+        if FileManager.default.fileExists(atPath: home.path) { return home }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID)
+            .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
     /// Starts the hub: the menu bar app when it's installed, else this command in its own

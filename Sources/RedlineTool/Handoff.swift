@@ -32,7 +32,7 @@ final class Handoff: Sendable {
     /// Hands over reports that arrived shortly before the hub started and no chat took.
     func handOverRecent(within interval: TimeInterval = 3600) {
         queue.async { [self] in
-            let apps = Set(Chats.removeClosedChats(hub.paths).flatMap(\.bundleIDs))
+            let apps = Set(Chats.removeClosedChats(hub.paths).flatMap(\.bundleIDs) + ProjectHistory.all(hub.paths).keys)
             for report in Inbox.unclaimedReports(for: Array(apps), paths: hub.paths)
             where Date.now.timeIntervalSince(report.source.receivedAt) < interval
                 && Inbox.recipient(of: report.folder) == nil
@@ -104,6 +104,17 @@ final class Handoff: Sendable {
         }
     }
 
+    /// Notes that the chat has the report, so the claim stands for good.
+    private func handedOver(_ report: InboxReport) {
+        do {
+            try Inbox.handedOver(report)
+        } catch {
+            hub.log(
+                "Couldn't note that report \(report.source.reportID) was handed over: \(error.localizedDescription)"
+            )
+        }
+    }
+
     /// Saves where the report went, for the panel and the viewer.
     private func record(_ delivery: ChatDelivery, for report: InboxReport) {
         do {
@@ -164,6 +175,7 @@ final class Handoff: Sendable {
         guard claim(report, for: chat) else { return }
         let name = session.title ?? Self.folderName(session.folder)
         if ClaudeSessions.send(ReportContent.text(for: report), to: session) {
+            handedOver(report)
             hub.log("Sent report \(source.reportID) to the Claude Code chat \(name), in \(session.folder)")
             record(.init(agent: .claude, chat: id, title: name, kind: .sent), for: report)
             Self.notify(title: Self.reportTitle(source), message: "Sent to the Claude Code chat \(name).")
@@ -204,6 +216,7 @@ final class Handoff: Sendable {
             outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
         }
         if outcome == .started {
+            handedOver(report)
             hub.log("Sent report \(source.reportID) with \(pictures.count) pictures to the Codex chat \(thread)")
             record(
                 .init(
@@ -248,7 +261,13 @@ final class Handoff: Sendable {
     /// the chat doesn't open in time, the report goes in with the claude command instead.
     private func openClaude(_ id: String, in folder: String, thenSend text: String, for report: InboxReport) {
         let source = report.source
-        guard let claude = AgentCommand.locate(.claude) else { return }
+        guard let claude = AgentCommand.locate(.claude) else {
+            release(report)
+            hub.log(
+                "Couldn't find the claude command to open the chat for report \(source.reportID); it waits in the inbox"
+            )
+            return
+        }
         let hasApp = AgentCommand.isClaudeAppInstalled()
         do {
             if hasApp {
@@ -275,6 +294,7 @@ final class Handoff: Sendable {
                 if let session = ClaudeSessions.openSessions().first(where: { $0.id == id }),
                     ClaudeSessions.send(text, to: session)
                 {
+                    handedOver(report)
                     hub.log("Sent report \(source.reportID) to the Claude Code chat \(id), now open")
                     record(
                         .init(agent: .claude, chat: id, title: session.title ?? "New chat in \(place)", kind: .newChat),
@@ -303,6 +323,7 @@ final class Handoff: Sendable {
                 hub.log("Couldn't run the claude command for report \(source.reportID): \(error.localizedDescription)")
                 return
             }
+            handedOver(report)
             Self.notify(
                 title: Self.reportTitle(source),
                 message: "Claude Code looked into it. Open the chat in worktree \(place) to see it."
@@ -347,13 +368,11 @@ final class Handoff: Sendable {
         )
         guard claim(report, for: chat) else { return }
 
-        // A new chat works in a worktree of its own. Without one, such as for a folder that isn't
-        // in a git repository, it works in the folder itself, where it can only look.
+        // A new chat works in a worktree of its own. Without one it would work in the user's
+        // checkout, so it doesn't start and the report waits in the inbox.
         let workFolder: String
-        var madeWorktree = false
         do {
             workFolder = try NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: agent)
-            madeWorktree = true
             hub.log("Made worktree \(workFolder) for report \(source.reportID)")
             do {
                 try Inbox.moveClaim(of: report.folder, to: workFolder)
@@ -363,15 +382,21 @@ final class Handoff: Sendable {
                 )
             }
         } catch {
-            workFolder = folder
+            release(report)
             hub.log(
-                "Couldn't make a worktree for report \(source.reportID): \(error.localizedDescription); the chat starts in \(folder)"
+                "Couldn't make a worktree for report \(source.reportID): \(error.localizedDescription); it waits in the inbox"
             )
+            Self.notify(
+                title: Self.reportTitle(source),
+                message:
+                    "Couldn't make a worktree for a new \(agent.name) chat from the main branch of \(Self.folderName(folder)). The report waits in the inbox."
+            )
+            return
         }
         let pictures = ReportContent.pictures(in: report.folder)
         var reportPrompt = ReportContent.text(for: report)
         // A Claude Code chat reads the pictures from a copy in its worktree, without asking.
-        if agent == .claude, madeWorktree {
+        if agent == .claude {
             do {
                 let copy = try NewWorktree.copyReport(report.folder, into: workFolder)
                 reportPrompt = reportPrompt.replacing(report.folder.path, with: copy)
@@ -409,14 +434,13 @@ final class Handoff: Sendable {
         }
         let paths = hub.paths
         let place = Self.folderName(workFolder)
-        let madeWorktreeForThis = madeWorktree
         process.terminationHandler = { [hub, self] finished in
             let text = (try? String(contentsOf: output, encoding: .utf8)) ?? ""
             let started = AgentCommand.startedChat(agent, in: text)
             guard finished.terminationStatus == 0, let started, !started.didFail else {
                 // Free the report for a chat that opens later, and take back the unused worktree.
                 release(report)
-                if madeWorktreeForThis { NewWorktree.remove(workFolder) }
+                NewWorktree.remove(workFolder)
                 let reason = AgentCommand.failure(in: text)
                 hub.log(
                     "The \(agent.name) chat for report \(source.reportID) failed (\(finished.terminationStatus)): \(reason)"
@@ -454,6 +478,9 @@ final class Handoff: Sendable {
             }
             switch agent {
             case .codex:
+                // The chat has the report: it was its first message. A Claude Code chat has it only once
+                // it is sent into the open chat.
+                handedOver(report)
                 do {
                     try Self.openChat(.codex, id: started.chat, in: workFolder)
                 } catch {
@@ -478,6 +505,7 @@ final class Handoff: Sendable {
             )
         } catch {
             release(report)
+            NewWorktree.remove(workFolder)
             hub.log("Couldn't start a \(agent.name) chat for report \(source.reportID): \(error.localizedDescription)")
         }
     }

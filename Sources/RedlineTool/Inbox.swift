@@ -25,6 +25,8 @@ enum Inbox {
     static let sourceFile = "source.json"
     /// The chat that took a report.
     static let claimFile = "claim.json"
+    /// Held while a claim is taken, so one process at a time replaces an interrupted one.
+    static let claimLockFile = ".claim.lock"
     /// The chat a report is addressed to.
     static let recipientFile = "to.json"
     /// Where the hub sent a report.
@@ -84,9 +86,10 @@ enum Inbox {
         }
     }
 
-    /// Reports for these apps that no chat has taken yet, oldest first.
+    /// Reports for these apps that no chat has taken yet, oldest first, including those whose
+    /// hand-over was interrupted.
     static func unclaimedReports(for bundleIDs: [String], paths: HubPaths) -> [InboxReport] {
-        reports(for: bundleIDs, paths: paths).filter { $0.claim == nil }
+        reports(for: bundleIDs, paths: paths).filter { $0.claim.map(\.isInterrupted) ?? true }
     }
 
     /// The chat that took a report, nil when none has.
@@ -119,10 +122,30 @@ enum Inbox {
         case failed(any Error)
     }
 
-    /// Takes a report for a chat, so no other chat gets it.
+    /// Takes a report for a chat, to be handed over by this process, so no other chat gets it.
+    ///
+    /// A claim left by a hand-over that was interrupted is replaced.
     static func claim(_ report: InboxReport, for chat: ChatRecord) -> ClaimResult {
-        let claim = Claim(chat: chat.id, agent: chat.agent, folder: chat.folder, claimedAt: .now)
+        let claim = Claim(
+            chat: chat.id,
+            agent: chat.agent,
+            folder: chat.folder,
+            claimedAt: .now,
+            handingOverIn: getpid()
+        )
         let file = report.folder.appending(path: claimFile)
+        // One process at a time replaces an interrupted claim, so two can't both take its report.
+        // The lock is released when the descriptor closes.
+        let lock = open(report.folder.appending(path: claimLockFile).path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        guard lock >= 0 else { return .failed(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)) }
+        defer { close(lock) }
+        guard flock(lock, LOCK_EX) == 0 else { return .failed(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)) }
+        if let existing = Self.claim(of: report.folder) {
+            guard existing.isInterrupted else { return .takenByAnotherChat }
+            guard unlink(file.path) == 0 || errno == ENOENT else {
+                return .failed(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
+            }
+        }
         // Written whole under a name of its own, then linked into place: linking fails if a claim
         // is already there, so two chats can't both take it, and no chat ever sees half a claim.
         let draft = report.folder.appending(path: ".\(claimFile).\(UUID().uuidString)")
@@ -136,6 +159,15 @@ enum Inbox {
             return errno == EEXIST ? .takenByAnotherChat : .failed(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
         }
         return .claimed
+    }
+
+    /// Notes that the chat has a report this process claimed, so the claim stands for good.
+    static func handedOver(_ report: InboxReport) throws {
+        let file = report.folder.appending(path: claimFile)
+        var claim = try HubPaths.decoder.decode(Claim.self, from: Data(contentsOf: file))
+        guard claim.handingOverIn == getpid() else { return }
+        claim.handingOverIn = nil
+        try HubPaths.encoder.encode(claim).write(to: file, options: .atomic)
     }
 }
 #endif

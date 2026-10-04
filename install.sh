@@ -233,9 +233,9 @@ function run(argv) {
 JS
 }
 
-# Removes Redline's hooks from the agent settings file $1 without the redline command, the way
-# redline remove does: hooks that run a command named redline or agentic-debugging go, groups
-# left empty go, everything else stays. Prints removed, unchanged, unreadable or unwritable.
+# Removes Redline's hooks from the agent settings file $1 without the redline command, for
+# uninstall: hooks that run a command named redline or agentic-debugging go, groups left empty go,
+# everything else stays. Prints removed, unchanged, unreadable or unwritable.
 remove_hooks_from() {
     /usr/bin/osascript -l JavaScript - "$1" 2>/dev/null <<'JS'
 function run(argv) {

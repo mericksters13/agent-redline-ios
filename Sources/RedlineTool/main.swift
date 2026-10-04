@@ -224,7 +224,7 @@ case "setup", "remove":
             try AgentSettings.update(agent) {
                 adding
                     ? AgentSettings.adding(agent, to: $0, executable: executable)
-                    : AgentSettings.removing(from: $0)
+                    : AgentSettings.removing(from: $0, executable: executable)
             }
             print(
                 "\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.fileURL(for: agent).path)"
@@ -245,8 +245,8 @@ case "setup", "remove":
     // for it, so none is left running a command that is later removed.
     let cursorFile = AgentSettings.cursorFileURL()
     do {
-        if try AgentSettings.containsHooks(inFile: cursorFile) {
-            try AgentSettings.update(cursorFile) { AgentSettings.removing(from: $0) }
+        if try AgentSettings.containsHooks(inFile: cursorFile, executable: executable) {
+            try AgentSettings.update(cursorFile) { AgentSettings.removing(from: $0, executable: executable) }
             print("Cursor: hooks from an earlier setup removed from \(cursorFile.path)")
         }
     } catch {

@@ -1,7 +1,8 @@
 #!/bin/zsh
 # Builds "Redline.app", the hub as a menu bar app, from this package and signs it for
-# local use. Installs it in ~/Applications unless a destination folder is given. A copy that is
-# running is stopped to replace it and opened again, unless --no-start is given.
+# local use. Installs it in ~/Applications unless a destination folder is given, and registers it
+# with Launch Services. A copy that is running is stopped to replace it and opened again. With
+# --no-start, it is neither opened again nor registered.
 #
 #   scripts/build-hub-app.sh [destination folder] [--no-start]
 set -euo pipefail
@@ -69,6 +70,11 @@ if pkill -TERM -f "$processes" 2>/dev/null; then
 fi
 rm -rf "$app"
 mv "$staging" "$app"
+# Registered with Launch Services, so chats find the app by its identifier in any folder. Not with
+# --no-start, which leaves the rest of the system as it is, such as for a test install.
+if $reopen; then
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" || true
+fi
 if $running; then
     if $reopen; then open -g "$app"; else echo "Stopped the running Redline to replace it; not opened again (--no-start)"; fi
 fi

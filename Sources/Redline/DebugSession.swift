@@ -126,6 +126,14 @@ final class DebugSession {
     private(set) var nudges = 0
     /// A short reminder under the island after such a tap.
     private(set) var hint: String?
+    /// Why the last Add note failed, shown on the note card.
+    private(set) var noteError: String?
+    /// The window size when the screen was last read.
+    private(set) var readSize = CGSize.zero
+
+    /// False after the window changes size, such as on rotation, until the screen is read
+    /// again: element frames from the last read no longer line up with the screen.
+    var screenReadIsCurrent: Bool { readSize == screenSize }
 
     /// Where reports from this build go, as the user picked.
     ///
@@ -183,6 +191,11 @@ final class DebugSession {
     @ObservationIgnored private var trayReturnMode = Mode.idle
     /// Where Cancel or Add on the note card goes back to.
     @ObservationIgnored private var notingReturnMode = Mode.picking
+    /// Notes added since pick mode opened.
+    ///
+    /// The app can't move while the debugger takes every touch, so these are on the current
+    /// screen even when it has no title.
+    @ObservationIgnored private var notesThisVisit: Set<UUID> = []
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var thumbnails: [UUID: UIImage] = [:]
     /// Full-size images for the viewer, kept for the few around the one showing.
@@ -350,6 +363,7 @@ final class DebugSession {
         // read, leaving every outline behind. Stop it, let it settle, then read.
         AppWindows.stopScrolling(in: appWindows())
         levels = []
+        notesThisVisit = []
         setMode(.picking)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         Task {
@@ -434,7 +448,8 @@ final class DebugSession {
         guard let element = selected, let screenshot else { return }
         let id = UUID()
         let captureID = fileCapture(screenshot)
-        thumbnails[id] = Self.crop(screenshot, around: element.frame, screenWidth: screenSize.width)
+        thumbnails[id] = Self.crop(screenshot, around: element.frame)
+        notesThisVisit.insert(id)
         annotations.append(
             Annotation(
                 id: id,
@@ -1073,7 +1088,7 @@ final class DebugSession {
         var capture = Capture(
             id: UUID(),
             file: "capture-\(UUID().uuidString).png",
-            size: screenSize,
+            size: readSize,
             scroll: scrollState,
             elements: elements,
             group: 0
@@ -1104,7 +1119,7 @@ final class DebugSession {
             screens[index].captures.append(capture)
             keep(image, for: capture)
             let screenCaptures = screens[index].captures
-            let onScreen = CGRect(origin: .zero, size: screenSize)
+            let onScreen = CGRect(origin: .zero, size: readSize)
             for i in annotations.indices {
                 // An earlier note moves onto the new picture only if its element is still
                 // there and still looks the same. Under a popup or a dimmed backdrop it doesn't,
@@ -1136,7 +1151,7 @@ final class DebugSession {
         let high = min(from.contentY(ofScreenY: band.upperBound), to.contentY(ofScreenY: band.upperBound))
         guard high - low >= 40 else { return .tooSmallToTell }
         func pixelRows(_ scroll: ScrollState, in image: CGImage) -> Range<Int> {
-            let ratio = CGFloat(image.width) / screenSize.width
+            let ratio = AppWindows.screenshotScale
             return Int(
                 (scroll.screenY(ofContentY: low) * ratio).rounded()
             )..<Int((scroll.screenY(ofContentY: high) * ratio).rounded())
@@ -1166,7 +1181,7 @@ final class DebugSession {
             old,
             in: pixels(frame, of: old, width: capture.size.width),
             new,
-            in: pixels(newFrame, of: new, width: screenSize.width)
+            in: pixels(newFrame, of: new, width: readSize.width)
         ) < PictureComparison.sameElement
     }
 
@@ -1239,7 +1254,7 @@ final class DebugSession {
     /// when the element itself is hidden behind the keyboard or the card.
     func selectedElementPreview() -> UIImage? {
         guard let frame = selected?.frame, let image = screenshot else { return nil }
-        return Self.crop(image, around: frame, screenWidth: screenSize.width)
+        return Self.crop(image, around: frame)
     }
 
     // MARK: - Thumbnails and previews
@@ -1295,10 +1310,12 @@ final class DebugSession {
     /// A square crop for a thumbnail.
     ///
     /// A wide element keeps its leading end and a tall one its top, where the icon and title
-    /// usually are; the middle of a row is often empty.
-    private static func crop(_ image: UIImage, around frame: CGRect, screenWidth: CGFloat) -> UIImage? {
-        guard let cgImage = image.cgImage, screenWidth > 0 else { return nil }
-        let scale = CGFloat(cgImage.width) / screenWidth
+    /// usually are; the middle of a row is often empty. `frame` is in the points of the screen
+    /// the image was taken of, which may have been a different size or orientation from the
+    /// screen now.
+    private static func crop(_ image: UIImage, around frame: CGRect) -> UIImage? {
+        guard let cgImage = image.cgImage else { return nil }
+        let scale = AppWindows.screenshotScale
         var area = frame.insetBy(dx: -12, dy: -12)
         let side = min(area.width, area.height)
         area.size = CGSize(width: side, height: side)
@@ -1329,7 +1346,7 @@ final class DebugSession {
         if let cached = thumbnails[annotation.id] { return cached }
         if let captureID = annotation.captureID, let element = annotation.element {
             guard let (_, capture) = capture(withID: captureID), let image = captureImage(capture),
-                let thumbnail = Self.crop(image, around: element.frame, screenWidth: capture.size.width)
+                let thumbnail = Self.crop(image, around: element.frame)
             else { return nil }
             thumbnails[annotation.id] = thumbnail
             return thumbnail
@@ -1337,9 +1354,7 @@ final class DebugSession {
         guard let first = annotation.screenshots.first,
             let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: first).path(percentEncoded: false))
         else { return nil }
-        let thumbnail =
-            annotation.element.map { Self.crop(image, around: $0.frame, screenWidth: screenSize.width) }
-            ?? Self.topSquare(of: image)
+        let thumbnail = annotation.element.map { Self.crop(image, around: $0.frame) } ?? Self.topSquare(of: image)
         guard let thumbnail else { return nil }
         thumbnails[annotation.id] = thumbnail
         return thumbnail
@@ -1359,7 +1374,9 @@ final class DebugSession {
     func noteCardTop(height: CGFloat, reservedHeight: CGFloat) -> CGFloat {
         let keyboard = noteKeyboardTop
         return NoteCardPlacement.top(
-            element: selected?.frame,
+            // After a rotation the picked frame points at the wrong place; the card shows
+            // a crop of the element instead.
+            element: screenReadIsCurrent ? selected?.frame : nil,
             height: height,
             reservedHeight: reservedHeight,
             top: safeAreaTop,
@@ -1503,6 +1520,7 @@ final class DebugSession {
     // MARK: - Noting
 
     private func beginNoting() {
+        noteError = nil
         isAwaitingKeyboard = keyboardTop == .infinity
         setMode(.noting)
         // A hardware keyboard never shows the on-screen one; stop waiting for it.
@@ -1519,6 +1537,7 @@ final class DebugSession {
         keyboardWait?.cancel()
         keyboardWait = nil
         isAwaitingKeyboard = false
+        noteError = nil
         setMode(next)
     }
 
@@ -1622,12 +1641,19 @@ final class DebugSession {
         )
         screenshot = AppWindows.screenshot(of: appWindows, bounds: window.bounds)
         scrollState = AppWindows.mainScrollState(under: roots, screenBounds: window.bounds)
+        readSize = window.bounds.size
         refreshMarkers()
     }
 
+    /// Markers go on notes made on this screen.
+    ///
+    /// Without a title, two screens of the same kind look alike (SwiftUI routes share one hosting
+    /// controller type), so only notes added since pick mode opened count as this screen's.
     private func refreshMarkers() {
         let found = annotations.enumerated().compactMap { index, annotation -> Marker? in
-            guard let element = annotation.element, annotation.screen == screen,
+            let sameScreen =
+                notesThisVisit.contains(annotation.id) || (screen.title != nil && annotation.screen == screen)
+            guard let element = annotation.element, sameScreen,
                 let match = ElementSelection.match(element, in: elements)
             else { return nil }
             return Marker(id: annotation.id, number: index + 1, frame: match.frame)

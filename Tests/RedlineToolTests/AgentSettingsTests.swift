@@ -43,12 +43,41 @@ struct AgentSettingsTests {
         // Run again, nothing changes.
         #expect(try sortedJSON(AgentSettings.adding(.codex, to: added, executable: executable)) == sortedJSON(added))
         // Removed, the file is as it was.
-        #expect(try sortedJSON(AgentSettings.removing(from: added)) == sortedJSON(codexSettings))
+        #expect(
+            try sortedJSON(AgentSettings.removing(from: added, executable: executable)) == sortedJSON(codexSettings)
+        )
         // A command of another tool that happens to have a hook subcommand stays.
         let other: [String: Any] = [
             "hooks": ["Stop": [["hooks": [["type": "command", "command": "'/opt/bin/other' hook stop"]]]]]
         ]
-        #expect(try sortedJSON(AgentSettings.removing(from: other)) == sortedJSON(other))
+        #expect(try sortedJSON(AgentSettings.removing(from: other, executable: executable)) == sortedJSON(other))
+        // Nor does another tool's command that is also named redline, in another folder.
+        let namesake: [String: Any] = [
+            "hooks": ["Stop": [["hooks": [["type": "command", "command": "'/opt/bin/redline' hook codex stop"]]]]]
+        ]
+        #expect(try sortedJSON(AgentSettings.removing(from: namesake, executable: executable)) == sortedJSON(namesake))
+        // Nor a command under the earlier name with other arguments.
+        let lookalike: [String: Any] = [
+            "hooks": [
+                "Stop": [["hooks": [["type": "command", "command": "'/opt/bin/agentic-debugging' hook stop --all"]]]]
+            ]
+        ]
+        #expect(
+            try sortedJSON(AgentSettings.removing(from: lookalike, executable: executable)) == sortedJSON(lookalike)
+        )
+        // A hook the earlier version left, from any folder, is replaced.
+        let earlier: [String: Any] = [
+            "hooks": [
+                "UserPromptSubmit": [
+                    ["hooks": [["type": "command", "command": "'/opt/old/agentic-debugging' hook codex prompt"]]]
+                ]
+            ]
+        ]
+        #expect(
+            commands(AgentSettings.adding(.codex, to: earlier, executable: executable), "UserPromptSubmit") == [
+                "'\(executable)' hook codex prompt"
+            ]
+        )
     }
 
     @Test func settingsThatDontChangeAreNotWritten() throws {
@@ -76,7 +105,9 @@ struct AgentSettingsTests {
             commands(added, "UserPromptSubmit") == ["'/Users/someone/Someone'\\''s tools/redline' hook codex prompt"]
         )
         // Recognized as this tool's, so removing gives back the settings as they were.
-        #expect(try sortedJSON(AgentSettings.removing(from: added)) == sortedJSON(codexSettings))
+        #expect(
+            try sortedJSON(AgentSettings.removing(from: added, executable: executable)) == sortedJSON(codexSettings)
+        )
         // And a second setup replaces it rather than adding another.
         #expect(
             commands(AgentSettings.adding(.codex, to: added, executable: executable), "UserPromptSubmit").count == 1
@@ -88,24 +119,26 @@ struct AgentSettingsTests {
         let cursor: [String: Any] = [
             "version": 1, "hooks": ["stop": [["command": "'\(executable)' hook cursor stop"]]],
         ]
-        #expect(AgentSettings.containsHooks(in: cursor))
-        #expect(try sortedJSON(AgentSettings.removing(from: cursor)) == sortedJSON(["version": 1]))
+        #expect(AgentSettings.containsHooks(in: cursor, executable: executable))
+        #expect(
+            try sortedJSON(AgentSettings.removing(from: cursor, executable: executable)) == sortedJSON(["version": 1])
+        )
         // Hooks of the earlier version's command count as this tool's.
         let earlier: [String: Any] = [
             "version": 1,
             "hooks": ["stop": [["command": "'/Users/someone/.local/bin/agentic-debugging' hook cursor stop"]]],
         ]
-        #expect(AgentSettings.containsHooks(in: earlier))
+        #expect(AgentSettings.containsHooks(in: earlier, executable: executable))
         let others: [String: Any] = ["version": 1, "hooks": ["stop": [["command": "/usr/local/bin/other-tool"]]]]
-        #expect(!AgentSettings.containsHooks(in: others))
+        #expect(!AgentSettings.containsHooks(in: others, executable: executable))
         // Read from the file: none when it doesn't exist, and a broken file throws.
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let file = root.appending(path: "hooks.json")
-        #expect(try !AgentSettings.containsHooks(inFile: file))
+        #expect(try !AgentSettings.containsHooks(inFile: file, executable: executable))
         try JSONSerialization.data(withJSONObject: cursor).write(to: file)
-        #expect(try AgentSettings.containsHooks(inFile: file))
+        #expect(try AgentSettings.containsHooks(inFile: file, executable: executable))
         try Data("[]".utf8).write(to: file)
-        #expect(throws: (any Error).self) { try AgentSettings.containsHooks(inFile: file) }
+        #expect(throws: (any Error).self) { try AgentSettings.containsHooks(inFile: file, executable: executable) }
     }
 
     @Test func settingsFollowTheHomeFolderInHOME() {

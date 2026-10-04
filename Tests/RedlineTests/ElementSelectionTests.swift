@@ -11,7 +11,8 @@ struct ElementSelectionTests {
         label: String?,
         frame: CGRect,
         identifier: String? = nil,
-        isContainer: Bool = false
+        isContainer: Bool = false,
+        parent: Int? = nil
     ) -> ElementSnapshot {
         ElementSnapshot(
             role: role,
@@ -20,7 +21,8 @@ struct ElementSelectionTests {
             identifier: identifier,
             className: nil,
             isContainer: isContainer,
-            frame: frame
+            frame: frame,
+            parent: parent
         )
     }
 
@@ -31,22 +33,37 @@ struct ElementSelectionTests {
             frame: CGRect(x: 20, y: 100, width: 360, height: 200),
             isContainer: true
         )
-        let row = element(role: "Button", label: "Email", frame: CGRect(x: 30, y: 120, width: 340, height: 44))
-        let label = element(role: "Text", label: "Email", frame: CGRect(x: 40, y: 130, width: 100, height: 20))
-        let levels = ElementSelection.levels(at: CGPoint(x: 60, y: 140), in: [card, label, row], screenSize: screen)
+        let row = element(
+            role: "Button",
+            label: "Email",
+            frame: CGRect(x: 30, y: 120, width: 340, height: 44),
+            parent: 0
+        )
+        let label = element(
+            role: "Text",
+            label: "Email",
+            frame: CGRect(x: 40, y: 130, width: 100, height: 20),
+            parent: 1
+        )
+        let levels = ElementSelection.levels(at: CGPoint(x: 60, y: 140), in: [card, row, label], screenSize: screen)
         #expect(levels == [label, row, card])
     }
 
     @Test func sameSizedWrappersCollapseIntoOneLevel() {
-        let button = element(role: "Button", label: "Save", frame: CGRect(x: 20, y: 600, width: 360, height: 50))
         let wrapper = element(
             role: "Group",
             label: "Save",
             frame: CGRect(x: 21, y: 601, width: 358, height: 49),
             isContainer: true
         )
-        let levels = ElementSelection.levels(at: CGPoint(x: 200, y: 620), in: [button, wrapper], screenSize: screen)
-        #expect(levels.count == 1)
+        let button = element(
+            role: "Button",
+            label: "Save",
+            frame: CGRect(x: 20, y: 600, width: 360, height: 50),
+            parent: 0
+        )
+        let levels = ElementSelection.levels(at: CGPoint(x: 200, y: 620), in: [wrapper, button], screenSize: screen)
+        #expect(levels == [button])
     }
 
     @Test func elementsCoveringTheScreenAreLeftOut() {
@@ -56,9 +73,72 @@ struct ElementSelectionTests {
             frame: CGRect(x: 0, y: 0, width: 400, height: 800),
             isContainer: true
         )
-        let button = element(role: "Button", label: "Save", frame: CGRect(x: 20, y: 600, width: 360, height: 50))
-        let levels = ElementSelection.levels(at: CGPoint(x: 200, y: 620), in: [background, button], screenSize: screen)
-        #expect(levels == [button])
+        let card = element(
+            role: "Group",
+            label: "Actions",
+            frame: CGRect(x: 10, y: 500, width: 380, height: 200),
+            isContainer: true,
+            parent: 0
+        )
+        let button = element(
+            role: "Button",
+            label: "Save",
+            frame: CGRect(x: 20, y: 600, width: 360, height: 50),
+            parent: 1
+        )
+        let levels = ElementSelection.levels(
+            at: CGPoint(x: 200, y: 620),
+            in: [background, card, button],
+            screenSize: screen
+        )
+        #expect(levels == [button, card])
+    }
+
+    @Test func theFrontElementWinsOverASmallerOneBehindIt() {
+        let row = element(role: "Button", label: "Delete", frame: CGRect(x: 20, y: 600, width: 100, height: 44))
+        let banner = element(role: "Text", label: "Saved", frame: CGRect(x: 0, y: 560, width: 400, height: 120))
+        let levels = ElementSelection.levels(at: CGPoint(x: 60, y: 620), in: [row, banner], screenSize: screen)
+        #expect(levels == [banner])
+    }
+
+    @Test func coveredElementsAreNotAncestors() {
+        let list = element(
+            role: "Group",
+            label: "Inbox",
+            frame: CGRect(x: 0, y: 100, width: 400, height: 600),
+            isContainer: true
+        )
+        let row = element(
+            role: "Button",
+            label: "Message",
+            frame: CGRect(x: 0, y: 300, width: 400, height: 60),
+            parent: 0
+        )
+        let sheet = element(
+            role: "Group",
+            label: "Compose",
+            frame: CGRect(x: 0, y: 250, width: 400, height: 400),
+            isContainer: true
+        )
+        let send = element(
+            role: "Button",
+            label: "Send",
+            frame: CGRect(x: 300, y: 270, width: 80, height: 44),
+            parent: 2
+        )
+        let levels = ElementSelection.levels(
+            at: CGPoint(x: 320, y: 310),
+            in: [list, row, sheet, send],
+            screenSize: screen
+        )
+        #expect(levels == [send, sheet])
+    }
+
+    @Test func theParentIsNotSaved() throws {
+        let saved = element(role: "Button", label: "Save", frame: CGRect(x: 1, y: 2, width: 3, height: 4), parent: 7)
+        let decoded = try JSONDecoder().decode(ElementSnapshot.self, from: JSONEncoder().encode(saved))
+        #expect(decoded.parent == nil)
+        #expect(decoded.label == "Save")
     }
 
     @Test func aNearMissPicksTheNearestElement() {

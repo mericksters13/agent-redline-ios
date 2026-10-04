@@ -45,8 +45,11 @@ struct OverlayView: View {
         ZStack(alignment: .topLeading) {
             if session.mode.isAnnotating {
                 touchSurface
-                ForEach(session.markers) { marker in
-                    savedNoteMarker(number: marker.number, frame: marker.frame)
+                // Frames from before a rotation would land on the wrong spots.
+                if session.screenReadIsCurrent {
+                    ForEach(session.markers) { marker in
+                        savedNoteMarker(number: marker.number, frame: marker.frame)
+                    }
                 }
             }
 
@@ -55,7 +58,9 @@ struct OverlayView: View {
                     .transition(.opacity)
             }
 
-            if session.mode == .picking || session.mode == .noting, let element = session.selected {
+            if session.mode == .picking || session.mode == .noting, session.screenReadIsCurrent,
+                let element = session.selected
+            {
                 outline(element.frame, weight: 2.5)
                 if session.mode == .picking {
                     nameTag(element)
@@ -436,6 +441,12 @@ struct OverlayView: View {
                 .padding(12)
                 .background(Mono.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
+            if let error = session.noteError {
+                Text(error)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Mono.text)
+            }
+
             HStack {
                 Button("Cancel") { session.cancelNote() }
                     .font(.subheadline.weight(.medium))
@@ -520,9 +531,11 @@ struct OverlayView: View {
         .accessibilityHidden(true)
     }
 
-    /// True when the picked element sits under the keyboard or under the card itself.
+    /// True when the picked element sits under the keyboard or under the card itself, or the screen
+    /// has rotated since it was picked and its frame no longer lines up.
     private func isElementHidden(cardTop: CGFloat, cardHeight height: CGFloat) -> Bool {
         guard let frame = session.selected?.frame else { return false }
+        guard session.screenReadIsCurrent else { return true }
         let visibleBottom = min(session.noteKeyboardTop, session.screenSize.height)
         let card = CGRect(x: panelLeading, y: cardTop, width: panelWidth, height: height)
         let center = CGPoint(x: frame.midX, y: frame.midY)

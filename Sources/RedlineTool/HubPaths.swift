@@ -5,14 +5,15 @@ import Foundation
 ///
 /// - `inbox/<bundle ID>/<report>/`: reports taken off phones and simulators. Each holds the
 ///   report's own files (`report.json`, `report.md`, pictures) and the hub's: `source.json`
-///   (where it came from), `claim.json` (the chat that took it), `to.json` (the chat it's
-///   addressed to), `delivery.json` (where the hub sent it), and for a chat the hub started,
-///   `new-chat-output.jsonl` and `answer.md`. A report is filled under `.incoming-<name>-<UUID>` and
-///   renamed into place whole.
+///   (where it came from), `claim.json` (the chat that took it, with `.claim.lock` held while one
+///   is taken), `to.json` (the chat it's addressed to), `delivery.json` (where the hub sent it),
+///   and for a chat the hub started, `new-chat-output.jsonl` and `answer.md`. A report is filled
+///   under `.incoming-<name>-<UUID>` and renamed into place whole.
 /// - `hub/chats/<chat>.json`: the open chats, written by their MCP copies, hooks and waits
 /// - `hub/state.json`: which reports each phone and simulator app has already given
 /// - `hub/tokens.json`: the token each app on each phone was given; secret
 /// - `hub/started-chats.json`: the chats the hub started for the phone's "New chat" picks
+/// - `hub/projects.json`: the apps chats have worked on, which the hub keeps watching
 /// - `hub/status.json`, `hub/hub.pid`, `hub/hub.log` (and `hub/hub.log.1`): for `redline status`
 ///   and the panel; the hub holds a lock on `hub.pid` while it runs
 struct HubPaths: Sendable {

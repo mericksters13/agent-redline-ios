@@ -10,12 +10,15 @@ enum NewWorktree {
     enum Failure: Error, LocalizedError {
         /// The folder isn't in a git repository.
         case notARepository(String)
+        /// Neither origin's default branch nor a local main or master can be found.
+        case noMainBranch(String)
         /// Git refused or didn't finish in time.
         case gitFailed(arguments: [String])
 
         var errorDescription: String? {
             switch self {
             case .notARepository(let folder): "\(folder) isn't in a git repository"
+            case .noMainBranch(let folder): "\(folder) has no main branch to start from"
             case .gitFailed(let arguments): "git \(arguments.joined(separator: " ")) failed"
             }
         }
@@ -23,7 +26,8 @@ enum NewWorktree {
 
     /// Makes the worktree and returns its path.
     ///
-    /// Throws when the folder isn't in a git repository or git refuses.
+    /// Throws when the folder isn't in a git repository, its main branch can't be told, or git
+    /// refuses.
     static func create(from source: String, name: String, agent: Agent) throws -> String {
         guard let top = git(["rev-parse", "--show-toplevel"], in: source),
             let common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: source)
@@ -43,15 +47,39 @@ enum NewWorktree {
             path = folder(for: agent, repository: repository, name: "\(name)-\(attempt)")
             branch = "report/\(id)-\(attempt)"
         }
+        fetchMainBranch(of: top)
+        // Never the checkout's own branch: a report's chat starts from main, not from whatever the
+        // app was built from.
+        guard let base = mainBranch(of: top)?.ref else { throw Failure.noMainBranch(top) }
         try FileManager.default.createDirectory(
             at: URL(filePath: path).deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        fetchMainBranch(of: top)
-        let base = mainBranch(of: top)?.ref ?? "HEAD"
+        try excludeWorktrees(of: agent, in: commonURL)
         let add = ["worktree", "add", "-b", branch, path, base]
         guard git(add, in: top) != nil else { throw Failure.gitFailed(arguments: add) }
         return path
+    }
+
+    /// Keeps the agent's worktrees folder inside the repository out of `git status` in the main
+    /// checkout, through the repository's own exclude file rather than any tracked file.
+    private static func excludeWorktrees(of agent: Agent, in commonDirectory: URL) throws {
+        let pattern: String
+        switch agent {
+        case .claude: pattern = "/.claude/worktrees/"
+        case .codex: return
+        }
+        let exclude = commonDirectory.appending(path: "info/exclude")
+        let existing =
+            FileManager.default.fileExists(atPath: exclude.path(percentEncoded: false))
+            ? try String(contentsOf: exclude, encoding: .utf8) : ""
+        guard !existing.split(separator: "\n").contains(Substring(pattern)) else { return }
+        try FileManager.default.createDirectory(
+            at: exclude.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let separator = existing.isEmpty || existing.hasSuffix("\n") ? "" : "\n"
+        try (existing + separator + pattern + "\n").write(to: exclude, atomically: true, encoding: .utf8)
     }
 
     /// Copies a report's files into `.redline/<report>` in a worktree, a folder git ignores there,
@@ -83,18 +111,25 @@ enum NewWorktree {
 
     /// Fetches origin's default branch, so a new worktree starts from it as it is now.
     ///
+    /// A clone can lack origin's default branch locally, so origin is asked which it is first.
     /// Best effort, and never waiting for a password: without the network, the last fetch is used.
     static func fetchMainBranch(of folder: String) {
-        guard let remote = git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: folder),
-            remote.hasPrefix("origin/")
-        else { return }
-        _ = git(["fetch", "--quiet", "origin", String(remote.dropFirst("origin/".count))], in: folder, timeout: 20)
+        func originDefault() -> String? {
+            git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: folder)
+                .flatMap { $0.hasPrefix("origin/") ? String($0.dropFirst("origin/".count)) : nil }
+        }
+        var name = originDefault()
+        if name == nil, git(["remote", "set-head", "origin", "--auto"], in: folder, timeout: 20) != nil {
+            name = originDefault()
+        }
+        guard let name else { return }
+        _ = git(["fetch", "--quiet", "origin", name], in: folder, timeout: 20)
     }
 
     /// The repository's main branch: origin's default branch, else a local main or master. `name`
     /// is what the phone shows.
     ///
-    /// Changes nothing.
+    /// Nil when none of these can be told. Changes nothing.
     static func mainBranch(of folder: String) -> (ref: String, name: String)? {
         if let remote = git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: folder),
             remote.hasPrefix("origin/")

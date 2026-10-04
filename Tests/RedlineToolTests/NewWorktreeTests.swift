@@ -35,6 +35,8 @@ struct NewWorktreeTests {
         let branch = try await runProcess("/usr/bin/git", ["-C", made, "branch", "--show-current"])
         #expect(branch.trimmingCharacters(in: .whitespacesAndNewlines) == "report/1")
         #expect(try String(contentsOfFile: made + "/App.swift", encoding: .utf8) == "one\n")
+        // The main checkout shows only its own change, not the folder the worktree is in.
+        #expect(try await runProcess("/usr/bin/git", ["-C", source, "status", "--porcelain"]) == " M App.swift\n")
         // The same name again gets a number rather than failing.
         let again = try await offPool { try NewWorktree.create(from: source, name: "report-1", agent: .claude) }
         #expect(again.hasSuffix("/report-1-2"))
@@ -54,6 +56,13 @@ struct NewWorktreeTests {
         await #expect(throws: NewWorktree.Failure.self) {
             try await offPool { try NewWorktree.create(from: notARepository, name: "x", agent: .claude) }
         }
+        // With no main branch to start from, no worktree is made from the checkout's own branch.
+        try await git("branch", "-q", "-m", "main", "trunk")
+        #expect(await offPool { NewWorktree.mainBranch(of: source) } == nil)
+        await #expect(throws: NewWorktree.Failure.self) {
+            try await offPool { try NewWorktree.create(from: source, name: "report-2", agent: .claude) }
+        }
+        try await git("branch", "-q", "-m", "trunk", "main")
 
         // The chat it started is found by the phone's pick while its worktree exists.
         try StartedChats.remember(StartedChat(chat: "s-1", folder: made, startedAt: .now), for: "N1", paths: paths)
