@@ -108,19 +108,21 @@ The snapshot at the top shows the first screen of this report. Each snapshot is 
 ```text
 UI report from Alex's iPhone · Sample Notes
 
-/Users/alex/Library/Application Support/Redline/inbox/com.example.notes/20261004-142233-0E12001C/screen-1.jpg
+/Users/alex/Library/Application Support/Redline/inbox/com.example.notes/20261004-142233-0E12001C/5E0C2A4B-7F1D-4C39-9A0E-2B6D8F41C3A7.jpg
 1. Save (Button, editor.save): The button sits under the keyboard on small phones
 2. Title (Text field, editor.title): Placeholder is hard to read in dark mode
 
-/Users/alex/Library/Application Support/Redline/inbox/com.example.notes/20261004-142233-0E12001C/note-3.jpg
-3. Image from Photos: This is how it looked in the last build
+/Users/alex/Library/Application Support/Redline/inbox/com.example.notes/20261004-142233-0E12001C/C81D3F07-52B6-4E8A-B19C-6A04D7E2F915.jpg
+3. Photo: This is how it looked in the last build
 ```
+
+Snapshot file names say nothing about what they show, so when a snapshot is an earlier state of a screen, or one part of a tall one, a line under its path says so, such as `Editor, earlier state, before the screen changed` or `Editor, part 2 of 2`.
 
 The report folder also holds:
 
 - `report.md`: a summary for the agent: the app and version, the device and iOS version, each screen's notes, and which snapshot shows each note.
 - `report.json`: the same in full: each element's frame, role, label, value, identifier and class, the bigger elements that hold it, and where its outline sits in its snapshot.
-- The snapshots: `screen-1.jpg` and so on, one per screen with every note on it outlined. A screen you scrolled while noting is stitched into one tall snapshot; one taller than about two screens is cut between rows into `screen-1-part-2.jpg` and so on. Attachments are `note-<number>.jpg`.
+- The snapshots, each named by a UUID, such as `5E0C2A4B-7F1D-4C39-9A0E-2B6D8F41C3A7.jpg`: one per screen with every note on it outlined. A screen you scrolled while noting is stitched into one tall snapshot, and one taller than about two screens is cut between rows into parts. A screen whose content changed between notes, such as a switched segment, gets a snapshot of each state, and each note is outlined on the state it was made on. Attachments are snapshots too. `report.md` and `report.json` say what each file shows.
 
 A chat that calls the MCP tool `check_messages` gets `report.md` with the snapshots attached instead.
 
@@ -187,6 +189,10 @@ There is no installer yet. These steps build Redline from source.
    ```
 
    It also gives the chat two tools, `check_messages` and `wait_for_message`, for taking reports that are waiting in the inbox.
+
+### Update
+
+Update the Mac first. After you pull a newer Redline, rebuild and install the menu bar app and the `redline` command (steps 2 and 4), then rebuild your apps against the new package. A newer hub reads reports from older apps, but an older hub may not fully read a report whose format changed: it still delivers it, without the notes in its panel and with the snapshots out of order.
 
 ## Add Redline to your iOS app
 
@@ -259,7 +265,7 @@ On a physical iPhone, iOS asks once whether the app may find devices on the loca
 - **Notes tray.** Tap the screen name in the bar to see the waiting notes. Tap one to see its snapshot and note full screen, or delete it. The draft is saved on the device, so it survives the app being killed or reinstalled by a rebuild.
 - **Screenshots and attachments.**
   - Take a screenshot as usual. A thumbnail appears beside the floating button; tap it to write a note and send. Redline captures the app's own windows at that moment, so Redline itself is never in the snapshot.
-  - In annotate mode, the capture button attaches the whole screen as it is, and the paperclip attaches images from Photos.
+  - In annotate mode, the capture button attaches the whole screen as it is, and the paperclip attaches photos.
   - Apps that already declare Photos access in their Info.plist show a grid of recent photos, and ask for access only when you tap Show recent photos. With that access, Redline also offers screenshots taken in other apps when you come back to yours. Other apps get the system photo picker, which needs no access.
   - Notes on elements and attachments go together in one report.
 - **Send to.** The row in the notes tray shows where reports go, and changes it. The picker has one tab per agent on the Mac, a New chat row ("In a new worktree from main"), and the open chats that work on this app, the one in this build's worktree first.

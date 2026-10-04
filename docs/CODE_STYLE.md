@@ -664,12 +664,12 @@ func read() async -> Data? {
 ```swift
 // Do
 func refresh() async {
-    let snapshot = await Self.loadSnapshot(paths: paths, watched: watched)
-    apply(snapshot)  // @MainActor, one update.
+    let state = await Self.loadState(paths: paths, watched: watched)
+    apply(state)  // @MainActor, one update.
 }
 
 /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
-nonisolated static func loadSnapshot(paths: HubPaths, watched: Set<String>) async -> Snapshot { ... }
+nonisolated static func loadState(paths: HubPaths, watched: Set<String>) async -> HubState { ... }
 
 // Don't
 Task.detached(priority: .userInitiated) {
@@ -802,9 +802,9 @@ private var refreshing: Task<Void, Never>?
 func refresh() {
     refreshing?.cancel()
     refreshing = Task {
-        let snapshot = await Self.loadSnapshot(paths: paths)
+        let state = await Self.loadState(paths: paths)
         guard !Task.isCancelled else { return }
-        apply(snapshot)
+        apply(state)
     }
 }
 
