@@ -20,9 +20,11 @@ enum ChatDirectory {
     /// take seconds, and the phone waits for the answer.
     private static let apps = FolderApps()
 
+    private static let warming = DispatchQueue(label: "Redline.hub.warming", qos: .utility)
+
     /// Reads the folders of every open chat ahead of time, so the first question is quick too.
     static func warm(paths: HubPaths) {
-        DispatchQueue.global(qos: .utility).async {
+        warming.async {
             for bundleID in Set(Chats.removeClosedChats(paths).flatMap(\.bundleIDs)) {
                 _ = list(bundleID: bundleID, sourceFile: nil, paths: paths)
             }

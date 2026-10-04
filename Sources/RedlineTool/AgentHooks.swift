@@ -51,7 +51,8 @@ enum AgentHooks {
     static func answer(for event: HookEvent, text: String?) -> Int32 {
         if let output = output(for: event, text: text),
            let data = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys, .withoutEscapingSlashes]) {
-            FileHandle.standardOutput.write(data + Data("\n".utf8))
+            // An agent that stopped reading gets nothing; the hook still exits cleanly.
+            try? FileHandle.standardOutput.write(contentsOf: data + Data("\n".utf8))
         }
         return 0
     }

@@ -89,7 +89,7 @@ struct MCPServerTests {
         let call: [String: Any] = ["jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": ["name": "check_messages", "arguments": [String: Any]()]]
         let content = ((server.respond(to: call)["result"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
         #expect(content.first?["type"] as? String == "text")
-        #expect(content.filter { $0["type"] as? String == "image" }.count == 2)
+        #expect(content.count(where: { $0["type"] as? String == "image" }) == 2)
         #expect(content.first { $0["type"] as? String == "image" }?["mimeType"] as? String == "image/jpeg")
 
         // Taken: a second check finds nothing.

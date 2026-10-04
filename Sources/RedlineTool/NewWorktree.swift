@@ -105,6 +105,9 @@ enum NewWorktree {
             .map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 
+    /// Where git's deadlines run.
+    private static let deadlines = DispatchQueue(label: "Redline.git.deadlines", qos: .utility)
+
     /// A command's standard output; nil when it fails or runs past `timeout`.
     private static func run(_ executable: String, arguments: [String], timeout: TimeInterval = 60) -> Data? {
         let process = Process()
@@ -119,7 +122,7 @@ enum NewWorktree {
         process.standardInput = FileHandle.nullDevice
         do { try process.run() } catch { return nil }
         let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
+        deadlines.asyncAfter(deadline: .now() + timeout, execute: deadline)
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         // Done in time: the deadline doesn't keep the process around for the rest of the timeout.
