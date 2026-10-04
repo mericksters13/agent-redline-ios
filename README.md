@@ -312,7 +312,7 @@ Click the Redline icon in the menu bar to open the panel:
 
 - **Header:** the address and port apps reach the Mac at.
 - **Devices:** paired iPhones that are ready and running simulators with a watched app, with the time of each one's last report. Paired phones that can't take reports right now are dimmed, with the reason, such as Not reachable or No watched app installed.
-- **Reports:** the 30 newest, each with its first snapshot, the device, when it arrived, the agent and chat it went to (or why it is waiting), and its first notes. Click a report to open its folder. A report viewer window, with "Open in" to jump to the chat, is being added to the panel.
+- **Reports:** the 30 newest, each with its first snapshot, the device, when it arrived, the agent and chat it went to (or why it is waiting), and its first notes. Click a report to open it in a viewer window: its pictures with the numbered outlines, and its notes beside them; click a note to bring its picture into view. **Open in Claude Code** or **Open in Codex** reopens the chat the report went to, and **Show in Finder** shows the report's folder.
 - **Open inbox** opens the inbox folder in Finder. **Quit** stops the hub.
 
 Each report also posts a Mac notification saying where it went.

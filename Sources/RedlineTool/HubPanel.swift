@@ -105,6 +105,12 @@ struct HubPanel: View {
     private var footer: some View {
         HStack {
             Button {
+                // Before the first report arrives the inbox doesn't exist yet.
+                do {
+                    try FileManager.default.createDirectory(at: model.inbox, withIntermediateDirectories: true)
+                } catch {
+                    printError("Couldn't create the inbox: \(error.localizedDescription)")
+                }
                 NSWorkspace.shared.open(model.inbox)
             } label: {
                 footerLabel("Open inbox")

@@ -191,6 +191,41 @@ struct ReportStoreTests {
         #expect(try store.loadScreens() == screens)
     }
 
+    @Test func aMissingPictureStopsTheReportAndKeepsTheDraft() throws {
+        defer { removeStore() }
+        let kept = annotation("Cut off")
+        let lost = photos("Same bug", count: 2)
+        try store.saveScreenshot(Data([1]), named: kept.screenshots[0])
+        try store.saveScreenshot(Data([1]), named: lost.screenshots[0])
+        let capture = Capture(
+            id: UUID(),
+            file: "capture.png",
+            size: CGSize(width: 402, height: 874),
+            scroll: nil,
+            elements: [],
+            group: 0
+        )
+        try store.saveScreenshot(Data([1]), named: capture.file)
+        let screens = [
+            ScreenRecord(id: UUID(), info: ScreenInfo(title: "Today", viewController: "Home"), captures: [capture])
+        ]
+        var onCapture = annotation("Too faint")
+        onCapture.screenshots = []
+        onCapture.captureID = capture.id
+        try store.saveDraft([kept, onCapture, lost])
+
+        try store.checkScreenshots(of: [kept, onCapture], screens: screens)
+        #expect(throws: ReportStore.MissingScreenshot(annotationID: lost.id)) {
+            try store.checkScreenshots(of: [kept, onCapture, lost], screens: screens)
+        }
+        // A note whose capture is no longer listed is missing its picture too.
+        #expect(throws: ReportStore.MissingScreenshot(annotationID: onCapture.id)) {
+            try store.checkScreenshots(of: [kept, onCapture], screens: [])
+        }
+        #expect(try store.loadDraft() == [kept, onCapture, lost])
+        #expect(!FileManager.default.fileExists(atPath: store.reportsDirectory.path(percentEncoded: false)))
+    }
+
     @Test func sentReportsAreListedNewestFirst() throws {
         defer { removeStore() }
         for (id, seconds) in [("older", 1_790_000_000.0), ("newer", 1_790_000_600.0)] {
@@ -386,6 +421,27 @@ struct ReportStoreTests {
         )
         #expect(try Data(contentsOf: new.hubAddressFile) == Data("new".utf8))
         #expect(!files.fileExists(atPath: old.root.path(percentEncoded: false)))
+    }
+
+    @Test func settingsUnderTheOldNameMoveOver() throws {
+        let domain = "ReportStoreSettings-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        defaults.set(true, forKey: "AgenticDebuggingHubReached")
+        defaults.set([0.2, 0.7], forKey: "AgenticDebuggingButtonPosition")
+        defaults.set(Data("old".utf8), forKey: "AgenticDebuggingDestination|com.example.app")
+        // Saved under the new name already: kept.
+        defaults.set(Data("new".utf8), forKey: "RedlineDestination|com.example.app")
+        defaults.set("other", forKey: "UnrelatedSetting")
+
+        ReportStore.moveSettingsFromOldName(in: defaults, domain: domain)
+
+        #expect(defaults.bool(forKey: "RedlineHubReached"))
+        #expect(defaults.array(forKey: "RedlineButtonPosition") as? [Double] == [0.2, 0.7])
+        #expect(defaults.data(forKey: "RedlineDestination|com.example.app") == Data("new".utf8))
+        #expect(defaults.string(forKey: "UnrelatedSetting") == "other")
+        let left = defaults.persistentDomain(forName: domain)?.keys.filter { $0.hasPrefix("AgenticDebugging") } ?? []
+        #expect(left.isEmpty)
     }
 }
 #endif

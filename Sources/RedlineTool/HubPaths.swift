@@ -34,17 +34,32 @@ struct HubPaths: Sendable {
 
     /// How the hub and the chats write their JSON files: ISO 8601 dates, pretty-printed with
     /// sorted keys, so people can read them.
+    ///
+    /// Dates keep their milliseconds: the menu bar panel orders a claim and a delivery saved in the
+    /// same second by them.
     static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(date.formatted(preciseDates))
+        }
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
     }()
 
+    /// Reads dates with or without milliseconds, so files saved before they were kept still load.
     static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let text = try container.decode(String.self)
+            if let date = try? preciseDates.parse(text) { return date }
+            if let date = try? Date.ISO8601FormatStyle().parse(text) { return date }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Not an ISO 8601 date: \(text)")
+        }
         return decoder
     }()
+
+    private static let preciseDates = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 }
 #endif

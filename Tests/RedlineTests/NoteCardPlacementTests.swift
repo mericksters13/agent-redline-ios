@@ -86,6 +86,24 @@ struct NoteCardPlacementTests {
         }
     }
 
+    @Test func aCardCappedAtTheMaxHeightFitsWholeInLandscapeWithTheKeyboardUp() {
+        // An iPhone 17 Pro in landscape: 402 pt tall, no status bar, keyboard top at 193.
+        let landscapeKeyboardTop: CGFloat = 193
+        let height = NoteCardPlacement.maxHeight(top: 0, bottom: landscapeKeyboardTop)
+        #expect(height == 177)
+        for y in stride(from: 0.0, through: 402.0, by: 10) {
+            let top = NoteCardPlacement.top(
+                element: CGRect(x: 20, y: y, width: 300, height: 44),
+                height: height,
+                reservedHeight: 266,
+                top: 0,
+                bottom: landscapeKeyboardTop
+            )
+            #expect(top >= 8)
+            #expect(top + height <= landscapeKeyboardTop - 8)
+        }
+    }
+
     @Test func aCardTallerThanTheSpaceKeepsItsTopVisible() {
         #expect(place(element(y: 300), height: 600) == statusBar + 8)
     }

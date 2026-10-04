@@ -7,6 +7,14 @@ import Foundation
 enum NoteCardPlacement {
     static let margin: CGFloat = 8
 
+    /// The tallest the card can be and still sit whole between `top` and `bottom`.
+    ///
+    /// The overlay caps the card at this height and scrolls its upper part, so Cancel and Add note
+    /// stay above the keyboard even in landscape or at large text sizes.
+    static func maxHeight(top: CGFloat, bottom: CGFloat) -> CGFloat {
+        max(bottom - top - 2 * margin, 0)
+    }
+
     /// The card's top edge, in screen points.
     /// - Parameters:
     ///   - element: the picked element's frame, or nil when editing a note from the list.
@@ -25,7 +33,7 @@ enum NoteCardPlacement {
         let maxBottom = bottom - margin
         // The card resting right on the keyboard.
         let restingTop = maxBottom - height
-        // Taller than the space left: keep its top visible.
+        // Taller than the space left, which the cap above should prevent: keep its top visible.
         guard restingTop > minTop else { return minTop }
         // Editing from the list: no element on screen, so sit on the keyboard like a composer.
         guard let element else { return restingTop }

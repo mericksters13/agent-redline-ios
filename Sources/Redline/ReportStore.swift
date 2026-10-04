@@ -22,6 +22,14 @@ import Foundation
 /// - `hub.json`: written by the Mac's hub, once, with its addresses and a token.
 /// - `delivery.json`: written by the phone after each attempt to hand reports to the Mac.
 struct ReportStore: Sendable {
+    /// A draft note whose picture is gone.
+    ///
+    /// Sending stops so the draft stays for recovery instead of producing a report that points at a
+    /// missing file.
+    struct MissingScreenshot: Error, Equatable {
+        var annotationID: UUID
+    }
+
     let root: URL
 
     static let standard: ReportStore = {
@@ -59,6 +67,22 @@ struct ReportStore: Sendable {
         try? files.removeItem(at: old.appending(path: "hub.json"))
         rmdir(old.appending(path: "reports").path(percentEncoded: false))
         rmdir(old.path(percentEncoded: false))
+    }
+
+    /// Moves the settings an earlier version saved under its old prefix, AgenticDebugging, to
+    /// Redline's, so a report waiting to reach the Mac is still offered again, and the button stays
+    /// where it was put.
+    ///
+    /// Only what the app saved moves, not launch arguments, and a setting already saved under the
+    /// new name is kept.
+    static func moveSettingsFromOldName(in defaults: UserDefaults, domain: String) {
+        let oldPrefix = "AgenticDebugging"
+        guard let saved = defaults.persistentDomain(forName: domain) else { return }
+        for (key, value) in saved where key.hasPrefix(oldPrefix) {
+            let renamed = "Redline" + key.dropFirst(oldPrefix.count)
+            if saved[renamed] == nil { defaults.set(value, forKey: renamed) }
+            defaults.removeObject(forKey: key)
+        }
     }
 
     var draftDirectory: URL { root.appending(path: "draft", directoryHint: .isDirectory) }
@@ -126,6 +150,31 @@ struct ReportStore: Sendable {
 
     func deleteScreenshot(named name: String) {
         try? FileManager.default.removeItem(at: draftDirectory.appending(path: name))
+    }
+
+    /// Throws `MissingScreenshot` for the first note whose picture isn't on disk: a capture that's
+    /// gone or no longer listed, or an attached image.
+    ///
+    /// Checked before a report takes the draft, so the draft stays for the note to be deleted and
+    /// the rest sent.
+    func checkScreenshots(of annotations: [Annotation], screens: [ScreenRecord]) throws {
+        let files = FileManager.default
+        let captures = Dictionary(
+            screens.flatMap(\.captures).map { ($0.id, $0.file) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for annotation in annotations {
+            var needed = annotation.screenshots
+            if let captureID = annotation.captureID {
+                guard let file = captures[captureID] else { throw MissingScreenshot(annotationID: annotation.id) }
+                needed.append(file)
+            }
+            if needed.contains(where: {
+                !files.fileExists(atPath: draftDirectory.appending(path: $0).path(percentEncoded: false))
+            }) {
+                throw MissingScreenshot(annotationID: annotation.id)
+            }
+        }
     }
 
     /// Starts a report: moves the whole draft into a new report folder, so new notes go into a

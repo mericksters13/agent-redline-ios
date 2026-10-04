@@ -91,25 +91,39 @@ case "app":
     // it was told to watch on the command line stay watched.
     var keptApps: [String] = []
     if let running = HubProcess.running(paths), running != getpid() {
-        do {
-            let status = try HubPaths.decoder.decode(HubStatus.self, from: Data(contentsOf: paths.status))
-            if status.pid == running { keptApps = status.fixedApps ?? [] }
-        } catch {
-            printError(
-                "Couldn't read the running hub's status; its command-line apps aren't kept: \(error.localizedDescription)"
-            )
+        // A hub saves its status, with those apps, as it starts; give one starting now a moment.
+        var status = savedStatus(paths)
+        var tries = 0
+        while status?.pid != running, HubProcess.running(paths) == running, tries < 50 {
+            usleep(100_000)
+            status = savedStatus(paths)
+            tries += 1
         }
-        kill(running, SIGTERM)
-        for _ in 0..<20 where HubProcess.running(paths) != nil { usleep(100_000) }
+        if HubProcess.running(paths) == running {
+            guard let status, status.pid == running else {
+                failToStart(
+                    "A hub is already running (pid \(running)) and didn't say which apps it watches, so it was left running."
+                )
+            }
+            keptApps = status.fixedApps ?? []
+            // Stopping can wait for a simulator scan to finish, and the PID file stays locked until it
+            // has. A hub that hasn't stopped in 30 seconds is ended, which frees the lock at once.
+            kill(running, SIGTERM)
+            tries = 0
+            while HubProcess.running(paths) == running {
+                if tries == 300 { kill(running, SIGKILL) }
+                if tries == 350 { break }
+                usleep(100_000)
+                tries += 1
+            }
+        }
     }
     guard let devicectl = Devicectl.locate() else {
-        print("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
-        exit(1)
+        failToStart("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
     }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: keptApps)
     guard hub.start() else {
-        print("Another hub is running and didn't stop. Quit it, then open Redline again.")
-        exit(1)
+        failToStart("Another hub is running and didn't stop. Quit it, then open Redline again.")
     }
     stopOnSignals { hub.stop() }
     HubAppContext.hub = hub
@@ -269,6 +283,39 @@ case "status":
 
 default:
     print(usage, terminator: "")
+}
+
+/// The running hub's saved status, nil until it has saved one.
+///
+/// A status that can't be read counts as not saved yet: a hub writes it whole as it starts.
+@MainActor
+func savedStatus(_ paths: HubPaths) -> HubStatus? {
+    do {
+        return try HubPaths.decoder.decode(HubStatus.self, from: Data(contentsOf: paths.status))
+    } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+        return nil
+    } catch {
+        printError("Couldn't read the running hub's status: \(error.localizedDescription)")
+        return nil
+    }
+}
+
+/// Says why the menu bar app can't start, then exits.
+///
+/// Opened from Finder or by a chat, the app has no terminal to print to, so it shows the reason in
+/// an alert too.
+@MainActor
+func failToStart(_ reason: String) -> Never {
+    printError(reason)
+    if Bundle.main.bundleURL.pathExtension == "app" {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        NSApplication.shared.activate()
+        let alert = NSAlert()
+        alert.messageText = "Redline couldn't start"
+        alert.informativeText = reason
+        alert.runModal()
+    }
+    exit(1)
 }
 
 /// Writes a line to standard error.
