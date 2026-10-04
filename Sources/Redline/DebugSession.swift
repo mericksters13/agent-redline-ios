@@ -157,6 +157,7 @@ final class DebugSession {
         guard window == nil else { return }
         self.sourceFile = sourceFile
         destination = savedDestination()
+        refreshHubAddress()
         AccessibilityTree.enableAutomation()
 
         let window = OverlayWindow(windowScene: scene)
@@ -485,8 +486,13 @@ final class DebugSession {
         store.sentReports()
     }
 
-    /// The last attempt to hand reports to the Mac.
-    func lastDelivery() -> Delivery? {
+    /// The last attempt to hand reports to the Mac, read off the main thread.
+    func lastDelivery() async -> Delivery? {
+        await Self.lastDelivery(from: store)
+    }
+
+    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    nonisolated private static func lastDelivery(from store: ReportStore) async -> Delivery? {
         store.lastDelivery()
     }
 
@@ -521,6 +527,7 @@ final class DebugSession {
         case .picking, .idle:
             guard !annotations.isEmpty else { return }
             trayReturnMode = mode
+            refreshHubAddress()
             setMode(.tray)
         case .noting, .viewer, .attaching, .reports, .destination:
             break
@@ -599,6 +606,7 @@ final class DebugSession {
         })
         observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
+                self?.refreshHubAddress()
                 self?.offerRecentScreenshot()
                 self?.offerUndeliveredReports()
             }
@@ -650,52 +658,13 @@ final class DebugSession {
 
     // MARK: - Handing reports to the Mac
 
-    /// Set once a report has reached the Mac's hub, and so iOS has allowed local network access.
-    nonisolated static let hubReachedKey = "RedlineHubReached"
-
-    /// Sends every report the Mac hasn't confirmed to its hub, notes the ones it now has, and
-    /// records how it went. Nil when there's nothing to send.
-    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
-    nonisolated static func deliverReports(from store: ReportStore, patience: TimeInterval) async -> HubLink.Outcome? {
-        guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
-        let reports = store.undeliveredReports()
-        guard !reports.isEmpty else { return nil }
-        guard let address = store.hubAddress() else {
-            store.recordDelivery(.noHub)
-            return .noHub
-        }
-        // In a simulator the hub takes reports from the app's folder as they're saved.
-        if address.uploads == false {
-            store.markDelivered(reports.map(\.id))
-            store.recordDelivery(.delivered)
-            return .delivered
-        }
-        let result = await HubLink.deliver(reports, bundleID: bundleID, address: address, files: { store.reportFiles($0) }, patience: patience)
-        store.markDelivered(result.delivered)
-        store.recordDelivery(result.outcome)
-        // The hub answered, so iOS has allowed local network access.
-        if result.outcome != .unreachable { UserDefaults.standard.set(true, forKey: hubReachedKey) }
-        return result.outcome
-    }
-
-    /// What the toast after Send says, so a report that didn't reach the Mac says why.
-    nonisolated static func toast(for outcome: HubLink.Outcome?, notes: String, to destination: String? = nil) -> String {
-        switch outcome {
-        case .delivered: "Sent \(notes) to \(destination ?? "the Mac")"
-        case .noHub, nil: "Saved \(notes) on this iPhone"
-        case .unreachable: "Saved on this iPhone. Couldn't reach the Mac"
-        case .refused: "Saved on this iPhone. The Mac didn't accept it"
-        case .interrupted: "Saved on this iPhone. Sending to the Mac stopped"
-        }
-    }
-
     /// When the app comes back, offers what the Mac hasn't confirmed, such as a report sent from
     /// another network. Only after a report has reached the hub once, so iOS's local network
     /// question is never asked at launch.
     private func offerUndeliveredReports() {
-        guard UserDefaults.standard.bool(forKey: Self.hubReachedKey) else { return }
+        guard UserDefaults.standard.bool(forKey: ReportDelivery.hubReachedKey) else { return }
         Task(priority: .utility) { [store] in
-            _ = await Self.deliverReports(from: store, patience: 8)
+            _ = await ReportDelivery.deliver(from: store, bundleID: Bundle.main.bundleIdentifier, patience: 8)
         }
     }
 
@@ -737,8 +706,17 @@ final class DebugSession {
     private(set) var sendsAfterPicking = false
     private var modeBeforePicking: Mode = .picking
 
+    /// The hub's address, read from disk at set points (install, activation, opening the notes,
+    /// Send and the picker) rather than on every redraw. The Mac writes it once, at setup.
+    private(set) var hubAddress: HubLink.Address?
+
     /// The hub has set this app up, so there are chats to pick from.
-    var canPickDestination: Bool { store.hubAddress() != nil }
+    var canPickDestination: Bool { hubAddress != nil }
+
+    private func refreshHubAddress() {
+        let address = store.hubAddress()
+        if address != hubAddress { hubAddress = address }
+    }
 
     private var destinationKey: String {
         "RedlineDestination|" + (sourceFile ?? Bundle.main.bundleIdentifier ?? "")
@@ -770,17 +748,17 @@ final class DebugSession {
         pickerAgent = destination?.agent
         chatList = .loading
         setMode(.destination)
-        guard let address = store.hubAddress(), let bundleID = Bundle.main.bundleIdentifier else {
+        refreshHubAddress()
+        guard let address = hubAddress, let bundleID = Bundle.main.bundleIdentifier else {
             chatList = .unavailable
             return
         }
-        // The first time, iOS asks about local network access before the hub can answer.
-        let patience: TimeInterval = UserDefaults.standard.bool(forKey: Self.hubReachedKey) ? 8 : 60
+        let patience = ReportDelivery.patience
         let sourceFile = sourceFile
         chatsRequest = Task {
             let list = await HubLink.chats(bundleID: bundleID, address: address, sourceFile: sourceFile, patience: patience)
             // The hub answered, so iOS has allowed local network access, even if this picker is gone.
-            if list != nil { UserDefaults.standard.set(true, forKey: Self.hubReachedKey) }
+            if list != nil { UserDefaults.standard.set(true, forKey: ReportDelivery.hubReachedKey) }
             guard !Task.isCancelled, mode == .destination else { return }
             guard let list else {
                 chatList = .unavailable
@@ -842,6 +820,7 @@ final class DebugSession {
     func send(pickingFirst: Bool = true) {
         // One send at a time: a second tap while the first waits is ignored.
         guard !annotations.isEmpty, sending == nil else { return }
+        refreshHubAddress()
         if pickingFirst, destination == nil, canPickDestination {
             openDestinations(thenSend: true)
             return
@@ -897,7 +876,7 @@ final class DebugSession {
         Task(priority: .userInitiated) {
             do {
                 let outcome = try await Self.finishAndDeliver(input, folder: started.folder, store: store, logger: logger)
-                show(toast: Self.toast(for: outcome, notes: notes, to: destination?.title))
+                show(toast: ReportDelivery.toast(for: outcome, notes: notes, to: destination?.title))
             } catch {
                 logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
                 show(toast: "Couldn't save the report")
@@ -914,9 +893,7 @@ final class DebugSession {
         let report = try ReportBuilder.build(input)
         try store.finishReport(report, in: folder)
         logger.notice("Report saved at \(folder.path, privacy: .public)")
-        // The first time, iOS asks about local network access before the hub can answer.
-        let patience: TimeInterval = UserDefaults.standard.bool(forKey: hubReachedKey) ? 8 : 60
-        return await deliverReports(from: store, patience: patience)
+        return await ReportDelivery.deliver(from: store, bundleID: Bundle.main.bundleIdentifier, patience: ReportDelivery.patience)
     }
 
     // MARK: - One picture per screen

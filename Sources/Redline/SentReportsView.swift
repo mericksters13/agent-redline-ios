@@ -12,6 +12,8 @@ struct SentReportsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Nil while the list loads.
     @State private var reports: [SentReport]?
+    /// The last attempt to hand reports to the Mac, read with the list.
+    @State private var lastDelivery: Delivery?
     @State private var open: SentReport?
 
     private var size: CGSize { session.screenSize }
@@ -20,7 +22,7 @@ struct SentReportsView: View {
         ZStack(alignment: .top) {
             Color.black
             if let open {
-                ReportDetail(sent: open, session: session) { show(nil) }
+                ReportDetail(sent: open, session: session, lastDelivery: lastDelivery) { show(nil) }
                     .transition(reduceMotion ? .opacity : .move(edge: .trailing))
             } else {
                 list
@@ -31,7 +33,9 @@ struct SentReportsView: View {
         .ignoresSafeArea()
         .task {
             let loaded = await session.sentReports()
+            let last = await session.lastDelivery()
             guard !Task.isCancelled else { return }
+            lastDelivery = last
             reports = loaded
         }
     }
@@ -136,6 +140,7 @@ struct SentReportsView: View {
 private struct ReportDetail: View {
     let sent: SentReport
     let session: DebugSession
+    let lastDelivery: Delivery?
     let back: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -173,7 +178,7 @@ private struct ReportDetail: View {
     /// Whether the Mac has it, and if not, why, from the last attempt to send.
     private var delivery: String {
         guard !sent.delivered else { return "On the Mac" }
-        guard let last = session.lastDelivery() else { return "Not on the Mac yet" }
+        guard let last = lastDelivery else { return "Not on the Mac yet" }
         let when = SentReportsView.time(last.at)
         return switch last.outcome {
         case .noHub: "Not on the Mac yet: no Mac has set up this app"
