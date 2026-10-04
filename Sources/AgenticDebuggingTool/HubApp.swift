@@ -109,10 +109,9 @@ final class HubWindowModel {
         let status = hub?.statusSnapshot() ?? Self.savedStatus(paths)
         let watchedSimulators = hub?.watchedSimulators() ?? []
         Task.detached(priority: .userInitiated) {
-            let reports = HubWindowModel.readReports(paths: paths)
+            let (reports, last) = HubWindowModel.readReports(paths: paths)
             let booted = HubWindowModel.bootedSimulators().filter { watchedSimulators.contains($0.udid) }
             await MainActor.run {
-                let last = Dictionary(reports.map { ($0.deviceID, $0.row.receivedAt) }, uniquingKeysWith: max)
                 let phones = (status?.phones ?? []).map {
                     DeviceRow(id: $0.udid, name: $0.name, kind: $0.model ?? "iPhone", state: HubWindowModel.phoneState($0.state),
                               lastReport: last[$0.udid], active: $0.state.hasPrefix("Ready"))
@@ -120,7 +119,8 @@ final class HubWindowModel {
                 let simulators = booted.map { DeviceRow(id: $0.udid, name: $0.name, kind: "Simulator", state: "Running", lastReport: last[$0.udid]) }
                 // Ready phones and running simulators first, then paired phones that can't take reports now.
                 self.devices = phones.filter(\.active) + simulators + phones.filter { !$0.active }
-                self.reports = reports.map(\.row)
+                self.reports = reports
+                ThumbnailCache.keep(Set(reports.compactMap(\.thumbnail)))
                 if let status { self.address = "\(status.hosts.first ?? "") · port \(status.port)" }
             }
         }
@@ -139,10 +139,11 @@ final class HubWindowModel {
         (try? Data(contentsOf: paths.status)).flatMap { try? Chats.decoder.decode(HubStatus.self, from: $0) }
     }
 
-    /// The newest reports in the inbox, with where each went.
-    nonisolated static func readReports(paths: HubPaths, limit: Int = 30) -> [(deviceID: String, row: ReportRow)] {
+    /// The newest reports in the inbox, with where each went, and when each device last sent
+    /// one, from every report in the inbox rather than only those shown.
+    nonisolated static func readReports(paths: HubPaths, limit: Int = 30) -> (rows: [ReportRow], lastReport: [String: Date]) {
         let files = FileManager.default
-        var found: [(String, ReportRow)] = []
+        var found: [(device: String, row: ReportRow)] = []
         for app in (try? files.contentsOfDirectory(atPath: paths.inbox.path)) ?? [] where !app.hasPrefix(".") {
             let appFolder = paths.inbox.appending(path: app, directoryHint: .isDirectory)
             for name in (try? files.contentsOfDirectory(atPath: appFolder.path)) ?? [] where !name.hasPrefix(".") {
@@ -156,18 +157,22 @@ final class HubWindowModel {
                                                        thumbnail: ReportContent.pictures(in: folder).first, notes: notes(in: folder))))
             }
         }
-        return Array(found.sorted { $0.1.receivedAt > $1.1.receivedAt }.prefix(limit))
+        let lastReport = Dictionary(found.map { ($0.device, $0.row.receivedAt) }, uniquingKeysWith: max)
+        let rows = found.map(\.row).sorted { $0.receivedAt > $1.receivedAt }.prefix(limit)
+        return (Array(rows), lastReport)
     }
 
     /// The agent and chat a report went to: what the hub saved when it delivered it, or the
-    /// chat that took it through MCP or a hook.
+    /// chat that took it through MCP or a hook. A report the hub left waiting, or set to go with
+    /// a chat's next message, shows the chat that took it once one has.
     nonisolated static func destination(of folder: URL) -> (agent: String, chat: String, waiting: Bool) {
-        if let delivery = ReportDelivery.load(from: folder) {
+        let delivery = ReportDelivery.load(from: folder)
+        let claim = (try? Data(contentsOf: folder.appending(path: InboxQueue.claimFile))).flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
+        if let delivery, !(delivery.pending && claim.map { $0.claimedAt > delivery.at } == true) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             return (agent, delivery.title, delivery.kind == .waiting)
         }
-        if let data = try? Data(contentsOf: folder.appending(path: InboxQueue.claimFile)),
-           let claim = try? Chats.decoder.decode(Claim.self, from: data) {
+        if let claim {
             let agent = Agent(rawValue: claim.agent)?.name ?? claim.agent
             return (agent, chatTitle(claim), false)
         }
@@ -401,9 +406,16 @@ struct Thumbnail: View {
     }
 }
 
+/// Thumbnails of the reports the panel lists, and no others: the hub runs for days, and
+/// reports that leave the list let go of theirs.
 @MainActor
 enum ThumbnailCache {
     private static var images: [URL: NSImage] = [:]
+
+    /// Drops the thumbnails of reports no longer listed.
+    static func keep(_ urls: Set<URL>) {
+        images = images.filter { urls.contains($0.key) }
+    }
 
     static func image(for url: URL) -> NSImage? {
         if let image = images[url] { return image }

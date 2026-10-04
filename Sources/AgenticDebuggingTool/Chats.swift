@@ -222,6 +222,9 @@ struct ReportDelivery: Codable, Equatable, Sendable {
         self.kind = kind
     }
 
+    /// Not in a chat yet: a chat that takes the report later records a claim.
+    var pending: Bool { kind == .waiting || kind == .nextMessage }
+
     static let file = "delivery.json"
 
     static func save(_ delivery: ReportDelivery, in report: URL) {

@@ -49,6 +49,8 @@ struct HubStatus: Codable, Sendable {
     var pid: Int32
     var startedAt: Date
     var apps: [String]
+    /// The apps given on the command line, which a hub taking over keeps watching.
+    var fixedApps: [String]? = nil
     /// Where apps reach the hub.
     var hosts: [String]
     var port: UInt16
@@ -403,7 +405,7 @@ final class Hub: @unchecked Sendable {
     func statusSnapshot() -> HubStatus {
         let containers = simulators?.containerCount ?? 0
         return lock.withLock {
-            HubStatus(pid: getpid(), startedAt: startedAt, apps: currentApps, hosts: hosts, port: HubListener.port,
+            HubStatus(pid: getpid(), startedAt: startedAt, apps: currentApps, fixedApps: fixedApps, hosts: hosts, port: HubListener.port,
                       phones: phoneStates.values.sorted { $0.name < $1.name }, simulatorContainers: containers)
         }
     }

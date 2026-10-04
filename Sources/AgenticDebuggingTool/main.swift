@@ -64,8 +64,12 @@ if arguments.isEmpty, Bundle.main.bundleURL.pathExtension == "app" { arguments =
 
 switch arguments.first {
 case "app":
-    // The menu bar app is the hub: one process. A hub already running steps aside.
+    // The menu bar app is the hub: one process. A hub already running steps aside, and the
+    // apps it was told to watch on the command line stay watched. Only a process holding the
+    // PID file's lock counts as running, so a pid left behind and reused is never signaled.
+    var keptApps: [String] = []
     if let running = HubProcess.running(paths), running != getpid() {
+        if let status = HubWindowModel.savedStatus(paths), status.pid == running { keptApps = status.fixedApps ?? [] }
         kill(running, SIGTERM)
         for _ in 0..<20 where HubProcess.running(paths) != nil { usleep(100_000) }
     }
@@ -73,9 +77,16 @@ case "app":
         print("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
         exit(1)
     }
-    let hub = Hub(paths: paths, devicectl: devicectl, apps: [])
-    hub.start()
+    let hub = Hub(paths: paths, devicectl: devicectl, apps: keptApps)
+    guard hub.start() else {
+        print("A hub is already running (pid \(HubProcess.running(paths).map(String.init) ?? "unknown")) and didn't stop.")
+        exit(1)
+    }
     stopOnSignals { hub.stop() }
+    // Quit in the panel ends the app without a signal: let go of the PID file then too.
+    _ = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { _ in
+        hub.stop()
+    }
     HubAppContext.hub = hub
     NSApplication.shared.setActivationPolicy(.accessory)
     HubMenuBarApp.main()

@@ -106,6 +106,11 @@ struct HubTests {
         #expect(called().count == 4)
     }
 
+    /// The menu bar app taking over from this hub reads these and keeps watching them.
+    @Test func theStatusNamesTheAppsGivenOnTheCommandLine() throws {
+        #expect(try hub().statusSnapshot().fixedApps == [app])
+    }
+
     @Test func aReportArrivingTwiceAtOnceIsFiledOnce() throws {
         let hub = try hub()
         let source = ReportSource(kind: .phone, device: phone, deviceName: "Mark iPhone", bundleID: app, reportID: "20261004-031600", receivedAt: Date())
