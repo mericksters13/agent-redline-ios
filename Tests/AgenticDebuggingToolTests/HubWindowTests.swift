@@ -116,6 +116,40 @@ struct HubWindowTests {
         #expect(destination.waiting)
     }
 
+    @Test func aWaitSavedAfterAChatTookTheReportDoesntHideIt() throws {
+        // A chat whose wait woke when the report was filed took it before the hub decided.
+        let taken = try report("20261004-140000", at: Date())
+        try Chats.coder.encode(Claim(chat: "claude-s-2", agent: "claude", folder: "/repo/wt", claimedAt: Date()))
+            .write(to: taken.appending(path: InboxQueue.claimFile))
+        ReportDelivery.save(.init(agent: nil, chat: nil, title: "2 chats work in wt; pick one on the phone", kind: .waiting), in: taken)
+        ReportDelivery.save(.init(agent: .cursor, chat: "c-1", title: "Cursor chat", kind: .nextMessage), in: taken)
+        #expect(ReportDelivery.load(from: taken) == nil)
+        let destination = HubWindowModel.destination(of: taken)
+        #expect(destination.chat == "wt")
+        #expect(!destination.waiting)
+
+        // A hand-over this process claimed and couldn't finish still says why the report waits.
+        let failed = try report("20261004-141000", at: Date())
+        let chat = ChatRecord(id: "claude-s-3", agent: "claude", folder: "/repo/wt", bundleIDs: ["com.example.app"], pid: getpid(),
+                              registeredAt: Date(), lastActiveAt: Date())
+        let inbox = try #require(InboxQueue.reports(for: ["com.example.app"], paths: paths).first { $0.folder == failed })
+        #expect(InboxQueue.claim(inbox, for: chat))
+        ReportDelivery.save(.init(agent: .claude, chat: "s-3", title: "wt didn't take it", kind: .waiting), in: failed)
+        InboxQueue.release(inbox)
+        #expect(HubWindowModel.destination(of: failed).chat == "wt didn't take it")
+        #expect(HubWindowModel.destination(of: failed).waiting)
+    }
+
+    @Test func theHeaderSaysWhereAppsReachTheHubOnlyWhileItCan() {
+        var status = HubStatus(pid: 1, startedAt: Date(), apps: [], hosts: ["192.168.1.20", "mac.local"], port: 8765, phones: [],
+                               simulatorContainers: 0)
+        #expect(HubWindowModel.reach(nil) == "Starting")
+        #expect(HubWindowModel.reach(status) == "Apps reach it at 192.168.1.20 · port 8765")
+        // The Mac left its network: the old address is gone.
+        status.hosts = []
+        #expect(HubWindowModel.reach(status) == "Not on a network, so apps can't reach it")
+    }
+
     @Test func phonesSayWhyTheyCantTakeReports() {
         #expect(HubWindowModel.phoneState("Ready for com.example.app") == "Ready")
         #expect(HubWindowModel.phoneState("Not reachable, trying again in 30 s or when a phone wakes") == "Not reachable")

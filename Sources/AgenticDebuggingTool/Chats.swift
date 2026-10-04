@@ -251,22 +251,43 @@ enum InboxQueue {
         let claim = Claim(chat: chat.id, agent: chat.agent, folder: chat.folder, claimedAt: Date(), handingOverIn: getpid())
         guard let data = try? Chats.coder.encode(claim) else { return false }
         // One process at a time decides who takes the report, so two can't both replace the
-        // same interrupted claim. The lock is released when the descriptor closes.
-        let lock = open(report.folder.appending(path: ".claim.lock").path, O_RDWR | O_CREAT, 0o600)
-        guard lock >= 0 else { return false }
+        // same interrupted claim.
+        return withClaimLock(report.folder) {
+            let file = report.folder.appending(path: claimFile)
+            if FileManager.default.fileExists(atPath: file.path) {
+                // A claim that can't be read was cut off mid-write, which only an interrupted process leaves.
+                if let existing = (try? Data(contentsOf: file)).flatMap({ try? Chats.decoder.decode(Claim.self, from: $0) }),
+                   !existing.isInterrupted { return false }
+                try? FileManager.default.removeItem(at: file)
+            }
+            let descriptor = open(file.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+            guard descriptor >= 0 else { return false }
+            defer { close(descriptor) }
+            return data.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) } == data.count
+        } ?? false
+    }
+
+    /// Runs `body` unless a chat holds the report: a claim that wasn't interrupted, other than
+    /// one this process is still handing over. Holds the lock claims take meanwhile, so a chat
+    /// can't take the report while `body` runs. False when a chat holds it or the lock failed.
+    @discardableResult
+    static func unlessTaken(_ report: URL, _ body: () -> Void) -> Bool {
+        withClaimLock(report) {
+            let claim = (try? Data(contentsOf: report.appending(path: claimFile))).flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
+            if let claim, !claim.isInterrupted, claim.handingOverIn != getpid() { return false }
+            body()
+            return true
+        } ?? false
+    }
+
+    /// Runs `body` while this process alone decides who takes the report. Nil when the lock
+    /// can't be taken. The lock is released when the descriptor closes.
+    private static func withClaimLock<T>(_ report: URL, _ body: () -> T) -> T? {
+        let lock = open(report.appending(path: ".claim.lock").path, O_RDWR | O_CREAT, 0o600)
+        guard lock >= 0 else { return nil }
         defer { close(lock) }
-        guard flock(lock, LOCK_EX) == 0 else { return false }
-        let file = report.folder.appending(path: claimFile)
-        if FileManager.default.fileExists(atPath: file.path) {
-            // A claim that can't be read was cut off mid-write, which only an interrupted process leaves.
-            if let existing = (try? Data(contentsOf: file)).flatMap({ try? Chats.decoder.decode(Claim.self, from: $0) }),
-               !existing.isInterrupted { return false }
-            try? FileManager.default.removeItem(at: file)
-        }
-        let descriptor = open(file.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
-        guard descriptor >= 0 else { return false }
-        defer { close(descriptor) }
-        return data.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) } == data.count
+        guard flock(lock, LOCK_EX) == 0 else { return nil }
+        return body()
     }
 
     /// Notes that the chat has a report this process claimed, so the claim stands for good.
@@ -315,8 +336,13 @@ struct ReportDelivery: Codable, Equatable, Sendable {
 
     static let file = "delivery.json"
 
+    /// Saves where the report went. One not in a chat yet is saved only while no chat holds
+    /// the report, and no chat can take it meanwhile: a chat that took it first, such as one
+    /// whose wait woke when the report was filed, keeps showing, and a chat that takes it later
+    /// is always newer than this.
     static func save(_ delivery: ReportDelivery, in report: URL) {
-        try? Chats.coder.encode(delivery).write(to: report.appending(path: file), options: .atomic)
+        let write = { _ = try? Chats.coder.encode(delivery).write(to: report.appending(path: file), options: .atomic) }
+        if delivery.pending { InboxQueue.unlessTaken(report, write) } else { write() }
     }
 
     static func load(from report: URL) -> ReportDelivery? {

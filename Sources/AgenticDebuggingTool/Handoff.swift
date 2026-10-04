@@ -353,7 +353,8 @@ final class Handoff: @unchecked Sendable {
     }
 
     /// The report stays in the inbox for a chat to take later; the panel shows why. Saved before
-    /// a claim is released, so a chat that takes the report next is always newer than this.
+    /// a claim is released, so a chat that takes the report next is always newer than this, and
+    /// not saved when a chat already took it, such as one whose wait woke when it was filed.
     private static func leaveWaiting(_ report: InboxReport, agent: Agent?, chat: String?, because reason: String) {
         ReportDelivery.save(.init(agent: agent, chat: chat, title: reason, kind: .waiting), in: report.folder)
     }

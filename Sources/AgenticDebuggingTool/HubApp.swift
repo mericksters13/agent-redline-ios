@@ -82,7 +82,8 @@ final class HubWindowModel {
 
     private(set) var devices: [DeviceRow] = []
     private(set) var reports: [ReportRow] = []
-    private(set) var address = ""
+    /// Where apps reach the hub, as the panel's header says it.
+    private(set) var address = HubWindowModel.reach(nil)
     private let hub: Hub?
     private var timer: Timer?
     /// True while a refresh is reading the inbox and simulators. A slow `simctl` makes the timer
@@ -127,9 +128,17 @@ final class HubWindowModel {
                 self.devices = phones.filter(\.active) + simulators + phones.filter { !$0.active }
                 self.reports = reports
                 ThumbnailCache.keep(Set(reports.compactMap(\.thumbnail)))
-                if let status, let host = status.hosts.first { self.address = "\(host) · port \(status.port)" }
+                self.address = HubWindowModel.reach(status)
             }
         }
+    }
+
+    /// Where apps reach the hub, from its latest status: none while it starts, and none once
+    /// the Mac leaves its networks, so the panel never shows an address apps can't use.
+    nonisolated static func reach(_ status: HubStatus?) -> String {
+        guard let status else { return "Starting" }
+        guard let host = status.hosts.first else { return "Not on a network, so apps can't reach it" }
+        return "Apps reach it at \(host) · port \(status.port)"
     }
 
     /// A phone's state as the panel shows it, short.
@@ -310,7 +319,7 @@ struct HubPanel: View {
             Circle().fill(Color.white).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Agentic Debugging").font(.headline)
-                Text(model.address.isEmpty ? "Starting" : "Apps reach it at \(model.address)")
+                Text(model.address)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
