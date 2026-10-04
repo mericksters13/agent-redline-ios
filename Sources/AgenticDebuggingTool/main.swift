@@ -126,6 +126,11 @@ case "hook":
 case "setup", "remove":
     let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
     let adding = arguments.first == "setup"
+    // Before anything else: new Claude Code chats need the claude command signed in.
+    if adding, AgentSettings.isPresent(.claude) || AgentCommand.hasClaudeApp {
+        guard ClaudeCLI.prepare() else { exit(1) }
+        print("Claude Code: the claude command is signed in and ready to start new chats.")
+    }
     var failed = false
     for agent in Agent.allCases {
         guard AgentSettings.isPresent(agent) else {

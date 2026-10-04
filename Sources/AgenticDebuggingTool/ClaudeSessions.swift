@@ -95,6 +95,41 @@ enum ClaudeCLI {
         return ready
     }
 
+    /// For setup, before anything else: the claude command installed, new enough for the desktop
+    /// app, and signed in, running `claude update` and `claude auth login` in this terminal when
+    /// needed. False when it still isn't ready, with what to do printed.
+    static func prepare() -> Bool {
+        guard let claude = AgentCommand.locate(.claude) else {
+            print("The claude command isn't installed. It starts new Claude Code chats for reports. Install it, then run setup again:")
+            print("  curl -fsSL https://claude.ai/install.sh | bash")
+            return false
+        }
+        let version = output(claude, ["--version"]).flatMap { version(in: $0) } ?? []
+        if AgentCommand.hasClaudeApp, version.lexicographicallyPrecedes(desktopVersion) {
+            print("Updating the claude command: opening new chats in the Claude app needs \(desktopVersion.map(String.init).joined(separator: ".")) or later.")
+            _ = interactive(claude, ["update"])
+        }
+        if output(claude, ["auth", "status"]) == nil {
+            print("Sign in the claude command first: it starts new Claude Code chats for reports, and keeps its own sign-in, separate from the Claude app's.")
+            guard interactive(claude, ["auth", "login"]), output(claude, ["auth", "status"]) != nil else {
+                print("The claude command still isn't signed in. Setup stopped; run it again after claude auth login.")
+                return false
+            }
+        }
+        lock.withLock { checked = nil }
+        return ready()
+    }
+
+    /// Runs the command in this terminal, so the user can answer it. True when it succeeds.
+    private static func interactive(_ executable: URL, _ arguments: [String]) -> Bool {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = arguments
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+
     /// "2.1.289 (Claude Code)" as [2, 1, 289].
     static func version(in text: String) -> [Int]? {
         let numbers = text.split(separator: " ").first?.split(separator: ".").compactMap { Int($0) } ?? []

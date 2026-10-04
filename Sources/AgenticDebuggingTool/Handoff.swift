@@ -129,7 +129,10 @@ final class Handoff: @unchecked Sendable {
             hub.log("The Claude Code chat for report \(source.reportID) is closed")
             // Continued where it left off, then reopened in the desktop app.
             if let worktree, ClaudeCLI.ready() {
-                startChat(.claude, in: worktree, for: report, resuming: id)
+                let chat = ChatRecord(id: "claude-\(id)", agent: Agent.claude.rawValue, folder: worktree, bundleIDs: [source.bundleID],
+                                      pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
+                guard InboxQueue.claim(report, for: chat) else { return }
+                openClaude(id, in: worktree, thenSend: AgentHooks.reportPrompt(ReportContent.text(for: report)), for: report)
             } else if worktree != nil {
                 waitForClaudeSignIn(report)
             }
@@ -219,6 +222,7 @@ final class Handoff: @unchecked Sendable {
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         process.currentDirectoryURL = URL(fileURLWithPath: folder)
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try? process.run()
@@ -231,6 +235,37 @@ final class Handoff: @unchecked Sendable {
         open.arguments = [link]
         try? open.run()
         open.waitUntilExit()
+    }
+
+    /// Opens a Claude Code chat the claude command made: in the desktop app with
+    /// `claude --desktop --resume`, or in a terminal without the app. Once the chat is open, sends
+    /// it the report through its socket, so the user sees it start. If the chat doesn't open in
+    /// time, the report goes in with the claude command instead.
+    private func openClaude(_ id: String, in folder: String, thenSend text: String, for report: InboxReport) {
+        let source = report.source
+        guard let claude = AgentCommand.locate(.claude) else { return }
+        if AgentCommand.hasClaudeApp {
+            // claude --desktop refuses to run without a terminal; script gives it one.
+            Self.run("/usr/bin/script", ["-q", "/dev/null", claude.path, "--desktop", "--resume", id], in: folder)
+        } else {
+            Self.openTerminal(in: folder, running: claude.path, arguments: ["--resume"], with: id)
+        }
+        let place = Self.folderName(folder)
+        hub.log("Opened the Claude Code chat \(id) in \(AgentCommand.hasClaudeApp ? "the Claude app" : "a terminal"), in \(folder)")
+        queue.async { [self] in
+            for _ in 0..<60 {
+                if let session = ClaudeSessions.open().first(where: { $0.id == id }), ClaudeSessions.send(text, to: session) {
+                    hub.log("Sent report \(source.reportID) to the Claude Code chat \(id), now open")
+                    Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code is looking into it in \(AgentCommand.hasClaudeApp ? "the Claude app" : "Terminal"), in worktree \(place).")
+                    return
+                }
+                Thread.sleep(forTimeInterval: 1)
+            }
+            // Not open after a minute: the report goes in anyway, and shows when the chat is opened.
+            hub.log("The Claude Code chat \(id) didn't open in time; giving it report \(source.reportID) with the claude command")
+            Self.run(claude.path, ["-p", text, "--resume", id, "--permission-mode", "plan"], in: folder)
+            Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code looked into it. Open the chat in worktree \(place) to see it.")
+        }
     }
 
     /// The claude command, which starts new Claude Code chats, isn't signed in: the report waits
@@ -266,11 +301,16 @@ final class Handoff: @unchecked Sendable {
             workFolder = folder
         }
         let pictures = ReportContent.pictures(in: report.folder)
-        var prompt = AgentHooks.reportPrompt(ReportContent.text(for: report), picturesAttached: agent == .codex)
+        var reportPrompt = AgentHooks.reportPrompt(ReportContent.text(for: report), picturesAttached: agent == .codex)
         // A Claude Code chat reads the pictures from a copy in its worktree, without asking.
         if agent == .claude, resuming == nil, madeWorktree, let copy = NewWorktree.copyReport(report.folder, into: workFolder) {
-            prompt = prompt.replacingOccurrences(of: report.folder.path, with: copy)
+            reportPrompt = reportPrompt.replacingOccurrences(of: report.folder.path, with: copy)
         }
+        // A Claude Code chat is only opened by the claude command, with a line that takes
+        // seconds; it moves into the desktop app at once and gets the report there, where the
+        // user watches it work. The app doesn't move a chat that's still running.
+        let reportText = reportPrompt
+        let prompt = agent == .claude ? "A UI report from the user's device comes in the next message. Reply with just: Ready." : reportPrompt
         let output = report.folder.appending(path: "new-chat-output.jsonl")
         FileManager.default.createFile(atPath: output.path, contents: nil)
         let process = Process()
@@ -286,7 +326,7 @@ final class Handoff: @unchecked Sendable {
         let paths = hub.paths
         let place = Self.folderName(workFolder)
         let madeWorktreeForThis = madeWorktree
-        process.terminationHandler = { [hub] finished in
+        process.terminationHandler = { [hub, self] finished in
             let text = (try? String(contentsOf: output, encoding: .utf8)) ?? ""
             let started = AgentCommand.startedChat(agent, in: text)
             guard finished.terminationStatus == 0, let started, !started.failed else {
@@ -313,15 +353,7 @@ final class Handoff: @unchecked Sendable {
                 hub.log("The Codex chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
                 Handoff.notify(title: "Codex looked into a report", message: "Opened in Codex, in worktree \(place).")
             } else if agent == .claude {
-                // Moved into the desktop app with what it found so far: its chat list doesn't pick
-                // up chats the claude command starts by itself. In a terminal without the app.
-                if AgentCommand.hasClaudeApp {
-                    Handoff.run(executable.path, ["--desktop", "--resume", started.chat], in: workFolder)
-                } else {
-                    Handoff.openTerminal(in: workFolder, running: executable.path, arguments: ["--resume"], with: started.chat)
-                }
-                hub.log("The Claude Code chat \(started.chat) in \(workFolder) looked into report \(source.reportID) and was opened")
-                Handoff.notify(title: "Claude Code looked into a report", message: "Opened in \(AgentCommand.hasClaudeApp ? "the Claude app" : "Terminal"), in worktree \(place).")
+                self.openClaude(started.chat, in: workFolder, thenSend: reportText, for: report)
             } else {
                 hub.log("The \(agent.name) chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
                 Handoff.notify(title: "\(agent.name) looked into a report", message: "Its answer is in the report's folder, answer.md. Worktree \(place).")
