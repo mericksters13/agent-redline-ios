@@ -245,5 +245,90 @@ struct KitContractTests {
         #expect(text.hasPrefix("UI report from Test iPhone · Example"))
         #expect(text.contains("1. Save (Button, editor.save): Too small"))
     }
+    @Test func everyReaderUsesTheImageNamesTheReportGives() throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "KitContractTests-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appending(path: "inbox/com.example.app/20261004-162330-00000001", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // As the kit names them: two parts of a stitched screen, its earlier state, two photos.
+        let files = (0..<5).map { _ in Report.makeSnapshotFileName() }
+        for file in files { try Data([0xFF, 0xD8]).write(to: folder.appending(path: file)) }
+        func image(_ index: Int, part: Int, parts: Int, earlier: Bool, notes: [Int]) -> Report.Picture {
+            Report.Picture(
+                file: files[index],
+                part: part,
+                parts: parts,
+                stitchedFrom: parts,
+                isEarlierState: earlier,
+                notes: notes,
+                width: 10,
+                height: 20
+            )
+        }
+        func item(_ number: Int, file: String?, attachments: [String] = []) -> Report.Item {
+            Report.Item(
+                number: number,
+                kind: file == nil ? .photo : .element,
+                note: "Note \(number)",
+                createdAt: date,
+                title: "Item \(number)",
+                element: nil,
+                ancestors: [],
+                screen: file == nil ? nil : "screen-1",
+                screenTitle: file == nil ? nil : "Patterns",
+                picture: file,
+                outline: nil,
+                attachments: attachments
+            )
+        }
+        let report = Report(
+            id: "20261004-162330",
+            createdAt: date,
+            app: .init(bundleID: "com.example.app", name: "Example", version: "1.0", build: "1"),
+            device: .init(model: "iPhone", systemName: "iOS", systemVersion: "26.0"),
+            screens: [
+                .init(
+                    id: "screen-1",
+                    title: "Patterns",
+                    viewController: nil,
+                    notes: [1, 2, 3],
+                    images: [
+                        image(2, part: 1, parts: 1, earlier: true, notes: [3]),
+                        image(0, part: 1, parts: 2, earlier: false, notes: [1]),
+                        image(1, part: 2, parts: 2, earlier: false, notes: [2]),
+                    ]
+                )
+            ],
+            items: [
+                item(1, file: files[0]),
+                item(2, file: files[1]),
+                item(3, file: files[2]),
+                item(4, file: nil, attachments: [files[3], files[4]]),
+            ]
+        )
+        try ReportStore(root: root).finishReport(report, in: folder)
+
+        let source = ReportSource(
+            kind: .phone,
+            device: "D",
+            deviceName: "Test iPhone",
+            bundleID: "com.example.app",
+            reportID: report.id,
+            receivedAt: date
+        )
+        let message = ReportContent.text(for: InboxReport(folder: folder, source: source, claim: nil))
+        let summary = try String(contentsOf: folder.appending(path: "report.md"), encoding: .utf8)
+        let json = try String(contentsOf: folder.appending(path: "report.json"), encoding: .utf8)
+        for text in [message, summary, json] {
+            let named = Set(text.matches(of: /[A-Za-z0-9-]+\.jpg/).map { String($0.output) })
+            #expect(named == Set(files))
+        }
+        let order = [files[2], files[0], files[1], files[3], files[4]]
+        #expect(ReportContent.pictures(in: folder).map(\.lastPathComponent) == order)
+        #expect(HubWindowModel.pictures(in: folder).map(\.file.lastPathComponent) == order)
+    }
 }
 #endif

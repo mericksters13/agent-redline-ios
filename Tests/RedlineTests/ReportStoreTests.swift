@@ -151,7 +151,7 @@ struct ReportStoreTests {
             from: Data(contentsOf: started.folder.appending(path: "report.json"))
         )
         #expect(report.screens.first?.images.first?.notes == [1, 2])
-        #expect(report.items.first?.picture == "screen-1.jpg")
+        #expect(report.items.first?.picture == Fixtures.snapshotFiles[0])
     }
 
     @Test func aReportIsNamedByWhenItWasSent() throws {
@@ -330,10 +330,12 @@ struct ReportStoreTests {
         defer { removeStore() }
         try store.saveDraft([annotation("Cut off")])
         let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
-        try Data([1, 2, 3]).write(to: started.folder.appending(path: "screen-1.jpg"))
+        try Data([1, 2, 3]).write(to: started.folder.appending(path: Fixtures.snapshotFiles[0]))
         try store.finishReport(Fixtures.report(id: started.id), in: started.folder)
         store.markDelivered([started.id])
-        #expect(store.reportFiles(started.id).keys.sorted() == ["report.json", "report.md", "screen-1.jpg"])
+        #expect(
+            store.reportFiles(started.id).keys.sorted() == [Fixtures.snapshotFiles[0], "report.json", "report.md"]
+        )
         #expect(store.sentReports().first?.isDelivered == true)
     }
 

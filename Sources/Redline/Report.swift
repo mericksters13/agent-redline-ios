@@ -129,6 +129,13 @@ struct Report: Codable, Sendable {
 }
 
 extension Report {
+    /// A name for a new image file in a report: a UUID, so no reader depends on what a name says.
+    ///
+    /// The report's JSON and summary say what each file shows.
+    static func makeSnapshotFileName() -> String {
+        UUID().uuidString + ".jpg"
+    }
+
     /// The screens it covers, for the list of sent reports.
     var screenNames: String {
         var seen = Set<String>()

@@ -91,7 +91,6 @@ enum ReportBuilder {
 
                 // The newest group is the screen as it is; older groups are its earlier states.
                 let earlier = groupIndex < groups.count - 1
-                let base = earlier ? "\(screenID)-earlier-\(groupIndex + 1)" : screenID
                 // Everything that was on screen, where it sits in the picture, so cuts fall between rows and sections.
                 let onScreen = group.flatMap { capture in
                     capture.elements.compactMap { plan.position(of: $0.frame, from: capture.id) }
@@ -106,7 +105,7 @@ enum ReportBuilder {
                 // One entry per part, nil for a part that couldn't be encoded, so indices stay matched to `parts`.
                 var files: [String?] = []
                 for (partIndex, rows) in parts.enumerated() {
-                    let file = partIndex == 0 ? "\(base).jpg" : "\(base)-part-\(partIndex + 1).jpg"
+                    let file = Report.makeSnapshotFileName()
                     let image = ReportRenderer.render(
                         plan,
                         pictures: images,
@@ -173,7 +172,7 @@ enum ReportBuilder {
         for annotation in input.annotations where annotation.captureID == nil {
             guard let number = numbers[annotation.id] else { continue }
             var files: [String] = []
-            for (index, name) in annotation.screenshots.enumerated() {
+            for name in annotation.screenshots {
                 guard let image = UIImage(contentsOfFile: input.draft.appending(path: name).path(percentEncoded: false))
                 else {
                     Log.report.error("Couldn't load attachment \(name, privacy: .public); it's left out of the report")
@@ -184,7 +183,7 @@ enum ReportBuilder {
                 let sized =
                     annotation.kind == .photo
                     ? image : ReportRenderer.shrunk(image, maxPixels: (pointWidth * scale).rounded())
-                let file = annotation.screenshots.count == 1 ? "note-\(number).jpg" : "note-\(number)-\(index + 1).jpg"
+                let file = Report.makeSnapshotFileName()
                 guard let data = ReportRenderer.jpeg(sized) else {
                     Log.report.error("Couldn't encode \(file, privacy: .public); it's left out of the report")
                     continue

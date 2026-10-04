@@ -17,24 +17,26 @@ struct ReportSummaryTests {
 
     @Test func theSummaryTellsTheAgentWhichPictureShowsEachNote() {
         let text = ReportSummary.markdown(Fixtures.report(id: "r"))
+        let files = Fixtures.snapshotFiles
         #expect(text.contains("## Screen: Today"))
         #expect(
             text.contains(
-                "One screenshot of this screen, stitched from 2 scroll positions, in 2 parts: screen-1.jpg, screen-1-part-2.jpg."
+                "One screenshot of this screen, stitched from 2 scroll positions, in 2 parts: \(files[0]), \(files[1])."
             )
         )
         #expect(text.contains("Notes 1 and 2 are outlined and numbered on it."))
-        #expect(text.contains("1. **Save** (Button, identifier `save`): Cut off. See screen-1.jpg."))
+        #expect(text.contains("1. **Save** (Button, identifier `save`): Cut off. See \(files[0])."))
         #expect(text.contains("## Attachments"))
-        #expect(text.contains("3. **2 images from Photos**: Same bug. Images: note-3-1.jpg, note-3-2.jpg."))
+        #expect(text.contains("3. **2 images from Photos**: Same bug. Images: \(files[2]), \(files[3])."))
     }
 
     @Test func anEarlierStateAndContentScrolledPastAreExplained() {
         var report = Fixtures.report(id: "r")
+        let earlier = Report.makeSnapshotFileName()
         report.screens[0].images[0].scrolledPast = 786
         report.screens[0].images.append(
             Report.Picture(
-                file: "screen-1-earlier-1.jpg",
+                file: earlier,
                 part: 1,
                 parts: 1,
                 stitchedFrom: 1,
@@ -50,9 +52,16 @@ struct ReportSummaryTests {
         )
         #expect(
             text.contains(
-                "An earlier state of the same screen, before its content changed: screen-1-earlier-1.jpg, with note 3."
+                "An earlier state of the same screen, before its content changed: \(earlier), with note 3."
             )
         )
+    }
+
+    @Test func newImageFilesAreNamedByUUID() throws {
+        let name = Report.makeSnapshotFileName()
+        #expect(name.hasSuffix(".jpg"))
+        #expect(UUID(uuidString: String(name.dropLast(4))) != nil)
+        #expect(Report.makeSnapshotFileName() != name)
     }
 
     @Test func threeOrMoreNotesAreListedWithAnd() {

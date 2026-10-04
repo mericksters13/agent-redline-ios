@@ -6,6 +6,15 @@ import Foundation
 
 /// Shared test data.
 enum Fixtures {
+    /// The image files of `report(id:)`, named as the kit names them: the screen's two parts, then
+    /// the two photos.
+    static let snapshotFiles = [
+        "3F2B8C1A-6D4E-4A57-9B0C-1E2D3F4A5B6C.jpg",
+        "A7C1D2E3-4F50-4617-8293-A4B5C6D7E8F9.jpg",
+        "0E9D8C7B-6A59-4837-A261-5F4E3D2C1B0A.jpg",
+        "C4B3A291-8070-4F6E-9D5C-4B3A29180706.jpg",
+    ]
+
     /// A sent report: two notes on a stitched screen sent in two parts, and two photos.
     static func report(id: String) -> Report {
         let element = ElementSnapshot(
@@ -46,7 +55,7 @@ enum Fixtures {
                     notes: [1, 2],
                     images: [
                         Report.Picture(
-                            file: "screen-1.jpg",
+                            file: snapshotFiles[0],
                             part: 1,
                             parts: 2,
                             stitchedFrom: 2,
@@ -56,7 +65,7 @@ enum Fixtures {
                             height: 1224
                         ),
                         Report.Picture(
-                            file: "screen-1-part-2.jpg",
+                            file: snapshotFiles[1],
                             part: 2,
                             parts: 2,
                             stitchedFrom: 2,
@@ -69,8 +78,8 @@ enum Fixtures {
                 )
             ],
             items: [
-                item(1, "Cut off", picture: "screen-1.jpg"),
-                item(2, "Too faint", picture: "screen-1-part-2.jpg"),
+                item(1, "Cut off", picture: snapshotFiles[0]),
+                item(2, "Too faint", picture: snapshotFiles[1]),
                 Report.Item(
                     number: 3,
                     kind: .photo,
@@ -83,7 +92,7 @@ enum Fixtures {
                     screenTitle: nil,
                     picture: nil,
                     outline: nil,
-                    attachments: ["note-3-1.jpg", "note-3-2.jpg"]
+                    attachments: [snapshotFiles[2], snapshotFiles[3]]
                 ),
             ]
         )
