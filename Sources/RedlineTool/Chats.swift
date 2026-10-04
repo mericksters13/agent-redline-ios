@@ -80,8 +80,10 @@ enum Chats {
         kill(pid, 0) == 0 || errno == EPERM
     }
 
-    /// Chats whose MCP copy is still running. Files left by a copy that was killed are removed.
-    static func live(_ paths: HubPaths) -> [ChatRecord] {
+    /// Removes the files of chats whose process is gone, such as an MCP copy that was killed,
+    /// and returns the chats still open.
+    @discardableResult
+    static func removeClosedChats(_ paths: HubPaths) -> [ChatRecord] {
         let files = (try? FileManager.default.contentsOfDirectory(at: folder(paths), includingPropertiesForKeys: nil)) ?? []
         return files.filter { $0.pathExtension == "json" }.compactMap { file in
             guard let data = try? Data(contentsOf: file), let chat = try? HubPaths.decoder.decode(ChatRecord.self, from: data) else { return nil }
@@ -95,8 +97,8 @@ enum Chats {
 
 }
 
-/// The chat a report is for: the one that built the app it came from.
-struct Address: Codable, Equatable, Sendable {
+/// The chat a report is addressed to: kept in its folder's to.json.
+struct ReportRecipient: Codable, Equatable, Sendable {
     var chat: String
     var agent: String
     var folder: String
@@ -110,7 +112,7 @@ enum Inbox {
     /// The chat that took a report.
     static let claimFile = "claim.json"
     /// The chat a report is addressed to.
-    static let addressFile = "to.json"
+    static let recipientFile = "to.json"
     /// Where the hub sent a report.
     static let deliveryFile = "delivery.json"
     /// What the command of a chat the hub started printed.
@@ -123,20 +125,20 @@ enum Inbox {
     /// One report's folder in the inbox: sorts by time, and two phones sending in the same
     /// second don't collide.
     static func folderName(reportID: String, device: String) -> String {
-        "\(reportID)-\(device.replacingOccurrences(of: "-", with: "").suffix(8))"
+        "\(reportID)-\(device.replacing("-", with: "").suffix(8))"
     }
 
-    static func address(of report: URL) -> Address? {
-        (try? Data(contentsOf: report.appending(path: addressFile))).flatMap { try? HubPaths.decoder.decode(Address.self, from: $0) }
+    static func recipient(of report: URL) -> ReportRecipient? {
+        (try? Data(contentsOf: report.appending(path: recipientFile))).flatMap { try? HubPaths.decoder.decode(ReportRecipient.self, from: $0) }
     }
 
-    static func setAddress(_ address: Address, of report: URL) throws {
-        try HubPaths.encoder.encode(address).write(to: report.appending(path: addressFile), options: .atomic)
+    static func setRecipient(_ recipient: ReportRecipient, of report: URL) throws {
+        try HubPaths.encoder.encode(recipient).write(to: report.appending(path: recipientFile), options: .atomic)
     }
 
     /// Reports for this chat that it hasn't taken yet, oldest first.
-    static func addressed(to chat: String, bundleIDs: [String], paths: HubPaths) -> [InboxReport] {
-        waiting(for: bundleIDs, paths: paths).filter { address(of: $0.folder)?.chat == chat }
+    static func reportsAddressed(to chat: String, bundleIDs: [String], paths: HubPaths) -> [InboxReport] {
+        unclaimedReports(for: bundleIDs, paths: paths).filter { recipient(of: $0.folder)?.chat == chat }
     }
 
     /// Every report for these apps, or every app's when `bundleIDs` is nil, oldest first. A
@@ -159,7 +161,7 @@ enum Inbox {
     }
 
     /// Reports for these apps that no chat has taken yet, oldest first.
-    static func waiting(for bundleIDs: [String], paths: HubPaths) -> [InboxReport] {
+    static func unclaimedReports(for bundleIDs: [String], paths: HubPaths) -> [InboxReport] {
         reports(for: bundleIDs, paths: paths).filter { $0.claim == nil }
     }
 
@@ -183,7 +185,7 @@ enum Inbox {
 
     /// Takes a report for a chat, so no other chat gets it.
     static func claim(_ report: InboxReport, for chat: ChatRecord) -> ClaimResult {
-        let claim = Claim(chat: chat.id, agent: chat.agent, folder: chat.folder, claimedAt: Date())
+        let claim = Claim(chat: chat.id, agent: chat.agent, folder: chat.folder, claimedAt: .now)
         let file = report.folder.appending(path: claimFile)
         // Written whole under a name of its own, then linked into place: linking fails if a claim
         // is already there, so two chats can't both take it, and no chat ever sees half a claim.
@@ -219,7 +221,12 @@ struct ReportDelivery: Codable, Equatable, Sendable {
     var chat: String?
     var title: String
     var kind: Kind
-    var at = Date()
+    var deliveredAt = Date.now
+
+    private enum CodingKeys: String, CodingKey {
+        case agent, chat, title, kind
+        case deliveredAt = "at"
+    }
 
     init(agent: Agent?, chat: String?, title: String, kind: Kind) {
         self.agent = agent?.rawValue

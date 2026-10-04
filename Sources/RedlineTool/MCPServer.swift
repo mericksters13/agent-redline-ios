@@ -13,7 +13,7 @@ final class MCPServer: Sendable {
     /// Answers every request except waits, one at a time, in order.
     private let work = DispatchQueue(label: "Redline.mcp", qos: .userInitiated)
     /// Keeps responses whole when a wait's thread and `work` answer at the same time.
-    private let output = DispatchQueue(label: "Redline.mcp.output")
+    private let outputQueue = DispatchQueue(label: "Redline.mcp.output")
     private let inFlight = DispatchGroup()
 
     /// The most picture bytes in one reply. Agent apps cap a tool result's size; Claude's
@@ -104,29 +104,29 @@ final class MCPServer: Sendable {
         case "initialize":
             let client = (params["clientInfo"] as? [String: Any])?["name"] as? String
             session.register(agent: client ?? "unknown")
-            return result(id, [
+            return response(id: id, result: [
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": [String: Any]()],
                 "serverInfo": ["name": "redline", "version": "0.1.0"],
                 "instructions": Self.instructions,
             ])
         case "ping":
-            return result(id, [String: Any]())
+            return response(id: id, result: [String: Any]())
         case "tools/list":
-            return result(id, ["tools": Self.tools])
+            return response(id: id, result: ["tools": Self.tools])
         case "tools/call":
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             switch params["name"] as? String {
             case "check_messages":
-                return result(id, check())
+                return response(id: id, result: takeReports())
             case "wait_for_message":
                 let seconds = (arguments["timeout_seconds"] as? NSNumber)?.doubleValue ?? Self.defaultWait
-                return result(id, wait(seconds: min(max(seconds, 1), Self.longestWait), waiter: waiter))
+                return response(id: id, result: wait(seconds: min(max(seconds, 1), Self.longestWait), waiter: waiter))
             default:
-                return error(id, code: -32602, message: "Unknown tool")
+                return errorResponse(id: id, code: -32602, message: "Unknown tool")
             }
         default:
-            return error(id, code: -32601, message: "Method not found")
+            return errorResponse(id: id, code: -32601, message: "Method not found")
         }
     }
 
@@ -155,7 +155,7 @@ final class MCPServer: Sendable {
         ],
     ] }
 
-    func check() -> [String: Any] {
+    func takeReports() -> [String: Any] {
         session.touch()
         let chat = session.chat
         guard !chat.bundleIDs.isEmpty else {
@@ -181,7 +181,7 @@ final class MCPServer: Sendable {
         guard session.waitForReport(timeout: seconds, waiter: waiter) else {
             return text("No report arrived in \(Int(seconds)) seconds.")
         }
-        return check()
+        return takeReports()
     }
 
     // MARK: - Messages
@@ -196,14 +196,14 @@ final class MCPServer: Sendable {
 
     private func send(_ message: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) else { return }
-        output.sync { write(data + Data("\n".utf8)) }
+        outputQueue.sync { write(data + Data("\n".utf8)) }
     }
 
-    private func result(_ id: Any, _ result: [String: Any]) -> [String: Any] {
+    private func response(id: Any, result: [String: Any]) -> [String: Any] {
         ["jsonrpc": "2.0", "id": id, "result": result]
     }
 
-    private func error(_ id: Any, code: Int, message: String) -> [String: Any] {
+    private func errorResponse(id: Any, code: Int, message: String) -> [String: Any] {
         ["jsonrpc": "2.0", "id": id, "error": ["code": code, "message": message]]
     }
 

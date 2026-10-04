@@ -8,11 +8,11 @@ struct Devicectl: Sendable {
 
     /// Finds `devicectl` through `xcrun` once.
     static func locate() -> Devicectl? {
-        guard let result = try? run(URL(fileURLWithPath: "/usr/bin/xcrun"), arguments: ["--find", "devicectl"]), result.status == 0,
+        guard let result = try? run(URL(filePath: "/usr/bin/xcrun"), arguments: ["--find", "devicectl"]), result.status == 0,
               let path = String(data: result.output, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
               !path.isEmpty
         else { return nil }
-        return Devicectl(executable: URL(fileURLWithPath: path))
+        return Devicectl(executable: URL(filePath: path))
     }
 
     struct Phone: Equatable, Sendable {

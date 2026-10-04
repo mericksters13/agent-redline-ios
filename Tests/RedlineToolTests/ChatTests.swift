@@ -97,7 +97,7 @@ struct ChatTests {
         let notes = root.appending(path: "Notes", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
         session(notes).register(agent: "claude-code")
-        #expect(Chats.live(paths).isEmpty)
+        #expect(Chats.removeClosedChats(paths).isEmpty)
     }
 
     @Test func onlyOneChatTakesAReport() throws {
@@ -138,7 +138,7 @@ struct ChatTests {
                                               "params": ["protocolVersion": "2025-06-18", "clientInfo": ["name": "claude-code"]]])
         let result = initialized["result"] as? [String: Any]
         #expect((result?["serverInfo"] as? [String: Any])?["name"] as? String == "redline")
-        #expect(Chats.live(paths).first?.agent == "claude-code")
+        #expect(Chats.removeClosedChats(paths).first?.agent == "claude-code")
 
         let tools = (server.respond(to: ["jsonrpc": "2.0", "id": 2, "method": "tools/list"])["result"] as? [String: Any])?["tools"] as? [[String: Any]]
         #expect(tools?.compactMap { $0["name"] as? String } == ["check_messages", "wait_for_message"])
@@ -170,7 +170,7 @@ struct ChatTests {
 
         /// The response to request `id`, waiting up to `timeout` seconds for it.
         func response(to id: Int, timeout: TimeInterval) -> String? {
-            let deadline = Date().addingTimeInterval(timeout)
+            let deadline = Date.now.addingTimeInterval(timeout)
             while true {
                 if let text = texts.withLock({ $0[id] }) { return text }
                 guard arrived.wait(timeout: .now() + deadline.timeIntervalSinceNow) == .success else { return nil }
@@ -216,7 +216,7 @@ struct ChatTests {
         older.registerWaiting()
         // Used a minute ago: saved times have whole seconds.
         var record = older.chat
-        record.lastActiveAt = Date().addingTimeInterval(-60)
+        record.lastActiveAt = Date.now.addingTimeInterval(-60)
         try Chats.register(record, paths: paths)
         let recent = ChatSession(paths: paths, folder: folder, extraApps: [], agent: "test", id: "recent", startsHub: false)
         recent.registerWaiting()
@@ -235,10 +235,10 @@ struct ChatTests {
         let chat = session(try project())
         let waiter = ChatSession.Waiter()
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { _ = try? self.inboxReport("20261003-230000") }
-        let started = Date()
+        let started = Date.now
         #expect(chat.waitForReport(timeout: 5, waiter: waiter))
         // Woken by the report arriving, not by the timeout.
-        #expect(Date().timeIntervalSince(started) < 2)
+        #expect(Date.now.timeIntervalSince(started) < 2)
         #expect(chat.take(budget: 1_000_000).taken == 1)
         // Nothing more: a short wait ends with no report.
         #expect(!chat.waitForReport(timeout: 0.2, waiter: ChatSession.Waiter()))

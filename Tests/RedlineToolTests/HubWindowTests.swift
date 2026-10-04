@@ -36,11 +36,11 @@ struct HubWindowTests {
         #expect(rows.map(\.folder) == [newer, older])
         #expect(rows[0].agent == "Claude Code")
         #expect(rows[0].chat == "Untitled session")
-        #expect(!rows[0].waiting)
+        #expect(!rows[0].isWaiting)
         #expect(rows[0].thumbnail == newer.appending(path: "screen-1.jpg"))
         // Notes in their numbers' order, with the element's name.
         #expect(rows[0].notes == [.init(number: 1, text: "Log milestone: Too plain"), .init(number: 2, text: "History: No note")])
-        #expect(rows[1].waiting)
+        #expect(rows[1].isWaiting)
         #expect(rows[1].chat == "2 chats work in wt; pick one on the phone")
     }
 
@@ -76,18 +76,18 @@ struct HubWindowTests {
     }
 
     @Test func aReportTakenBeforeDeliveriesWereSavedNamesItsChat() throws {
-        let folder = try report("20261004-100000", at: Date())
-        let claim = Claim(chat: "started-claude-20261004-100000", agent: "claude", folder: "/repo/.claude/worktrees/report-1", claimedAt: Date())
+        let folder = try report("20261004-100000", at: Date.now)
+        let claim = Claim(chat: "started-claude-20261004-100000", agent: "claude", folder: "/repo/.claude/worktrees/report-1", claimedAt: .now)
         try HubPaths.encoder.encode(claim).write(to: folder.appending(path: Inbox.claimFile))
         let destination = HubWindowModel.destination(of: folder, codexDatabase: nil)
         #expect(destination.agent == "Claude Code")
         #expect(destination.chat == "New chat in report-1")
         // A Codex chat stored no folder: never the folder this process happens to be in.
-        #expect(HubWindowModel.chatTitle(Claim(chat: "codex-unknown", agent: "codex", folder: "", claimedAt: Date()), codexDatabase: nil) == "Codex chat")
+        #expect(HubWindowModel.chatTitle(Claim(chat: "codex-unknown", agent: "codex", folder: "", claimedAt: .now), codexDatabase: nil) == "Codex chat")
     }
 
     @Test func theViewerShowsEachPictureWithTheNotesItShows() throws {
-        let folder = try report("20261004-130000", at: Date())
+        let folder = try report("20261004-130000", at: Date.now)
         try Data([0xFF, 0xD8]).write(to: folder.appending(path: "note-2.jpg"))
         let pictures = HubWindowModel.pictures(in: folder)
         // Screens' pictures first, then pictures attached to notes, as the agent gets them.
@@ -103,32 +103,32 @@ struct HubWindowTests {
 
     @Test func theViewerOpensTheChatAReportWentTo() throws {
         func claim(_ chat: String, agent: String, folder: String = "", in report: URL) throws {
-            try HubPaths.encoder.encode(Claim(chat: chat, agent: agent, folder: folder, claimedAt: Date())).write(to: report.appending(path: Inbox.claimFile))
+            try HubPaths.encoder.encode(Claim(chat: chat, agent: agent, folder: folder, claimedAt: .now)).write(to: report.appending(path: Inbox.claimFile))
         }
         // What the hub saved when it delivered it, with the folder of the chat that took it.
-        let sent = try report("20261004-140000", at: Date())
+        let sent = try report("20261004-140000", at: Date.now)
         try claim("claude-s-1", agent: "claude", folder: "/repo", in: sent)
         try ReportDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: sent)
         let chat = try #require(HubWindowModel.chat(of: sent))
         #expect(chat.agent == .claude && chat.id == "s-1" && chat.folder == "/repo")
 
         // Taken before deliveries were saved: the chat that took it.
-        let taken = try report("20261004-140100", at: Date())
+        let taken = try report("20261004-140100", at: Date.now)
         try claim("codex-t-1", agent: "codex", in: taken)
         let codex = try #require(HubWindowModel.chat(of: taken))
         #expect(codex.agent == .codex && codex.id == "t-1" && codex.folder == nil)
 
         // A chat the hub started: its ID from what the command printed.
-        let started = try report("20261004-140200", at: Date())
+        let started = try report("20261004-140200", at: Date.now)
         try claim("started-codex-20261004-140200", agent: "codex", folder: "/repo", in: started)
         try #"{"type":"thread.started","thread_id":"t-2"}"#.write(to: started.appending(path: "new-chat-output.jsonl"), atomically: true, encoding: .utf8)
         #expect(HubWindowModel.chat(of: started)?.id == "t-2")
 
         // Waiting: nothing to open.
-        let waiting = try report("20261004-140300", at: Date())
+        let waiting = try report("20261004-140300", at: Date.now)
         try ReportDelivery.save(.init(agent: .claude, chat: nil, title: "Waiting for claude auth login", kind: .waiting), in: waiting)
         #expect(HubWindowModel.chat(of: waiting) == nil)
-        #expect(HubWindowModel.chat(of: try report("20261004-140500", at: Date())) == nil)
+        #expect(HubWindowModel.chat(of: try report("20261004-140500", at: Date.now)) == nil)
     }
 
     @Test func chatsOpenInTheirAgentsAppWhenItIsInstalled() {

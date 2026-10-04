@@ -20,7 +20,7 @@ struct ReportSourcesTests {
         // An offer isn't taken for a question about chats.
         #expect(throws: DecodingError.self) { try HubMessage.decode(HubMessage.ChatsRequest.self, from: Data(line.utf8)) }
         let list = HubMessage.ChatList(agents: ["claude"], chats: [HubMessage.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt",
-                                                                                 sameWorktree: true, lastActive: Date(timeIntervalSince1970: 1_791_000_000))], worktree: "wt")
+                                                                                 isSameWorktree: true, lastActive: Date(timeIntervalSince1970: 1_791_000_000))], worktree: "wt")
         #expect(String(decoding: HubMessage.encode(list), as: UTF8.self) == #"{"agents":["claude"],"chats":[{"agent":"claude","folder":"wt","id":"s1","lastActive":"2026-10-03T04:00:00Z","sameWorktree":true,"title":"Let"}],"worktree":"wt"}"# + "\n")
     }
 
@@ -33,7 +33,7 @@ struct ReportSourcesTests {
             // Just started: no report.json yet.
             ("20261003-202300", at), ("20261003-202300/draft/annotations.json", at),
         ]
-        #expect(ReportFolder.finished(in: entries) == [FinishedReport(id: "20261003-150846", finishedAt: at)])
+        #expect(ReportFolder.finishedReports(in: entries) == [FinishedReport(id: "20261003-150846", finishedAt: at)])
     }
 
     @Test func reportsFromBeforeTheHubFirstLookedStayOnThePhone() {
@@ -41,11 +41,11 @@ struct ReportSourcesTests {
         var state = SourceState(since: since)
         let old = FinishedReport(id: "20261002-135144", finishedAt: since.addingTimeInterval(-86_400))
         let new = FinishedReport(id: "20261003-202235", finishedAt: since.addingTimeInterval(30))
-        #expect(state.toCopy(from: [old, new]) == ["20261003-202235"])
+        #expect(state.reportIDsToCopy(from: [old, new]) == ["20261003-202235"])
         state.delivered.append("20261003-202235")
-        #expect(state.toCopy(from: [old, new]).isEmpty)
+        #expect(state.reportIDsToCopy(from: [old, new]).isEmpty)
         // The app can stop offering both: one is on the Mac, the other is from before.
-        #expect(state.settled([old, new]) == ["20261002-135144", "20261003-202235"])
+        #expect(state.settledReportIDs(in: [old, new]) == ["20261002-135144", "20261003-202235"])
     }
 
     @Test func aSimulatorReportIsFoundFromAnyFileInIt() {

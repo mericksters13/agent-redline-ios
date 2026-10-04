@@ -18,11 +18,11 @@ enum ClaudeSessions {
     }
 
     /// The interactive chats that are still running.
-    static func open() -> [Session] {
-        let folders = [ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], NSHomeDirectory() + "/.claude"].compactMap { $0 }
+    static func openSessions() -> [Session] {
+        let folders = [ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], URL.homeDirectory.appending(path: ".claude").path].compactMap { $0 }
         var sessions: [Session] = []
         for folder in Set(folders) {
-            let files = (try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: folder).appending(path: "sessions"), includingPropertiesForKeys: nil)) ?? []
+            let files = (try? FileManager.default.contentsOfDirectory(at: URL(filePath: folder).appending(path: "sessions"), includingPropertiesForKeys: nil)) ?? []
             for file in files where file.pathExtension == "json" {
                 guard let data = try? Data(contentsOf: file), let session = session(from: data) else { continue }
                 sessions.append(session)
@@ -100,13 +100,13 @@ enum ClaudeCLI {
 
     /// Signed in with `claude auth login`, and, with the desktop app installed, new enough to open
     /// a chat in it. Checked at most every minute.
-    static func ready() -> Bool {
-        if let check = lastCheck.withLock({ $0 }), Date().timeIntervalSince(check.checkedAt) < 60 { return check.isReady }
+    static func isReady() -> Bool {
+        if let check = lastCheck.withLock({ $0 }), Date.now.timeIntervalSince(check.checkedAt) < 60 { return check.isReady }
         guard let claude = AgentCommand.locate(.claude) else { return false }
-        let signedIn = output(claude, ["auth", "status"]) != nil
-        let version = output(claude, ["--version"]).flatMap { version(in: $0) } ?? []
+        let signedIn = runForOutput(claude, ["auth", "status"]) != nil
+        let version = runForOutput(claude, ["--version"]).flatMap { version(in: $0) } ?? []
         let ready = signedIn && (!AgentCommand.isClaudeAppInstalled() || !version.lexicographicallyPrecedes(desktopVersion))
-        lastCheck.withLock { $0 = ReadinessCheck(isReady: ready, checkedAt: Date()) }
+        lastCheck.withLock { $0 = ReadinessCheck(isReady: ready, checkedAt: .now) }
         return ready
     }
 
@@ -119,24 +119,24 @@ enum ClaudeCLI {
             print("  curl -fsSL https://claude.ai/install.sh | bash")
             return false
         }
-        let version = output(claude, ["--version"]).flatMap { version(in: $0) } ?? []
+        let version = runForOutput(claude, ["--version"]).flatMap { version(in: $0) } ?? []
         if AgentCommand.isClaudeAppInstalled(), version.lexicographicallyPrecedes(desktopVersion) {
             print("Updating the claude command: opening new chats in the Claude app needs \(desktopVersion.map(String.init).joined(separator: ".")) or later.")
-            _ = interactive(claude, ["update"])
+            _ = runInteractively(claude, ["update"])
         }
-        if output(claude, ["auth", "status"]) == nil {
+        if runForOutput(claude, ["auth", "status"]) == nil {
             print("Sign in the claude command first: it starts new Claude Code chats for reports, and keeps its own sign-in, separate from the Claude app's.")
-            guard interactive(claude, ["auth", "login"]), output(claude, ["auth", "status"]) != nil else {
+            guard runInteractively(claude, ["auth", "login"]), runForOutput(claude, ["auth", "status"]) != nil else {
                 print("The claude command still isn't signed in. Setup stopped; run it again after claude auth login.")
                 return false
             }
         }
         lastCheck.withLock { $0 = nil }
-        return ready()
+        return isReady()
     }
 
     /// Runs the command in this terminal, so the user can answer it. True when it succeeds.
-    private static func interactive(_ executable: URL, _ arguments: [String]) -> Bool {
+    private static func runInteractively(_ executable: URL, _ arguments: [String]) -> Bool {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -157,7 +157,7 @@ enum ClaudeCLI {
     }
 
     /// The command's output when it succeeds.
-    private static func output(_ executable: URL, _ arguments: [String]) -> String? {
+    private static func runForOutput(_ executable: URL, _ arguments: [String]) -> String? {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments

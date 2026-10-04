@@ -19,7 +19,7 @@ final class ChatSession: Sendable {
         self.startsHub = startsHub
         let apps = Array(Set(ProjectApps.bundleIDs(in: folder) + extraApps)).sorted()
         record = Mutex(ChatRecord(id: id ?? UUID().uuidString, agent: agent, folder: folder.path, bundleIDs: apps,
-                                  pid: pid ?? getpid(), registeredAt: Date(), lastActiveAt: Date()))
+                                  pid: pid ?? getpid(), registeredAt: .now, lastActiveAt: .now))
     }
 
     /// Registers this process as the one waiting for the chat's reports.
@@ -43,7 +43,7 @@ final class ChatSession: Sendable {
 
     /// Notes that the chat was used just now, for picking the most recent chat.
     func touch() {
-        record.withLock { $0.lastActiveAt = Date() }
+        record.withLock { $0.lastActiveAt = Date.now }
         guard !chat.bundleIDs.isEmpty else { return }
         save()
     }
@@ -53,7 +53,7 @@ final class ChatSession: Sendable {
     func takeAddressed() -> String? {
         let chat = self.chat
         var texts: [String] = []
-        for report in Inbox.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths) {
+        for report in Inbox.reportsAddressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths) {
             guard case .claimed = Inbox.claim(report, for: chat) else { continue }
             texts.append(ReportContent.text(for: report))
         }
@@ -68,7 +68,7 @@ final class ChatSession: Sendable {
         var used = 0
         var taken = 0
         var lookedAt = 0
-        let waiting = Inbox.waiting(for: chat.bundleIDs, paths: paths)
+        let waiting = Inbox.unclaimedReports(for: chat.bundleIDs, paths: paths)
         for report in waiting {
             if taken > 0, used >= budget { break }
             lookedAt += 1
@@ -90,14 +90,14 @@ final class ChatSession: Sendable {
     /// are waiting, the one used most recently takes it; the others take it only if it's still
     /// waiting a moment later, such as when that chat is busy or gone.
     func waitForRoutedReport(timeout: TimeInterval?, waiter: Waiter) -> Bool {
-        let deadline = timeout.map { Date().addingTimeInterval($0) }
+        let deadline = timeout.map { Date.now.addingTimeInterval($0) }
         while true {
             let left = deadline.map { $0.timeIntervalSinceNow }
             if let left, left <= 0 { return false }
             guard waitForReport(timeout: left, waiter: waiter) else { return false }
-            let live = Chats.live(paths)
-            let me = live.first { $0.id == chat.id } ?? chat
-            let moreRecent = live.contains { other in
+            let open = Chats.removeClosedChats(paths)
+            let me = open.first { $0.id == chat.id } ?? chat
+            let moreRecent = open.contains { other in
                 other.id != me.id && other.isWaiting && other.lastActiveAt > me.lastActiveAt
                     && !Set(other.bundleIDs).isDisjoint(with: me.bundleIDs)
             }
@@ -111,7 +111,7 @@ final class ChatSession: Sendable {
             _ = waiter.signal.wait(timeout: .now() + Self.deferToRecentChat)
             if waiter.isCancelled { return false }
             // Still there: the more recent chat didn't take it.
-            if !Inbox.waiting(for: chat.bundleIDs, paths: paths).isEmpty { return true }
+            if !Inbox.unclaimedReports(for: chat.bundleIDs, paths: paths).isEmpty { return true }
         }
     }
 
@@ -121,12 +121,12 @@ final class ChatSession: Sendable {
     /// Something to wait on that can be stopped from another thread.
     final class Waiter: Sendable {
         fileprivate let signal = DispatchSemaphore(value: 0)
-        private let stopped = Mutex(false)
+        private let isStopped = Mutex(false)
 
-        var isCancelled: Bool { stopped.withLock { $0 } }
+        var isCancelled: Bool { isStopped.withLock { $0 } }
 
         func cancel() {
-            stopped.withLock { $0 = true }
+            isStopped.withLock { $0 = true }
             signal.signal()
         }
 
@@ -140,12 +140,12 @@ final class ChatSession: Sendable {
     /// cancelled. Woken by the inbox changing, not by checking on a timer. True when one is waiting.
     func waitForReport(timeout: TimeInterval?, waiter: Waiter) -> Bool {
         let chat = self.chat
-        return wait(timeout: timeout, waiter: waiter) { !Inbox.waiting(for: chat.bundleIDs, paths: self.paths).isEmpty }
+        return wait(timeout: timeout, waiter: waiter) { !Inbox.unclaimedReports(for: chat.bundleIDs, paths: self.paths).isEmpty }
     }
 
     private func wait(timeout: TimeInterval?, waiter: Waiter, until ready: () -> Bool) -> Bool {
         let chat = self.chat
-        let deadline = timeout.map { Date().addingTimeInterval($0) }
+        let deadline = timeout.map { Date.now.addingTimeInterval($0) }
         var sources: [DispatchSourceFileSystemObject] = []
         for bundleID in chat.bundleIDs {
             let folder = paths.inbox.appending(path: bundleID, directoryHint: .isDirectory)
@@ -234,7 +234,7 @@ enum HubProcess {
 
     /// The menu bar app, which is the hub, when it's installed. Checks the disk.
     static func installedApp() -> URL? {
-        let app = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications/Redline.app")
+        let app = URL.homeDirectory.appending(path: "Applications/Redline.app")
         return FileManager.default.fileExists(atPath: app.path) ? app : nil
     }
 
@@ -245,7 +245,7 @@ enum HubProcess {
         guard running(paths) == nil else { return }
         if let app = installedApp() {
             let open = Process()
-            open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            open.executableURL = URL(filePath: "/usr/bin/open")
             open.arguments = ["-g", app.path]
             do {
                 try open.run()

@@ -45,7 +45,7 @@ struct KitContractTests {
         #expect(throws: DecodingError.self) { try HubMessage.decode(HubMessage.ChatsRequest.self, from: HubLink.encode(offer).dropLast()) }
 
         let list = HubMessage.ChatList(agents: ["claude", "codex"],
-                                       chats: [HubMessage.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt", sameWorktree: true, lastActive: date)],
+                                       chats: [HubMessage.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt", isSameWorktree: true, lastActive: date)],
                                        worktree: "wt", newChatBase: "main")
         let kitList = try #require(HubLink.decode(HubLink.ChatList.self, from: HubMessage.encode(list).dropLast()))
         #expect(kitList.agents == ["claude", "codex"])

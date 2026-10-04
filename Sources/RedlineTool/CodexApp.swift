@@ -7,7 +7,7 @@ import Foundation
 /// app runs the turn: the chat wakes even when idle and shows it live. The socket's protocol
 /// is the app's own, not a published one, so an update to the app can change it.
 enum CodexApp {
-    static var socketPath: String { NSHomeDirectory() + "/.codex/ipc/ipc.sock" }
+    static let socketPath = URL.homeDirectory.appending(path: ".codex/ipc/ipc.sock").path
 
     enum Outcome: Equatable {
         case started

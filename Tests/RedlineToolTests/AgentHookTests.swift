@@ -74,9 +74,9 @@ struct AgentHookTests {
     }
 
     @Test func eachAgentReadsTheReportWhereItLooks() {
-        #expect(json(AgentHooks.output(.prompt, "r")!) == json(["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": "r"]]))
+        #expect(json(AgentHooks.output(for: .prompt, text: "r")!) == json(["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": "r"]]))
         // Nothing to say, nothing printed.
-        #expect(AgentHooks.output(.prompt, nil) == nil)
+        #expect(AgentHooks.output(for: .prompt, text: nil) == nil)
     }
 
     @Test func anotherHookKeepsTheChatsWaiter() throws {
@@ -98,7 +98,7 @@ struct AgentHookTests {
 
     /// A report in the inbox the way the hub files it, with the build UUIDs the app sends.
     private func inboxReport(_ id: String, bundleID: String = "com.example.app", buildIDs: [String]? = nil, sourceFile: String? = nil,
-                             address: Address? = nil) throws -> URL {
+                             recipient: ReportRecipient? = nil) throws -> URL {
         let incoming = paths.inbox.appending(path: "\(bundleID)/.incoming-\(id)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
         try "1. **Save**: Too small.\n".write(to: incoming.appending(path: "report.md"), atomically: true, encoding: .utf8)
@@ -109,9 +109,9 @@ struct AgentHookTests {
                                       "items": [item]]
         try JSONSerialization.data(withJSONObject: listing).write(to: incoming.appending(path: "report.json"))
         try Data([0xFF]).write(to: incoming.appending(path: "screen-1.jpg"))
-        let source = ReportSource(kind: .phone, device: "D", deviceName: "Mark iPhone", bundleID: bundleID, reportID: id, receivedAt: Date())
+        let source = ReportSource(kind: .phone, device: "D", deviceName: "Mark iPhone", bundleID: bundleID, reportID: id, receivedAt: .now)
         try HubPaths.encoder.encode(source).write(to: incoming.appending(path: "source.json"))
-        if let address { try Inbox.setAddress(address, of: incoming) }
+        if let recipient { try Inbox.setRecipient(recipient, of: incoming) }
         let final = paths.inbox.appending(path: "\(bundleID)/\(id)", directoryHint: .isDirectory)
         try FileManager.default.moveItem(at: incoming, to: final)
         return final
@@ -128,7 +128,7 @@ struct AgentHookTests {
     }
 
     private func chat(_ id: String, _ agent: String, sameWorktree: Bool) -> HubMessage.Chat {
-        HubMessage.Chat(id: id, agent: agent, title: id, folder: "wt", sameWorktree: sameWorktree, lastActive: Date())
+        HubMessage.Chat(id: id, agent: agent, title: id, folder: "wt", isSameWorktree: sameWorktree, lastActive: Date.now)
     }
 
     @Test func aReportGoesWhereThePhonePickedOrElseToItsWorktreesChat() throws {
@@ -136,7 +136,7 @@ struct AgentHookTests {
         try FileManager.default.createDirectory(at: worktree.appending(path: ".git"), withIntermediateDirectories: true)
         let file = worktree.appending(path: "App/AppMain.swift").path
         let folder = worktree.standardizedFileURL.path
-        func route(_ report: URL, _ chats: [HubMessage.Chat]) -> Destination {
+        func route(_ report: URL, _ chats: [HubMessage.Chat]) -> ReportDestination {
             Routing.destination(of: report, bundleID: "com.example.app") { _, _ in
                 HubMessage.ChatList(agents: ["claude", "codex"], chats: chats)
             }
@@ -164,7 +164,7 @@ struct AgentHookTests {
         try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
         func git(_ arguments: String...) throws {
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.executableURL = URL(filePath: "/usr/bin/git")
             process.arguments = ["-C", repository.path, "-c", "user.name=Test", "-c", "user.email=test@example.com"] + arguments
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
@@ -186,7 +186,7 @@ struct AgentHookTests {
         let made = try NewWorktree.create(from: repository.path, name: "report-1", agent: .claude)
         #expect(made.hasSuffix("/.claude/worktrees/report-1"))
         let branch = Process()
-        branch.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        branch.executableURL = URL(filePath: "/usr/bin/git")
         branch.arguments = ["-C", made, "branch", "--show-current"]
         let pipe = Pipe()
         branch.standardOutput = pipe
@@ -205,7 +205,7 @@ struct AgentHookTests {
         let copy = try NewWorktree.copyReport(report, into: made)
         #expect(FileManager.default.fileExists(atPath: copy + "/report.md"))
         let status = Process()
-        status.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        status.executableURL = URL(filePath: "/usr/bin/git")
         status.arguments = ["-C", made, "status", "--porcelain"]
         let statusPipe = Pipe()
         status.standardOutput = statusPipe
@@ -219,7 +219,7 @@ struct AgentHookTests {
         #expect(throws: NewWorktree.Failure.self) { try NewWorktree.create(from: root.appending(path: "not-a-repo").path, name: "x", agent: .claude) }
 
         // The chat it started is found by the phone's pick while its worktree exists.
-        try StartedChats.remember(StartedChat(chat: "s-1", folder: made, at: Date()), for: "N1", paths: paths)
+        try StartedChats.remember(StartedChat(chat: "s-1", folder: made, startedAt: .now), for: "N1", paths: paths)
         #expect(StartedChats.find("N1", paths: paths)?.chat == "s-1")
         #expect(StartedChats.find("N2", paths: paths) == nil)
         try FileManager.default.removeItem(atPath: made)
@@ -235,10 +235,10 @@ struct AgentHookTests {
         #expect(AgentCommand.startedChat(.claude, in: "Not logged in · Please run /login") == nil)
         // Claude Code prints a result even when it couldn't run: that's a failure, in its own words.
         let notSignedIn = #"{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login","session_id":"s-1"}"#
-        #expect(AgentCommand.startedChat(.claude, in: notSignedIn)?.failed == true)
+        #expect(AgentCommand.startedChat(.claude, in: notSignedIn)?.didFail == true)
         #expect(AgentCommand.failure(in: notSignedIn) == "Not logged in · Please run /login")
         #expect(AgentCommand.arguments(.claude, folder: "/w", prompt: "p").contains("plan"))
-        #expect(AgentCommand.arguments(.codex, folder: "/w", prompt: "p", pictures: [URL(fileURLWithPath: "/a.jpg")]).suffix(4) == ["-i", "/a.jpg", "--", "p"])
+        #expect(AgentCommand.arguments(.codex, folder: "/w", prompt: "p", pictures: [URL(filePath: "/a.jpg")]).suffix(4) == ["-i", "/a.jpg", "--", "p"])
     }
 
     @Test func aTerminalChatStartsWithTheReportWhateverTheFolderIsCalled() throws {
@@ -251,7 +251,7 @@ struct AgentHookTests {
         let file = root.appending(path: "run.command")
         try script.write(to: file, atomically: true, encoding: .utf8)
         let shell = Process()
-        shell.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        shell.executableURL = URL(filePath: "/bin/zsh")
         shell.arguments = [file.path]
         let pipe = Pipe()
         shell.standardOutput = pipe
@@ -284,7 +284,7 @@ struct AgentHookTests {
             ],
         ]
         try JSONSerialization.data(withJSONObject: listing).write(to: report.appending(path: "report.json"))
-        let source = ReportSource(kind: .phone, device: "D", deviceName: "Mark iPhone", bundleID: "com.example.app", reportID: "20261004-120950", receivedAt: Date())
+        let source = ReportSource(kind: .phone, device: "D", deviceName: "Mark iPhone", bundleID: "com.example.app", reportID: "20261004-120950", receivedAt: .now)
         let text = ReportContent.text(for: InboxReport(folder: report, source: source, claim: nil))
         #expect(text == """
             UI report from Mark iPhone · Tiny Tally
@@ -303,7 +303,7 @@ struct AgentHookTests {
     @Test func codexChatsLeaveOutWhatCodexRunsOnItsOwn() throws {
         let database = root.appending(path: "state_5.sqlite")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let now = Int64(Date.now.timeIntervalSince1970 * 1000)
         let old = now - 30 * 86_400_000
         let sql = """
             CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, updated_at_ms INTEGER,
@@ -316,7 +316,7 @@ struct AgentHookTests {
             INSERT INTO threads VALUES ('t-stale', 'Stale', '', '', '/p', \(old), 0, NULL, 'user', 'vscode');
             """
         let sqlite = Process()
-        sqlite.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        sqlite.executableURL = URL(filePath: "/usr/bin/sqlite3")
         sqlite.arguments = [database.path, sql]
         try sqlite.run()
         sqlite.waitUntilExit()
@@ -329,8 +329,8 @@ struct AgentHookTests {
     @Test func aClaimThatCantBeReadStillCountsAsTaken() throws {
         let folder = try inboxReport("20261004-120200")
         try Data("{\"chat\":\"cod".utf8).write(to: folder.appending(path: Inbox.claimFile))
-        #expect(Inbox.waiting(for: ["com.example.app"], paths: paths).isEmpty)
-        let chat = ChatRecord(id: "codex-A", agent: "codex", folder: "/w", bundleIDs: ["com.example.app"], pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
+        #expect(Inbox.unclaimedReports(for: ["com.example.app"], paths: paths).isEmpty)
+        let chat = ChatRecord(id: "codex-A", agent: "codex", folder: "/w", bundleIDs: ["com.example.app"], pid: getpid(), registeredAt: .now, lastActiveAt: .now)
         let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
         guard case .takenByAnotherChat = Inbox.claim(report, for: chat) else {
             Issue.record("A second claim should find the first")
@@ -343,7 +343,7 @@ struct AgentHookTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let builder = ChatSession(paths: paths, folder: folder, extraApps: ["com.example.app"], agent: "codex", id: "codex-A", startsHub: false)
         let other = ChatSession(paths: paths, folder: folder, extraApps: ["com.example.app"], agent: "codex", id: "codex-B", startsHub: false)
-        let report = try inboxReport("20261004-120000", address: Address(chat: "codex-A", agent: "codex", folder: folder.path))
+        let report = try inboxReport("20261004-120000", recipient: ReportRecipient(chat: "codex-A", agent: "codex", folder: folder.path))
         _ = try inboxReport("20261004-120100")
 
         // Another chat on the same app gets nothing, and an unaddressed report goes to no one.

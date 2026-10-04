@@ -4,8 +4,8 @@ import Foundation
 /// Adds this tool's hooks to each agent's user hook settings, keeping every other hook there,
 /// and takes them out again. Running it twice changes nothing.
 enum AgentSettings {
-    static func file(_ agent: Agent) -> URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+    static func fileURL(for agent: Agent) -> URL {
+        let home = URL.homeDirectory
         switch agent {
         case .claude: return home.appending(path: ".claude/settings.json")
         case .codex: return home.appending(path: ".codex/hooks.json")
@@ -14,18 +14,18 @@ enum AgentSettings {
 
     /// The agent's settings folder exists, so the agent has been used on this Mac.
     static func isPresent(_ agent: Agent) -> Bool {
-        FileManager.default.fileExists(atPath: file(agent).deletingLastPathComponent().path)
+        FileManager.default.fileExists(atPath: fileURL(for: agent).deletingLastPathComponent().path)
     }
 
-    static func command(_ executable: String, _ agent: Agent, _ event: HookEvent) -> String {
-        "'\(executable.replacingOccurrences(of: "'", with: "'\\''"))' hook \(agent.rawValue) \(event.rawValue)"
+    static func command(running executable: String, agent: Agent, event: HookEvent) -> String {
+        "'\(executable.replacing("'", with: "'\\''"))' hook \(agent.rawValue) \(event.rawValue)"
     }
 
     /// This tool's hooks, by the agent's event name, with the matcher that limits them to
     /// commands and MCP tools where an agent supports one.
     static func hooks(_ agent: Agent, executable: String) -> [(event: String, matcher: String?, hooks: [[String: Any]])] {
         func hook(_ event: HookEvent, _ extra: [String: Any] = [:]) -> [String: Any] {
-            ["type": "command", "command": command(executable, agent, event)].merging(extra) { $1 }
+            ["type": "command", "command": command(running: executable, agent: agent, event: event)].merging(extra) { $1 }
         }
         switch agent {
         case .claude:
@@ -45,8 +45,8 @@ enum AgentSettings {
     static func isOurs(_ hook: Any) -> Bool {
         guard let command = (hook as? [String: Any])?["command"] as? String, command.hasPrefix("'"),
               let end = command.range(of: "' hook ") else { return false }
-        let path = command[command.index(after: command.startIndex)..<end.lowerBound].replacingOccurrences(of: "'\\''", with: "'")
-        return URL(fileURLWithPath: path).lastPathComponent == commandName
+        let path = String(command[command.index(after: command.startIndex)..<end.lowerBound]).replacing("'\\''", with: "'")
+        return URL(filePath: path).lastPathComponent == commandName
     }
 
     /// The settings with this tool's hooks in place, replacing any older copy of them.
@@ -94,14 +94,14 @@ enum AgentSettings {
 
     /// Reads, changes and writes an agent's settings, keeping a copy of the file as it was the
     /// first time this tool changed it.
-    static func update(_ agent: Agent, _ change: ([String: Any]) -> [String: Any]) throws {
-        try update(file(agent), change)
+    static func update(_ agent: Agent, applying change: (_ settings: [String: Any]) -> [String: Any]) throws {
+        try update(fileURL(for: agent), applying: change)
     }
 
     /// Changes a settings file. A change that leaves the settings as they were writes nothing,
     /// not even the copy, so the file keeps its own formatting. A file that exists but can't be
     /// read throws, so it's never written over as if it were empty.
-    static func update(_ file: URL, _ change: ([String: Any]) -> [String: Any]) throws {
+    static func update(_ file: URL, applying change: (_ settings: [String: Any]) -> [String: Any]) throws {
         let files = FileManager.default
         var current: [String: Any] = [:]
         let data = try StoredFile.read(file)

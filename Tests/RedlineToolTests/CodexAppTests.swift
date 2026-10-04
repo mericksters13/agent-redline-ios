@@ -62,7 +62,7 @@ struct CodexAppTests {
 
     @Test func aTurnGoesToTheChatWithItsPictures() throws {
         let app = try fakeApp(answer: ["resultType": "success", "result": ["result": ["turn": ["status": "inProgress"]]]])
-        let picture = URL(fileURLWithPath: "/tmp/screen-1.jpg")
+        let picture = URL(filePath: "/tmp/screen-1.jpg")
         #expect(CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [picture], socketPath: app.path, timeout: 5) == .started)
         let requests = app.requests()
         let turn = try #require(requests.first { $0["method"] as? String == "thread-follower-start-turn" })
@@ -79,8 +79,8 @@ struct CodexAppTests {
         func answered() -> Bool {
             app.requests().contains { $0["type"] as? String == "client-discovery-response" && ($0["response"] as? [String: Any])?["canHandle"] as? Bool == false }
         }
-        let deadline = Date().addingTimeInterval(2)
-        while !answered(), Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+        let deadline = Date.now.addingTimeInterval(2)
+        while !answered(), Date.now < deadline { Thread.sleep(forTimeInterval: 0.02) }
         #expect(answered())
     }
 
@@ -106,9 +106,9 @@ struct CodexAppTests {
                 Thread.sleep(forTimeInterval: 0.2)
             }
         }
-        let started = Date()
+        let started = Date.now
         #expect(CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [], socketPath: path, timeout: 1) == .failed("The Codex app didn't answer"))
-        #expect(Date().timeIntervalSince(started) < 2.5)
+        #expect(Date.now.timeIntervalSince(started) < 2.5)
     }
 
     @Test func aChatNoWindowHasOpenIsReported() throws {

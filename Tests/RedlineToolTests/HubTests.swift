@@ -11,11 +11,11 @@ struct HubTests {
     /// A hub that's never started: no listener, no simulators, no devicectl.
     private func hub() throws -> Hub {
         try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        return Hub(paths: paths, devicectl: Devicectl(executable: URL(fileURLWithPath: "/usr/bin/true")), apps: [app])
+        return Hub(paths: paths, devicectl: Devicectl(executable: URL(filePath: "/usr/bin/true")), apps: [app])
     }
 
-    private func offer(token: String, reports: [(String, Date)]) -> HubMessage.Offer {
-        HubMessage.Offer(device: phone, bundleID: app, token: token, reports: reports.map { .init(id: $0.0, finishedAt: $0.1) })
+    private func offer(token: String, reports: [HubMessage.Offer.Report]) -> HubMessage.Offer {
+        HubMessage.Offer(device: phone, bundleID: app, token: token, reports: reports)
     }
 
     /// The hub's state for the phone once `done` accepts it, waiting up to five seconds.
@@ -47,24 +47,24 @@ struct HubTests {
         """.write(to: devicectl, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: devicectl.path)
         let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app])
-        hub.updateApps(starting: true)
+        hub.updateApps(isStarting: true)
         let link = PhoneLink(phone: .init(udid: phone, name: "Mark iPhone", model: "iPhone 17 Pro"), hub: hub)
 
-        link.update(hosts: ["192.168.1.2"], port: 47361, rediscover: true)
+        link.update(hosts: ["192.168.1.2"], port: 47361, includingNewApps: true)
         #expect(try await state(of: hub) { $0.hasPrefix("Not reachable") }?.hasPrefix("Not reachable, trying again in 30 s") == true)
         // The phone wakes long before the 30 seconds are up, and gets its address right away.
         try Data().write(to: awake)
-        link.phoneWoke()
+        link.phoneDidWake()
         #expect(try await state(of: hub) { $0.hasPrefix("Ready") } == "Ready for \(app)")
     }
 
     @Test func aTokenOutlivesTheHub() throws {
         let first = try hub()
-        let token = first.token(device: phone, bundleID: app)
+        let token = first.issueToken(device: phone, bundleID: app)
         // Files are written on the hub's writer queue.
         first.flushWrites()
         #expect(token.count == 64)
-        #expect(try hub().token(device: phone, bundleID: app) == token)
+        #expect(try hub().issueToken(device: phone, bundleID: app) == token)
         let permissions = try FileManager.default.attributesOfItem(atPath: paths.tokens.path)[.posixPermissions] as? Int
         #expect(permissions == 0o600)
     }
@@ -86,7 +86,7 @@ struct HubTests {
         try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
         try Data("not json".utf8).write(to: paths.state)
         let hub = try hub()
-        _ = hub.toCopy(device: phone, bundleID: app, finished: [])
+        hub.startTrackingIfNeeded(device: phone, bundleID: app)
         hub.flushWrites()
         let names = try FileManager.default.contentsOfDirectory(atPath: paths.hub.path)
         let aside = try #require(names.first { $0.hasPrefix("state.json.unreadable-") })
@@ -97,7 +97,7 @@ struct HubTests {
 
     @Test func aReportWhoseSourceCantBeSavedIsNotFiled() throws {
         let hub = try hub()
-        let source = ReportSource(kind: .phone, device: phone, deviceName: "Test iPhone", bundleID: app, reportID: "20261004-031600", receivedAt: Date())
+        let source = ReportSource(kind: .phone, device: phone, deviceName: "Test iPhone", bundleID: app, reportID: "20261004-031600", receivedAt: .now)
         // The copy works, but source.json can't be written: a folder is in its place.
         #expect(throws: (any Error).self) {
             try hub.receive(source) { destination in
@@ -107,13 +107,14 @@ struct HubTests {
         let inbox = paths.inbox.appending(path: app)
         #expect(try FileManager.default.contentsOfDirectory(atPath: inbox.path).isEmpty)
         // Not counted as delivered, so it's offered again.
-        #expect(hub.toCopy(device: phone, bundleID: app, finished: [FinishedReport(id: "20261004-031600", finishedAt: Date())]) == ["20261004-031600"])
+        hub.startTrackingIfNeeded(device: phone, bundleID: app)
+        #expect(hub.reportIDsToCopy(device: phone, bundleID: app, finished: [FinishedReport(id: "20261004-031600", finishedAt: Date.now)]) == ["20261004-031600"])
     }
 
     @Test func anOfferWithoutTheRightTokenIsTurnedDown() throws {
         let hub = try hub()
-        _ = hub.token(device: phone, bundleID: app)
-        let answer = hub.answerNow(offer(token: "guess", reports: [("20261004-031600", Date())]))
+        _ = hub.issueToken(device: phone, bundleID: app)
+        let answer = hub.answerNow(offer(token: "guess", reports: [.init(id: "20261004-031600", finishedAt: .now)]))
         #expect(answer.refused != nil)
         #expect(answer.want.isEmpty)
         // An app this hub never gave an address to is turned down too.
@@ -123,9 +124,9 @@ struct HubTests {
 
     @Test func theHubAsksOnlyForNewReportsAndFilesThemWhole() throws {
         let hub = try hub()
-        let token = hub.token(device: phone, bundleID: app)
-        let old = ("20261002-135144", Date().addingTimeInterval(-86_400))
-        let new = ("20261004-031600", Date())
+        let token = hub.issueToken(device: phone, bundleID: app)
+        let old = HubMessage.Offer.Report(id: "20261002-135144", finishedAt: Date.now.addingTimeInterval(-86_400))
+        let new = HubMessage.Offer.Report(id: "20261004-031600", finishedAt: .now)
         let offered = offer(token: token, reports: [old, new])
         let answer = hub.answerNow(offered)
         #expect(answer.refused == nil)
@@ -135,12 +136,12 @@ struct HubTests {
 
         // Unsafe file names and reports without their report.json are turned down.
         #expect(throws: Hub.FilingError.unusableUpload) {
-            try hub.storeNow(HubMessage.Upload(id: new.0, files: ["../escape.jpg": Data([1]), "report.json": Data("{}".utf8)]), offeredIn: offered)
+            try hub.storeNow(HubMessage.Upload(id: new.id, files: ["../escape.jpg": Data([1]), "report.json": Data("{}".utf8)]), offeredIn: offered)
         }
-        #expect(throws: Hub.FilingError.unusableUpload) { try hub.storeNow(HubMessage.Upload(id: new.0, files: ["screen-1.jpg": Data([1])]), offeredIn: offered) }
+        #expect(throws: Hub.FilingError.unusableUpload) { try hub.storeNow(HubMessage.Upload(id: new.id, files: ["screen-1.jpg": Data([1])]), offeredIn: offered) }
 
         let files = ["report.json": Data("{}".utf8), "report.md": Data("# Report".utf8), "screen-1.jpg": Data([0xFF, 0xD8])]
-        try hub.storeNow(HubMessage.Upload(id: new.0, files: files), offeredIn: offered)
+        try hub.storeNow(HubMessage.Upload(id: new.id, files: files), offeredIn: offered)
         let folder = paths.inbox.appending(path: "\(app)/20261004-031600-0CF3C01C", directoryHint: .isDirectory)
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted() == ["report.json", "report.md", "screen-1.jpg", "source.json"])
         // Offered again, it's on the Mac now.

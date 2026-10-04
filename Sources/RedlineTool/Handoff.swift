@@ -3,7 +3,7 @@ import Foundation
 import UserNotifications
 
 /// Where a report goes.
-enum Destination: Equatable {
+enum ReportDestination: Equatable {
     /// An open chat: the one the user picked on the phone, or the only chat working in the
     /// worktree the app was built from.
     case chat(Agent, id: String)
@@ -13,7 +13,7 @@ enum Destination: Equatable {
     case newChat(Agent, folder: String, pick: String?)
     /// Nothing says where: several chats work in the worktree and none was picked, or the
     /// report doesn't say where the app was built. It waits in the inbox.
-    case undecided(String)
+    case undecided(reason: String)
 }
 
 enum Routing {
@@ -21,21 +21,21 @@ enum Routing {
         ReportListing.load(from: report)?.app?.sourceFile.map(Worktree.root(of:))
     }
 
-    static func destination(of report: URL, bundleID: String, list: (String, String?) -> HubMessage.ChatList) -> Destination {
+    static func destination(of report: URL, bundleID: String, list: (_ bundleID: String, _ sourceFile: String?) -> HubMessage.ChatList) -> ReportDestination {
         // A listing without its app reads as if there were none, as it always has.
         let listing = ReportListing.load(from: report).flatMap { $0.app == nil ? nil : $0 }
         let worktree = listing?.app?.sourceFile.map(Worktree.root(of:))
         if let pick = listing?.destination, let agent = Agent(rawValue: pick.agent) {
             if let chat = pick.chat { return .chat(agent, id: chat) }
-            guard let worktree else { return .undecided("The report doesn't say which worktree the app was built from") }
+            guard let worktree else { return .undecided(reason: "The report doesn't say which worktree the app was built from") }
             return .newChat(agent, folder: worktree, pick: pick.newChat)
         }
-        guard let worktree else { return .undecided("The report doesn't say which worktree the app was built from") }
+        guard let worktree else { return .undecided(reason: "The report doesn't say which worktree the app was built from") }
         let directory = list(bundleID, listing?.app?.sourceFile)
-        let here = directory.chats.filter(\.sameWorktree)
+        let here = directory.chats.filter(\.isSameWorktree)
         if here.count == 1, let chat = here.first, let agent = Agent(rawValue: chat.agent) { return .chat(agent, id: chat.id) }
         if here.isEmpty, let agent = directory.agents.first.flatMap(Agent.init(rawValue:)) { return .newChat(agent, folder: worktree, pick: nil) }
-        return .undecided("\(here.count) chats work in \(URL(fileURLWithPath: worktree).lastPathComponent); pick one on the phone")
+        return .undecided(reason: "\(here.count) chats work in \(URL(filePath: worktree).lastPathComponent); pick one on the phone")
     }
 }
 
@@ -52,7 +52,7 @@ final class Handoff: Sendable {
         self.hub = hub
     }
 
-    func reportFiled(_ folder: URL, source: ReportSource) {
+    func reportDidArrive(at folder: URL, source: ReportSource) {
         queue.async { [self] in
             // A chat may have taken it already, through MCP or a hook.
             guard Inbox.claim(of: folder) == nil else { return }
@@ -63,9 +63,9 @@ final class Handoff: Sendable {
     /// Hands over reports that arrived shortly before the hub started and no chat took.
     func handOverRecent(within interval: TimeInterval = 3600) {
         queue.async { [self] in
-            let apps = Set(Chats.live(hub.paths).flatMap(\.bundleIDs))
-            for report in Inbox.waiting(for: Array(apps), paths: hub.paths)
-            where Date().timeIntervalSince(report.source.receivedAt) < interval && Inbox.address(of: report.folder) == nil {
+            let apps = Set(Chats.removeClosedChats(hub.paths).flatMap(\.bundleIDs))
+            for report in Inbox.unclaimedReports(for: Array(apps), paths: hub.paths)
+            where Date.now.timeIntervalSince(report.source.receivedAt) < interval && Inbox.recipient(of: report.folder) == nil {
                 deliver(report)
             }
         }
@@ -93,7 +93,7 @@ final class Handoff: Sendable {
                 case .codex: sendToCodex(report, thread: started.chat)
                 case .claude: sendToClaude(report, session: started.chat, worktree: started.folder)
                 }
-            } else if agent == .claude, !ClaudeCLI.ready() {
+            } else if agent == .claude, !ClaudeCLI.isReady() {
                 waitForClaudeSignIn(report)
             } else {
                 startChat(agent, in: folder, for: report, pick: pick)
@@ -139,7 +139,7 @@ final class Handoff: Sendable {
 
     /// A chat record for a chat the hub hands a report to, as the claim names it.
     private static func claimant(id: String, agent: Agent, folder: String, bundleID: String) -> ChatRecord {
-        ChatRecord(id: id, agent: agent.rawValue, folder: folder, bundleIDs: [bundleID], pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
+        ChatRecord(id: id, agent: agent.rawValue, folder: folder, bundleIDs: [bundleID], pid: getpid(), registeredAt: .now, lastActiveAt: .now)
     }
 
     /// The title of every notification about a report.
@@ -151,10 +151,10 @@ final class Handoff: Sendable {
     /// one starts in the worktree.
     private func sendToClaude(_ report: InboxReport, session id: String, worktree: String?) {
         let source = report.source
-        guard let session = ClaudeSessions.open().first(where: { $0.id == id }) else {
+        guard let session = ClaudeSessions.openSessions().first(where: { $0.id == id }) else {
             hub.log("The Claude Code chat for report \(source.reportID) is closed")
             // Continued where it left off, then reopened in the desktop app.
-            if let worktree, ClaudeCLI.ready() {
+            if let worktree, ClaudeCLI.isReady() {
                 let chat = Self.claimant(id: ChatID.make(.claude, id), agent: .claude, folder: worktree, bundleID: source.bundleID)
                 guard claim(report, for: chat) else { return }
                 openClaude(id, in: worktree, thenSend: ReportContent.text(for: report), for: report)
@@ -190,7 +190,7 @@ final class Handoff: Sendable {
         if outcome == .notOpen {
             hub.log("The Codex chat for report \(source.reportID) isn't open; opening it")
             do {
-                try Self.open(Self.appLink(.codex, id: thread, isClaudeAppInstalled: false, isCodexAppInstalled: true) ?? "codex://threads/\(thread)")
+                try Self.openURL(Self.appLink(.codex, id: thread, isClaudeAppInstalled: false, isCodexAppInstalled: true) ?? "codex://threads/\(thread)")
             } catch {
                 hub.log("Couldn't open the Codex chat \(thread): \(error.localizedDescription)")
             }
@@ -205,7 +205,7 @@ final class Handoff: Sendable {
         }
         do {
             // Addressed before it's let go, so no other chat takes it in between.
-            try Inbox.setAddress(Address(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
+            try Inbox.setRecipient(ReportRecipient(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
         } catch {
             hub.log("Couldn't address report \(source.reportID) to the Codex chat \(thread): \(error.localizedDescription)")
         }
@@ -219,7 +219,7 @@ final class Handoff: Sendable {
     /// through a `.command` file: it opens in the user's terminal and needs no permission to
     /// control one. `last` goes through a file, so no quoting can break it.
     static func openTerminal(in folder: String, running command: String, arguments: [String] = [], with last: String) throws {
-        let scripts = URL(fileURLWithPath: folder).appending(path: ".redline", directoryHint: .isDirectory)
+        let scripts = URL(filePath: folder).appending(path: ".redline", directoryHint: .isDirectory)
         let name = "chat-\(UUID().uuidString.prefix(8))"
         let lastFile = scripts.appending(path: "\(name).txt")
         let script = scripts.appending(path: "\(name).command")
@@ -229,13 +229,13 @@ final class Handoff: Sendable {
         try last.write(to: lastFile, atomically: true, encoding: .utf8)
         try terminalScript(folder: folder, command: command, arguments: arguments, lastFile: lastFile.path).write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-        try open(script.path)
+        try openURL(script.path)
     }
 
     /// The script a terminal runs: into the folder, read the last argument from its file, remove
     /// the file and the script, then run the command.
     static func terminalScript(folder: String, command: String, arguments: [String], lastFile: String) -> String {
-        func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        func quoted(_ text: String) -> String { "'" + text.replacing("'", with: "'\\''") + "'" }
         return [
             "#!/bin/zsh",
             "cd \(quoted(folder)) || exit 1",
@@ -248,9 +248,9 @@ final class Handoff: Sendable {
     /// Runs a command in a folder and waits for it. Throws when it can't start.
     static func run(_ executable: String, arguments: [String], in folder: String) throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
+        process.executableURL = URL(filePath: executable)
         process.arguments = arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: folder)
+        process.currentDirectoryURL = URL(filePath: folder)
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -262,7 +262,7 @@ final class Handoff: Sendable {
     /// installed, else in a terminal window in `folder` that resumes it. Throws when it can't.
     static func openChat(_ agent: Agent, id: String, in folder: String) throws {
         if let link = appLink(agent, id: id) {
-            try open(link)
+            try openURL(link)
             return
         }
         guard let command = AgentCommand.locate(agent) else { throw OpenError.agentNotFound(agent) }
@@ -301,9 +301,9 @@ final class Handoff: Sendable {
     }
 
     /// Opens a link or file with /usr/bin/open and waits for it. Throws when open can't start.
-    private static func open(_ link: String) throws {
+    private static func openURL(_ link: String) throws {
         let open = Process()
-        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.executableURL = URL(filePath: "/usr/bin/open")
         open.arguments = [link]
         try open.run()
         open.waitUntilExit()
@@ -333,7 +333,7 @@ final class Handoff: Sendable {
         let place = Self.folderName(folder)
         queue.async { [self] in
             for _ in 0..<60 {
-                if let session = ClaudeSessions.open().first(where: { $0.id == id }), ClaudeSessions.send(text, to: session) {
+                if let session = ClaudeSessions.openSessions().first(where: { $0.id == id }), ClaudeSessions.send(text, to: session) {
                     hub.log("Sent report \(source.reportID) to the Claude Code chat \(id), now open")
                     record(.init(agent: .claude, chat: id, title: session.title ?? "New chat in \(place)", kind: .newChat), for: report)
                     Self.notify(title: Self.reportTitle(source), message: "Claude Code is looking into it in \(hasApp ? "the Claude app" : "Terminal"), in worktree \(place).")
@@ -392,7 +392,7 @@ final class Handoff: Sendable {
         if agent == .claude, madeWorktree {
             do {
                 let copy = try NewWorktree.copyReport(report.folder, into: workFolder)
-                reportPrompt = reportPrompt.replacingOccurrences(of: report.folder.path, with: copy)
+                reportPrompt = reportPrompt.replacing(report.folder.path, with: copy)
             } catch {
                 hub.log("Couldn't copy report \(source.reportID) into \(workFolder): \(error.localizedDescription); the chat reads it from the inbox")
             }
@@ -410,7 +410,7 @@ final class Handoff: Sendable {
         let process = Process()
         process.executableURL = executable
         process.arguments = AgentCommand.arguments(agent, folder: workFolder, prompt: prompt, pictures: pictures)
-        process.currentDirectoryURL = URL(fileURLWithPath: workFolder)
+        process.currentDirectoryURL = URL(filePath: workFolder)
         process.environment = ProcessInfo.processInfo.environment.merging([AgentHooks.startedByHub: "1"]) { $1 }
         process.standardInput = FileHandle.nullDevice
         do {
@@ -426,19 +426,19 @@ final class Handoff: Sendable {
         process.terminationHandler = { [hub, self] finished in
             let text = (try? String(contentsOf: output, encoding: .utf8)) ?? ""
             let started = AgentCommand.startedChat(agent, in: text)
-            guard finished.terminationStatus == 0, let started, !started.failed else {
+            guard finished.terminationStatus == 0, let started, !started.didFail else {
                 // Free the report for a chat that opens later, and take back the unused worktree.
                 release(report)
                 if madeWorktreeForThis { NewWorktree.remove(workFolder) }
                 let reason = AgentCommand.failure(in: text)
                 hub.log("The \(agent.name) chat for report \(source.reportID) failed (\(finished.terminationStatus)): \(reason)")
-                Handoff.notify(title: "Couldn't start a \(agent.name) chat", message: "\(reason). The report waits in the inbox.")
+                Self.notify(title: "Couldn't start a \(agent.name) chat", message: "\(reason). The report waits in the inbox.")
                 return
             }
             // Later reports with the same pick go to this chat.
             if let pick {
                 do {
-                    try StartedChats.remember(StartedChat(chat: started.chat, folder: workFolder, at: Date()), for: pick, paths: paths)
+                    try StartedChats.remember(StartedChat(chat: started.chat, folder: workFolder, startedAt: .now), for: pick, paths: paths)
                 } catch {
                     hub.log("Couldn't remember the chat for the phone's pick \(pick); its next report starts another: \(error.localizedDescription)")
                 }
@@ -453,13 +453,13 @@ final class Handoff: Sendable {
             switch agent {
             case .codex:
                 do {
-                    try Handoff.openChat(.codex, id: started.chat, in: workFolder)
+                    try Self.openChat(.codex, id: started.chat, in: workFolder)
                 } catch {
                     hub.log("Couldn't open the Codex chat \(started.chat): \(error.localizedDescription)")
                 }
                 hub.log("The Codex chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
                 record(.init(agent: .codex, chat: started.chat, title: "New chat in \(place)", kind: .newChat), for: report)
-                Handoff.notify(title: "Codex looked into a report", message: "Opened in Codex, in worktree \(place).")
+                Self.notify(title: "Codex looked into a report", message: "Opened in Codex, in worktree \(place).")
             case .claude:
                 openClaude(started.chat, in: workFolder, thenSend: reportText, for: report)
             }
@@ -475,7 +475,7 @@ final class Handoff: Sendable {
     }
 
     private static func folderName(_ path: String) -> String {
-        URL(fileURLWithPath: path).lastPathComponent
+        URL(filePath: path).lastPathComponent
     }
 
     /// Shows a notification. Inside Redline.app it comes from Redline; the bare command has no
@@ -489,10 +489,10 @@ final class Handoff: Sendable {
             return
         }
         func quoted(_ text: String) -> String {
-            "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+            "\"" + text.replacing("\\", with: "\\\\").replacing("\"", with: "\\\"") + "\""
         }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.executableURL = URL(filePath: "/usr/bin/osascript")
         process.arguments = ["-e", "display notification \(quoted(message)) with title \(quoted(title))"]
         // A notification that can't be shown is left out; the log says what happened.
         try? process.run()
@@ -513,7 +513,7 @@ enum AgentCommand {
     }
 
     static func locate(_ agent: Agent) -> URL? {
-        let home = NSHomeDirectory()
+        let home = URL.homeDirectory.path
         let candidates: [String]
         switch agent {
         case .claude:
@@ -537,18 +537,28 @@ enum AgentCommand {
         }
     }
 
-    /// The chat a command line run started or continued, its answer when it gives one, and
-    /// whether the run reported an error: `codex exec --json`'s first event, or the result
-    /// `claude -p --output-format json` prints.
-    static func startedChat(_ agent: Agent, in output: String) -> (chat: String, answer: String?, failed: Bool)? {
+    /// What a command line run printed about the chat it started.
+    struct StartedChatOutput: Equatable {
+        var chat: String
+        /// The chat's answer, when the run gives one.
+        var answer: String?
+        /// The run reported an error.
+        var didFail: Bool
+    }
+
+    /// The chat a command line run started, from `codex exec --json`'s first event or the
+    /// result `claude -p --output-format json` prints.
+    static func startedChat(_ agent: Agent, in output: String) -> StartedChatOutput? {
         for line in output.split(separator: "\n") {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
             switch agent {
             case .codex:
-                if object["type"] as? String == "thread.started", let thread = object["thread_id"] as? String { return (thread, nil, false) }
+                if object["type"] as? String == "thread.started", let thread = object["thread_id"] as? String {
+                    return StartedChatOutput(chat: thread, answer: nil, didFail: false)
+                }
             case .claude:
                 if let session = object["session_id"] as? String ?? object["chatId"] as? String {
-                    return (session, object["result"] as? String, object["is_error"] as? Bool ?? false)
+                    return StartedChatOutput(chat: session, answer: object["result"] as? String, didFail: object["is_error"] as? Bool ?? false)
                 }
             }
         }

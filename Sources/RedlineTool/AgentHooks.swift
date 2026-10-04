@@ -40,26 +40,26 @@ enum AgentHooks {
     static let startedByHub = "REDLINE_STARTED_CHAT"
 
     /// Runs one hook call and returns the exit code for the agent.
-    static func run(_ agent: Agent, _ event: HookEvent, paths: HubPaths) -> Int32 {
+    static func run(for agent: Agent, event: HookEvent, paths: HubPaths) -> Int32 {
         let input = HookInput(json: FileHandle.standardInput.readDataToEndOfFile())
-        guard let input, ProcessInfo.processInfo.environment[startedByHub] == nil else { return answer(event, nil) }
+        guard let input, ProcessInfo.processInfo.environment[startedByHub] == nil else { return answer(for: event, text: nil) }
         let id = ChatID.make(agent, input.chat)
-        let folder = URL(fileURLWithPath: input.folder)
+        let folder = URL(filePath: input.folder)
 
         let session = ChatSession(paths: paths, folder: folder, extraApps: [], agent: agent.rawValue, id: id, pid: AgentProcess.find())
         // Not an app project: nothing to do, in every project the agent opens.
-        guard !session.chat.bundleIDs.isEmpty else { return answer(event, nil) }
+        guard !session.chat.bundleIDs.isEmpty else { return answer(for: event, text: nil) }
 
         switch event {
         case .prompt:
             session.touch()
-            return answer(event, session.takeAddressed())
+            return answer(for: event, text: session.takeAddressed())
         }
     }
 
     /// Prints what the agent expects from this event, carrying `text` when there is any.
-    static func answer(_ event: HookEvent, _ text: String?) -> Int32 {
-        if let output = output(event, text),
+    static func answer(for event: HookEvent, text: String?) -> Int32 {
+        if let output = output(for: event, text: text),
            let data = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys, .withoutEscapingSlashes]) {
             FileHandle.standardOutput.write(data + Data("\n".utf8))
         }
@@ -67,7 +67,7 @@ enum AgentHooks {
     }
 
     /// The output for each event; Claude Code and Codex share one shape.
-    static func output(_ event: HookEvent, _ text: String?) -> [String: Any]? {
+    static func output(for event: HookEvent, text: String?) -> [String: Any]? {
         switch event {
         case .prompt:
             text.map { ["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": $0]] }

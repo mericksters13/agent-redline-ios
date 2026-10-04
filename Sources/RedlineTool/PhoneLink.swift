@@ -37,12 +37,12 @@ final class PhoneLink: @unchecked Sendable {
         queue = DispatchQueue(label: "Redline.hub.phone", target: Self.devices)
     }
 
-    /// Gives the address to every watched app that doesn't have it yet. `rediscover` looks
+    /// Gives the address to every watched app that doesn't have it yet. `includingNewApps` looks
     /// again for apps that weren't installed.
-    func update(hosts: [String], port: UInt16, rediscover: Bool) {
+    func update(hosts: [String], port: UInt16, includingNewApps: Bool) {
         queue.async {
             let address = HubMessage.Address(device: self.phone.udid, hosts: hosts, port: port)
-            if address != self.address || rediscover {
+            if address != self.address || includingNewApps {
                 self.address = address
                 self.missing = []
                 self.retryDelay = Self.firstRetry
@@ -55,10 +55,10 @@ final class PhoneLink: @unchecked Sendable {
     /// now instead of waiting out the delay, which grows while a phone sleeps: it's awake and
     /// likely about to be used. The wake also starts the delays over, so a try made before the
     /// phone's link is fully up is followed soon by another.
-    func phoneWoke() {
+    func phoneDidWake() {
         queue.async {
-            guard self.retryAt != nil, Date().timeIntervalSince(self.lastWakeTry) >= Self.wakeSpacing else { return }
-            self.lastWakeTry = Date()
+            guard self.retryAt != nil, Date.now.timeIntervalSince(self.lastWakeTry) >= Self.wakeSpacing else { return }
+            self.lastWakeTry = Date.now
             self.retryDelay = Self.firstRetry
             self.giveAddress()
         }
@@ -73,7 +73,7 @@ final class PhoneLink: @unchecked Sendable {
         let apps = hub.apps
         let addresses = Dictionary(uniqueKeysWithValues: apps.map { bundleID in
             var app = address
-            app.token = hub.token(device: phone.udid, bundleID: bundleID)
+            app.token = hub.issueToken(device: phone.udid, bundleID: bundleID)
             return (bundleID, app)
         })
         for (bundleID, address) in addresses.sorted(by: { $0.key < $1.key }) where given[bundleID] != address && !missing.contains(bundleID) {
@@ -90,19 +90,19 @@ final class PhoneLink: @unchecked Sendable {
         }
         let ready = apps.filter { given[$0] == addresses[$0] }
         if unreachable {
-            retryAt = Date().addingTimeInterval(retryDelay)
-            hub.phoneChanged(phone, state: .unreachable(retryInSeconds: Int(retryDelay)))
+            retryAt = Date.now.addingTimeInterval(retryDelay)
+            hub.phoneDidChange(phone, state: .unreachable(retryInSeconds: Int(retryDelay)))
             let delay = retryDelay
             retryDelay = min(retryDelay * 2, Self.longestRetry)
             queue.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self, let retryAt, Date() >= retryAt.addingTimeInterval(-1) else { return }
+                guard let self, let retryAt, Date.now >= retryAt.addingTimeInterval(-1) else { return }
                 giveAddress()
             }
         } else if ready.isEmpty {
-            hub.phoneChanged(phone, state: .noWatchedApps)
+            hub.phoneDidChange(phone, state: .noWatchedApps)
         } else {
             retryDelay = Self.firstRetry
-            hub.phoneChanged(phone, state: .ready(apps: ready))
+            hub.phoneDidChange(phone, state: .ready(apps: ready))
         }
     }
 }

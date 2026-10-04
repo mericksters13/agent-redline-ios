@@ -11,7 +11,7 @@ enum ChatDirectory {
     static func agents() -> [Agent] {
         Agent.allCases.filter { agent in
             switch agent {
-            case .claude: FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.claude/sessions")
+            case .claude: FileManager.default.fileExists(atPath: URL.homeDirectory.appending(path: ".claude/sessions").path)
             case .codex: AgentCommand.locate(.codex) != nil
             }
         }
@@ -24,7 +24,7 @@ enum ChatDirectory {
     /// Reads the folders of every open chat ahead of time, so the first question is quick too.
     static func warm(paths: HubPaths) {
         DispatchQueue.global(qos: .utility).async {
-            for bundleID in Set(Chats.live(paths).flatMap(\.bundleIDs)) {
+            for bundleID in Set(Chats.removeClosedChats(paths).flatMap(\.bundleIDs)) {
                 _ = list(bundleID: bundleID, sourceFile: nil, paths: paths)
             }
         }
@@ -34,22 +34,22 @@ enum ChatDirectory {
         let worktree = sourceFile.map(Worktree.root(of:))
         func buildsApp(_ folder: String) -> Bool { apps.bundleIDs(in: folder).contains(bundleID) }
         func chat(_ agent: Agent, id: String, title: String, folder: String, lastActive: Date) -> HubMessage.Chat {
-            HubMessage.Chat(id: id, agent: agent.rawValue, title: title, folder: URL(fileURLWithPath: folder).lastPathComponent,
-                            sameWorktree: worktree != nil && Worktree.root(of: folder) == worktree, lastActive: lastActive)
+            HubMessage.Chat(id: id, agent: agent.rawValue, title: title, folder: URL(filePath: folder).lastPathComponent,
+                            isSameWorktree: worktree != nil && Worktree.root(of: folder) == worktree, lastActive: lastActive)
         }
         let agents = agents()
         var chats: [HubMessage.Chat] = []
         if agents.contains(.claude) {
-            chats += ClaudeSessions.open().filter { buildsApp($0.folder) }
+            chats += ClaudeSessions.openSessions().filter { buildsApp($0.folder) }
                 .map { chat(.claude, id: $0.id, title: $0.title ?? "Untitled", folder: $0.folder, lastActive: $0.updatedAt) }
         }
         if agents.contains(.codex) {
             // Lazy, so projects are read only until 15 chats are found.
             chats += CodexThreads.recent(in: CodexThreads.newestDatabase()).lazy.filter { buildsApp($0.folder) }.prefix(15)
-                .map { chat(.codex, id: $0.id, title: $0.title, folder: $0.folder, lastActive: $0.updated) }
+                .map { chat(.codex, id: $0.id, title: $0.title, folder: $0.folder, lastActive: $0.updatedAt) }
         }
-        chats.sort { ($0.sameWorktree ? 1 : 0, $0.lastActive) > ($1.sameWorktree ? 1 : 0, $1.lastActive) }
-        return HubMessage.ChatList(agents: agents.map(\.rawValue), chats: chats, worktree: worktree.map { URL(fileURLWithPath: $0).lastPathComponent },
+        chats.sort { ($0.isSameWorktree ? 1 : 0, $0.lastActive) > ($1.isSameWorktree ? 1 : 0, $1.lastActive) }
+        return HubMessage.ChatList(agents: agents.map(\.rawValue), chats: chats, worktree: worktree.map { URL(filePath: $0).lastPathComponent },
                                    newChatBase: worktree.flatMap { NewWorktree.mainBranch(of: $0)?.name })
     }
 }
@@ -65,9 +65,9 @@ final class FolderApps: Sendable {
     static let keepFor: TimeInterval = 1800
 
     func bundleIDs(in folder: String) -> [String] {
-        if let entry = known.withLock({ $0[folder] }), Date().timeIntervalSince(entry.readAt) < Self.keepFor { return entry.ids }
-        let ids = ProjectApps.bundleIDs(in: URL(fileURLWithPath: folder))
-        known.withLock { $0[folder] = CachedApps(ids: ids, readAt: Date()) }
+        if let entry = known.withLock({ $0[folder] }), Date.now.timeIntervalSince(entry.readAt) < Self.keepFor { return entry.ids }
+        let ids = ProjectApps.bundleIDs(in: URL(filePath: folder))
+        known.withLock { $0[folder] = CachedApps(ids: ids, readAt: .now) }
         return ids
     }
 }
@@ -76,7 +76,7 @@ final class FolderApps: Sendable {
 enum Worktree {
     static func root(of path: String) -> String {
         let files = FileManager.default
-        var folder = URL(fileURLWithPath: path).standardizedFileURL
+        var folder = URL(filePath: path).standardizedFileURL
         var isFolder: ObjCBool = false
         if !files.fileExists(atPath: folder.path, isDirectory: &isFolder) || !isFolder.boolValue || folder.pathExtension == "xcodeproj" {
             folder = folder.deletingLastPathComponent()
@@ -92,17 +92,17 @@ enum Worktree {
 
 /// Codex's chats, from the database the Codex app and its command line keep.
 enum CodexThreads {
-    struct Thread: Equatable {
+    struct CodexThread: Equatable {
         var id: String
         var title: String
         var folder: String
-        var updated: Date
+        var updatedAt: Date
     }
 
     /// The newest of Codex's own databases of chats. Lists ~/.codex, so callers look it up once
     /// and pass it on.
     static func newestDatabase() -> URL? {
-        let folder = URL(fileURLWithPath: NSHomeDirectory() + "/.codex")
+        let folder = URL.homeDirectory.appending(path: ".codex", directoryHint: .isDirectory)
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
             .filter { $0.hasPrefix("state_") && $0.hasSuffix(".sqlite") }
         let newest = names.max { (Int($0.dropFirst(6).dropLast(7)) ?? 0) < (Int($1.dropFirst(6).dropLast(7)) ?? 0) }
@@ -129,7 +129,7 @@ enum CodexThreads {
 
     /// Chats the user had, used in the last `days`, newest first: not archived, and not the
     /// reviews, subagents and automations Codex runs on its own.
-    static func recent(days: Double = 14, in database: URL?) -> [Thread] {
+    static func recent(days: Double = 14, in database: URL?) -> [CodexThread] {
         guard let database else { return [] }
         var connection: OpaquePointer?
         guard sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
@@ -147,12 +147,12 @@ enum CodexThreads {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(connection, query, -1, &statement, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(statement) }
-        sqlite3_bind_int64(statement, 1, Int64((Date().timeIntervalSince1970 - days * 86_400) * 1000))
-        var threads: [Thread] = []
+        sqlite3_bind_int64(statement, 1, Int64((Date.now.timeIntervalSince1970 - days * 86_400) * 1000))
+        var threads: [CodexThread] = []
         while sqlite3_step(statement) == SQLITE_ROW {
             func text(_ column: Int32) -> String { sqlite3_column_text(statement, column).map { String(cString: $0) } ?? "" }
-            threads.append(Thread(id: text(0), title: text(1), folder: text(2),
-                                  updated: Date(timeIntervalSince1970: Double(sqlite3_column_int64(statement, 3)) / 1000)))
+            threads.append(CodexThread(id: text(0), title: text(1), folder: text(2),
+                                  updatedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(statement, 3)) / 1000)))
         }
         return threads
     }

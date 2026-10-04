@@ -71,8 +71,14 @@ enum HubMessage {
         /// The last part of the chat's folder.
         var folder: String
         /// The chat works in the worktree the app was built from.
-        var sameWorktree: Bool
+        var isSameWorktree: Bool
         var lastActive: Date
+
+        private enum CodingKeys: String, CodingKey {
+            case id, agent, title, folder, lastActive
+            /// The kit reads this key.
+            case isSameWorktree = "sameWorktree"
+        }
     }
 
     struct ChatList: Codable, Equatable, Sendable {
@@ -151,7 +157,7 @@ enum ReportFolder {
 
     /// The finished reports among paths relative to the reports folder. A report is finished
     /// once its `report.json` is written and the draft it was drawn from is gone.
-    static func finished(in entries: [(path: String, modified: Date?)]) -> [FinishedReport] {
+    static func finishedReports(in entries: [(path: String, modified: Date?)]) -> [FinishedReport] {
         var written: [String: FinishedReport] = [:]
         var drawing = Set<String>()
         for entry in entries {
@@ -172,7 +178,7 @@ struct SourceState: Codable, Equatable {
     var delivered: [String] = []
 
     /// The finished reports still to copy.
-    func toCopy(from finished: [FinishedReport]) -> [String] {
+    func reportIDsToCopy(from finished: [FinishedReport]) -> [String] {
         let done = Set(delivered)
         return finished.filter { report in
             !done.contains(report.id) && !isOld(report)
@@ -180,7 +186,7 @@ struct SourceState: Codable, Equatable {
     }
 
     /// The offered reports the app can stop offering: copied, or there before the hub first looked.
-    func settled(_ finished: [FinishedReport]) -> [String] {
+    func settledReportIDs(in finished: [FinishedReport]) -> [String] {
         let done = Set(delivered)
         return finished.filter { done.contains($0.id) || isOld($0) }.map(\.id)
     }
@@ -191,7 +197,7 @@ struct SourceState: Codable, Equatable {
 }
 
 /// A report folder inside a simulator app's data container, found from the path of a file in it.
-struct SimulatorReportPath: Equatable {
+struct SimulatorReportPath: Hashable {
     /// The app's data container.
     var container: String
     /// The simulator's UDID.
@@ -202,9 +208,15 @@ struct SimulatorReportPath: Equatable {
         guard let marker = path.range(of: "/" + ReportFolder.path + "/") else { return nil }
         let container = String(path[..<marker.lowerBound])
         guard let id = path[marker.upperBound...].split(separator: "/").first.map(String.init), !id.isEmpty else { return nil }
+        guard let device = device(ofContainer: container) else { return nil }
+        return SimulatorReportPath(container: container, device: device, reportID: id)
+    }
+
+    /// The simulator an app's data container belongs to, from the container's path.
+    static func device(ofContainer container: String) -> String? {
         let parts = container.split(separator: "/")
         guard let devices = parts.lastIndex(of: "Devices"), devices + 1 < parts.count else { return nil }
-        return SimulatorReportPath(container: container, device: String(parts[devices + 1]), reportID: id)
+        return String(parts[devices + 1])
     }
 }
 #endif

@@ -61,7 +61,7 @@ extension HubWindowModel {
         // A chat the hub started: its ID is in what the agent's command printed.
         if ChatID.isStarted(claim.chat),
            let output = try? String(contentsOf: report.appending(path: Inbox.newChatOutputFile), encoding: .utf8),
-           let started = AgentCommand.startedChat(agent, in: output), !started.failed {
+           let started = AgentCommand.startedChat(agent, in: output), !started.didFail {
             return ChatLink(agent: agent, id: started.chat, folder: folder)
         }
         return nil
@@ -76,7 +76,7 @@ enum ReportWindows {
         var observer: any NSObjectProtocol
     }
 
-    private static var open: [URL: OpenWindow] = [:]
+    private static var windows: [URL: OpenWindow] = [:]
     /// Reports whose files are being read before their window shows; a second click waits for it.
     private static var loading: [URL: Task<Void, Never>] = [:]
 
@@ -96,7 +96,7 @@ enum ReportWindows {
 
     private static func present(_ report: HubWindowModel.ReportRow, _ contents: ReportViewer.Contents) {
         defer { NSApp.activate() }
-        if let window = open[report.folder]?.window {
+        if let window = windows[report.folder]?.window {
             window.title = ReportViewer.title(of: report)
             (window.contentViewController as? NSHostingController<ReportViewer>)?.rootView = ReportViewer(report: report, contents: contents)
             window.makeKeyAndOrderFront(nil)
@@ -114,11 +114,11 @@ enum ReportWindows {
         // queue: .main delivers on the main thread.
         let observer = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
             MainActor.assumeIsolated {
-                if let observer = open[folder]?.observer { NotificationCenter.default.removeObserver(observer) }
-                open[folder] = nil
+                if let observer = windows[folder]?.observer { NotificationCenter.default.removeObserver(observer) }
+                windows[folder] = nil
             }
         }
-        open[folder] = OpenWindow(window: window, observer: observer)
+        windows[folder] = OpenWindow(window: window, observer: observer)
         window.makeKeyAndOrderFront(nil)
     }
 }
@@ -172,13 +172,13 @@ struct ReportViewer: View {
 
     /// The pictures side by side, each as tall as the window allows.
     private var pictureStrip: some View {
-        GeometryReader { size in
+        GeometryReader { geometry in
             ScrollViewReader { proxy in
                 ScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: 20) {
                         ForEach(pictures, id: \.file) { picture in
                             // Room for the padding and the caption below.
-                            pictureView(picture, height: max(size.size.height - 48 - 28, 120))
+                            pictureView(picture, height: max(geometry.size.height - 48 - 28, 120))
                                 .id(picture.file)
                         }
                     }
@@ -224,7 +224,7 @@ struct ReportViewer: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                (Text(report.agent).foregroundStyle(report.waiting ? .secondary : .primary)
+                (Text(report.agent).foregroundStyle(report.isWaiting ? .secondary : .primary)
                     + Text(" · ").foregroundStyle(.secondary)
                     + Text(report.chat))
                     .font(.callout.weight(.semibold))
@@ -234,7 +234,7 @@ struct ReportViewer: View {
             HStack(spacing: 8) {
                 if let chat {
                     Button("Open in \(chat.agent.name)") {
-                        let folder = chat.folder ?? NSHomeDirectory()
+                        let folder = chat.folder ?? URL.homeDirectory.path
                         let hub = HubAppContext.hub
                         // Opening runs /usr/bin/open and waits for it, so not on the main thread.
                         DispatchQueue.global(qos: .userInitiated).async {
@@ -245,11 +245,11 @@ struct ReportViewer: View {
                             }
                         }
                     }
-                    .buttonStyle(ViewerButtonStyle(prominent: true))
+                    .buttonStyle(ViewerButtonStyle(isProminent: true))
                     .help("Opens the chat this report went to")
                 }
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([report.folder]) }
-                    .buttonStyle(ViewerButtonStyle(prominent: false))
+                    .buttonStyle(ViewerButtonStyle(isProminent: false))
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
@@ -312,16 +312,16 @@ struct PictureImage: View {
 
 /// The viewer's buttons: white on black for the main one, gray for the other.
 struct ViewerButtonStyle: ButtonStyle {
-    let prominent: Bool
+    let isProminent: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.callout.weight(.medium))
-            .foregroundStyle(prominent ? Color.black : Color.white)
+            .foregroundStyle(isProminent ? Color.black : Color.white)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(prominent ? Color.white : Color.white.opacity(0.12)))
+                .fill(isProminent ? Color.white : Color.white.opacity(0.12)))
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

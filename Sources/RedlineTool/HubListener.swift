@@ -95,7 +95,7 @@ final class HubListener: @unchecked Sendable {
             }
         }
         let finished = offer.reports.map { FinishedReport(id: $0.id, finishedAt: $0.finishedAt) }
-        let delivered = await hub.settled(device: offer.device, bundleID: offer.bundleID, finished: finished)
+        let delivered = await hub.settledReportIDs(device: offer.device, bundleID: offer.bundleID, finished: finished)
         _ = await lines.send(HubMessage.encode(HubMessage.Reply(delivered: delivered)))
     }
 
@@ -108,7 +108,7 @@ final class HubListener: @unchecked Sendable {
                 if case .added = change { return true }
                 return false
             }
-            if woke { self?.hub.phoneWoke() }
+            if woke { self?.hub.phoneDidWake() }
         }
         browser.start(queue: queue)
         self.browser = browser

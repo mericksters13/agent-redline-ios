@@ -75,7 +75,7 @@ final class HubWindowModel {
         var state: String
         var lastReport: Date?
         /// Ready to send reports. A paired phone that isn't still shows, dimmed, with why.
-        var active = true
+        var isActive = true
         var isSimulator: Bool { kind == "Simulator" }
     }
 
@@ -92,7 +92,7 @@ final class HubWindowModel {
         var receivedAt: Date
         var agent: String
         var chat: String
-        var waiting: Bool
+        var isWaiting: Bool
         var thumbnail: URL?
         var notes: [Note]
     }
@@ -120,7 +120,7 @@ final class HubWindowModel {
     var inbox: URL { hub.paths.inbox }
 
     /// Refreshes now and every two seconds while the panel is open.
-    func panelOpened() {
+    func panelDidOpen() {
         refresh()
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -130,7 +130,7 @@ final class HubWindowModel {
         timer?.tolerance = 0.5
     }
 
-    func panelClosed() {
+    func panelDidClose() {
         timer?.invalidate()
         timer = nil
         refreshing?.cancel()
@@ -155,11 +155,11 @@ final class HubWindowModel {
         let last = Dictionary(snapshot.reports.map { ($0.deviceID, $0.row.receivedAt) }, uniquingKeysWith: max)
         let phones = snapshot.status.phones.map {
             DeviceRow(id: $0.udid, name: $0.name, kind: $0.model ?? "iPhone", state: Self.phoneState($0),
-                      lastReport: last[$0.udid], active: $0.phoneState?.isReady ?? $0.state.hasPrefix("Ready"))
+                      lastReport: last[$0.udid], isActive: $0.phoneState?.isReady ?? $0.state.hasPrefix("Ready"))
         }
         let simulators = snapshot.simulators.map { DeviceRow(id: $0.udid, name: $0.name, kind: "Simulator", state: "Running", lastReport: last[$0.udid]) }
         // Ready phones and running simulators first, then paired phones that can't take reports now.
-        devices = phones.filter(\.active) + simulators + phones.filter { !$0.active }
+        devices = phones.filter(\.isActive) + simulators + phones.filter { !$0.isActive }
         reports = snapshot.reports.map(\.row)
         address = "\(snapshot.status.hosts.first ?? "") · port \(snapshot.status.port)"
     }
@@ -174,7 +174,7 @@ final class HubWindowModel {
                 let status = hub.statusSnapshot()
                 let watched = hub.watchedSimulators()
                 let reports = readReports(paths: hub.paths)
-                let simulators = bootedSimulators().filter { watched.contains($0.udid) }
+                let simulators = fetchBootedSimulators().filter { watched.contains($0.udid) }
                 continuation.resume(returning: Snapshot(status: status, reports: reports, simulators: simulators))
             }
         }
@@ -199,16 +199,16 @@ final class HubWindowModel {
         return newest.map { report in
             let folder = report.folder
             let listing = ReportListing.load(from: folder)
-            let (agent, chat, waiting) = destination(of: folder, codexDatabase: database)
+            let (agent, chat, isWaiting) = destination(of: folder, codexDatabase: database)
             return (report.source.device, ReportRow(id: folder.path, folder: folder, device: report.source.deviceName, receivedAt: report.source.receivedAt,
-                                                    agent: agent, chat: chat, waiting: waiting,
+                                                    agent: agent, chat: chat, isWaiting: isWaiting,
                                                     thumbnail: ReportContent.pictures(in: folder, listing: listing).first, notes: notes(of: listing)))
         }
     }
 
     /// The agent and chat a report went to: what the hub saved when it delivered it, or the
     /// chat that took it through MCP or a hook.
-    nonisolated static func destination(of folder: URL, codexDatabase: URL?) -> (agent: String, chat: String, waiting: Bool) {
+    nonisolated static func destination(of folder: URL, codexDatabase: URL?) -> (agent: String, chat: String, isWaiting: Bool) {
         if let delivery = ReportDelivery.load(from: folder) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             return (agent, delivery.title, delivery.kind == .waiting)
@@ -223,7 +223,7 @@ final class HubWindowModel {
     /// A chat's title for a report taken before the hub saved where reports went: the Codex
     /// chat's title, "New chat in …" for one the hub started, else the chat's folder.
     nonisolated static func chatTitle(_ claim: Claim, codexDatabase: URL?) -> String {
-        let folder = claim.folder.isEmpty ? nil : URL(fileURLWithPath: claim.folder).lastPathComponent
+        let folder = claim.folder.isEmpty ? nil : URL(filePath: claim.folder).lastPathComponent
         if let thread = ChatID.agentID(of: claim.chat, agent: .codex) {
             return CodexThreads.title(of: thread, in: codexDatabase) ?? folder ?? "Codex chat"
         }
@@ -248,9 +248,9 @@ final class HubWindowModel {
     }
 
     /// Simulators that are booted, from `simctl`.
-    nonisolated static func bootedSimulators() -> [(udid: String, name: String)] {
+    nonisolated static func fetchBootedSimulators() -> [(udid: String, name: String)] {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        process.executableURL = URL(filePath: "/usr/bin/xcrun")
         process.arguments = ["simctl", "list", "devices", "booted", "-j"]
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -318,8 +318,8 @@ struct HubPanel: View {
         .frame(width: 400)
         .background(Color.black)
         .environment(\.colorScheme, .dark)
-        .onAppear { model.panelOpened() }
-        .onDisappear { model.panelClosed() }
+        .onAppear { model.panelDidOpen() }
+        .onDisappear { model.panelDidClose() }
     }
 
     private var reportList: some View {
@@ -397,7 +397,7 @@ struct DeviceRowView: View {
             }
             Spacer()
         }
-        .opacity(device.active ? 1 : 0.5)
+        .opacity(device.isActive ? 1 : 0.5)
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
     }
@@ -414,7 +414,7 @@ struct ReportRowView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                (Text(report.agent).foregroundStyle(report.waiting ? .secondary : .primary)
+                (Text(report.agent).foregroundStyle(report.isWaiting ? .secondary : .primary)
                     + Text(" · ").foregroundStyle(.secondary)
                     + Text(report.chat))
                     .font(.callout.weight(.semibold))

@@ -20,14 +20,14 @@ struct LineBufferTests {
     private func secondsToRead(megabytes: Int) -> TimeInterval {
         var buffer = LineBuffer()
         let piece = Data(repeating: UInt8(ascii: "a"), count: 16_384)
-        let started = Date()
+        let started = Date.now
         for _ in 0..<(megabytes * 64) {
             buffer.append(piece)
             _ = buffer.takeLine()
         }
         buffer.append(Data("\n".utf8))
         #expect(buffer.takeLine()?.count == megabytes * 1_048_576)
-        return Date().timeIntervalSince(started)
+        return Date.now.timeIntervalSince(started)
     }
 
     @Test func aLongLineTakesTimeInProportionToItsLength() {
