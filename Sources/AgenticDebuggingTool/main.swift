@@ -91,7 +91,10 @@ case "hub":
         exit(1)
     }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: options.apps)
-    hub.start()
+    guard hub.start() else {
+        print("A hub is already running (pid \(HubProcess.running(paths).map(String.init) ?? "unknown")).")
+        exit(1)
+    }
     stopOnSignals { hub.stop() }
     dispatchMain()
 
