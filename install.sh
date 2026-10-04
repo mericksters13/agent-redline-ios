@@ -593,6 +593,11 @@ remove_old_install() {
         fi
     fi
     if [ -n "$removed" ]; then item "Done" "Earlier version (Agentic Debugging): $removed"; fi
+    # Moved only into a new folder (see install), so it stays when Redline's folder already existed.
+    if [ -d "$OLD_DATA" ]; then
+        item "Needs you" "Earlier version: its reports, paired phones and chats stay in $OLD_DATA, because $DATA already existed. Redline reads only $DATA." \
+            "Pair your phone again from Redline's menu if it was paired with the earlier version." "Delete $OLD_DATA once you no longer need its reports."
+    fi
 }
 
 # Deletes the earlier version's file or folder at $1. Returns 0 when it was there and is gone, and
@@ -786,7 +791,7 @@ Next: add Redline to your iOS app. Add the package https://github.com/merickster
 # and runs even when redline remove failed without naming the file. Returns 1 when hooks may be
 # left, because the uninstall deletes the command they run.
 remove_hooks() {
-    local output status file result failed="" delegated=false unexplained=false found=false kept=false
+    local output status file result rc failed="" delegated=false unexplained=false found=false kept=false
     if [ -x "$COMMAND" ]; then
         delegated=true
         output="$("$COMMAND" remove 2>&1)"
@@ -807,8 +812,17 @@ remove_hooks() {
         fi
     fi
     for file in "$HOME/.codex/hooks.json" "$HOME/.claude/settings.json" "$HOME/.cursor/hooks.json"; do
-        [ "$file" != "$failed" ] || continue
-        grep -qE "/(redline|agentic-debugging)' hook " "$file" 2>/dev/null || continue
+        [ "$file" != "$failed" ] && [ -e "$file" ] || continue
+        grep -qE "/(redline|agentic-debugging)' hook " "$file" 2>/dev/null
+        rc=$?
+        [ "$rc" -ne 1 ] || continue
+        if [ "$rc" -ne 0 ]; then
+            found=true
+            kept=true
+            item "Needs you" "Hooks: couldn't read $file, so Redline's hooks may still be in it." \
+                "Check its owner and permissions with ls -lO $file, then run the same command again."
+            continue
+        fi
         result="$(remove_hooks_from "$file" "$COMMAND")"
         # Unchanged: the hooks there are another tool's, such as another command named redline.
         [ "$result" != "unchanged" ] || continue
