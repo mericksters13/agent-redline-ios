@@ -359,6 +359,7 @@ struct AgentHookTests {
                                   archived INTEGER, agent_role TEXT, thread_source TEXT, source TEXT);
             INSERT INTO threads VALUES ('t-user', 'Fix the paywall', 'Fix the paywall', 'fix it', '/p', \(now), 0, NULL, 'user', 'vscode');
             INSERT INTO threads VALUES ('t-older', '', '', 'Why is the outline wide', '/p', \(now - 1000), 0, NULL, NULL, 'vscode');
+            INSERT INTO threads VALUES ('t-no-source', 'Tidy the list', '', '', '/p', \(now - 2000), 0, NULL, NULL, NULL);
             INSERT INTO threads VALUES ('t-guardian', 'Guardian review', '', '', '/p', \(now), 0, NULL, 'guardian_review', '{"subagent":{"other":"guardian"}}');
             INSERT INTO threads VALUES ('t-auto', 'Nightly', '', '', '/p', \(now), 0, NULL, 'automation', 'vscode');
             INSERT INTO threads VALUES ('t-archived', 'Old', '', '', '/p', \(now), 1, NULL, 'user', 'vscode');
@@ -370,9 +371,9 @@ struct AgentHookTests {
         try sqlite.run()
         sqlite.waitUntilExit()
         let threads = CodexThreads.recent(in: database)
-        #expect(threads.map(\.id) == ["t-user", "t-older"])
+        #expect(threads.map(\.id) == ["t-user", "t-older", "t-no-source"])
         // A chat without a name goes by its first message.
-        #expect(threads.last?.title == "Why is the outline wide")
+        #expect(threads[1].title == "Why is the outline wide")
     }
 
     @Test func onlyTheAddressedChatTakesAReport() throws {
