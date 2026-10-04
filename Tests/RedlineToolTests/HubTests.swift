@@ -13,7 +13,12 @@ struct HubTests {
     /// A hub that's never started: no listener, no simulators, no devicectl.
     private func hub() throws -> Hub {
         try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        return Hub(paths: paths, devicectl: Devicectl(executable: URL(filePath: "/usr/bin/true")), apps: [app])
+        return Hub(
+            paths: paths,
+            devicectl: Devicectl(executable: URL(filePath: "/usr/bin/true")),
+            apps: [app],
+            claudeChats: { [] }
+        )
     }
 
     private func offer(token: String, reports: [HubMessage.Offer.Report]) -> HubMessage.Offer {
@@ -206,11 +211,34 @@ struct HubTests {
         let home = try install("home/Applications", builtAt: Date.now.addingTimeInterval(-86_400))
         let system = try install("Applications", builtAt: .now)
         let trashed = try install(".Trash", builtAt: Date.now.addingTimeInterval(60))
+        let trashedOnAnotherVolume = try install(
+            "Volumes/External/.Trashes/501",
+            builtAt: Date.now.addingTimeInterval(120)
+        )
         let missing = paths.root.appending(path: "Elsewhere/Redline.app", directoryHint: .isDirectory)
         // Installed in ~/Applications first, then in /Applications: the later install opens.
-        #expect(HubProcess.newestApp(among: [home, system, trashed, missing]) == system)
+        #expect(HubProcess.newestApp(among: [home, system, trashed, trashedOnAnotherVolume, missing]) == system)
         #expect(HubProcess.newestApp(among: [home, missing]) == home)
         #expect(HubProcess.newestApp(among: [missing]) == nil)
+    }
+
+    @Test func anOpenClaudeChatsAppIsWatched() throws {
+        try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
+        let project = paths.root.appending(path: "claude-project", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try "targets:\n  App:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.claude\n"
+            .write(to: project.appending(path: "project.yml"), atomically: true, encoding: .utf8)
+        let session = ClaudeSessions.Session(id: "s1", folder: project.path, socket: "/tmp/none", updatedAt: .now)
+        let hub = Hub(
+            paths: paths,
+            devicectl: Devicectl(executable: URL(filePath: "/usr/bin/true")),
+            apps: [],
+            claudeChats: { [session] }
+        )
+        hub.updateApps(isStarting: true)
+        #expect(hub.apps == ["com.example.claude"])
+        // Claude Code runs no hooks: the app is noted for it, so it stays watched once the chat closes.
+        #expect(ProjectHistory.all(paths)["com.example.claude"]?.agent == "claude")
     }
 
     @Test func chatsNotingTheirAppsAtOnceKeepEachOthers() {

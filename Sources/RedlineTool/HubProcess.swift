@@ -59,12 +59,13 @@ enum HubProcess {
     /// The copy whose program was built last.
     ///
     /// Every build has the same version, so a copy left in one folder by an earlier install would
-    /// otherwise be as likely to open as the one installed since in another. Copies in the Trash
-    /// and missing copies don't count.
+    /// otherwise be as likely to open as the one installed since in another. Copies in the Trash,
+    /// ~/.Trash or .Trashes on another volume, and missing copies don't count.
     static func newestApp(among copies: [URL]) -> URL? {
         let dated = copies.compactMap { app -> (app: URL, builtAt: Date)? in
             let program = app.appending(path: "Contents/MacOS/redline")
-            guard !app.standardizedFileURL.pathComponents.contains(".Trash"),
+            let folders = app.standardizedFileURL.pathComponents
+            guard !folders.contains(".Trash"), !folders.contains(".Trashes"),
                 let builtAt = (try? FileManager.default.attributesOfItem(atPath: program.path))?[.modificationDate]
                     as? Date
             else { return nil }
@@ -76,6 +77,9 @@ enum HubProcess {
     /// Starts the hub, watching `apps` besides the open chats' apps: the menu bar app when it's
     /// installed, else this command in its own session, so it keeps running after the chat that
     /// started it closes, with nothing attached to the chat's input and output.
+    ///
+    /// When the menu bar app can't be opened, such as over SSH with no one logged in, the
+    /// command-line hub starts instead.
     static func startIfNeeded(_ paths: HubPaths, apps: [String] = []) {
         guard running(paths) == nil else { return }
         let appArguments = apps.flatMap { ["--app", $0] }
@@ -83,12 +87,18 @@ enum HubProcess {
             let open = Process()
             open.executableURL = URL(filePath: "/usr/bin/open")
             open.arguments = ["-g", app.path] + (apps.isEmpty ? [] : ["--args", "app"] + appArguments)
+            open.standardOutput = FileHandle.nullDevice
+            open.standardError = FileHandle.nullDevice
             do {
                 try open.run()
+                open.waitUntilExit()
+                if open.terminationStatus == 0 { return }
+                printError(
+                    "Couldn't open \(app.path) (open exited with \(open.terminationStatus)); starting the command-line hub"
+                )
             } catch {
-                printError("Couldn't open \(app.path): \(error.localizedDescription)")
+                printError("Couldn't open \(app.path): \(error.localizedDescription); starting the command-line hub")
             }
-            return
         }
         guard let executable = Bundle.main.executablePath else {
             printError("Couldn't start the hub: this command's own path is unknown")

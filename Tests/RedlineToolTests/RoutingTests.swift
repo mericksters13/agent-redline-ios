@@ -32,6 +32,8 @@ struct RoutingTests {
     @Test func aReportGoesWhereThePhonePickedOrElseToItsWorktreesChat() throws {
         let worktree = root.appending(path: "worktree-a", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: worktree.appending(path: ".git"), withIntermediateDirectories: true)
+        try "targets:\n  App:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.app\n"
+            .write(to: worktree.appending(path: "project.yml"), atomically: true, encoding: .utf8)
         let file = worktree.appending(path: "App/AppMain.swift").path
         let folder = worktree.standardizedFileURL.path
         func route(_ report: URL, _ chats: [HubMessage.Chat]) -> ReportDestination {
@@ -95,6 +97,21 @@ struct RoutingTests {
         } else {
             Issue.record("A report without its worktree should be undecided")
         }
+        // The phone writes the report: a folder that doesn't build the app gets no new chat.
+        let elsewhere = root.appending(path: "other-project", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(
+            at: elsewhere.appending(path: ".git"),
+            withIntermediateDirectories: true
+        )
+        let foreign = elsewhere.appending(path: "Sources/Main.swift").path
+        for pick: [String: Any]? in [["agent": "codex"], ["agent": "claude", "newChat": "N2"], nil] {
+            if case .undecided = route(try report(sourceFile: foreign, pick: pick), []) {
+            } else {
+                Issue.record("A worktree that doesn't build the app should leave the report undecided")
+            }
+        }
+        #expect(Routing.worktree(of: try report(sourceFile: foreign, pick: nil), bundleID: "com.example.app") == nil)
+        #expect(Routing.worktree(of: try report(sourceFile: file, pick: nil), bundleID: "com.example.app") == folder)
     }
 
     @Test func aRestartedHubReplaysPromisedReportsHoweverOld() throws {

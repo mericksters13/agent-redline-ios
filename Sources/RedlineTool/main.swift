@@ -140,8 +140,23 @@ case "app":
                     "A hub is already running (pid \(running)) and didn't say which apps it watches, so it was left running."
                 )
             }
-            // A hub from before fixedApps was saved lists them only among all its apps.
+            // A hub from before fixedApps was saved lists them only among all its apps. Such a
+            // hub also lets go of the PID file at once when asked to stop, without waiting for
+            // its hand-overs, so one handing a report over is left running: stopping it would
+            // hand that report over twice.
             keptApps += status.fixedApps ?? status.apps
+            if status.fixedApps == nil {
+                let handingOver = Inbox.reportsHandedOver(by: running, paths: paths)
+                guard handingOver == 0 else {
+                    let reports =
+                        handingOver == 1
+                        ? "the report it's handing over reaches its chat"
+                        : "the \(handingOver) reports it's handing over reach their chats"
+                    failToStart(
+                        "The hub that's running (pid \(running)) is from an older version. Open Redline again once \(reports)."
+                    )
+                }
+            }
             // Asked to stop, the hub takes no more reports and starts no more hand-overs at once,
             // then lets the hand-overs under way reach their chats before it lets go of the PID file.
             // One that hasn't stopped in 30 seconds and isn't handing a report over is ended, which

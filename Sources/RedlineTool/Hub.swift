@@ -13,7 +13,7 @@ import SystemConfiguration
 /// saved.
 ///
 /// Thread safety: everything that changes while the hub runs is in `state`, a `Mutex`.
-/// `simulators`, `listener`, `handoff`, `chatsWatcher`, `discovery` and `pidLock` are written once
+/// `simulators`, `listener`, `handoff`, `chatsWatchers`, `discovery` and `pidLock` are written once
 /// in `start()`, before any source, queue or listener that reads them starts, and only read
 /// afterwards; `stop()` runs after `start()`, once, under `isStopped`. `whenListenerFails` is set
 /// before `start()` and only read afterwards. `logDescriptor` is used only on `writer`.
@@ -27,7 +27,11 @@ final class Hub: @unchecked Sendable {
     private let fixedApps: [String]
     private let startedAt = Date.now
     private let state: Mutex<State>
-    private var chatsWatcher: DispatchSourceFileSystemObject?
+    private var chatsWatchers: [DispatchSourceFileSystemObject] = []
+    /// Claude Code's open chats.
+    ///
+    /// It runs no hooks, so its chats are found from its own files.
+    private let claudeChats: @Sendable () -> [ClaudeSessions.Session]
     private var simulators: SimulatorWatcher?
     private var listener: HubListener?
     private var handoff: Handoff?
@@ -92,10 +96,16 @@ final class Hub: @unchecked Sendable {
     /// any given on the command line.
     var apps: [String] { state.withLock { $0.currentApps } }
 
-    init(paths: HubPaths, devicectl: Devicectl, apps: [String]) {
+    init(
+        paths: HubPaths,
+        devicectl: Devicectl,
+        apps: [String],
+        claudeChats: @escaping @Sendable () -> [ClaudeSessions.Session] = ClaudeSessions.openSessions
+    ) {
         self.paths = paths
         self.devicectl = devicectl
         fixedApps = apps
+        self.claudeChats = claudeChats
         state = Mutex(State())
         let sources = StoredFile.load([String: SourceState].self, from: paths.state, decoder: HubPaths.decoder) {
             log($0)
@@ -169,7 +179,7 @@ final class Hub: @unchecked Sendable {
             guard !isStopped else { return }
             isStopped = true
             discovery?.cancel()
-            chatsWatcher?.cancel()
+            for watcher in chatsWatchers { watcher.cancel() }
             network.cancel()
             listener?.stop()
             // Before the simulator watcher: stopping it waits for a rescan under way, and hand-overs
@@ -235,21 +245,24 @@ final class Hub: @unchecked Sendable {
         writeStatus()
     }
 
-    /// A chat opening or closing changes the apps to take reports from.
+    /// A chat opening or closing changes the apps to take reports from: the hub's own chat
+    /// records, and the session files of Claude Code's chats.
     private func watchChats() {
         let folder = Chats.folder(paths)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let descriptor = open(folder.path, O_EVTONLY)
-        guard descriptor >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor,
-            eventMask: .write,
-            queue: queue
-        )
-        source.setEventHandler { [weak self] in self?.updateApps(isStarting: false) }
-        source.setCancelHandler { close(descriptor) }
-        source.resume()
-        chatsWatcher = source
+        for folder in [folder.path] + ClaudeSessions.configFolders.map({ $0 + "/sessions" }) {
+            let descriptor = open(folder, O_EVTONLY)
+            guard descriptor >= 0 else { continue }
+            let source = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: descriptor,
+                eventMask: .write,
+                queue: queue
+            )
+            source.setEventHandler { [weak self] in self?.updateApps(isStarting: false) }
+            source.setCancelHandler { close(descriptor) }
+            source.resume()
+            chatsWatchers.append(source)
+        }
     }
 
     /// Takes reports from the apps of the open chats and of chats before them, and the ones given on
@@ -259,6 +272,7 @@ final class Hub: @unchecked Sendable {
     /// can start a new chat. When they change after the start, looks for the new apps on phones and
     /// simulators.
     func updateApps(isStarting: Bool) {
+        noteClaudeChats()
         let open = Chats.removeClosedChats(paths).flatMap(\.bundleIDs)
         let apps = Array(Set(fixedApps + open + ProjectHistory.all(paths).keys)).sorted()
         let changed = state.withLock { state in
@@ -270,6 +284,31 @@ final class Hub: @unchecked Sendable {
         // New apps' simulator folders to watch and phones to give the address to; discovery
         // rescans the simulators too.
         queue.async { self.discover(includingNewApps: true) }
+    }
+
+    /// Notes the apps open Claude Code chats work on, so the hub watches them.
+    ///
+    /// Other agents' chats note theirs when they register. Only apps not noted yet are written.
+    private func noteClaudeChats() {
+        let known = ProjectHistory.all(paths)
+        for session in claudeChats() {
+            let new = ChatDirectory.apps.bundleIDs(in: session.folder).filter { known[$0] == nil }
+            guard !new.isEmpty else { continue }
+            let chat = ChatRecord(
+                id: ChatID.make(.claude, session.id),
+                agent: Agent.claude.rawValue,
+                folder: session.folder,
+                bundleIDs: new,
+                pid: getpid(),
+                registeredAt: .now,
+                lastActiveAt: session.updatedAt
+            )
+            do {
+                try ProjectHistory.note(chat, paths: paths)
+            } catch {
+                log("Couldn't note the apps of the Claude Code chat \(session.id): \(error.localizedDescription)")
+            }
+        }
     }
 
     private func link(for phone: Devicectl.Phone) -> PhoneLink {

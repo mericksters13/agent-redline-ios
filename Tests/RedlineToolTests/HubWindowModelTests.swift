@@ -185,7 +185,7 @@ struct HubWindowModelTests {
         #expect(HubWindowModel.notes(in: folder) == [.init(number: 1, text: "Save: No note")])
         // Without screens, pictures come from the folder; without an app, routing has no worktree.
         #expect(ReportContent.pictures(in: folder).isEmpty)
-        #expect(Routing.worktree(of: folder) == nil)
+        #expect(Routing.worktree(of: folder, bundleID: "com.example.app") == nil)
     }
 
     @Test func aWaitSavedAfterAChatTookTheReportDoesntHideIt() throws {
@@ -258,7 +258,12 @@ struct HubWindowModelTests {
         // Another process's hand-over isn't this one's to wait for.
         #expect(Inbox.reportsHandedOver(by: getpid() + 1, paths: paths) == 0)
         // Stopping waits until the chat has the report.
-        let hub = Hub(paths: paths, devicectl: Devicectl(executable: URL(filePath: "/usr/bin/false")), apps: [])
+        let hub = Hub(
+            paths: paths,
+            devicectl: Devicectl(executable: URL(filePath: "/usr/bin/false")),
+            apps: [],
+            claudeChats: { [] }
+        )
         let handoff = Handoff(hub: hub)
         let started = Date.now
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.6) { try? Inbox.handedOver(inbox) }
@@ -348,6 +353,26 @@ struct HubWindowModelTests {
         #expect(HubWindowModel.picture(showing: 1, in: pictures) == folder.appending(path: "screen-1.jpg"))
         #expect(HubWindowModel.picture(showing: 2, in: pictures) == folder.appending(path: "note-2.jpg"))
         #expect(HubWindowModel.picture(showing: 3, in: pictures) == nil)
+    }
+
+    @Test func aNoteOnASplitScreenScrollsToThePartThatShowsMostOfIt() throws {
+        let folder = try report("20261004-130050", at: Date.now)
+        let listing: [String: Any] = [
+            "screens": [
+                [
+                    "title": "Today",
+                    "images": [["file": "screen-1-1.jpg", "notes": [1]], ["file": "screen-1-2.jpg", "notes": [1]]],
+                ]
+            ],
+            "items": [["number": 1, "title": "List", "picture": "screen-1-2.jpg", "attachments": [String]()]],
+        ]
+        try JSONSerialization.data(withJSONObject: listing).write(to: folder.appending(path: "report.json"))
+        for file in ["screen-1-1.jpg", "screen-1-2.jpg"] {
+            try Data([0xFF, 0xD8]).write(to: folder.appending(path: file))
+        }
+        let pictures = HubWindowModel.pictures(in: folder)
+        #expect(pictures.map(\.mainFor) == [[], [1]])
+        #expect(HubWindowModel.picture(showing: 1, in: pictures) == folder.appending(path: "screen-1-2.jpg"))
     }
 
     @Test func theViewerShowsOnlyPicturesInTheReportsOwnFolder() throws {

@@ -81,6 +81,19 @@ struct ReportContentTests {
                 2. History: The list breaks
                 """
         )
+
+        // A long pasted note is cut, so the text fits in a command's arguments; report.md has the rest.
+        var long = listing
+        long["items"] = [
+            [
+                "number": 1, "title": "Log milestone", "note": String(repeating: "pasted ", count: 20_000),
+                "attachments": [String](),
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: long).write(to: report.appending(path: "report.json"))
+        let cut = ReportContent.text(for: InboxReport(folder: report, source: source, claim: nil))
+        #expect(cut.utf8.count <= ReportContent.longestText)
+        #expect(cut.hasSuffix("The rest is in \(report.path)/report.md."))
     }
 
     @Test func onlyPicturesInTheReportsOwnFolderAreRead() throws {

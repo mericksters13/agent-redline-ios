@@ -38,17 +38,20 @@ enum AccessibilityTree {
     /// Every element and named group under `roots`, in screen points: back to front, each
     /// parent before its children, with `parent` set to the enclosing one.
     ///
+    /// Frames are cut to the screen and to every enclosing view that clips, such as a scroll view,
+    /// so a row scrolled out of sight can't be picked over what covers it.
+    ///
     /// With `stopAtFirst`, the walk ends at the first element found, to tell whether there are any.
     static func elements(under roots: [UIView], screenBounds: CGRect, stopAtFirst: Bool = false) -> [ElementSnapshot] {
         var result: [ElementSnapshot] = []
         var visited = Set<ObjectIdentifier>()
 
-        func append(_ object: NSObject, isContainer: Bool, parent: Int?) -> Int? {
+        func append(_ object: NSObject, isContainer: Bool, parent: Int?, clip: CGRect) -> Int? {
             var frame = object.accessibilityFrame
             if frame.isEmpty, let view = object as? UIView, let window = view.window {
                 frame = view.convert(view.bounds, to: window.screen.coordinateSpace)
             }
-            frame = frame.intersection(screenBounds)
+            frame = frame.intersection(clip)
             guard !frame.isNull, !frame.isEmpty else { return nil }
             result.append(
                 ElementSnapshot(
@@ -65,38 +68,46 @@ enum AccessibilityTree {
             return result.count - 1
         }
 
-        func visit(_ object: NSObject, depth: Int, parent: Int?) {
+        func visit(_ object: NSObject, depth: Int, parent: Int?, clip: CGRect) {
             if stopAtFirst, !result.isEmpty { return }
             guard depth < 80, visited.insert(ObjectIdentifier(object)).inserted else { return }
             if let view = object as? UIView, view.isHidden || view.alpha < 0.01 { return }
 
+            var clip = clip
+            if let view = object as? UIView, view.clipsToBounds, let window = view.window {
+                clip = clip.intersection(view.convert(view.bounds, to: window.screen.coordinateSpace))
+                guard !clip.isNull, !clip.isEmpty else { return }
+            }
+
             var parent = parent
             if object.isAccessibilityElement {
-                parent = append(object, isContainer: false, parent: parent) ?? parent
+                parent = append(object, isContainer: false, parent: parent, clip: clip) ?? parent
             } else if identifier(of: object) != nil || object.accessibilityLabel?.nonEmpty != nil {
                 // Named groups let the note box step up from a leaf to its card or section.
-                parent = append(object, isContainer: true, parent: parent) ?? parent
+                parent = append(object, isContainer: true, parent: parent, clip: clip) ?? parent
             }
 
             if let children = object.accessibilityElements {
-                for case let child as NSObject in children { visit(child, depth: depth + 1, parent: parent) }
+                for case let child as NSObject in children {
+                    visit(child, depth: depth + 1, parent: parent, clip: clip)
+                }
             } else {
                 // SwiftUI hosting views expose their tree through the container methods.
                 let count = object.accessibilityElementCount()
                 if count > 0, count != NSNotFound {
                     for index in 0..<min(count, 500) {
                         if let child = object.accessibilityElement(at: index) as? NSObject {
-                            visit(child, depth: depth + 1, parent: parent)
+                            visit(child, depth: depth + 1, parent: parent, clip: clip)
                         }
                     }
                 }
             }
             if let view = object as? UIView {
-                for subview in view.subviews { visit(subview, depth: depth + 1, parent: parent) }
+                for subview in view.subviews { visit(subview, depth: depth + 1, parent: parent, clip: clip) }
             }
         }
 
-        for root in roots { visit(root, depth: 0, parent: nil) }
+        for root in roots { visit(root, depth: 0, parent: nil, clip: screenBounds) }
         return result
     }
 

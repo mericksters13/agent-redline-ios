@@ -53,7 +53,9 @@ enum AgentHooks {
 
         switch event {
         case .prompt:
-            session.touch()
+            // Registered, not just marked used: this is the only hook, so it's what notes the
+            // chat's apps and starts the hub.
+            session.register()
             return answer(for: event, taken: session.takeAddressed())
         }
     }

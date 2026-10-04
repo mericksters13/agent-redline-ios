@@ -26,7 +26,7 @@ enum ChatDirectory {
 
     /// What each folder's projects build, kept a while: reading a big folder's projects can
     /// take seconds, and the phone waits for the answer.
-    private static let apps = FolderApps()
+    static let apps = FolderApps()
 
     private static let warming = DispatchQueue(label: "Redline.hub.warming", qos: .utility)
 
@@ -42,8 +42,9 @@ enum ChatDirectory {
     /// The open chats that work on the app, the ones in the worktree `sourceFile` is in first,
     /// for the phone to show.
     static func list(bundleID: String, sourceFile: String?, paths: HubPaths) -> HubMessage.ChatList {
-        let worktree = sourceFile.map(Worktree.root(of:))
         func buildsApp(_ folder: String) -> Bool { apps.bundleIDs(in: folder).contains(bundleID) }
+        // The phone names the worktree; one that doesn't build the app isn't used.
+        let worktree = sourceFile.map(Worktree.root(of:)).flatMap { buildsApp($0) ? $0 : nil }
         func chat(_ agent: Agent, id: String, title: String, folder: String, lastActive: Date) -> HubMessage.Chat {
             HubMessage.Chat(
                 id: id,
@@ -86,7 +87,7 @@ enum ChatDirectory {
 }
 
 /// The bundle IDs each folder's projects build, read at most every half hour per folder.
-private final class FolderApps: Sendable {
+final class FolderApps: Sendable {
     private struct CachedApps {
         var ids: [String]
         var readAt: Date

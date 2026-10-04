@@ -9,6 +9,8 @@ extension HubWindowModel {
         /// The screen's title, or the title of the note the picture is attached to.
         var title: String
         var notes: [Int]
+        /// The notes whose outline this picture shows most of, when a screen is split into parts.
+        var mainFor: [Int] = []
     }
 
     /// The report's pictures in the order the agent gets them: each screen's pictures, then the
@@ -24,7 +26,11 @@ extension HubWindowModel {
             }).allPresent(),
             let items = listing?.items?.map({ item in
                 item.number.flatMap { number in
-                    item.title.flatMap { title in item.attachments.map { (number, item.screenTitle ?? title, $0) } }
+                    item.title.flatMap { title in
+                        item.attachments.map {
+                            (number: number, title: item.screenTitle ?? title, attachments: $0, picture: item.picture)
+                        }
+                    }
                 }
             }).allPresent()
         else {
@@ -32,19 +38,28 @@ extension HubWindowModel {
                 Picture(file: $0, title: $0.deletingPathExtension().lastPathComponent, notes: [])
             }
         }
+        func mainFor(_ file: String) -> [Int] { items.filter { $0.picture == file }.map(\.number).sorted() }
         let shown = images.flatMap { $0 }.map { title, file, notes in
-            Picture(file: folder.appending(path: file), title: title ?? "Screen", notes: notes)
+            Picture(file: folder.appending(path: file), title: title ?? "Screen", notes: notes, mainFor: mainFor(file))
         }
-        let attached = items.flatMap { number, title, attachments in
-            attachments.map { Picture(file: folder.appending(path: $0), title: title, notes: [number]) }
+        let attached = items.flatMap { item in
+            item.attachments.map {
+                Picture(
+                    file: folder.appending(path: $0),
+                    title: item.title,
+                    notes: [item.number],
+                    mainFor: item.picture == $0 ? [item.number] : []
+                )
+            }
         }
         let safe = Set(ReportContent.pictures(in: folder, listing: listing))
         return (shown + attached).filter { safe.contains($0.file) }
     }
 
-    /// The first picture that shows a note.
+    /// The picture that shows most of a note's outline, as the report names it, or else the first
+    /// picture that shows the note.
     nonisolated static func picture(showing note: Int, in pictures: [Picture]) -> URL? {
-        pictures.first { $0.notes.contains(note) }?.file
+        (pictures.first { $0.mainFor.contains(note) } ?? pictures.first { $0.notes.contains(note) })?.file
     }
 
     /// A chat a report went to, to open it again. `folder` is where that chat works, when known.

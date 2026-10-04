@@ -57,6 +57,8 @@ struct ReportListing: Decodable {
         /// Missing in reports from before they were saved.
         var ancestors: [Element]?
         var screenTitle: String?
+        /// The picture that shows most of the note's outline.
+        var picture: String?
         var attachments: [String]?
     }
 
