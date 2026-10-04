@@ -1,9 +1,19 @@
 #!/bin/zsh
 # Builds "Redline.app", the hub as a menu bar app, from this package and signs it for
-# local use. Installs it in ~/Applications unless a destination folder is given.
+# local use. Installs it in ~/Applications unless a destination folder is given. A copy that is
+# running is stopped to replace it and opened again, unless --no-start is given.
+#
+#   scripts/build-hub-app.sh [destination folder] [--no-start]
 set -euo pipefail
 cd "$(dirname "$0")/.."
-destination="${1:-$HOME/Applications}"
+destination="$HOME/Applications"
+reopen=true
+for argument in "$@"; do
+    case "$argument" in
+        --no-start) reopen=false ;;
+        *) destination="$argument" ;;
+    esac
+done
 swift build -c release --product redline
 binary="$(swift build -c release --show-bin-path)/redline"
 # The same as `version` in Sources/RedlineTool/main.swift, which the MCP server reports.
@@ -47,9 +57,9 @@ else
     echo "Signed ad hoc"
 fi
 mkdir -p "$destination"
-# A running copy is stopped first and opened again after: macOS may not match a running app to a
-# bundle replaced under it, and ask for permissions again. A stop signal, not an AppleScript quit,
-# which would need its own permission.
+# A running copy is stopped first and opened again after, unless --no-start was given: macOS may
+# not match a running app to a bundle replaced under it, and ask for permissions again. A stop
+# signal, not an AppleScript quit, which would need its own permission.
 # pgrep and pkill take a regular expression, so the path's special characters are escaped.
 processes="$(printf '%s' "$app/Contents/MacOS/" | sed 's/[][\.*^$+?(){}|]/\\&/g')"
 running=false
@@ -59,5 +69,7 @@ if pkill -TERM -f "$processes" 2>/dev/null; then
 fi
 rm -rf "$app"
 mv "$staging" "$app"
-if $running; then open -g "$app"; fi
+if $running; then
+    if $reopen; then open -g "$app"; else echo "Stopped the running Redline to replace it; not opened again (--no-start)"; fi
+fi
 echo "Built $app"

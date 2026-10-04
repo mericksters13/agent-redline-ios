@@ -39,6 +39,7 @@ SOURCE=""
 CLAUDE=""
 BUILT=""
 SETUP_OK=false
+MOVE_OLD_DATA=false
 # Temporary files and folders, removed when the installer exits, however it exits.
 TMP_CLONE=""
 TMP_BIN=""
@@ -120,7 +121,7 @@ cleanup() {
 finish() {
     local title="$1" summary="$2"
     printf '\n%s\n\n%s\n%s\n' "$title" "$CHECKLIST" "$summary"
-    mkdir -p "$DATA" 2>/dev/null || return 0
+    mkdir -p "$(dirname "$REPORT")" 2>/dev/null || return 0
     TMP_REPORT="$REPORT.tmp.$$"
     if printf '%s, %s\n\n%s\n%s\n' "$title" "$(date '+%Y-%m-%d %H:%M')" "$CHECKLIST" "$summary" >"$TMP_REPORT" 2>/dev/null &&
         mv -f "$TMP_REPORT" "$REPORT"; then
@@ -147,9 +148,11 @@ stop_early() {
 
 # The log of the build and of each command the installer runs, started fresh each time.
 start_log() {
-    mkdir -p "$DATA" || stop_early "Couldn't create $DATA." "Check that you can write to $HOME/Library/Application Support."
+    local folder
+    folder="$(dirname "$LOG")"
+    mkdir -p "$folder" || stop_early "Couldn't create $folder." "Check that you can write to $(dirname "$folder")."
     printf 'Redline installer, %s, %s\n' "$ACTION" "$(date)" >"$LOG" ||
-        stop_early "Couldn't write $LOG." "Check that you own that folder: ls -ld \"$DATA\""
+        stop_early "Couldn't write $LOG." "Check that you own that folder: ls -ld \"$folder\""
 }
 
 # True when there is someone to ask: not turned off, standard output is a terminal, and /dev/tty
@@ -273,17 +276,20 @@ function run(argv) {
 JS
 }
 
-# An earlier version kept its reports, paired phones and chats in another folder. Redline moves
-# them on its first run, but only while its own folder doesn't exist, so the installer moves them
-# before it writes its log there. A hub of the earlier version still running is stopped first.
-# The pid in hub.pid counts only while that process has the file open: a running hub holds its
-# lock on it, and a file left by a hub that crashed may name a pid macOS has given to another app.
+# An earlier version kept its reports, paired phones and chats in another folder. They move to
+# Redline's folder only once the new command and app are installed, so a run that stops before
+# then leaves the earlier version working with its data; until then the log and the checklist
+# are kept in the cache folder (see install). A hub of the earlier version still running is
+# stopped first. The pid in hub.pid counts only while that process has the file open: a running
+# hub holds its lock on it, and a file left by a hub that crashed may name a pid macOS has given
+# to another app.
 move_old_data() {
-    local pid pid_file try
-    if [ ! -d "$OLD_DATA" ] || [ -e "$DATA" ]; then return 0; fi
+    local pid pid_file try pending_log="$LOG" pending_report="$REPORT"
+    $MOVE_OLD_DATA || return 0
+    step "Moving the earlier version's reports"
     stop_app "$OLD_APP" || true
     pid_file="$OLD_DATA/hub/hub.pid"
-    pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null)"
+    pid="$(tr -d '[:space:]' 2>/dev/null <"$pid_file")"
     case "$pid" in
         '' | *[!0-9]*) ;;
         *)
@@ -294,15 +300,20 @@ move_old_data() {
                     sleep 0.3
                 done
                 if kill -0 "$pid" 2>/dev/null; then
-                    stop_early "The hub of the earlier version (Agentic Debugging, pid $pid) is still running." "Quit it: kill $pid"
+                    stop "The hub of the earlier version (Agentic Debugging, pid $pid) is still running." "Quit it: kill $pid"
                 fi
             fi
             ;;
     esac
-    if ! { mkdir -p "$(dirname "$DATA")" && mv "$OLD_DATA" "$DATA"; }; then
-        stop_early "Couldn't move the earlier version's reports from $OLD_DATA to $DATA." \
-            "Check that you can write to $HOME/Library/Application Support."
+    if [ -e "$DATA" ] || ! { mkdir -p "$(dirname "$DATA")" && mv "$OLD_DATA" "$DATA"; } >>"$LOG" 2>&1; then
+        stop "Couldn't move the earlier version's reports from $OLD_DATA to $DATA." \
+            "Check that you can write to $HOME/Library/Application Support, and that $DATA doesn't exist."
     fi
+    MOVE_OLD_DATA=false
+    LOG="$DATA/install.log"
+    REPORT="$DATA/install-report.txt"
+    mv -f "$pending_log" "$LOG" 2>/dev/null || cat "$pending_log" >>"$LOG" 2>/dev/null
+    rm -f "$pending_log" "$pending_report"
     item "Done" "Moved the earlier version's reports and paired phones from $OLD_DATA to $DATA"
 }
 
@@ -490,9 +501,11 @@ install_command() {
 }
 
 install_app() {
-    local output
+    local output start=""
     step "Building and installing Redline.app"
-    if ! output="$(/bin/zsh "$SOURCE/scripts/build-hub-app.sh" "$HOME/Applications" 2>&1)"; then
+    # With --no-start, a running Redline is stopped for the update and not opened again.
+    if $NO_START; then start="--no-start"; fi
+    if ! output="$(/bin/zsh "$SOURCE/scripts/build-hub-app.sh" "$HOME/Applications" ${start:+"$start"} 2>&1)"; then
         printf '%s\n' "$output" >>"$LOG"
         show_log_errors
         stop "Building Redline.app failed. The full log is $LOG." "Fix the error above; an Xcode update or opening Xcode once often does."
@@ -671,13 +684,20 @@ check_codex() {
 
 install() {
     local summary
-    move_old_data
+    # The earlier version's data moves only after the build (move_old_data). Until then nothing is
+    # written to Redline's folder, because the move needs it not to exist.
+    if [ -d "$OLD_DATA" ] && [ ! -e "$DATA" ]; then
+        MOVE_OLD_DATA=true
+        LOG="$CACHE/install.log"
+        REPORT="$CACHE/install-report.txt"
+    fi
     start_log
     preflight
     find_source
     build_command
     install_command
     install_app
+    move_old_data
     run_setup
     remove_old_install
     check_claude
@@ -731,7 +751,7 @@ remove_hooks() {
 }
 
 uninstall() {
-    local domain have tmp rc
+    local domain have tmp rc artifact left=""
     start_log
     step "Removing Redline"
 
@@ -767,13 +787,20 @@ uninstall() {
 
     if stop_app "$APP"; then item "Done" "Stopped Redline"; fi
 
-    if [ -e "$APP" ] || [ -e "$COMMAND" ]; then
-        rm -rf "$APP"
-        rm -f "$COMMAND"
-        item "Done" "Removed $APP and $COMMAND"
-    else
-        item "Skipped" "The app and the command were already removed"
-    fi
+    for artifact in "$APP" "$COMMAND"; do
+        if [ ! -e "$artifact" ] && [ ! -L "$artifact" ]; then
+            item "Skipped" "$artifact was already removed"
+            continue
+        fi
+        rm -rf "$artifact" >>"$LOG" 2>&1
+        if [ -e "$artifact" ] || [ -L "$artifact" ]; then
+            left="${left:+$left and }$artifact"
+            item "Needs you" "Couldn't delete $artifact (see $LOG)." \
+                "Check its owner, permissions and flags with ls -ldO $artifact, then delete it."
+        else
+            item "Done" "Removed $artifact"
+        fi
+    done
 
     if grep -qxF "$PATH_LINE" "$ZPROFILE" 2>/dev/null; then
         tmp="$ZPROFILE.redline.$$"
@@ -796,6 +823,10 @@ uninstall() {
     if [ -d "$OLD_DATA" ]; then item "Done" "Kept the earlier version's reports in $OLD_DATA"; fi
     if [ -e "$HOME/.codex/hooks.json.before-redline" ] || [ -e "$HOME/.claude/settings.json.before-redline" ]; then
         item "Done" "Kept the settings backups from Redline's first setup (the .before-redline files in ~/.codex and ~/.claude)"
+    fi
+    if [ -n "$left" ]; then
+        finish "Redline uninstall checklist" "Redline is not fully removed; still there: $left. See Needs you above, then run the same command again."
+        exit 1
     fi
     finish "Redline uninstall checklist" "Redline is removed. In your app, remove the .redline() line and the Redline package."
 }
