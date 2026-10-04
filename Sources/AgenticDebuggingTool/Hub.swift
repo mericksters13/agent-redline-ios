@@ -2,6 +2,7 @@
 import Foundation
 import Network
 import Security
+import SystemConfiguration
 
 /// Where the tool keeps things on the Mac.
 ///
@@ -189,7 +190,11 @@ final class Hub: @unchecked Sendable {
             let link = link(for: phone)
             // Off every network, phones keep the address they have, which works again once the
             // Mac is back on theirs; the new address follows as soon as the Mac has one.
-            if !hosts.isEmpty { link.update(hosts: hosts, port: HubListener.port, rediscover: rediscover) }
+            if hosts.isEmpty {
+                link.macOffline()
+            } else {
+                link.update(hosts: hosts, port: HubListener.port, rediscover: rediscover)
+            }
         }
         writeStatus()
     }
@@ -329,11 +334,13 @@ final class Hub: @unchecked Sendable {
         return zip(x, y).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
-    /// The Mac's addresses on its local networks, then its `.local` name, which keeps working
-    /// when the address changes. None while no Wi-Fi or Ethernet link is up, since phones can't
-    /// reach the Mac by any of them then.
+    /// The Mac's IPv4 addresses on its local networks, then its `.local` name, which keeps
+    /// working when the address changes and is the only way to reach the Mac on an IPv6-only
+    /// network. None while no Wi-Fi or Ethernet link has an address, since phones can't reach
+    /// the Mac by any of them then.
     static func addresses() -> [String] {
         var found: [String] = []
+        var onNetwork = false
         var list: UnsafeMutablePointer<ifaddrs>?
         if getifaddrs(&list) == 0, let first = list {
             defer { freeifaddrs(list) }
@@ -343,17 +350,32 @@ final class Hub: @unchecked Sendable {
                 let name = String(cString: interface.ifa_name)
                 // Wi-Fi and Ethernet, not VPN tunnels or AirDrop's own links.
                 guard flags & IFF_UP != 0, flags & IFF_RUNNING != 0, flags & IFF_LOOPBACK == 0, name.hasPrefix("en"),
-                      let address = interface.ifa_addr, address.pointee.sa_family == UInt8(AF_INET)
+                      let address = interface.ifa_addr
                 else { continue }
+                if address.pointee.sa_family == UInt8(AF_INET6) {
+                    let ipv6 = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee.sin6_addr }
+                    if isOnNetwork(ipv6) { onNetwork = true }
+                    continue
+                }
+                guard address.pointee.sa_family == UInt8(AF_INET) else { continue }
                 var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                 if getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
                     found.append(String(decoding: host.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self))
+                    onNetwork = true
                 }
             }
         }
-        let name = ProcessInfo.processInfo.hostName
-        if !found.isEmpty, name.hasSuffix(".local") { found.append(name) }
+        // The name the Mac answers to over Bonjour, as set in Sharing settings.
+        if onNetwork, let name = SCDynamicStoreCopyLocalHostName(nil) as String? { found.append("\(name).local") }
         return found
+    }
+
+    /// Whether an IPv6 address comes from a network rather than only from the link being up:
+    /// every active interface has a link-local address (fe80::/10), with or without a network.
+    static func isOnNetwork(_ address: in6_addr) -> Bool {
+        let bytes = withUnsafeBytes(of: address) { Array($0) }
+        let linkLocal = bytes[0] == 0xFE && bytes[1] & 0xC0 == 0x80
+        return !linkLocal && bytes != Array(repeating: 0, count: 16)
     }
 
     // MARK: - Delivery

@@ -110,6 +110,54 @@ struct HubTests {
         #expect(called().count == 4)
     }
 
+    @Test func aPhoneSaysWhenTheMacIsOffEveryNetwork() async throws {
+        try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
+        // Stands in for devicectl, noting each call; the phone always answers.
+        let calls = paths.root.appending(path: "calls")
+        let devicectl = paths.root.appending(path: "devicectl")
+        try """
+        #!/bin/sh
+        echo "$1 $2" >> '\(calls.path)'
+        [ "$1 $2" = "device copy" ]
+        """.write(to: devicectl, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: devicectl.path)
+        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app])
+        hub.updateApps(starting: true)
+        let link = PhoneLink(phone: .init(udid: phone, name: "Mark iPhone", model: "iPhone 17 Pro"), hub: hub)
+        func called() -> Int { ((try? String(contentsOf: calls, encoding: .utf8)) ?? "").split(separator: "\n").count }
+
+        // The hub started with the Mac off every network: the phone is listed, not left out.
+        link.macOffline()
+        #expect(try await state(of: hub) { _ in true } == PhoneLink.macOfflineState)
+        #expect(called() == 0)
+        link.update(hosts: ["192.168.1.2"], port: 47361, rediscover: true)
+        #expect(try await state(of: hub) { $0.hasPrefix("Ready") } == "Ready for \(app)")
+        // The Mac leaves its network: the phone is no longer shown as ready.
+        link.macOffline()
+        #expect(try await state(of: hub) { $0 == PhoneLink.macOfflineState } == PhoneLink.macOfflineState)
+        // Back on the same network, the phone is ready again without being given the address again.
+        link.update(hosts: ["192.168.1.2"], port: 47361, rediscover: false)
+        #expect(try await state(of: hub) { $0.hasPrefix("Ready") } == "Ready for \(app)")
+        #expect(called() == 1)
+    }
+
+    @Test func anIPv6OnlyNetworkCountsAsANetwork() {
+        func ipv6(_ text: String) -> in6_addr {
+            var address = in6_addr()
+            #expect(inet_pton(AF_INET6, text, &address) == 1)
+            return address
+        }
+        #expect(Hub.isOnNetwork(ipv6("2001:db8::1")))
+        #expect(Hub.isOnNetwork(ipv6("fd12:3456:789a::1")))
+        // Every interface that's up has one of these, network or not.
+        #expect(!Hub.isOnNetwork(ipv6("fe80::1")))
+        #expect(!Hub.isOnNetwork(ipv6("febf::1")))
+        #expect(!Hub.isOnNetwork(ipv6("::")))
+        // On a network, the `.local` name is last, after any IPv4 address.
+        let hosts = Hub.addresses()
+        #expect(hosts.isEmpty || hosts.last?.hasSuffix(".local") == true)
+    }
+
     /// The menu bar app taking over from this hub reads these and keeps watching them.
     @Test func theStatusNamesTheAppsGivenOnTheCommandLine() throws {
         #expect(try hub().statusSnapshot().fixedApps == [app])
@@ -184,6 +232,25 @@ struct HubTests {
         #expect(HubProcess.claim(paths) == nil)
         close(held)
         #expect(HubProcess.running(paths) == nil)
+    }
+
+    @Test func chatsOpenTheNewestInstalledCopyOfTheMenuBarApp() throws {
+        func install(_ folder: String, builtAt date: Date) throws -> URL {
+            let app = paths.root.appending(path: "\(folder)/Agentic Debugging.app", directoryHint: .isDirectory)
+            let program = app.appending(path: "Contents/MacOS/agentic-debugging")
+            try FileManager.default.createDirectory(at: program.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data().write(to: program)
+            try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: program.path)
+            return app
+        }
+        let home = try install("home/Applications", builtAt: Date(timeIntervalSinceNow: -86_400))
+        let system = try install("Applications", builtAt: Date())
+        let trashed = try install(".Trash", builtAt: Date(timeIntervalSinceNow: 60))
+        let missing = paths.root.appending(path: "Elsewhere/Agentic Debugging.app", directoryHint: .isDirectory)
+        // Installed in ~/Applications first, then in /Applications: the later install opens.
+        #expect(HubProcess.newestApp(among: [home, system, trashed, missing]) == system)
+        #expect(HubProcess.newestApp(among: [home, missing]) == home)
+        #expect(HubProcess.newestApp(among: [missing]) == nil)
     }
 
     @Test func anAppStaysWatchedAfterItsLastChatCloses() throws {

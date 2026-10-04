@@ -146,6 +146,7 @@ final class HubWindowModel {
         if state.hasPrefix("Ready") { return "Ready" }
         if state.hasPrefix("Not reachable") { return "Not reachable" }
         if state.hasPrefix("None of the watched apps") { return "No watched app installed" }
+        if state == PhoneLink.macOfflineState { return "Mac offline" }
         return state
     }
 

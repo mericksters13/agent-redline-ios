@@ -189,6 +189,7 @@ struct HubWindowTests {
         #expect(HubWindowModel.phoneState("Ready for com.example.app") == "Ready")
         #expect(HubWindowModel.phoneState("Not reachable, trying again in 30 s or when a phone wakes") == "Not reachable")
         #expect(HubWindowModel.phoneState("None of the watched apps installed") == "No watched app installed")
+        #expect(HubWindowModel.phoneState(PhoneLink.macOfflineState) == "Mac offline")
     }
 
     @Test func aReportTakenBeforeDeliveriesWereSavedNamesItsChat() throws {

@@ -221,12 +221,24 @@ enum HubProcess {
 
     /// The menu bar app, which is the hub, when it's installed: in ~/Applications, where
     /// scripts/build-hub-app.sh puts it by default, or wherever else Launch Services knows it by
-    /// its identifier, such as /Applications.
+    /// its identifier, such as /Applications. With more than one copy, the newest build.
     static var app: URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications/Agentic Debugging.app")
-        if FileManager.default.fileExists(atPath: home.path) { return home }
-        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID)
-            .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+        return newestApp(among: [home] + NSWorkspace.shared.urlsForApplications(withBundleIdentifier: appBundleID))
+    }
+
+    /// The copy whose program was built last. Every build has the same version, so a copy left
+    /// in one folder by an earlier install would otherwise be as likely to open as the one
+    /// installed since in another. Copies in the Trash don't count.
+    static func newestApp(among copies: [URL]) -> URL? {
+        let dated = copies.compactMap { app -> (app: URL, built: Date)? in
+            let program = app.appending(path: "Contents/MacOS/agentic-debugging")
+            guard !app.standardizedFileURL.pathComponents.contains(".Trash"),
+                  let built = (try? FileManager.default.attributesOfItem(atPath: program.path))?[.modificationDate] as? Date
+            else { return nil }
+            return (app, built)
+        }
+        return dated.max { $0.built < $1.built }?.app
     }
 
     /// Starts the hub in its own session, so it keeps running after the chat that started it
