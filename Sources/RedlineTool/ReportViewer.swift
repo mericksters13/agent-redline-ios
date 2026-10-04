@@ -84,10 +84,13 @@ enum ReportWindows {
     private static var open: [URL: (window: NSWindow, observer: any NSObjectProtocol)] = [:]
 
     /// Opens the report's window, or brings it forward, in front of the other apps: Redline is
-    /// a menu bar app, so it isn't active when the panel is clicked.
+    /// a menu bar app, so it isn't active when the panel is clicked. An open window reads the
+    /// report again, since it may have gone to a chat since it opened.
     static func show(_ report: HubWindowModel.ReportRow) {
         defer { NSApp.activate() }
         if let window = open[report.folder]?.window {
+            window.title = ReportViewer.title(of: report)
+            (window.contentViewController as? NSHostingController<ReportViewer>)?.rootView = ReportViewer(report: report)
             window.makeKeyAndOrderFront(nil)
             return
         }
