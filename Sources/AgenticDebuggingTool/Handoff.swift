@@ -103,9 +103,10 @@ final class Handoff: @unchecked Sendable {
             Self.notify(title: "Report from \(source.deviceName)", message: "The Cursor chat it was sent to is closed. The report waits in the inbox.")
         case .chat(.cursor, let id):
             InboxQueue.setAddress(Address(chat: "cursor-\(id)", agent: Agent.cursor.rawValue, folder: worktree ?? ""), of: report.folder)
+            // Saved before the chat's hook wakes, so a claim it makes is always newer than this.
+            ReportDelivery.save(.init(agent: .cursor, chat: id, title: "Cursor chat", kind: .nextMessage), in: report.folder)
             InboxQueue.signal(source.bundleID, paths: paths)
             hub.log("Report \(source.reportID) goes to the Cursor chat \(id) when its hooks next run")
-            ReportDelivery.save(.init(agent: .cursor, chat: id, title: "Cursor chat", kind: .nextMessage), in: report.folder)
             Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Cursor chat after its next reply or with your next message there.")
         case .newChat(let agent, let folder, let pick):
             // The chat this pick started for an earlier report, while its worktree exists.
@@ -384,6 +385,7 @@ final class Handoff: @unchecked Sendable {
                 self.openClaude(started.chat, in: workFolder, thenSend: reportText, for: report)
             } else {
                 hub.log("The \(agent.name) chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
+                ReportDelivery.save(.init(agent: agent, chat: started.chat, title: "New chat in \(place)", kind: .newChat), in: report.folder)
                 Handoff.notify(title: "\(agent.name) looked into a report", message: "Its answer is in the report's folder, answer.md. Worktree \(place).")
             }
         }

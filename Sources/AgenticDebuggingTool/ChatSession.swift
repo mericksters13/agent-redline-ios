@@ -1,5 +1,5 @@
 #if os(macOS)
-import Foundation
+import AppKit
 
 /// One chat's side of the hub: its registration, which tells the hub which apps to take
 /// reports from, and taking the reports that arrive for them.
@@ -208,14 +208,22 @@ enum HubProcess {
         return descriptor
     }
 
-    /// Starts the hub in its own session, so it keeps running after the chat that started it
-    /// closes, with nothing attached to the chat's input and output.
-    /// The menu bar app, which is the hub, when it's installed.
+    /// The menu bar app's bundle identifier, as scripts/build-hub-app.sh sets it.
+    static let appBundleID = "com.iosagenticdebuggingkit.hub"
+
+    /// The menu bar app, which is the hub, when it's installed: in ~/Applications, where
+    /// scripts/build-hub-app.sh puts it by default, or wherever else Launch Services knows it by
+    /// its identifier, such as /Applications.
     static var app: URL? {
-        let app = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications/Agentic Debugging.app")
-        return FileManager.default.fileExists(atPath: app.path) ? app : nil
+        let home = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications/Agentic Debugging.app")
+        if FileManager.default.fileExists(atPath: home.path) { return home }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID)
+            .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
+    /// Starts the hub in its own session, so it keeps running after the chat that started it
+    /// closes, with nothing attached to the chat's input and output. The menu bar app is the
+    /// hub when it's installed.
     static func startIfNeeded(_ paths: HubPaths) {
         guard running(paths) == nil else { return }
         if let app {
