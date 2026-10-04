@@ -2,10 +2,11 @@
 import Darwin
 import Foundation
 
-/// Claude Code's open chats, from the file each keeps under `~/.claude/sessions`. Every chat
-/// listens on a socket for messages from the user's other chats, and starts a turn with one
-/// when it's idle. The hub uses it for a chat that isn't waiting for reports, such as one
-/// opened before the hooks were added.
+/// Claude Code's open chats, from the file each keeps under `~/.claude/sessions`.
+///
+/// Every chat listens on a socket for messages from the user's other chats, and starts a turn with
+/// one when it's idle. The hub uses it for a chat that isn't waiting for
+/// reports, such as one opened before the hooks were added.
 enum ClaudeSessions {
     /// An open Claude Code chat.
     struct Session: Equatable {
@@ -19,10 +20,16 @@ enum ClaudeSessions {
 
     /// The interactive chats that are still running.
     static func openSessions() -> [Session] {
-        let folders = [ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], URL.homeDirectory.appending(path: ".claude").path].compactMap { $0 }
+        let folders = [
+            ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], URL.homeDirectory.appending(path: ".claude").path,
+        ].compactMap { $0 }
         var sessions: [Session] = []
         for folder in Set(folders) {
-            let files = (try? FileManager.default.contentsOfDirectory(at: URL(filePath: folder).appending(path: "sessions"), includingPropertiesForKeys: nil)) ?? []
+            let files =
+                (try? FileManager.default.contentsOfDirectory(
+                    at: URL(filePath: folder).appending(path: "sessions"),
+                    includingPropertiesForKeys: nil
+                )) ?? []
             for file in files where file.pathExtension == "json" {
                 guard let data = try? Data(contentsOf: file), let session = session(from: data) else { continue }
                 sessions.append(session)
@@ -31,7 +38,9 @@ enum ClaudeSessions {
         return sessions
     }
 
-    /// One session file, as Claude Code writes it. Times are in milliseconds.
+    /// One session file, as Claude Code writes it.
+    ///
+    /// Times are in milliseconds.
     private struct SessionFile: Decodable {
         var sessionId: String?
         var cwd: String?
@@ -48,18 +57,25 @@ enum ClaudeSessions {
     /// The session a file describes, when it's an interactive chat that's still running.
     static func session(from data: Data) -> Session? {
         guard let file = try? decoder.decode(SessionFile.self, from: data),
-              let id = file.sessionId, let folder = file.cwd, let socket = file.messagingSocketPath, let pid = file.pid,
-              file.kind == "interactive", Chats.isRunning(pid)
+            let id = file.sessionId, let folder = file.cwd, let socket = file.messagingSocketPath, let pid = file.pid,
+            file.kind == "interactive", Chats.isRunning(pid)
         else { return nil }
         let updated = file.updatedAt ?? file.startedAt ?? 0
-        return Session(id: id, folder: folder, socket: socket, updatedAt: Date(timeIntervalSince1970: updated / 1000), title: file.name)
+        return Session(
+            id: id,
+            folder: folder,
+            socket: socket,
+            updatedAt: Date(timeIntervalSince1970: updated / 1000),
+            title: file.name
+        )
     }
 
     /// The line a chat's socket takes: one message, as if typed by another of the user's chats.
     private static func line(_ text: String) -> Data {
         let message: [String: Any] = ["type": "user", "message": ["role": "user", "content": text]]
         do {
-            return try JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) + Data("\n".utf8)
+            return try JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes])
+                + Data("\n".utf8)
         } catch {
             // Strings in nested dictionaries always serialize.
             assertionFailure("Couldn't encode a chat message: \(error)")
@@ -67,7 +83,9 @@ enum ClaudeSessions {
         }
     }
 
-    /// Sends `text` to the chat. True once the chat's socket took it.
+    /// Sends `text` to the chat.
+    ///
+    /// True once the chat's socket took it.
     static func send(_ text: String, to session: Session) -> Bool {
         guard let descriptor = UnixSocket.connect(path: session.socket) else { return false }
         defer { close(descriptor) }

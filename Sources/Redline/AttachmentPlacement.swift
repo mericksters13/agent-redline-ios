@@ -1,9 +1,10 @@
 #if REDLINE
 import Foundation
 
-/// Where the photo panel sits. It grows out of the attachment button: it starts at the
-/// button's edge and opens toward the middle of the screen, so it follows the button
-/// wherever it is.
+/// Where the photo panel sits.
+///
+/// It grows out of the attachment button: it starts at the button's edge and opens toward the
+/// middle of the screen, so it follows the button wherever it is.
 enum AttachmentPlacement {
     static let margin: CGFloat = 12
 

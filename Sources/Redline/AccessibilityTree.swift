@@ -11,9 +11,10 @@ import UIKit
 enum AccessibilityTree {
     private static var isAutomationEnabled = false
 
-    /// SwiftUI builds its accessibility tree only when an assistive client is
-    /// connected. Turn on the automation mode UI testing uses so the tree exists
-    /// when we read it. Debug builds only.
+    /// SwiftUI builds its accessibility tree only when an assistive client is connected.
+    ///
+    /// Turn on the automation mode UI testing uses so the tree exists when we read it. Debug builds
+    /// only.
     static func enableAutomation() {
         guard !isAutomationEnabled else { return }
         isAutomationEnabled = true
@@ -34,8 +35,9 @@ enum AccessibilityTree {
         windows.flatMap(visibleRoots(of:))
     }
 
-    /// Every element and named group under `roots`, in screen points. With `stopAtFirst`, the
-    /// walk ends at the first element found, to tell whether there are any.
+    /// Every element and named group under `roots`, in screen points.
+    ///
+    /// With `stopAtFirst`, the walk ends at the first element found, to tell whether there are any.
     static func elements(under roots: [UIView], screenBounds: CGRect, stopAtFirst: Bool = false) -> [ElementSnapshot] {
         var result: [ElementSnapshot] = []
         var visited = Set<ObjectIdentifier>()
@@ -47,15 +49,17 @@ enum AccessibilityTree {
             }
             frame = frame.intersection(screenBounds)
             guard !frame.isNull, !frame.isEmpty else { return }
-            result.append(ElementSnapshot(
-                role: role(of: object, isContainer: isContainer),
-                label: object.accessibilityLabel?.nonEmpty,
-                value: object.accessibilityValue?.nonEmpty,
-                identifier: identifier(of: object),
-                className: String(describing: type(of: object)),
-                isContainer: isContainer,
-                frame: frame
-            ))
+            result.append(
+                ElementSnapshot(
+                    role: role(of: object, isContainer: isContainer),
+                    label: object.accessibilityLabel?.nonEmpty,
+                    value: object.accessibilityValue?.nonEmpty,
+                    identifier: identifier(of: object),
+                    className: String(describing: type(of: object)),
+                    isContainer: isContainer,
+                    frame: frame
+                )
+            )
         }
 
         func visit(_ object: NSObject, depth: Int) {
@@ -98,12 +102,15 @@ enum AccessibilityTree {
     static func screen(of window: UIWindow?, elements: [ElementSnapshot]) -> ScreenInfo {
         guard let window else { return ScreenInfo() }
         let controller = topController(from: window.rootViewController)
-        let title = navigationBarTitle(in: window)
+        let title =
+            navigationBarTitle(in: window)
             ?? ElementSelection.headerTitle(in: elements)
             ?? selectedTabTitle(from: window.rootViewController)
             ?? controller?.navigationItem.title?.nonEmpty
             ?? controller?.title?.nonEmpty
-        let typeName = controller.map { String(describing: type(of: $0)).split(separator: "<").first.map(String.init) ?? "" }
+        let typeName = controller.map {
+            String(describing: type(of: $0)).split(separator: "<").first.map(String.init) ?? ""
+        }
         return ScreenInfo(title: title, viewController: typeName?.nonEmpty)
     }
 
@@ -130,8 +137,10 @@ enum AccessibilityTree {
         return covering
     }
 
-    /// An open menu presents an empty controller and draws its items in the window, over
-    /// the screen it opened from. Such a presentation hides nothing and isn't a new screen.
+    /// An open menu presents an empty controller and draws its items in the window, over the screen
+    /// it opened from.
+    ///
+    /// Such a presentation hides nothing and isn't a new screen.
     private static func showsContent(_ controller: UIViewController) -> Bool {
         guard let view = controller.viewIfLoaded, let window = view.window else { return false }
         return !elements(under: [view], screenBounds: window.bounds, stopAtFirst: true).isEmpty
@@ -165,7 +174,7 @@ enum AccessibilityTree {
         }
         let selector = NSSelectorFromString("accessibilityIdentifier")
         guard object.responds(to: selector),
-              let value = object.perform(selector)?.takeUnretainedValue() as? String
+            let value = object.perform(selector)?.takeUnretainedValue() as? String
         else { return nil }
         return value.nonEmpty
     }
@@ -185,7 +194,8 @@ enum AccessibilityTree {
         // SwiftUI hosts its navigation and tab controllers as children.
         for child in controller.children.reversed() where child.viewIfLoaded?.window != nil {
             if child is UINavigationController || child is UITabBarController || !child.children.isEmpty,
-               let found = topController(from: child) {
+                let found = topController(from: child)
+            {
                 return found
             }
         }
@@ -205,7 +215,8 @@ enum AccessibilityTree {
 
     private static func navigationBarTitle(in view: UIView) -> String? {
         if let bar = view as? UINavigationBar, !bar.isHidden, bar.alpha > 0.01, bar.window != nil,
-           let title = bar.topItem?.title?.nonEmpty {
+            let title = bar.topItem?.title?.nonEmpty
+        {
             return title
         }
         for subview in view.subviews where !subview.isHidden {

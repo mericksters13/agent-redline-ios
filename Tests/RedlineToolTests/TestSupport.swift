@@ -22,7 +22,10 @@ final class TemporaryFolder: Sendable {
     let url: URL
 
     init(_ name: String) {
-        url = FileManager.default.temporaryDirectory.appending(path: "\(name)-\(UUID().uuidString)", directoryHint: .isDirectory)
+        url = FileManager.default.temporaryDirectory.appending(
+            path: "\(name)-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
     }
 
     deinit {
@@ -52,20 +55,39 @@ func sortedJSON(_ object: [String: Any]) throws -> String {
     String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self)
 }
 
-/// Files a report in the inbox the way the hub does: filled under a hidden name, then renamed
-/// into place whole. Returns its folder.
+/// Files a report in the inbox the way the hub does: filled under a hidden name, then renamed into
+/// place whole.
+///
+/// Returns its folder.
 @discardableResult
-func fileInboxReport(_ name: String, bundleID: String = "com.example.app", in paths: HubPaths, listing: [String: Any],
-                     pictures: [String: Data] = ["screen-1.jpg": Data([0xFF, 0xD8])], summary: String? = nil,
-                     deviceName: String = "Test iPhone", receivedAt: Date = .now, recipient: ReportRecipient? = nil) throws -> URL {
-    let incoming = paths.inbox.appending(path: "\(bundleID)/\(Inbox.incomingPrefix)\(name)", directoryHint: .isDirectory)
+func fileInboxReport(
+    _ name: String,
+    bundleID: String = "com.example.app",
+    in paths: HubPaths,
+    listing: [String: Any],
+    pictures: [String: Data] = ["screen-1.jpg": Data([0xFF, 0xD8])],
+    summary: String? = nil,
+    deviceName: String = "Test iPhone",
+    receivedAt: Date = .now,
+    recipient: ReportRecipient? = nil
+) throws -> URL {
+    let incoming = paths.inbox.appending(
+        path: "\(bundleID)/\(Inbox.incomingPrefix)\(name)",
+        directoryHint: .isDirectory
+    )
     try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
     if let summary { try summary.write(to: incoming.appending(path: "report.md"), atomically: true, encoding: .utf8) }
     try JSONSerialization.data(withJSONObject: listing).write(to: incoming.appending(path: "report.json"))
     for (file, data) in pictures { try data.write(to: incoming.appending(path: file)) }
     let reportID = String(name.prefix(15))
-    let source = ReportSource(kind: .phone, device: "00000000-0000000000000001", deviceName: deviceName, bundleID: bundleID,
-                              reportID: reportID, receivedAt: receivedAt)
+    let source = ReportSource(
+        kind: .phone,
+        device: "00000000-0000000000000001",
+        deviceName: deviceName,
+        bundleID: bundleID,
+        reportID: reportID,
+        receivedAt: receivedAt
+    )
     try HubPaths.encoder.encode(source).write(to: incoming.appending(path: Inbox.sourceFile))
     if let recipient { try Inbox.setRecipient(recipient, of: incoming) }
     let folder = paths.inbox.appending(path: "\(bundleID)/\(name)", directoryHint: .isDirectory)

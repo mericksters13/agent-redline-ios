@@ -3,9 +3,10 @@ import SwiftUI
 import UIKit
 
 /// The saved notes, full screen: each note's screenshot with its note underneath.
-/// Every image is a page, so a note with several attached images pages through them.
-/// Swipe or use the strip to move between notes. A tap on the screenshot hides or
-/// shows the details, and zooming in hides them, as in the Photos viewer.
+///
+/// Every image is a page, so a note with several attached images pages through them. Swipe or use
+/// the strip to move between notes. A tap on the screenshot hides or shows the details, and zooming
+/// in hides them, as in the Photos viewer.
 struct NoteViewer: View {
     let session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -45,8 +46,10 @@ struct NoteViewer: View {
     /// The note the draft belongs to, so moving to another note saves it against the right one.
     @State private var draftOwner: UUID?
     @State private var isConfirmingDelete = false
-    /// The details panel's height, which sets where the screenshot ends. Kept from before
-    /// a zoom, so the screenshot never resizes under the finger while the details are hidden.
+    /// The details panel's height, which sets where the screenshot ends.
+    ///
+    /// Kept from before a zoom, so the screenshot never resizes under the finger while the details
+    /// are hidden.
     @State private var detailsHeight: CGFloat = 0
     @FocusState private var isEditingNote: Bool
 
@@ -134,12 +137,16 @@ struct NoteViewer: View {
                 // Another note was chosen from the strip, or the one showing was deleted.
                 let pages = Page.all(in: annotations)
                 guard let id, pages.first(where: { $0.id == shownID })?.annotation.id != id,
-                      let first = pages.first(where: { $0.annotation.id == id })
+                    let first = pages.first(where: { $0.annotation.id == id })
                 else { return }
-                withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) { scroller.scrollTo(first.id, anchor: .center) }
+                withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
+                    scroller.scrollTo(first.id, anchor: .center)
+                }
             }
             .onChange(of: shownID) { _, id in
-                if let page = Page.all(in: annotations).first(where: { $0.id == id }), page.annotation.id != session.viewerID {
+                if let page = Page.all(in: annotations).first(where: { $0.id == id }),
+                    page.annotation.id != session.viewerID
+                {
                     session.showInViewer(page.annotation.id)
                 }
             }
@@ -163,9 +170,11 @@ struct NoteViewer: View {
                 }
             )
             .accessibilityElement()
-            .accessibilityLabel(page.annotation.imageCount > 1
-                ? "Image \(page.index + 1) of \(page.annotation.imageCount) for note \(number)"
-                : "Screenshot for note \(number)")
+            .accessibilityLabel(
+                page.annotation.imageCount > 1
+                    ? "Image \(page.index + 1) of \(page.annotation.imageCount) for note \(number)"
+                    : "Screenshot for note \(number)"
+            )
             .accessibilityValue(isZoomed ? "Zoomed in" : "")
             .accessibilityHint("Double-tap with two fingers to zoom")
             .accessibilityAddTraits(.isImage)
@@ -225,7 +234,9 @@ struct NoteViewer: View {
                     }
                     .lineLimit(1)
                     Spacer(minLength: 0)
-                    Button { isConfirmingDelete = true } label: {
+                    Button {
+                        isConfirmingDelete = true
+                    } label: {
                         Image(systemName: "trash")
                             .font(.subheadline)
                             .foregroundStyle(Color.red)
@@ -236,7 +247,11 @@ struct NoteViewer: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Delete note \(index + 1)")
-                    .confirmationDialog("Delete this note?", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
+                    .confirmationDialog(
+                        "Delete this note?",
+                        isPresented: $isConfirmingDelete,
+                        titleVisibility: .visible
+                    ) {
                         Button("Delete note", role: .destructive) {
                             isEditingNote = false
                             session.delete(current)
@@ -271,7 +286,11 @@ struct NoteViewer: View {
         .frame(width: min(size.width - 24, 420))
         .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { detailsHeight = $0 }
+        .onGeometryChange(for: CGFloat.self) {
+            $0.size.height
+        } action: {
+            detailsHeight = $0
+        }
     }
 
     /// What the note is, and which of its images is showing when it has several.
@@ -285,7 +304,9 @@ struct NoteViewer: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(Array(annotations.enumerated()), id: \.element.id) { index, annotation in
-                        Button { session.showInViewer(annotation.id) } label: {
+                        Button {
+                            session.showInViewer(annotation.id)
+                        } label: {
                             stripThumbnail(for: annotation)
                                 .padding(3)
                                 .overlay {
@@ -348,7 +369,10 @@ private struct ZoomableScreenshot: UIViewRepresentable {
     func makeUIView(context: Context) -> ZoomView {
         let view = ZoomView()
         view.delegate = context.coordinator
-        let double = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.doubleTapped(_:)))
+        let double = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.doubleTapped(_:))
+        )
         double.numberOfTapsRequired = 2
         let single = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.singleTapped))
         single.require(toFail: double)
@@ -395,7 +419,15 @@ private struct ZoomableScreenshot: UIViewRepresentable {
                 let point = gesture.location(in: view.photo)
                 let scale = ZoomView.doubleTapScale
                 let size = CGSize(width: view.bounds.width / scale, height: view.bounds.height / scale)
-                view.zoom(to: CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2, width: size.width, height: size.height), animated: true)
+                view.zoom(
+                    to: CGRect(
+                        x: point.x - size.width / 2,
+                        y: point.y - size.height / 2,
+                        width: size.width,
+                        height: size.height
+                    ),
+                    animated: true
+                )
             }
         }
     }
@@ -444,7 +476,10 @@ private struct ZoomableScreenshot: UIViewRepresentable {
             laidOutSize = bounds.size
             zoomScale = minimumZoomScale
             let fit = min(bounds.width / image.size.width, bounds.height / image.size.height)
-            photo.frame = CGRect(origin: .zero, size: CGSize(width: image.size.width * fit, height: image.size.height * fit))
+            photo.frame = CGRect(
+                origin: .zero,
+                size: CGSize(width: image.size.width * fit, height: image.size.height * fit)
+            )
             contentSize = photo.frame.size
             centerPhoto()
         }

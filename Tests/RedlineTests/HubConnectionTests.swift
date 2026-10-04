@@ -8,7 +8,9 @@ import Testing
 /// The phone's side of a whole exchange, against a hub on the loopback interface that answers
 /// each line with the next line of a script.
 struct HubConnectionTests {
-    private let store = ReportStore(root: FileManager.default.temporaryDirectory.appending(path: "HubConnectionTests-\(UUID().uuidString)"))
+    private let store = ReportStore(
+        root: FileManager.default.temporaryDirectory.appending(path: "HubConnectionTests-\(UUID().uuidString)")
+    )
 
     /// Files one finished report and returns its id.
     private func fileReport() throws -> String {
@@ -31,8 +33,13 @@ struct HubConnectionTests {
         ])
         defer { hub.stop() }
         let port = try #require(await hub.start())
-        let result = await HubLink.deliver(store.undeliveredReports(), bundleID: "com.example.app", address: address(port: port),
-                                           files: { store.reportFiles($0) }, patience: 5)
+        let result = await HubLink.deliver(
+            store.undeliveredReports(),
+            bundleID: "com.example.app",
+            address: address(port: port),
+            files: { store.reportFiles($0) },
+            patience: 5
+        )
         #expect(result.outcome == .delivered)
         #expect(result.delivered == [id])
         let lines = hub.lines
@@ -49,8 +56,13 @@ struct HubConnectionTests {
         let hub = try ScriptedHub(script: [#"{"delivered":[],"refused":"Pair again","want":[]}"#])
         defer { hub.stop() }
         let port = try #require(await hub.start())
-        let result = await HubLink.deliver(store.undeliveredReports(), bundleID: "com.example.app", address: address(port: port),
-                                           files: { store.reportFiles($0) }, patience: 5)
+        let result = await HubLink.deliver(
+            store.undeliveredReports(),
+            bundleID: "com.example.app",
+            address: address(port: port),
+            files: { store.reportFiles($0) },
+            patience: 5
+        )
         #expect(result.outcome == .refused)
     }
 
@@ -61,8 +73,13 @@ struct HubConnectionTests {
         let hub = try ScriptedHub(script: [#"{"delivered":[],"want":["\#(id)"]}"#, nil])
         defer { hub.stop() }
         let port = try #require(await hub.start())
-        let result = await HubLink.deliver(store.undeliveredReports(), bundleID: "com.example.app", address: address(port: port),
-                                           files: { store.reportFiles($0) }, patience: 5)
+        let result = await HubLink.deliver(
+            store.undeliveredReports(),
+            bundleID: "com.example.app",
+            address: address(port: port),
+            files: { store.reportFiles($0) },
+            patience: 5
+        )
         #expect(result.outcome == .interrupted)
         #expect(result.delivered.isEmpty)
     }
@@ -74,8 +91,13 @@ struct HubConnectionTests {
         // be handed to the next one while tests run in parallel.
         let clock = ContinuousClock()
         let start = clock.now
-        let result = await HubLink.deliver(store.undeliveredReports(), bundleID: "com.example.app", address: address(port: 1),
-                                           files: { store.reportFiles($0) }, patience: 0.5)
+        let result = await HubLink.deliver(
+            store.undeliveredReports(),
+            bundleID: "com.example.app",
+            address: address(port: 1),
+            files: { store.reportFiles($0) },
+            patience: 0.5
+        )
         #expect(result.outcome == .unreachable)
         #expect(clock.now - start < .seconds(10))
     }
@@ -98,8 +120,10 @@ struct HubConnectionTests {
     }
 }
 
-/// A hub on the loopback interface. Each line it receives gets the next line of the script as
-/// its answer; nil closes the connection, and once the script runs out it stays quiet.
+/// A hub on the loopback interface.
+///
+/// Each line it receives gets the next line of the script as its answer; nil closes the connection,
+/// and once the script runs out it stays quiet.
 private final class ScriptedHub: Sendable {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "Redline.tests.hub")
@@ -116,7 +140,9 @@ private final class ScriptedHub: Sendable {
         (arrivals, arrival) = AsyncStream.makeStream(of: String.self)
     }
 
-    /// Starts listening. Returns the port, or nil when the listener couldn't start.
+    /// Starts listening.
+    ///
+    /// Returns the port, or nil when the listener couldn't start.
     func start() async -> UInt16? {
         let once = Once<UInt16?>()
         return await withCheckedContinuation { continuation in
@@ -163,7 +189,8 @@ private final class ScriptedHub: Sendable {
     }
 
     private func receive(_ peer: Peer) {
-        peer.connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [self] data, _, isComplete, error in
+        peer.connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) {
+            [self] data, _, isComplete, error in
             if let data { peer.buffer.append(data) }
             while let newline = peer.buffer.firstIndex(of: UInt8(ascii: "\n")) {
                 let line = String(decoding: peer.buffer[peer.buffer.startIndex..<newline], as: UTF8.self)

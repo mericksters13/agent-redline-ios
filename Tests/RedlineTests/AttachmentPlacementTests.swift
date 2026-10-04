@@ -23,7 +23,10 @@ struct AttachmentPlacementTests {
     @Test func theGridStaysInsideTheSpace() {
         for x in stride(from: 0.0, through: 380, by: 20) {
             for y in stride(from: 62.0, through: 820, by: 40) {
-                let grid = AttachmentPlacement.expandedFrame(anchor: CGRect(x: x, y: y, width: 44, height: 44), in: bounds)
+                let grid = AttachmentPlacement.expandedFrame(
+                    anchor: CGRect(x: x, y: y, width: 44, height: 44),
+                    in: bounds
+                )
                 #expect(bounds.insetBy(dx: AttachmentPlacement.margin - 0.001, dy: -0.001).contains(grid))
             }
         }

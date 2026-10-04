@@ -9,17 +9,44 @@ struct ScreenCompositionTests {
     private let size = CGSize(width: 402, height: 874)
 
     private func scroll(_ offset: CGFloat, insetBottom: CGFloat = 34, contentHeight: CGFloat = 3000) -> ScrollState {
-        ScrollState(frame: CGRect(origin: .zero, size: size), offsetY: offset, insetTop: 62, insetBottom: insetBottom, contentHeight: contentHeight)
+        ScrollState(
+            frame: CGRect(origin: .zero, size: size),
+            offsetY: offset,
+            insetTop: 62,
+            insetBottom: insetBottom,
+            contentHeight: contentHeight
+        )
     }
 
-    private func element(_ label: String, y: CGFloat, height: CGFloat = 50, identifier: String? = nil) -> ElementSnapshot {
-        ElementSnapshot(role: "Button", label: label, value: nil, identifier: identifier, className: nil, isContainer: false,
-                        frame: CGRect(x: 20, y: y, width: 362, height: height))
+    private func element(_ label: String, y: CGFloat, height: CGFloat = 50, identifier: String? = nil)
+        -> ElementSnapshot
+    {
+        ElementSnapshot(
+            role: "Button",
+            label: label,
+            value: nil,
+            identifier: identifier,
+            className: nil,
+            isContainer: false,
+            frame: CGRect(x: 20, y: y, width: 362, height: height)
+        )
     }
 
-    private func capture(_ offset: CGFloat?, group: Int = 0, elements: [ElementSnapshot] = [], insetBottom: CGFloat = 34, contentHeight: CGFloat = 3000) -> Capture {
-        Capture(id: UUID(), file: "c.png", size: size, scroll: offset.map { scroll($0, insetBottom: insetBottom, contentHeight: contentHeight) },
-                elements: elements, group: group)
+    private func capture(
+        _ offset: CGFloat?,
+        group: Int = 0,
+        elements: [ElementSnapshot] = [],
+        insetBottom: CGFloat = 34,
+        contentHeight: CGFloat = 3000
+    ) -> Capture {
+        Capture(
+            id: UUID(),
+            file: "c.png",
+            size: size,
+            scroll: offset.map { scroll($0, insetBottom: insetBottom, contentHeight: contentHeight) },
+            elements: elements,
+            group: group
+        )
     }
 
     // MARK: - Reuse, stitch or replace
@@ -27,7 +54,10 @@ struct ScreenCompositionTests {
     @Test func anUnchangedScreenReusesItsPicture() {
         let first = capture(-62)
         let second = capture(-62)
-        #expect(CaptureMerge.decision(previous: first, new: second, picturesMatch: true, overlap: .tooSmallToTell) == .reuse(first.id))
+        #expect(
+            CaptureMerge.decision(previous: first, new: second, picturesMatch: true, overlap: .tooSmallToTell)
+                == .reuse(first.id)
+        )
     }
 
     @Test func aMenuOverALookalikePictureIsNotReused() {
@@ -35,7 +65,10 @@ struct ScreenCompositionTests {
         let row = element("Milk", y: 252, identifier: "glance.milk")
         let first = capture(-62, elements: [row])
         let withMenu = capture(-62, elements: [row, element("PDF report", y: 100), element("CSV file", y: 178)])
-        #expect(CaptureMerge.decision(previous: first, new: withMenu, picturesMatch: true, overlap: .tooSmallToTell) == .replace)
+        #expect(
+            CaptureMerge.decision(previous: first, new: withMenu, picturesMatch: true, overlap: .tooSmallToTell)
+                == .replace
+        )
     }
 
     @Test func changedTextStillReusesThePicture() {
@@ -44,44 +77,93 @@ struct ScreenCompositionTests {
         var later = element("Last feed 2:09 PM", y: 252)
         later.frame.size.width -= 3
         let second = capture(-62, elements: [later])
-        #expect(CaptureMerge.decision(previous: first, new: second, picturesMatch: true, overlap: .tooSmallToTell) == .reuse(first.id))
+        #expect(
+            CaptureMerge.decision(previous: first, new: second, picturesMatch: true, overlap: .tooSmallToTell)
+                == .reuse(first.id)
+        )
     }
 
     @Test func aChangedScreenReplacesItsPicture() {
-        #expect(CaptureMerge.decision(previous: capture(-62), new: capture(-62), picturesMatch: false, overlap: .tooSmallToTell) == .replace)
-        #expect(CaptureMerge.decision(previous: capture(nil), new: capture(nil), picturesMatch: false, overlap: .tooSmallToTell) == .replace)
+        #expect(
+            CaptureMerge.decision(
+                previous: capture(-62),
+                new: capture(-62),
+                picturesMatch: false,
+                overlap: .tooSmallToTell
+            ) == .replace
+        )
+        #expect(
+            CaptureMerge.decision(
+                previous: capture(nil),
+                new: capture(nil),
+                picturesMatch: false,
+                overlap: .tooSmallToTell
+            ) == .replace
+        )
     }
 
     @Test func aScrolledScreenIsStitched() {
-        #expect(CaptureMerge.decision(previous: capture(-62), new: capture(400), picturesMatch: false, overlap: .matches) == .stitch)
+        #expect(
+            CaptureMerge.decision(previous: capture(-62), new: capture(400), picturesMatch: false, overlap: .matches)
+                == .stitch
+        )
         // Scrolled too far to overlap: nothing contradicts a scroll.
-        #expect(CaptureMerge.decision(previous: capture(-62), new: capture(1500), picturesMatch: false, overlap: .tooSmallToTell) == .stitch)
+        #expect(
+            CaptureMerge.decision(
+                previous: capture(-62),
+                new: capture(1500),
+                picturesMatch: false,
+                overlap: .tooSmallToTell
+            ) == .stitch
+        )
     }
 
     @Test func aScrolledScreenWhoseContentAlsoChangedIsReplaced() {
-        #expect(CaptureMerge.decision(previous: capture(-62), new: capture(400), picturesMatch: false, overlap: .differs) == .replace)
+        #expect(
+            CaptureMerge.decision(previous: capture(-62), new: capture(400), picturesMatch: false, overlap: .differs)
+                == .replace
+        )
     }
 
     @Test func aRotatedScreenIsReplaced() {
         var turned = capture(-62)
         turned.size = CGSize(width: 874, height: 402)
-        #expect(CaptureMerge.decision(previous: capture(-62), new: turned, picturesMatch: true, overlap: .tooSmallToTell) == .replace)
+        #expect(
+            CaptureMerge.decision(previous: capture(-62), new: turned, picturesMatch: true, overlap: .tooSmallToTell)
+                == .replace
+        )
     }
 
     // MARK: - A scroll, or different content under the same title
 
     @Test func elementsThatMovedByTheScrollDistanceProveAScroll() {
         // Scrolled 262 pt: the row seen at 600 is now at 338.
-        let before = capture(-62, elements: [element("Feed", y: 600, identifier: "row.feed"), element("Pee", y: 700, identifier: "row.pee")])
-        let after = capture(200, elements: [element("Feed", y: 338, identifier: "row.feed"), element("Pee", y: 438, identifier: "row.pee")])
+        let before = capture(
+            -62,
+            elements: [element("Feed", y: 600, identifier: "row.feed"), element("Pee", y: 700, identifier: "row.pee")]
+        )
+        let after = capture(
+            200,
+            elements: [element("Feed", y: 338, identifier: "row.feed"), element("Pee", y: 438, identifier: "row.pee")]
+        )
         #expect(CaptureMerge.isScroll(from: before, to: after))
         #expect(CaptureMerge.decision(previous: before, new: after, picturesMatch: false, overlap: .matches) == .stitch)
     }
 
     @Test func aPinnedSectionHeaderDoesNotSpoilAScroll() {
         let header = element("Today", y: 100, height: 30, identifier: "section.today")
-        let before = capture(-62, elements: [header, element("Feed", y: 600, identifier: "row.feed"), element("Pee", y: 700, identifier: "row.pee")])
-        let after = capture(200, elements: [header, element("Feed", y: 338, identifier: "row.feed"), element("Pee", y: 438, identifier: "row.pee")])
+        let before = capture(
+            -62,
+            elements: [
+                header, element("Feed", y: 600, identifier: "row.feed"), element("Pee", y: 700, identifier: "row.pee"),
+            ]
+        )
+        let after = capture(
+            200,
+            elements: [
+                header, element("Feed", y: 338, identifier: "row.feed"), element("Pee", y: 438, identifier: "row.pee"),
+            ]
+        )
         #expect(CaptureMerge.isScroll(from: before, to: after))
     }
 
@@ -90,14 +172,20 @@ struct ScreenCompositionTests {
         let before = capture(-62, elements: [element("Notes", y: 400, height: 30, identifier: "detail.notes")])
         let after = capture(200, elements: [element("Notes", y: 500, height: 30, identifier: "detail.notes")])
         #expect(!CaptureMerge.isScroll(from: before, to: after))
-        #expect(CaptureMerge.decision(previous: before, new: after, picturesMatch: false, overlap: .tooSmallToTell) == .replace)
+        #expect(
+            CaptureMerge.decision(previous: before, new: after, picturesMatch: false, overlap: .tooSmallToTell)
+                == .replace
+        )
     }
 
     @Test func farApartWithNothingSharedTheContentMustBeAsLong() {
         #expect(CaptureMerge.isScroll(from: capture(-62), to: capture(1500)))
         let other = capture(1500, contentHeight: 2400)
         #expect(!CaptureMerge.isScroll(from: capture(-62), to: other))
-        #expect(CaptureMerge.decision(previous: capture(-62), new: other, picturesMatch: false, overlap: .tooSmallToTell) == .replace)
+        #expect(
+            CaptureMerge.decision(previous: capture(-62), new: other, picturesMatch: false, overlap: .tooSmallToTell)
+                == .replace
+        )
     }
 
     // MARK: - Where content scrolls
@@ -142,7 +230,9 @@ struct ScreenCompositionTests {
         #expect(plan.position(of: CGRect(x: 20, y: 100, width: 100, height: 40), from: top.id)?.minY == 100)
         #expect(plan.position(of: CGRect(x: 20, y: 500, width: 100, height: 40), from: lower.id)?.minY == 962)
         // A note on the bottom bars sits at the bottom of the picture.
-        #expect(plan.position(of: CGRect(x: 20, y: 850, width: 100, height: 20), from: top.id)?.minY == plan.footerY + 11)
+        #expect(
+            plan.position(of: CGRect(x: 20, y: 850, width: 100, height: 20), from: top.id)?.minY == plan.footerY + 11
+        )
     }
 
     @Test func capturesFarApartAreJoinedAcrossAMarkedGap() throws {
@@ -153,7 +243,10 @@ struct ScreenCompositionTests {
         // The top capture ends at 777 in the content; the far one starts at 1563.
         #expect(plan.gaps.map(\.skippedHeight) == [786])
         #expect(plan.size.height == 63 + 776 + ScreenComposition.gapHeight + 776 + 35)
-        #expect(plan.position(of: CGRect(x: 20, y: 100, width: 100, height: 40), from: far.id)?.minY == 63 + 776 + ScreenComposition.gapHeight + 37)
+        #expect(
+            plan.position(of: CGRect(x: 20, y: 100, width: 100, height: 40), from: far.id)?.minY == 63 + 776
+                + ScreenComposition.gapHeight + 37
+        )
     }
 
     @Test func aNoteShowsOnAnotherCaptureOnlyWhenItWasInView() {
@@ -174,7 +267,9 @@ struct ScreenCompositionTests {
     @Test func aScreenScrolledOnceIsSentAsOneImage() {
         // The stitched Today screen from the simulator: about one and a half screens.
         #expect(ScreenComposition.parts(height: 1307, maxHeight: twoScreens, keepingWhole: []) == [0...1307])
-        #expect(ScreenComposition.parts(height: twoScreens, maxHeight: twoScreens, keepingWhole: []) == [0...twoScreens])
+        #expect(
+            ScreenComposition.parts(height: twoScreens, maxHeight: twoScreens, keepingWhole: []) == [0...twoScreens]
+        )
     }
 
     @Test func aLongerScreenIsCutInAGapBetweenSections() {
@@ -197,7 +292,12 @@ struct ScreenCompositionTests {
         // One long card holding rows 60 pt tall with 8 pt between them.
         let card = CGRect(x: 16, y: 0, width: 370, height: 3000)
         let rows = stride(from: 0.0, to: 3000, by: 68).map { CGRect(x: 24, y: $0, width: 354, height: 60) }
-        let parts = ScreenComposition.parts(height: 3000, maxHeight: twoScreens, keepingWhole: [], avoiding: [card] + rows)
+        let parts = ScreenComposition.parts(
+            height: 3000,
+            maxHeight: twoScreens,
+            keepingWhole: [],
+            avoiding: [card] + rows
+        )
         let cut = parts[0].upperBound
         #expect(!rows.contains { $0.minY < cut && $0.maxY > cut })
     }

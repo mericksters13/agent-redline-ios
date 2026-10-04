@@ -4,8 +4,10 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-/// The photo panel. It grows out of the attachment button into a grid of recent photos,
-/// in Redline's black and white.
+/// The photo panel.
+///
+/// It grows out of the attachment button into a grid of recent photos, in Redline's black and
+/// white.
 ///
 /// Photos always opens this grid. Before the app has Photos access
 /// the grid offers to show recent photos, which asks for access, or to open the system
@@ -30,7 +32,8 @@ struct AttachmentPicker: View {
     private static let footerHeight: CGFloat = 78
 
     private var motion: Animation {
-        reduceMotion ? .linear(duration: 0.12) : .interpolatingSpring(mass: 1, stiffness: 440, damping: 42, initialVelocity: 0)
+        reduceMotion
+            ? .linear(duration: 0.12) : .interpolatingSpring(mass: 1, stiffness: 440, damping: 42, initialVelocity: 0)
     }
 
     /// The space inside the safe area, in screen points.
@@ -69,18 +72,23 @@ struct AttachmentPicker: View {
 
             photosPage
                 .frame(width: frame.width, height: frame.height)
-            .background(Mono.surface)
-            .clipShape(.rect(cornerRadius: Self.cornerRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
-            .shadow(color: .black.opacity(0.35), radius: 24, y: 10)
-            // Starts the size of the button and grows from the button's corner.
-            .scaleEffect(
-                x: isExpanded ? 1 : max(1, anchor.width) / max(frame.width, 1),
-                y: isExpanded ? 1 : max(1, anchor.height) / max(frame.height, 1),
-                anchor: corner.unitPoint
-            )
-            .opacity(isExpanded ? 1 : 0)
-            .position(x: frame.midX, y: frame.midY)
+                .background(Mono.surface)
+                .clipShape(.rect(cornerRadius: Self.cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous).strokeBorder(
+                        Mono.hairline,
+                        lineWidth: 1
+                    )
+                )
+                .shadow(color: .black.opacity(0.35), radius: 24, y: 10)
+                // Starts the size of the button and grows from the button's corner.
+                .scaleEffect(
+                    x: isExpanded ? 1 : max(1, anchor.width) / max(frame.width, 1),
+                    y: isExpanded ? 1 : max(1, anchor.height) / max(frame.height, 1),
+                    anchor: corner.unitPoint
+                )
+                .opacity(isExpanded ? 1 : 0)
+                .position(x: frame.midX, y: frame.midY)
         }
         .buttonStyle(.plain)
         .onAppear { withAnimation(motion) { isExpanded = true } }
@@ -108,7 +116,8 @@ struct AttachmentPicker: View {
     /// The height the photos page needs: the header, the rows of tiles and the footer.
     private func photosHeight(width: CGFloat) -> CGFloat {
         guard let items = library?.items, !items.isEmpty else { return Self.headerHeight + 170 + Self.footerHeight }
-        let tileWidth = (width - 2 * Self.gridInset - CGFloat(Self.columns - 1) * Self.gridSpacing) / CGFloat(Self.columns)
+        let tileWidth =
+            (width - 2 * Self.gridInset - CGFloat(Self.columns - 1) * Self.gridSpacing) / CGFloat(Self.columns)
         let rows = CGFloat((items.count + Self.columns - 1) / Self.columns)
         let grid = rows * tileWidth / tileAspect + (rows - 1) * Self.gridSpacing
         return Self.headerHeight + grid + Self.footerHeight
@@ -129,7 +138,10 @@ struct AttachmentPicker: View {
             if let library, !library.items.isEmpty {
                 ScrollView {
                     LazyVGrid(
-                        columns: Array(repeating: GridItem(.flexible(), spacing: Self.gridSpacing), count: Self.columns),
+                        columns: Array(
+                            repeating: GridItem(.flexible(), spacing: Self.gridSpacing),
+                            count: Self.columns
+                        ),
                         spacing: Self.gridSpacing
                     ) {
                         ForEach(library.items) { item in
@@ -157,7 +169,9 @@ struct AttachmentPicker: View {
                     }
                     .accessibilityLabel(selectedIDs.count == 1 ? "Add 1 photo" : "Add \(selectedIDs.count) photos")
                 } else {
-                    Button { showsSystemPicker = true } label: {
+                    Button {
+                        showsSystemPicker = true
+                    } label: {
                         Text("All Photos")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(Mono.text)
@@ -182,7 +196,9 @@ struct AttachmentPicker: View {
                         .font(.subheadline)
                         .foregroundStyle(Mono.secondary)
                         .multilineTextAlignment(.center)
-                    Button { Task { await library.requestAccess() } } label: {
+                    Button {
+                        Task { await library.requestAccess() }
+                    } label: {
                         Text("Show recent photos")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(Color.black)
@@ -199,7 +215,9 @@ struct AttachmentPicker: View {
                     Text("Choose from your photo library.")
                         .font(.subheadline)
                         .foregroundStyle(Mono.secondary)
-                    Button { showsSystemPicker = true } label: {
+                    Button {
+                        showsSystemPicker = true
+                    } label: {
                         Text("Open photo library")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(Color.black)
@@ -287,9 +305,11 @@ struct AttachmentPicker: View {
         }
     }
 
-    /// Off the main thread and in parallel: reading and shrinking a large photo takes long
-    /// enough to stall the UI. Keeps the order they were chosen in.
-    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    /// Off the main thread and in parallel: reading and shrinking a large photo takes long enough
+    /// to stall the UI.
+    ///
+    /// Keeps the order they were chosen in. Runs off the main actor. Add @concurrent when the tools
+    /// version reaches 6.2.
     nonisolated private static func images(from items: [PhotosPickerItem]) async -> [UIImage] {
         await withTaskGroup(of: (index: Int, image: UIImage?).self) { group in
             for (index, item) in items.enumerated() {
@@ -301,7 +321,9 @@ struct AttachmentPicker: View {
                         }
                         return (index, PhotoLibrary.downscaled(data))
                     } catch {
-                        Log.photos.error("Couldn't load chosen photo \(index + 1): \(error.localizedDescription, privacy: .public)")
+                        Log.photos.error(
+                            "Couldn't load chosen photo \(index + 1): \(error.localizedDescription, privacy: .public)"
+                        )
                         return (index, nil)
                     }
                 }
@@ -313,7 +335,9 @@ struct AttachmentPicker: View {
     }
 }
 
-/// The newest photos and screenshots in Photos, for the grid. Empty without Photos access.
+/// The newest photos and screenshots in Photos, for the grid.
+///
+/// Empty without Photos access.
 @MainActor
 @Observable
 private final class RecentPhotos {
@@ -365,7 +389,13 @@ private final class RecentPhotos {
             // The panel closed: stop loading thumbnails nobody will see.
             guard !Task.isCancelled else { return }
             if let thumbnail = await PhotoLibrary.image(for: asset, pixels: 480) {
-                loaded.append(Photo(id: asset.localIdentifier, createdAt: asset.creationDate ?? .distantPast, thumbnail: thumbnail))
+                loaded.append(
+                    Photo(
+                        id: asset.localIdentifier,
+                        createdAt: asset.creationDate ?? .distantPast,
+                        thumbnail: thumbnail
+                    )
+                )
             }
         }
         guard !Task.isCancelled else { return }
@@ -373,8 +403,9 @@ private final class RecentPhotos {
         isLoaded = true
     }
 
-    /// The chosen photos at attachment size, in the order they were chosen, all requested at
-    /// once. Cancelling the task stops the requests.
+    /// The chosen photos at attachment size, in the order they were chosen, all requested at once.
+    ///
+    /// Cancelling the task stops the requests.
     func images(for ids: [String]) async -> [UIImage] {
         if usesSamples { return ids.compactMap { UIImage(contentsOfFile: $0) } }
         let chosen = ids.compactMap { assets[$0] }
@@ -392,11 +423,15 @@ private final class RecentPhotos {
 
 extension RecentPhotos {
     /// The sample images, decoded at grid size.
+    ///
     /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
     nonisolated private static func sampleItems() async -> [Photo] {
         sampleFiles().compactMap { file in
             guard let image = UIImage(contentsOfFile: file.url.path(percentEncoded: false)) else { return nil }
-            let thumbnail = image.preparingThumbnail(of: CGSize(width: 240, height: 240 * image.size.height / max(image.size.width, 1))) ?? image
+            let thumbnail =
+                image.preparingThumbnail(
+                    of: CGSize(width: 240, height: 240 * image.size.height / max(image.size.width, 1))
+                ) ?? image
             return Photo(id: file.url.path(percentEncoded: false), createdAt: file.date, thumbnail: thumbnail)
         }
     }
@@ -404,10 +439,13 @@ extension RecentPhotos {
     /// Images from sent reports, newest first.
     nonisolated private static func sampleFiles() -> [(url: URL, date: Date)] {
         let files = FileManager.default
-        let reports = (try? files.contentsOfDirectory(at: ReportStore.standard.reportsDirectory, includingPropertiesForKeys: nil)) ?? []
+        let reports =
+            (try? files.contentsOfDirectory(at: ReportStore.standard.reportsDirectory, includingPropertiesForKeys: nil))
+            ?? []
         var found: [(url: URL, date: Date)] = []
         for report in reports {
-            let images = (try? files.contentsOfDirectory(at: report, includingPropertiesForKeys: [.creationDateKey])) ?? []
+            let images =
+                (try? files.contentsOfDirectory(at: report, includingPropertiesForKeys: [.creationDateKey])) ?? []
             for image in images where image.pathExtension == "png" || image.pathExtension == "jpg" {
                 let date = (try? image.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
                 found.append((url: image, date: date))

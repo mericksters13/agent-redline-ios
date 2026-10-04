@@ -72,7 +72,8 @@ final class HubListener: @unchecked Sendable {
         guard await lines.send(HubMessage.encode(answer)), !answer.want.isEmpty else { return }
         var waiting = Set(answer.want)
         while !waiting.isEmpty {
-            let stopped = "\(offer.bundleID) stopped sending before \(waiting.count == 1 ? "a report" : "\(waiting.count) reports") arrived"
+            let stopped =
+                "\(offer.bundleID) stopped sending before \(waiting.count == 1 ? "a report" : "\(waiting.count) reports") arrived"
             guard let line = await lines.read() else {
                 hub.log(stopped)
                 break
@@ -100,8 +101,10 @@ final class HubListener: @unchecked Sendable {
         _ = await lines.send(HubMessage.encode(HubMessage.Reply(delivered: delivered)))
     }
 
-    /// Phones announce Xcode's wireless link whenever they wake. The announcement doesn't say
-    /// which paired phone it is, so every phone still waiting for its address gets a try.
+    /// Phones announce Xcode's wireless link whenever they wake.
+    ///
+    /// The announcement doesn't say which paired phone it is, so every phone still waiting for its
+    /// address gets a try.
     private func watchForWakingPhones() {
         let browser = NWBrowser(for: .bonjour(type: "_remotepairing._tcp", domain: "local."), using: .tcp)
         browser.browseResultsChangedHandler = { [weak self] _, changes in
@@ -115,8 +118,9 @@ final class HubListener: @unchecked Sendable {
         self.browser = browser
     }
 
-    /// One app's connection, read and written a line at a time. Cancelling the task that waits
-    /// on it cancels the connection, which ends the wait.
+    /// One app's connection, read and written a line at a time.
+    ///
+    /// Cancelling the task that waits on it cancels the connection, which ends the wait.
     ///
     /// Thread safety: `buffer` is read and written only on `queue`.
     private final class Lines: @unchecked Sendable {
@@ -189,7 +193,8 @@ final class HubListener: @unchecked Sendable {
         }
 
         private func receive(_ once: Once<Data?>) {
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [self] data, _, isComplete, error in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) {
+                [self] data, _, isComplete, error in
                 queue.async {
                     if let data { self.buffer.append(data) }
                     if let line = self.buffer.takeLine() {

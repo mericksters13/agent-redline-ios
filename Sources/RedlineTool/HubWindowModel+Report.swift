@@ -16,14 +16,22 @@ extension HubWindowModel {
     nonisolated static func pictures(in folder: URL) -> [Picture] {
         let listing = ReportListing.load(from: folder)
         guard let screens = listing?.screens,
-              let images = screens.map({ screen in screen.images.map { image in image.notes.map { (screen.title, image.file, $0) } }.allPresent() }).allPresent(),
-              let items = listing?.items?.map({ item in
-                  item.number.flatMap { number in item.title.flatMap { title in item.attachments.map { (number, item.screenTitle ?? title, $0) } } }
-              }).allPresent()
+            let images = screens.map({ screen in
+                screen.images.map { image in image.notes.map { (screen.title, image.file, $0) } }.allPresent()
+            }).allPresent(),
+            let items = listing?.items?.map({ item in
+                item.number.flatMap { number in
+                    item.title.flatMap { title in item.attachments.map { (number, item.screenTitle ?? title, $0) } }
+                }
+            }).allPresent()
         else {
-            return ReportContent.pictures(in: folder).map { Picture(file: $0, title: $0.deletingPathExtension().lastPathComponent, notes: []) }
+            return ReportContent.pictures(in: folder).map {
+                Picture(file: $0, title: $0.deletingPathExtension().lastPathComponent, notes: [])
+            }
         }
-        let shown = images.flatMap { $0 }.map { title, file, notes in Picture(file: folder.appending(path: file), title: title ?? "Screen", notes: notes) }
+        let shown = images.flatMap { $0 }.map { title, file, notes in
+            Picture(file: folder.appending(path: file), title: title ?? "Screen", notes: notes)
+        }
         let attached = items.flatMap { number, title, attachments in
             attachments.map { Picture(file: folder.appending(path: $0), title: title, notes: [number]) }
         }
@@ -42,14 +50,18 @@ extension HubWindowModel {
         var folder: String?
     }
 
-    /// The chat a report went to: from what the hub saved when it delivered the report, or else
-    /// the chat that took it. Nil when the report went to no chat.
+    /// The chat a report went to: from what the hub saved when it delivered the report, or else the
+    /// chat that took it.
+    ///
+    /// Nil when the report went to no chat.
     nonisolated static func chat(of report: URL) -> ChatLink? {
-        let claim = (try? Data(contentsOf: report.appending(path: Inbox.claimFile))).flatMap { try? HubPaths.decoder.decode(Claim.self, from: $0) }
+        let claim = (try? Data(contentsOf: report.appending(path: Inbox.claimFile))).flatMap {
+            try? HubPaths.decoder.decode(Claim.self, from: $0)
+        }
         let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
         if let delivery = ReportDelivery.load(from: report) {
             guard delivery.kind != .waiting, let agent = delivery.agent.flatMap(Agent.init(rawValue:)),
-                  let id = delivery.chat
+                let id = delivery.chat
             else { return nil }
             return ChatLink(agent: agent, id: id, folder: folder)
         }
@@ -59,8 +71,9 @@ extension HubWindowModel {
         }
         // A chat the hub started: its ID is in what the agent's command printed.
         if ChatID.isStarted(claim.chat),
-           let output = try? String(contentsOf: report.appending(path: Inbox.newChatOutputFile), encoding: .utf8),
-           let started = AgentCommand.startedChat(agent, in: output), !started.didFail {
+            let output = try? String(contentsOf: report.appending(path: Inbox.newChatOutputFile), encoding: .utf8),
+            let started = AgentCommand.startedChat(agent, in: output), !started.didFail
+        {
             return ChatLink(agent: agent, id: started.chat, folder: folder)
         }
         return nil

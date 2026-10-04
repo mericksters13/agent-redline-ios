@@ -9,11 +9,14 @@ struct PhoneLinkTests {
     private let phone = "00000000-0000000000000001"
     private let app = "com.example.app"
 
-    /// The hub's state for the phone once `done` accepts it, waiting up to five seconds. The hub
-    /// publishes no event when a phone's state changes, only the status file, so this polls it.
+    /// The hub's state for the phone once `done` accepts it, waiting up to five seconds.
+    ///
+    /// The hub publishes no event when a phone's state changes, only the status file, so this polls
+    /// it.
     private func state(of hub: Hub, until done: (String) -> Bool) async throws -> String? {
         func saved() -> String? {
-            (try? Data(contentsOf: paths.status)).flatMap { try? HubPaths.decoder.decode(HubStatus.self, from: $0) }?.phones.first?.state
+            (try? Data(contentsOf: paths.status)).flatMap { try? HubPaths.decoder.decode(HubStatus.self, from: $0) }?
+                .phones.first?.state
         }
         for _ in 0..<50 {
             if let state = saved(), done(state) { return state }
@@ -43,7 +46,10 @@ struct PhoneLinkTests {
         let link = PhoneLink(phone: .init(udid: phone, name: "Test iPhone", model: "iPhone 17 Pro"), hub: hub)
 
         link.update(hosts: ["192.168.1.2"], port: 47361, includingNewApps: true)
-        #expect(try await state(of: hub) { $0.hasPrefix("Not reachable") }?.hasPrefix("Not reachable, trying again in 30 s") == true)
+        #expect(
+            try await state(of: hub) { $0.hasPrefix("Not reachable") }?.hasPrefix("Not reachable, trying again in 30 s")
+                == true
+        )
         // The phone wakes long before the 30 seconds are up, and gets its address right away.
         try Data().write(to: awake)
         link.phoneDidWake()

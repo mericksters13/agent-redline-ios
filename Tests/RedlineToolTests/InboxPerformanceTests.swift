@@ -15,14 +15,22 @@ final class InboxPerformanceTests: XCTestCase {
             "app": ["name": "Example"],
             "screens": [["title": "Editor", "images": [["file": "screen-1.jpg", "notes": [1, 2]]]]],
             "items": [
-                ["number": 1, "title": "Save", "note": "Too small", "attachments": [String](), "element": ["label": "Save", "role": "Button"]],
+                [
+                    "number": 1, "title": "Save", "note": "Too small", "attachments": [String](),
+                    "element": ["label": "Save", "role": "Button"],
+                ],
                 ["number": 2, "title": "Cancel", "note": "", "attachments": [String]()],
             ],
         ]
         let start = Date(timeIntervalSince1970: 1_791_000_000)
         for index in 0..<500 {
-            try fileInboxReport(String(format: "20261004-%06d-00000001", index), in: paths, listing: listing,
-                                pictures: ["screen-1.jpg": Data(repeating: 0xFF, count: 100_000)], receivedAt: start.addingTimeInterval(Double(index)))
+            try fileInboxReport(
+                String(format: "20261004-%06d-00000001", index),
+                in: paths,
+                listing: listing,
+                pictures: ["screen-1.jpg": Data(repeating: 0xFF, count: 100_000)],
+                receivedAt: start.addingTimeInterval(Double(index))
+            )
         }
     }
 

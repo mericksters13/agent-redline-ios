@@ -54,8 +54,9 @@ struct Claim: Codable, Equatable, Sendable {
     var claimedAt: Date
 }
 
-/// Open chats, each as a file under `hub/chats/`, written by its MCP copy. The hub watches the
-/// folder for the apps it should take reports from.
+/// Open chats, each as a file under `hub/chats/`, written by its MCP copy.
+///
+/// The hub watches the folder for the apps it should take reports from.
 enum Chats {
     /// The folder of chat records.
     static func folder(_ paths: HubPaths) -> URL { paths.hub.appending(path: "chats", directoryHint: .isDirectory) }
@@ -74,7 +75,9 @@ enum Chats {
 
     /// The chat's saved record, if it has one.
     static func record(_ id: String, paths: HubPaths) -> ChatRecord? {
-        (try? Data(contentsOf: folder(paths).appending(path: "\(id).json"))).flatMap { try? HubPaths.decoder.decode(ChatRecord.self, from: $0) }
+        (try? Data(contentsOf: folder(paths).appending(path: "\(id).json"))).flatMap {
+            try? HubPaths.decoder.decode(ChatRecord.self, from: $0)
+        }
     }
 
     /// True while the process exists, even one this user may not signal.
@@ -86,9 +89,12 @@ enum Chats {
     /// and returns the chats still open.
     @discardableResult
     static func removeClosedChats(_ paths: HubPaths) -> [ChatRecord] {
-        let files = (try? FileManager.default.contentsOfDirectory(at: folder(paths), includingPropertiesForKeys: nil)) ?? []
+        let files =
+            (try? FileManager.default.contentsOfDirectory(at: folder(paths), includingPropertiesForKeys: nil)) ?? []
         return files.filter { $0.pathExtension == "json" }.compactMap { file in
-            guard let data = try? Data(contentsOf: file), let chat = try? HubPaths.decoder.decode(ChatRecord.self, from: data) else { return nil }
+            guard let data = try? Data(contentsOf: file),
+                let chat = try? HubPaths.decoder.decode(ChatRecord.self, from: data)
+            else { return nil }
             guard isRunning(chat.pid) else {
                 unregister(chat.id, paths: paths)
                 return nil

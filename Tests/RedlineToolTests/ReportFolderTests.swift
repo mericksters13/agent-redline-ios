@@ -17,9 +17,17 @@ struct ReportFolderTests {
     }
 
     @Test func aSimulatorReportIsFoundFromAnyFileInIt() {
-        let container = "/Users/me/Library/Developer/CoreSimulator/Devices/198F6C2F-B757-44A8-88BB-A574EC16F621/data/Containers/Data/Application/17364006-587A-45B0-86EC-941E51A550D1"
+        let container =
+            "/Users/me/Library/Developer/CoreSimulator/Devices/198F6C2F-B757-44A8-88BB-A574EC16F621/data/Containers/Data/Application/17364006-587A-45B0-86EC-941E51A550D1"
         let path = container + "/Library/Application Support/Redline/reports/20261003-151826/report.md"
-        #expect(SimulatorReportPath.parse(path) == SimulatorReportPath(container: container, device: "198F6C2F-B757-44A8-88BB-A574EC16F621", reportID: "20261003-151826"))
+        #expect(
+            SimulatorReportPath.parse(path)
+                == SimulatorReportPath(
+                    container: container,
+                    device: "198F6C2F-B757-44A8-88BB-A574EC16F621",
+                    reportID: "20261003-151826"
+                )
+        )
         #expect(SimulatorReportPath.parse(container + "/Library/Caches/whatever") == nil)
     }
 }

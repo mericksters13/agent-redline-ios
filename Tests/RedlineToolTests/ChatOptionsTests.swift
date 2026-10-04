@@ -5,8 +5,12 @@ import Testing
 
 struct ChatOptionsTests {
     @Test func flagsAreReadAndUnknownOnesTurnedDown() throws {
-        let options = try #require(ChatOptions.parse(["--project", "/w", "--app", "com.example.app", "--app", "com.example.other",
-                                                     "--timeout", "30", "--session", "s-1", "--agent", "codex"]))
+        let options = try #require(
+            ChatOptions.parse([
+                "--project", "/w", "--app", "com.example.app", "--app", "com.example.other",
+                "--timeout", "30", "--session", "s-1", "--agent", "codex",
+            ])
+        )
         #expect(options.project.path == "/w")
         #expect(options.apps == ["com.example.app", "com.example.other"])
         #expect(options.timeout == 30)

@@ -3,10 +3,11 @@ import ImageIO
 import SwiftUI
 import UIKit
 
-/// The reports already sent from this phone, opened with a long press on the floating
-/// button: a list, newest first, and each report the way the agent gets it, with every
-/// screen's pictures and their numbered outlines, then the notes. Tap a note to jump to
-/// its outline.
+/// The reports already sent from this phone, opened with a long press on the floating button: a
+/// list, newest first, and each report the way the agent gets it, with every screen's pictures and
+/// their numbered outlines, then the notes.
+///
+/// Tap a note to jump to its outline.
 struct SentReportsView: View {
     let session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -67,7 +68,12 @@ struct SentReportsView: View {
                         }
                         .padding(.vertical, 6)
                         .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(
+                                Mono.hairline,
+                                lineWidth: 1
+                            )
+                        )
                         .padding(.horizontal, 12)
                         .padding(.top, 8)
                         .padding(.bottom, session.safeAreaInsets.bottom + 16)
@@ -78,12 +84,16 @@ struct SentReportsView: View {
     }
 
     private func row(_ sent: SentReport) -> some View {
-        Button { show(sent) } label: {
+        Button {
+            show(sent)
+        } label: {
             HStack(spacing: 12) {
                 ReportPicture(url: sent.cover, pointWidth: 52, alignment: .top)
                     .frame(width: 52, height: 52)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1)
+                    )
                 VStack(alignment: .leading, spacing: 2) {
                     Text(sent.report.screenNames)
                         .font(.subheadline.weight(.semibold))
@@ -136,8 +146,9 @@ struct SentReportsView: View {
     }
 }
 
-/// One sent report: each screen's pictures as the agent got them, then the notes made on
-/// it. A note scrolls to its outline when tapped.
+/// One sent report: each screen's pictures as the agent got them, then the notes made on it.
+///
+/// A note scrolls to its outline when tapped.
 private struct ReportDetail: View {
     let sent: SentReport
     let session: DebugSession
@@ -153,7 +164,13 @@ private struct ReportDetail: View {
         let items = Dictionary(report.items.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
         let attachments = report.items.filter { $0.screen == nil }
         VStack(spacing: 0) {
-            ViewerBar(title: SentReportsView.time(report.createdAt), icon: "chevron.left", label: "Back", top: session.safeAreaTop, action: onBack)
+            ViewerBar(
+                title: SentReportsView.time(report.createdAt),
+                icon: "chevron.left",
+                label: "Back",
+                top: session.safeAreaTop,
+                action: onBack
+            )
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 32) {
@@ -225,7 +242,9 @@ private struct ReportDetail: View {
     private func caption(for picture: Report.Picture) -> String? {
         var parts: [String] = []
         if picture.isEarlierState { parts.append("Earlier state, before the screen changed") }
-        if picture.stitchedFrom > 1, picture.part == 1 { parts.append("Stitched from \(picture.stitchedFrom) scroll positions") }
+        if picture.stitchedFrom > 1, picture.part == 1 {
+            parts.append("Stitched from \(picture.stitchedFrom) scroll positions")
+        }
         if picture.parts > 1 { parts.append("Part \(picture.part) of \(picture.parts)") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -254,7 +273,11 @@ private struct ReportDetail: View {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
             .accessibilityElement()
-            .accessibilityLabel(picture.notes.isEmpty ? "Screenshot" : "Screenshot with notes \(picture.notes.map(String.init).joined(separator: ", ")) outlined")
+            .accessibilityLabel(
+                picture.notes.isEmpty
+                    ? "Screenshot"
+                    : "Screenshot with notes \(picture.notes.map(String.init).joined(separator: ", ")) outlined"
+            )
             .accessibilityAddTraits(.isImage)
     }
 
@@ -267,10 +290,14 @@ private struct ReportDetail: View {
                     Rectangle().fill(Mono.hairline).frame(height: 1).padding(.leading, 52)
                 }
                 if let jump, item.outline != nil {
-                    Button { jump(item.number) } label: { noteRow(item) }
-                        .buttonStyle(.plain)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityHint("Scrolls to its outline")
+                    Button {
+                        jump(item.number)
+                    } label: {
+                        noteRow(item)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityHint("Scrolls to its outline")
                 } else {
                     // Nothing to scroll to, such as images attached from Photos.
                     noteRow(item)
@@ -312,12 +339,22 @@ private struct ReportDetail: View {
                 VStack(alignment: .leading, spacing: 10) {
                     notes([item], jump: nil)
                     ForEach(item.attachments, id: \.self) { file in
-                        ReportPicture(url: sent.folder.appending(path: file), pointWidth: width, alignment: .top, fits: true)
-                            .frame(width: width)
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
-                            .accessibilityLabel("Image for note \(item.number)")
-                            .accessibilityAddTraits(.isImage)
+                        ReportPicture(
+                            url: sent.folder.appending(path: file),
+                            pointWidth: width,
+                            alignment: .top,
+                            fits: true
+                        )
+                        .frame(width: width)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(
+                                Mono.hairline,
+                                lineWidth: 1
+                            )
+                        )
+                        .accessibilityLabel("Image for note \(item.number)")
+                        .accessibilityAddTraits(.isImage)
                     }
                 }
             }
@@ -362,8 +399,9 @@ private struct ViewerBar: View {
     }
 }
 
-/// A picture from a sent report, decoded off the main thread at the size it's shown. It
-/// fills the frame it's given, or, with `fits`, takes its own aspect ratio, for attachments
+/// A picture from a sent report, decoded off the main thread at the size it's shown.
+///
+/// It fills the frame it's given, or, with `fits`, takes its own aspect ratio, for attachments
 /// whose size the report doesn't record.
 private struct ReportPicture: View {
     let url: URL?
@@ -381,8 +419,10 @@ private struct ReportPicture: View {
                     .resizable()
                     .aspectRatio(contentMode: fits ? .fit : .fill)
                     .frame(
-                        minWidth: 0, maxWidth: fits ? nil : .infinity,
-                        minHeight: 0, maxHeight: fits ? nil : .infinity,
+                        minWidth: 0,
+                        maxWidth: fits ? nil : .infinity,
+                        minHeight: 0,
+                        maxHeight: fits ? nil : .infinity,
                         alignment: alignment
                     )
                     .clipped()
@@ -406,32 +446,36 @@ private struct ReportPicture: View {
         }
     }
 
-    /// Decoded pictures, so reopening the list doesn't decode every cover again. Touched only
-    /// from the main actor, in `.task`.
+    /// Decoded pictures, so reopening the list doesn't decode every cover again.
+    ///
+    /// Touched only from the main actor, in `.task`.
     private static let cache: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
         cache.countLimit = 60
         return cache
     }()
 
-    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    /// Runs off the main actor.
+    ///
+    /// Add @concurrent when the tools version reaches 6.2.
     nonisolated private static func load(_ url: URL, pixelWidth: CGFloat) async -> UIImage? {
         // Only the thumbnail is kept; the full image is never cached.
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
-              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
-              width > 0
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+            let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
+            width > 0
         else { return nil }
         // The longest side, at no more than the width it's shown at.
         let longest = max(width, height) * min(pixelWidth / width, 1)
         guard !Task.isCancelled else { return nil }
-        let options = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: longest.rounded(.up),
-        ] as CFDictionary
+        let options =
+            [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: longest.rounded(.up),
+            ] as CFDictionary
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options).map { UIImage(cgImage: $0) }
     }
 }
@@ -439,7 +483,9 @@ private struct ReportPicture: View {
 extension SentReport {
     /// The picture shown in the list: the first screen as it was last, or the first attachment.
     fileprivate var cover: URL? {
-        let picture = report.screens.first.flatMap { screen in screen.images.first { !$0.isEarlierState } ?? screen.images.first }
+        let picture = report.screens.first.flatMap { screen in
+            screen.images.first { !$0.isEarlierState } ?? screen.images.first
+        }
         let file = picture?.file ?? report.items.lazy.flatMap(\.attachments).first
         return file.map { folder.appending(path: $0) }
     }

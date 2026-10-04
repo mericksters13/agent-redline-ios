@@ -2,8 +2,10 @@
 import Darwin
 import Foundation
 
-/// Adds this tool's hooks to each agent's user hook settings, keeping every other hook there,
-/// and takes them out again. Running it twice changes nothing.
+/// Adds this tool's hooks to each agent's user hook settings, keeping every other hook there, and
+/// takes them out again.
+///
+/// Running it twice changes nothing.
 enum AgentSettings {
     /// The agent's user hook settings file.
     static func fileURL(for agent: Agent) -> URL {
@@ -25,9 +27,12 @@ enum AgentSettings {
 
     /// This tool's hooks, by the agent's event name, with the matcher that limits them to
     /// commands and MCP tools where an agent supports one.
-    static func hooks(_ agent: Agent, executable: String) -> [(event: String, matcher: String?, hooks: [[String: Any]])] {
+    static func hooks(_ agent: Agent, executable: String) -> [(event: String, matcher: String?, hooks: [[String: Any]])]
+    {
         func hook(_ event: HookEvent, _ extra: [String: Any] = [:]) -> [String: Any] {
-            ["type": "command", "command": command(running: executable, agent: agent, event: event)].merging(extra) { $1 }
+            ["type": "command", "command": command(running: executable, agent: agent, event: event)].merging(extra) {
+                $1
+            }
         }
         switch agent {
         case .claude:
@@ -40,14 +45,20 @@ enum AgentSettings {
         }
     }
 
-    /// The tool's command name. A hook that runs it, from any folder, is a copy of this tool's,
-    /// such as one from before a move.
+    /// The tool's command name.
+    ///
+    /// A hook that runs it, from any folder, is a copy of this tool's, such as one from before a
+    /// move.
     private static let commandName = "redline"
 
     private static func isOurs(_ hook: Any) -> Bool {
         guard let command = (hook as? [String: Any])?["command"] as? String, command.hasPrefix("'"),
-              let end = command.range(of: "' hook ") else { return false }
-        let path = String(command[command.index(after: command.startIndex)..<end.lowerBound]).replacing("'\\''", with: "'")
+            let end = command.range(of: "' hook ")
+        else { return false }
+        let path = String(command[command.index(after: command.startIndex)..<end.lowerBound]).replacing(
+            "'\\''",
+            with: "'"
+        )
         return URL(filePath: path).lastPathComponent == commandName
     }
 
@@ -100,9 +111,11 @@ enum AgentSettings {
         try update(fileURL(for: agent), applying: change)
     }
 
-    /// Changes a settings file. A change that leaves the settings as they were writes nothing,
-    /// not even the copy, so the file keeps its own formatting. A file that exists but can't be
-    /// read throws, so it's never written over as if it were empty.
+    /// Changes a settings file.
+    ///
+    /// A change that leaves the settings as they were writes nothing, not even the copy, so the
+    /// file keeps its own formatting. A file that exists but can't be read throws, so it's never
+    /// written over as if it were empty.
     static func update(_ file: URL, applying change: (_ settings: [String: Any]) -> [String: Any]) throws {
         let files = FileManager.default
         var current: [String: Any] = [:]
@@ -120,7 +133,10 @@ enum AgentSettings {
             let backup = file.appendingPathExtension("before-redline")
             if !files.fileExists(atPath: backup.path) { try data.write(to: backup) }
         }
-        let output = try JSONSerialization.data(withJSONObject: changed, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        let output = try JSONSerialization.data(
+            withJSONObject: changed,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        )
         try output.write(to: file, options: .atomic)
     }
 }

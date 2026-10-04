@@ -8,8 +8,9 @@ enum ScreenComposition {
     static let gapHeight: CGFloat = 32
 
     /// Where content scrolls, in screen points: the scroll view without the bars over it.
-    /// Bars that float over the content without insets, such as a custom tab bar, are found
-    /// as elements that stay put while the content scrolls under them.
+    ///
+    /// Bars that float over the content without insets, such as a custom tab bar, are found as
+    /// elements that stay put while the content scrolls under them.
     static func band(for captures: [Capture]) -> ClosedRange<CGFloat>? {
         guard let first = captures.first, let scroll = first.scroll else { return nil }
         var top = max(scroll.frame.minY + scroll.insetTop, 0)
@@ -21,8 +22,8 @@ enum ScreenComposition {
             for element in high.capture.elements where !element.isContainer {
                 let frame = element.frame
                 guard frame.height < (bottom - top) * 0.25, frame.maxY > top, frame.minY < bottom,
-                      let match = ElementSelection.match(element, in: low.capture.elements),
-                      abs(match.frame.minY - frame.minY) < 1.5, abs(match.frame.minX - frame.minX) < 1.5
+                    let match = ElementSelection.match(element, in: low.capture.elements),
+                    abs(match.frame.minY - frame.minY) < 1.5, abs(match.frame.minX - frame.minX) < 1.5
                 else { continue }
                 if frame.midY > middle {
                     bottom = min(bottom, frame.minY)
@@ -36,11 +37,12 @@ enum ScreenComposition {
         return bottom - top > 2 ? (top + 1)...(bottom - 1) : nil
     }
 
-    /// The plan for one group of captures: the newest capture whole, or, when the group
-    /// scrolled, one tall picture with the top bars once, the scrolled content in between,
-    /// newest capture first where they overlap, and the bottom bars once. Bars are often
-    /// see-through, so the top ones come from the capture scrolled highest and the bottom
-    /// ones from the capture scrolled lowest, where the content behind them matches.
+    /// The plan for one group of captures: the newest capture whole, or, when the group scrolled,
+    /// one tall picture with the top bars once, the scrolled content in between, newest capture
+    /// first where they overlap, and the bottom bars once.
+    ///
+    /// Bars are often see-through, so the top ones come from the capture scrolled highest and the
+    /// bottom ones from the capture scrolled lowest, where the content behind them matches.
     static func plan(for captures: [Capture]) -> ImagePlan? {
         guard let reference = captures.last else { return nil }
         let byID = Dictionary(captures.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -48,17 +50,28 @@ enum ScreenComposition {
         guard captures.count > 1, scrolls.count == captures.count, let band = band(for: captures) else {
             return ImagePlan(
                 size: reference.size,
-                segments: [.init(captureID: reference.id, sourceMinY: 0, height: reference.size.height, destinationY: 0)],
-                gaps: [], stitchedFrom: 1, band: nil, runs: [], footerY: reference.size.height,
+                segments: [
+                    .init(captureID: reference.id, sourceMinY: 0, height: reference.size.height, destinationY: 0)
+                ],
+                gaps: [],
+                stitchedFrom: 1,
+                band: nil,
+                runs: [],
+                footerY: reference.size.height,
                 captures: [reference.id: reference]
             )
         }
 
         let topmost = scrolls.min { $0.scroll.offsetY < $1.scroll.offsetY }?.capture ?? reference
         let bottommost = scrolls.max { $0.scroll.offsetY < $1.scroll.offsetY }?.capture ?? reference
-        var segments = [ImagePlan.Segment(captureID: topmost.id, sourceMinY: 0, height: band.lowerBound, destinationY: 0)]
+        var segments = [
+            ImagePlan.Segment(captureID: topmost.id, sourceMinY: 0, height: band.lowerBound, destinationY: 0)
+        ]
         let ranges = scrolls.map { entry -> (capture: Capture, scroll: ScrollState, range: ClosedRange<CGFloat>) in
-            (entry.capture, entry.scroll, entry.scroll.contentY(ofScreenY: band.lowerBound)...entry.scroll.contentY(ofScreenY: band.upperBound))
+            (
+                entry.capture, entry.scroll,
+                entry.scroll.contentY(ofScreenY: band.lowerBound)...entry.scroll.contentY(ofScreenY: band.upperBound)
+            )
         }
         let points = Set(ranges.flatMap { [$0.range.lowerBound, $0.range.upperBound] }).sorted()
         var y = band.lowerBound
@@ -68,26 +81,37 @@ enum ScreenComposition {
         var pendingGap = false
         for (start, end) in zip(points, points.dropFirst()) where end - start > 0.5 {
             // The newest capture that shows this stretch.
-            guard let owner = ranges.last(where: { $0.range.lowerBound <= start + 0.5 && $0.range.upperBound >= end - 0.5 }) else {
+            guard
+                let owner = ranges.last(where: {
+                    $0.range.lowerBound <= start + 0.5 && $0.range.upperBound >= end - 0.5
+                })
+            else {
                 if lastEnd != nil { pendingGap = true }
                 continue
             }
             if pendingGap {
-                gaps.append(ImagePlan.Gap(
-                    rect: CGRect(x: 0, y: y, width: reference.size.width, height: gapHeight),
-                    skippedHeight: start - (lastEnd ?? start)
-                ))
+                gaps.append(
+                    ImagePlan.Gap(
+                        rect: CGRect(x: 0, y: y, width: reference.size.width, height: gapHeight),
+                        skippedHeight: start - (lastEnd ?? start)
+                    )
+                )
                 y += gapHeight
                 pendingGap = false
             }
             let source = owner.scroll.screenY(ofContentY: start)
             if let last = segments.last, segments.count > 1, last.captureID == owner.capture.id,
-               abs(last.sourceMinY + last.height - source) < 0.5, abs(last.destinationY + last.height - y) < 0.5 {
+                abs(last.sourceMinY + last.height - source) < 0.5, abs(last.destinationY + last.height - y) < 0.5
+            {
                 segments[segments.count - 1].height += end - start
             } else {
-                segments.append(.init(captureID: owner.capture.id, sourceMinY: source, height: end - start, destinationY: y))
+                segments.append(
+                    .init(captureID: owner.capture.id, sourceMinY: source, height: end - start, destinationY: y)
+                )
             }
-            if let last = runs.last, abs(last.contentEnd - start) < 0.5, abs(last.destinationY + (last.contentEnd - last.contentStart) - y) < 0.5 {
+            if let last = runs.last, abs(last.contentEnd - start) < 0.5,
+                abs(last.destinationY + (last.contentEnd - last.contentStart) - y) < 0.5
+            {
                 runs[runs.count - 1].contentEnd = end
             } else {
                 runs.append(.init(contentStart: start, contentEnd: end, destinationY: y))
@@ -96,12 +120,24 @@ enum ScreenComposition {
             lastEnd = end
         }
         let footerY = y
-        segments.append(.init(captureID: bottommost.id, sourceMinY: band.upperBound, height: reference.size.height - band.upperBound, destinationY: y))
+        segments.append(
+            .init(
+                captureID: bottommost.id,
+                sourceMinY: band.upperBound,
+                height: reference.size.height - band.upperBound,
+                destinationY: y
+            )
+        )
         y += reference.size.height - band.upperBound
         return ImagePlan(
             size: CGSize(width: reference.size.width, height: y),
-            segments: segments, gaps: gaps, stitchedFrom: captures.count, band: band, runs: runs,
-            footerY: footerY, captures: byID
+            segments: segments,
+            gaps: gaps,
+            stitchedFrom: captures.count,
+            band: band,
+            runs: runs,
+            footerY: footerY,
+            captures: byID
         )
     }
 
@@ -112,7 +148,9 @@ enum ScreenComposition {
 
     /// Where a note made on one capture shows on another capture of the same group, or nil
     /// when it's scrolled out of that capture's view.
-    static func position(of frame: CGRect, from source: Capture, on target: Capture, band: ClosedRange<CGFloat>?) -> CGRect? {
+    static func position(of frame: CGRect, from source: Capture, on target: Capture, band: ClosedRange<CGFloat>?)
+        -> CGRect?
+    {
         if source.id == target.id { return frame }
         guard let band, let from = source.scroll, let to = target.scroll else { return nil }
         if frame.midY < band.lowerBound || frame.midY > band.upperBound { return frame }
@@ -121,19 +159,32 @@ enum ScreenComposition {
         return moved.midY >= band.lowerBound && moved.midY <= band.upperBound ? moved : nil
     }
 
-    /// How many screens tall a picture can be and still be sent whole. Agents shrink large
-    /// images (Claude to about 1,568 pixels on the long side); at two screens the text stays readable.
+    /// How many screens tall a picture can be and still be sent whole.
+    ///
+    /// Agents shrink large images (Claude to about 1,568 pixels on the long side); at two screens
+    /// the text stays readable.
     static let screensPerPicture: CGFloat = 2
 
-    /// Splits a picture taller than `maxHeight` into parts, so agents that shrink large images
-    /// can still read them. A picture that fits is sent whole. Each cut goes in a gap between
-    /// rows or sections, so no outline, row or card is sliced; only when there is no such gap
-    /// in the lower half of a part does it cut at the limit.
+    /// Splits a picture taller than `maxHeight` into parts, so agents that shrink large images can
+    /// still read them.
+    ///
+    /// A picture that fits is sent whole. Each cut goes in a gap between rows or sections, so no
+    /// outline, row or card is sliced; only when there is no such gap in the lower half of a part
+    /// does it cut at the limit.
     /// - Parameters:
+    ///   - height: the picture's height.
+    ///   - maxHeight: the tallest a part may be.
     ///   - outlines: the notes' outlines, never cut.
     ///   - elements: everything on screen, in picture coordinates, cut through only when unavoidable.
     ///   - preferred: rows to cut at first when one falls in range, such as a "Scrolled past" band.
-    static func parts(height: CGFloat, maxHeight: CGFloat, keepingWhole outlines: [CGRect], avoiding elements: [CGRect] = [], preferring preferred: [CGFloat] = []) -> [ClosedRange<CGFloat>] {
+    /// - Returns: The parts' vertical ranges, top to bottom.
+    static func parts(
+        height: CGFloat,
+        maxHeight: CGFloat,
+        keepingWhole outlines: [CGRect],
+        avoiding elements: [CGRect] = [],
+        preferring preferred: [CGFloat] = []
+    ) -> [ClosedRange<CGFloat>] {
         guard height > maxHeight else { return [0...height] }
         var parts: [ClosedRange<CGFloat>] = []
         var start: CGFloat = 0
@@ -144,7 +195,8 @@ enum ScreenComposition {
                 break
             }
             let low = start + maxHeight * 0.5
-            let cut = preferred.filter { $0 >= low && $0 <= limit }.max()
+            let cut =
+                preferred.filter { $0 >= low && $0 <= limit }.max()
                 ?? gap(between: low, and: limit, outlines: outlines, elements: elements) ?? limit
             parts.append(start...cut)
             start = cut
@@ -154,7 +206,8 @@ enum ScreenComposition {
 
     /// The lowest row between `low` and `high` that runs through nothing: first avoiding every
     /// outline, row and card; then only outlines and rows, since a long section may span the range.
-    private static func gap(between low: CGFloat, and high: CGFloat, outlines: [CGRect], elements: [CGRect]) -> CGFloat? {
+    private static func gap(between low: CGFloat, and high: CGFloat, outlines: [CGRect], elements: [CGRect]) -> CGFloat?
+    {
         let span = high - low
         let sections = elements.filter { $0.height < span }
         let rows = elements.filter { $0.height < span * 0.25 }

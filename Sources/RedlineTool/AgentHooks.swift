@@ -15,7 +15,7 @@ struct HookInput: Equatable {
 
     init?(json: Data) {
         guard let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
-              let id = object["session_id"] as? String, let cwd = object["cwd"] as? String
+            let id = object["session_id"] as? String, let cwd = object["cwd"] as? String
         else { return nil }
         chat = id
         folder = cwd
@@ -25,18 +25,29 @@ struct HookInput: Equatable {
 /// What `redline hook <agent> <event>` does: hands reports addressed to the chat over in the
 /// agent's own words.
 enum AgentHooks {
-    /// Set for chats the hub starts itself. Their hooks stay out of the way: such a chat runs
-    /// once and ends, and must not take other reports.
+    /// Set for chats the hub starts itself.
+    ///
+    /// Their hooks stay out of the way: such a chat runs once and ends, and must not take other
+    /// reports.
     static let startedByHub = "REDLINE_STARTED_CHAT"
 
     /// Runs one hook call and returns the exit code for the agent.
     static func run(for agent: Agent, event: HookEvent, paths: HubPaths) -> Int32 {
         let input = HookInput(json: FileHandle.standardInput.readDataToEndOfFile())
-        guard let input, ProcessInfo.processInfo.environment[startedByHub] == nil else { return answer(for: event, text: nil) }
+        guard let input, ProcessInfo.processInfo.environment[startedByHub] == nil else {
+            return answer(for: event, text: nil)
+        }
         let id = ChatID.make(agent, input.chat)
         let folder = URL(filePath: input.folder)
 
-        let session = ChatSession(paths: paths, folder: folder, extraApps: [], agent: agent.rawValue, id: id, pid: AgentProcess.find())
+        let session = ChatSession(
+            paths: paths,
+            folder: folder,
+            extraApps: [],
+            agent: agent.rawValue,
+            id: id,
+            pid: AgentProcess.find()
+        )
         // Not an app project: nothing to do, in every project the agent opens.
         guard !session.chat.bundleIDs.isEmpty else { return answer(for: event, text: nil) }
 
@@ -50,7 +61,11 @@ enum AgentHooks {
     /// Prints what the agent expects from this event, carrying `text` when there is any.
     static func answer(for event: HookEvent, text: String?) -> Int32 {
         if let output = output(for: event, text: text),
-           let data = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys, .withoutEscapingSlashes]) {
+            let data = try? JSONSerialization.data(
+                withJSONObject: output,
+                options: [.sortedKeys, .withoutEscapingSlashes]
+            )
+        {
             // An agent that stopped reading gets nothing; the hook still exits cleanly.
             try? FileHandle.standardOutput.write(contentsOf: data + Data("\n".utf8))
         }

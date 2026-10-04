@@ -22,7 +22,11 @@ extension Report.Device {
         let model = withUnsafeBytes(of: &system.machine) { bytes in
             String(decoding: bytes.prefix(while: { $0 != 0 }), as: UTF8.self)
         }
-        return Report.Device(model: model, systemName: UIDevice.current.systemName, systemVersion: UIDevice.current.systemVersion)
+        return Report.Device(
+            model: model,
+            systemName: UIDevice.current.systemName,
+            systemVersion: UIDevice.current.systemVersion
+        )
     }
 }
 #endif

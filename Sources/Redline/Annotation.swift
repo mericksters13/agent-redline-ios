@@ -22,17 +22,24 @@ struct Annotation: Codable, Equatable, Identifiable, Sendable {
     var createdAt: Date
     var note: String
     var kind: Kind
-    /// The picked element. Nil for attachments.
+    /// The picked element.
+    ///
+    /// Nil for attachments.
     var element: ElementSnapshot?
     /// Bigger elements holding the chosen one, innermost first.
     var ancestors: [ElementSnapshot]
-    /// The screen it was made on. Nil for images from Photos, which can come from anywhere.
+    /// The screen it was made on.
+    ///
+    /// Nil for images from Photos, which can come from anywhere.
     var screen: ScreenInfo?
     /// Attached images, in order: the captured screen or the images picked from Photos.
+    ///
     /// Element notes made before screens shared one screenshot keep theirs here, outlined.
     var screenshots: [String]
-    /// For an element note, the capture of its screen it was made on. Every note on a
-    /// screen shares the screen's picture; outlines are drawn when it's shown or sent.
+    /// For an element note, the capture of its screen it was made on.
+    ///
+    /// Every note on a screen shares the screen's picture; outlines are drawn when it's shown or
+    /// sent.
     var captureID: UUID? = nil
 
     /// How many pictures the note shows in the viewer.

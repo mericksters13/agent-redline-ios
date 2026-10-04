@@ -2,8 +2,9 @@
 import AppKit
 import SwiftUI
 
-/// A report as the agent got it: its pictures, with the numbered outlines drawn in, and its
-/// notes. Clicking a note brings the picture that shows it into view.
+/// A report as the agent got it: its pictures, with the numbered outlines drawn in, and its notes.
+///
+/// Clicking a note brings the picture that shows it into view.
 struct ReportViewer: View {
     /// What the viewer reads from the report's folder, before its window shows.
     struct Contents: Sendable {
@@ -24,12 +25,18 @@ struct ReportViewer: View {
 
     private nonisolated static let loader = DispatchQueue(label: "Redline.viewer.loader", qos: .userInitiated)
 
-    /// Reads the report's pictures and chat. Runs off the main actor. Add @concurrent when the
-    /// tools version reaches 6.2.
+    /// Reads the report's pictures and chat.
+    ///
+    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
     nonisolated static func load(_ folder: URL) async -> Contents {
         await withCheckedContinuation { continuation in
             loader.async {
-                continuation.resume(returning: Contents(pictures: HubWindowModel.pictures(in: folder), chat: HubWindowModel.chat(of: folder)))
+                continuation.resume(
+                    returning: Contents(
+                        pictures: HubWindowModel.pictures(in: folder),
+                        chat: HubWindowModel.chat(of: folder)
+                    )
+                )
             }
         }
     }
@@ -54,9 +61,11 @@ struct ReportViewer: View {
     /// Room in the strip's height for its padding (48) and each picture's caption (28).
     private static let pictureMargin: CGFloat = 76
 
-    /// The pictures side by side, each as tall as the window allows. The strip measures its own
-    /// height: inside a horizontal scroll view, containerRelativeFrame doesn't get it (a render
-    /// showed the pictures shrunk to their minimum), and a picture's width follows its height.
+    /// The pictures side by side, each as tall as the window allows.
+    ///
+    /// The strip measures its own height: inside a horizontal scroll view, containerRelativeFrame
+    /// doesn't get it (a render showed the pictures shrunk to their minimum), and a picture's width
+    /// follows its height.
     private var pictureStrip: some View {
         GeometryReader { geometry in
             ScrollView(.horizontal) {
@@ -84,8 +93,10 @@ struct ReportViewer: View {
         return VStack(alignment: .leading, spacing: 8) {
             PictureImage(file: picture.file, height: height)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.white.opacity(showsSelected ? 0.9 : 0.16), lineWidth: showsSelected ? 2 : 1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.white.opacity(showsSelected ? 0.9 : 0.16), lineWidth: showsSelected ? 2 : 1)
+                )
             HStack(spacing: 6) {
                 Text(picture.title)
                     .font(.caption)
@@ -95,7 +106,10 @@ struct ReportViewer: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(picture.notes.isEmpty ? picture.title : "\(picture.title), notes \(picture.notes.map(String.init).joined(separator: ", "))")
+        .accessibilityLabel(
+            picture.notes.isEmpty
+                ? picture.title : "\(picture.title), notes \(picture.notes.map(String.init).joined(separator: ", "))"
+        )
     }
 
     /// Brings the picture that shows a note into view, every time the note is clicked.
@@ -128,7 +142,9 @@ struct ReportViewer: View {
                             do {
                                 try Handoff.openChat(chat.agent, id: chat.id, in: folder)
                             } catch {
-                                hub?.log("Couldn't open the \(chat.agent.name) chat \(chat.id): \(error.localizedDescription)")
+                                hub?.log(
+                                    "Couldn't open the \(chat.agent.name) chat \(chat.id): \(error.localizedDescription)"
+                                )
                             }
                         }
                     }
@@ -164,8 +180,10 @@ struct ReportViewer: View {
                             }
                             .padding(.horizontal, 8)
                             .padding(.vertical, 6)
-                            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Color.white.opacity(selected == note.number ? 0.12 : 0)))
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Color.white.opacity(selected == note.number ? 0.12 : 0))
+                            )
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -178,8 +196,9 @@ struct ReportViewer: View {
     }
 }
 
-/// One of the viewer's pictures, as tall as `height`, decoded off the main actor. A placeholder
-/// of a phone screen's shape shows until it's ready.
+/// One of the viewer's pictures, as tall as `height`, decoded off the main actor.
+///
+/// A placeholder of a phone screen's shape shows until it's ready.
 private struct PictureImage: View {
     let file: URL
     let height: CGFloat
@@ -191,7 +210,10 @@ private struct PictureImage: View {
     var body: some View {
         Group {
             if let image, image.size.height > 0 {
-                Image(nsImage: image).resizable().frame(width: height * image.size.width / image.size.height, height: height)
+                Image(nsImage: image).resizable().frame(
+                    width: height * image.size.width / image.size.height,
+                    height: height
+                )
             } else {
                 Color.white.opacity(0.08).frame(width: height * 9 / 19.5, height: height)
             }
@@ -210,8 +232,10 @@ private struct ViewerButtonStyle: ButtonStyle {
             .foregroundStyle(isProminent ? Color.black : Color.white)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(isProminent ? Color.white : Color.white.opacity(0.12)))
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(isProminent ? Color.white : Color.white.opacity(0.12))
+            )
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

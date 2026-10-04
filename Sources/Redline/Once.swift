@@ -6,7 +6,9 @@ import Synchronization
 final class Once<T: Sendable>: Sendable {
     private struct State {
         var continuation: CheckedContinuation<T, Never>?
-        /// Resumes with a fallback value when time runs out. Cancelled once resumed.
+        /// Resumes with a fallback value when time runs out.
+        ///
+        /// Cancelled once resumed.
         var timeout: Task<Void, Never>?
     }
 
@@ -16,8 +18,9 @@ final class Once<T: Sendable>: Sendable {
         state.withLock { $0.continuation = continuation }
     }
 
-    /// Resumes with `value` once `delay` passes, unless something resumes it first. The timer
-    /// stops as soon as it is resumed, so a finished wait leaves nothing behind.
+    /// Resumes with `value` once `delay` passes, unless something resumes it first.
+    ///
+    /// The timer stops as soon as it is resumed, so a finished wait leaves nothing behind.
     func resume(_ value: T, after delay: Duration) {
         let timeout = Task { [weak self] in
             try? await Task.sleep(for: delay)

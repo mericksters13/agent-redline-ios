@@ -2,10 +2,11 @@
 import Foundation
 import Network
 
-/// Sends this app's reports to the Mac's hub over the local network. The hub leaves its address
-/// and a token in the app's folder over Xcode's device link, once; the token shows the hub that
-/// the reports come from a phone paired with that Mac. iOS asks once per app for local network
-/// access, the first time a report is sent.
+/// Sends this app's reports to the Mac's hub over the local network.
+///
+/// The hub leaves its address and a token in the app's folder over Xcode's device link, once; the
+/// token shows the hub that the reports come from a phone paired with that Mac. iOS asks once per
+/// app for local network access, the first time a report is sent.
 ///
 /// One connection, one line of JSON per message:
 /// 1. The app offers the reports the Mac hasn't confirmed (`Offer`).
@@ -19,15 +20,18 @@ enum HubLink {
         var device: String
         var hosts: [String]
         var port: UInt16
-        /// Proves to the hub that an offer comes from this phone and app. Missing from addresses
-        /// left by an older hub, which the hub turns down until it leaves a new one.
+        /// Proves to the hub that an offer comes from this phone and app.
+        ///
+        /// Missing from addresses left by an older hub, which the hub turns down until it leaves a
+        /// new one.
         var token: String?
         /// False in a simulator, where the hub takes reports from the app's folder: the app only
         /// asks which chats a report can go to.
         var uploads: Bool? = nil
 
-        /// Whether the app sends the hub its reports' files. Older hubs leave `uploads` out;
-        /// they always took uploads.
+        /// Whether the app sends the hub its reports' files.
+        ///
+        /// Older hubs leave `uploads` out; they always took uploads.
         var acceptsUploads: Bool { uploads ?? true }
     }
 
@@ -63,7 +67,9 @@ enum HubLink {
     /// Step 3: one wanted report's files.
     struct Upload: Codable, Equatable, Sendable {
         var id: String
-        /// File name to contents. Encoded as base64 in the line.
+        /// File name to contents.
+        ///
+        /// Encoded as base64 in the line.
         var files: [String: Data]
     }
 
@@ -122,13 +128,18 @@ enum HubLink {
         }
     }
 
-    /// Asks the hub which chats a report from this app can go to. Nil when the hub can't be
-    /// reached or turns the question down.
-    static func requestChats(bundleID: String, address: Address, sourceFile: String?, patience: TimeInterval) async -> ChatList? {
+    /// Asks the hub which chats a report from this app can go to.
+    ///
+    /// Nil when the hub can't be reached or turns the question down.
+    static func requestChats(bundleID: String, address: Address, sourceFile: String?, patience: TimeInterval) async
+        -> ChatList?
+    {
         guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return nil }
         let request: Data
         do {
-            request = try encode(ChatsRequest(device: address.device, bundleID: bundleID, token: token, sourceFile: sourceFile))
+            request = try encode(
+                ChatsRequest(device: address.device, bundleID: bundleID, token: token, sourceFile: sourceFile)
+            )
         } catch {
             Log.hubLink.error("Couldn't write the chats request: \(error.localizedDescription, privacy: .public)")
             return nil
@@ -197,11 +208,19 @@ enum HubLink {
 
     /// Delivers the reports the Mac hasn't confirmed. `patience` is how long to wait for the
     /// connection, which includes iOS asking about local network access the first time.
-    /// Returns how it went and the reports the Mac now has.
-    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
-    static func deliver(_ reports: [OfferedReport], bundleID: String, address: Address,
-                        files: @Sendable (_ reportID: String) -> [String: Data], patience: TimeInterval) async -> (outcome: Outcome, delivered: [String]) {
-        guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return (.refused, []) }
+    ///
+    /// Returns how it went and the reports the Mac now has. Runs off the main actor. Add
+    /// @concurrent when the tools version reaches 6.2.
+    static func deliver(
+        _ reports: [OfferedReport],
+        bundleID: String,
+        address: Address,
+        files: @Sendable (_ reportID: String) -> [String: Data],
+        patience: TimeInterval
+    ) async -> (outcome: Outcome, delivered: [String]) {
+        guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else {
+            return (.refused, [])
+        }
         let offer: Data
         do {
             offer = try encode(Offer(device: address.device, bundleID: bundleID, token: token, reports: reports))
@@ -236,7 +255,9 @@ enum HubLink {
                 do {
                     upload = try encode(Upload(id: id, files: files(id)))
                 } catch {
-                    Log.hubLink.error("Couldn't write report \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    Log.hubLink.error(
+                        "Couldn't write report \(id, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                    )
                     return (.interrupted, delivered)
                 }
                 guard await line.send(upload) else { return (.interrupted, delivered) }
@@ -273,8 +294,9 @@ enum HubLink {
         }
 
         /// Waits for the connection. `.waiting` (no route yet, or iOS still asking about local
-        /// network access) keeps waiting until `patience` runs out. A connection that doesn't
-        /// open, or whose task is cancelled, is cancelled too.
+        /// network access) keeps waiting until `patience` runs out.
+        ///
+        /// A connection that doesn't open, or whose task is cancelled, is cancelled too.
         func open(patience: TimeInterval) async -> Bool {
             guard !Task.isCancelled else {
                 connection.cancel()
@@ -307,13 +329,18 @@ enum HubLink {
             return opened
         }
 
-        /// Sends one line. False when it couldn't be sent or the task was cancelled.
+        /// Sends one line.
+        ///
+        /// False when it couldn't be sent or the task was cancelled.
         func send(_ data: Data) async -> Bool {
             await withTaskCancellationHandler {
                 await withCheckedContinuation { continuation in
-                    connection.send(content: data, completion: .contentProcessed { error in
-                        continuation.resume(returning: error == nil)
-                    })
+                    connection.send(
+                        content: data,
+                        completion: .contentProcessed { error in
+                            continuation.resume(returning: error == nil)
+                        }
+                    )
                 }
             } onCancel: {
                 connection.cancel()  // The pending send then completes with an error.
@@ -347,7 +374,8 @@ enum HubLink {
         }
 
         private func receive(_ once: Once<Data?>) {
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [self] data, _, isComplete, error in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) {
+                [self] data, _, isComplete, error in
                 queue.async {
                     if let data { self.buffer.append(data) }
                     if let line = self.takeLine() {

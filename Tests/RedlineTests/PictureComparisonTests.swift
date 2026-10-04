@@ -4,11 +4,24 @@ import Testing
 @testable import Redline
 
 struct PictureComparisonTests {
-    /// A 400 by 800 picture: white, with dark bars at the given heights, measured from the
-    /// bottom as Core Graphics draws. Pixel rows count from the top.
-    private func picture(bars: [Int], barHeight: Int = 40, mark: CGRect? = nil, markGray: CGFloat = 0.1) throws -> CGImage {
-        let context = try #require(CGContext(data: nil, width: 400, height: 800, bitsPerComponent: 8, bytesPerRow: 0,
-                                             space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue))
+    /// A 400 by 800 picture: white, with dark bars at the given heights, measured from the bottom
+    /// as Core Graphics draws.
+    ///
+    /// Pixel rows count from the top.
+    private func picture(bars: [Int], barHeight: Int = 40, mark: CGRect? = nil, markGray: CGFloat = 0.1) throws
+        -> CGImage
+    {
+        let context = try #require(
+            CGContext(
+                data: nil,
+                width: 400,
+                height: 800,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceGray(),
+                bitmapInfo: CGImageAlphaInfo.none.rawValue
+            )
+        )
         context.setFillColor(gray: 1, alpha: 1)
         context.fill(CGRect(x: 0, y: 0, width: 400, height: 800))
         context.setFillColor(gray: 0.1, alpha: 1)
@@ -41,12 +54,18 @@ struct PictureComparisonTests {
     @Test func anElementCoveredByAPopupNoLongerLooksTheSame() throws {
         let plain = try picture(bars: [300, 500, 700])
         // A white popup card over the middle of the screen, covering the bar drawn at 500.
-        let withPopup = try picture(bars: [300, 500, 700], mark: CGRect(x: 0, y: 420, width: 400, height: 200), markGray: 1)
+        let withPopup = try picture(
+            bars: [300, 500, 700],
+            mark: CGRect(x: 0, y: 420, width: 400, height: 200),
+            markGray: 1
+        )
         // Pixel rows count from the top: the bar drawn at 500 sits in rows 260..<300, the one at 700 in 60..<100.
         let covered = CGRect(x: 20, y: 260, width: 360, height: 40)
         let clear = CGRect(x: 20, y: 60, width: 360, height: 40)
         #expect(PictureComparison.difference(plain, in: clear, withPopup, in: clear) < PictureComparison.sameElement)
-        #expect(PictureComparison.difference(plain, in: covered, withPopup, in: covered) > PictureComparison.sameElement)
+        #expect(
+            PictureComparison.difference(plain, in: covered, withPopup, in: covered) > PictureComparison.sameElement
+        )
     }
 
     @Test func theSharedStretchOfTwoScrolledPicturesMatches() throws {

@@ -1,8 +1,10 @@
 #if REDLINE && canImport(UIKit)
 import SwiftUI
 
-/// Where reports go: an agent on the Mac, then one of its chats that work on this app, or a
-/// new chat. The chat in the worktree the app was built from is marked and picked at first.
+/// Where reports go: an agent on the Mac, then one of its chats that work on this app, or a new
+/// chat.
+///
+/// The chat in the worktree the app was built from is marked and picked at first.
 struct DestinationPicker: View {
     let session: DebugSession
 
@@ -47,10 +49,12 @@ struct DestinationPicker: View {
             }
             .frame(minHeight: 44)
         case .unavailable:
-            Text("Couldn't reach the Mac. It will send the report to the chat working in the folder this app was built from.")
-                .font(.subheadline)
-                .foregroundStyle(Mono.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(
+                "Couldn't reach the Mac. It will send the report to the chat working in the folder this app was built from."
+            )
+            .font(.subheadline)
+            .foregroundStyle(Mono.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         case .loaded(let list):
             if list.agents.isEmpty {
                 Text("No agents found on the Mac.")
@@ -67,7 +71,9 @@ struct DestinationPicker: View {
         HStack(spacing: 8) {
             ForEach(agents, id: \.self) { agent in
                 let isSelected = session.pickerAgent == agent
-                Button { session.choose(agent: agent) } label: {
+                Button {
+                    session.choose(agent: agent)
+                } label: {
                     Text(HubLink.agentName(agent))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(isSelected ? Color.black : Mono.text)
@@ -87,12 +93,22 @@ struct DestinationPicker: View {
         let chats = list.chats.filter { $0.agent == agent }
         return ScrollView {
             VStack(spacing: 0) {
-                row(title: "New chat", detail: "In a new worktree from \(list.newChatBase ?? "main")", tag: nil, icon: "plus",
-                    choice: Report.Destination(agent: agent, chat: nil, title: "a new \(HubLink.agentName(agent)) chat"))
+                row(
+                    title: "New chat",
+                    detail: "In a new worktree from \(list.newChatBase ?? "main")",
+                    tag: nil,
+                    icon: "plus",
+                    choice: Report.Destination(agent: agent, chat: nil, title: "a new \(HubLink.agentName(agent)) chat")
+                )
                 ForEach(chats) { chat in
                     Rectangle().fill(Mono.hairline).frame(height: 1)
-                    row(title: chat.title, detail: detail(chat), tag: chat.isSameWorktree ? "This build" : nil, icon: nil,
-                        choice: Report.Destination(agent: agent, chat: chat.id, title: chat.title))
+                    row(
+                        title: chat.title,
+                        detail: detail(chat),
+                        tag: chat.isSameWorktree ? "This build" : nil,
+                        icon: nil,
+                        choice: Report.Destination(agent: agent, chat: chat.id, title: chat.title)
+                    )
                 }
                 if chats.isEmpty {
                     Text("No open \(HubLink.agentName(agent)) chats work on this app.")
@@ -112,9 +128,13 @@ struct DestinationPicker: View {
         "\(chat.folder) · \(chat.lastActive.formatted(.relative(presentation: .numeric, unitsStyle: .wide)))"
     }
 
-    private func row(title: String, detail: String, tag: String?, icon: String?, choice: Report.Destination) -> some View {
+    private func row(title: String, detail: String, tag: String?, icon: String?, choice: Report.Destination)
+        -> some View
+    {
         let isSelected = choice.isSameChoice(as: session.pickerChoice)
-        return Button { session.choose(choice) } label: {
+        return Button {
+            session.choose(choice)
+        } label: {
             HStack(spacing: 12) {
                 if let icon {
                     Image(systemName: icon)
@@ -179,7 +199,9 @@ struct DestinationPicker: View {
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
             Spacer()
-            Button { session.confirmDestination() } label: {
+            Button {
+                session.confirmDestination()
+            } label: {
                 Text(primaryTitle(unavailable: unavailable))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.black)

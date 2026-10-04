@@ -4,7 +4,9 @@ import Testing
 @testable import Redline
 
 struct ReportStoreTests {
-    private let store = ReportStore(root: FileManager.default.temporaryDirectory.appending(path: "ReportStoreTests-\(UUID().uuidString)"))
+    private let store = ReportStore(
+        root: FileManager.default.temporaryDirectory.appending(path: "ReportStoreTests-\(UUID().uuidString)")
+    )
 
     /// Each test gets its own folder; this removes it.
     private func removeStore() {
@@ -18,7 +20,15 @@ struct ReportStoreTests {
             createdAt: Date(timeIntervalSince1970: 1_790_000_000),
             note: note,
             kind: .element,
-            element: ElementSnapshot(role: "Button", label: "Save", value: nil, identifier: "save", className: nil, isContainer: false, frame: CGRect(x: 1, y: 2, width: 3, height: 4)),
+            element: ElementSnapshot(
+                role: "Button",
+                label: "Save",
+                value: nil,
+                identifier: "save",
+                className: nil,
+                isContainer: false,
+                frame: CGRect(x: 1, y: 2, width: 3, height: 4)
+            ),
             ancestors: [],
             screen: ScreenInfo(title: "Settings", viewController: "SettingsController"),
             screenshots: ["\(id.uuidString).png"]
@@ -59,11 +69,11 @@ struct ReportStoreTests {
     @Test func aDraftSavedBeforeAttachmentsStillLoads() throws {
         defer { removeStore() }
         let legacy = """
-        [{"id":"8FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC","createdAt":"2026-10-02T23:59:39Z","note":"Date wraps badly",
-          "element":{"role":"Button","label":"Use next","identifier":"milk.home.urgency","isContainer":false,"frame":[[20,468],[362,74]]},
-          "ancestors":[],"screen":{"title":"Today","viewController":"NavigationStackHostingController"},
-          "screenshot":"8FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC.png"}]
-        """
+            [{"id":"8FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC","createdAt":"2026-10-02T23:59:39Z","note":"Date wraps badly",
+              "element":{"role":"Button","label":"Use next","identifier":"milk.home.urgency","isContainer":false,"frame":[[20,468],[362,74]]},
+              "ancestors":[],"screen":{"title":"Today","viewController":"NavigationStackHostingController"},
+              "screenshot":"8FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC.png"}]
+            """
         try FileManager.default.createDirectory(at: store.draftDirectory, withIntermediateDirectories: true)
         try Data(legacy.utf8).write(to: store.draftDirectory.appending(path: "annotations.json"))
         let loaded = try store.loadDraft()
@@ -98,12 +108,12 @@ struct ReportStoreTests {
     @Test func aKindFromANewerKitStillLoads() throws {
         defer { removeStore() }
         let draft = """
-        [{"id":"8FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC","createdAt":"2026-10-02T23:59:39Z","note":"Shaky",
-          "kind":"recording","ancestors":[],"screenshots":["a.mov"]},
-         {"id":"9FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC","createdAt":"2026-10-02T23:59:40Z","note":"Cut off",
-          "kind":"futureKind","element":{"role":"Button","label":"Save","isContainer":false,"frame":[[1,2],[3,4]]},
-          "ancestors":[],"screenshots":[]}]
-        """
+            [{"id":"8FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC","createdAt":"2026-10-02T23:59:39Z","note":"Shaky",
+              "kind":"recording","ancestors":[],"screenshots":["a.mov"]},
+             {"id":"9FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC","createdAt":"2026-10-02T23:59:40Z","note":"Cut off",
+              "kind":"futureKind","element":{"role":"Button","label":"Save","isContainer":false,"frame":[[1,2],[3,4]]},
+              "ancestors":[],"screenshots":[]}]
+            """
         try FileManager.default.createDirectory(at: store.draftDirectory, withIntermediateDirectories: true)
         try Data(draft.utf8).write(to: store.draftFile)
         #expect(try store.loadDraft().map(\.kind) == [.screen, .element])
@@ -136,7 +146,10 @@ struct ReportStoreTests {
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let report = try decoder.decode(Report.self, from: Data(contentsOf: started.folder.appending(path: "report.json")))
+        let report = try decoder.decode(
+            Report.self,
+            from: Data(contentsOf: started.folder.appending(path: "report.json"))
+        )
         #expect(report.screens.first?.images.first?.notes == [1, 2])
         #expect(report.items.first?.picture == "screen-1.jpg")
     }
@@ -149,15 +162,31 @@ struct ReportStoreTests {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
         let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
-        let expected = String(format: "%04d%02d%02d-%02d%02d%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0,
-                              parts.hour ?? 0, parts.minute ?? 0, parts.second ?? 0)
+        let expected = String(
+            format: "%04d%02d%02d-%02d%02d%02d",
+            parts.year ?? 0,
+            parts.month ?? 0,
+            parts.day ?? 0,
+            parts.hour ?? 0,
+            parts.minute ?? 0,
+            parts.second ?? 0
+        )
         #expect(try store.beginReport(date: date).id == expected)
     }
 
     @Test func screensSurviveAReload() throws {
         defer { removeStore() }
-        let capture = Capture(id: UUID(), file: "capture.png", size: CGSize(width: 402, height: 874), scroll: nil, elements: [], group: 0)
-        let screens = [ScreenRecord(id: UUID(), info: ScreenInfo(title: "Today", viewController: "Home"), captures: [capture])]
+        let capture = Capture(
+            id: UUID(),
+            file: "capture.png",
+            size: CGSize(width: 402, height: 874),
+            scroll: nil,
+            elements: [],
+            group: 0
+        )
+        let screens = [
+            ScreenRecord(id: UUID(), info: ScreenInfo(title: "Today", viewController: "Home"), captures: [capture])
+        ]
         try store.saveScreens(screens)
         #expect(try store.loadScreens() == screens)
     }
@@ -212,7 +241,12 @@ struct ReportStoreTests {
     @Test func theHubsAddressIsReadFromTheAppsFolder() throws {
         defer { removeStore() }
         #expect(store.hubAddress() == nil)
-        let address = HubLink.Address(device: "00008150-00123C360CF3C01C", hosts: ["192.168.1.2", "mac.local"], port: 47361, token: "secret")
+        let address = HubLink.Address(
+            device: "00008150-00123C360CF3C01C",
+            hosts: ["192.168.1.2", "mac.local"],
+            port: 47361,
+            token: "secret"
+        )
         try FileManager.default.createDirectory(at: store.root, withIntermediateDirectories: true)
         try HubLink.encode(address).write(to: store.hubAddressFile)
         #expect(store.hubAddress() == address)
@@ -220,7 +254,9 @@ struct ReportStoreTests {
         try Data(#"{"device":"x","hosts":["mac.local"],"port":47361}"#.utf8).write(to: store.hubAddressFile)
         #expect(store.hubAddress()?.token == nil)
         // A simulator app's address says it doesn't upload.
-        try Data(#"{"device":"S","hosts":["127.0.0.1"],"port":47361,"token":"t","uploads":false}"#.utf8).write(to: store.hubAddressFile)
+        try Data(#"{"device":"S","hosts":["127.0.0.1"],"port":47361,"token":"t","uploads":false}"#.utf8).write(
+            to: store.hubAddressFile
+        )
         #expect(store.hubAddress()?.uploads == false)
     }
 
@@ -228,8 +264,16 @@ struct ReportStoreTests {
         defer { removeStore() }
         // Must match the Mac tool's ReportFolder.path and HubAddress.addressPath.
         let reports = ReportStore.standard.reportsDirectory.path(percentEncoded: false)
-        #expect(reports.trimmingCharacters(in: CharacterSet(charactersIn: "/")).hasSuffix("Library/Application Support/Redline/reports"))
-        #expect(ReportStore.standard.hubAddressFile.path(percentEncoded: false).hasSuffix("Library/Application Support/Redline/hub.json"))
+        #expect(
+            reports.trimmingCharacters(in: CharacterSet(charactersIn: "/")).hasSuffix(
+                "Library/Application Support/Redline/reports"
+            )
+        )
+        #expect(
+            ReportStore.standard.hubAddressFile.path(percentEncoded: false).hasSuffix(
+                "Library/Application Support/Redline/hub.json"
+            )
+        )
     }
 
     @Test func reportFieldsKeepTheirNamesOnDisk() throws {
@@ -242,7 +286,10 @@ struct ReportStoreTests {
         #expect(json.contains(#""earlierState" : false"#))
         #expect(!json.contains("isEarlierState"))
         store.recordDelivery(.refused, at: Date(timeIntervalSince1970: 1_791_000_000))
-        let delivery = try String(decoding: Data(contentsOf: store.root.appending(path: "delivery.json")), as: UTF8.self)
+        let delivery = try String(
+            decoding: Data(contentsOf: store.root.appending(path: "delivery.json")),
+            as: UTF8.self
+        )
         #expect(delivery.contains(#""at" : "2026-10-03T04:00:00Z""#))
     }
 
@@ -256,7 +303,9 @@ struct ReportStoreTests {
         // Reports written before the format had a version still list.
         let old = store.reportsDirectory.appending(path: "20261001-120000")
         try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
-        var unversioned = try JSONSerialization.jsonObject(with: Data(contentsOf: started.folder.appending(path: "report.json"))) as? [String: Any] ?? [:]
+        var unversioned =
+            try JSONSerialization.jsonObject(with: Data(contentsOf: started.folder.appending(path: "report.json")))
+            as? [String: Any] ?? [:]
         unversioned["version"] = nil
         unversioned["id"] = "20261001-120000"
         try JSONSerialization.data(withJSONObject: unversioned).write(to: old.appending(path: "report.json"))
@@ -292,7 +341,10 @@ struct ReportStoreTests {
         defer { removeStore() }
         #expect(store.lastDelivery() == nil)
         store.recordDelivery(.unreachable, at: Date(timeIntervalSince1970: 1_791_000_000))
-        #expect(store.lastDelivery() == Delivery(attemptedAt: Date(timeIntervalSince1970: 1_791_000_000), outcome: .unreachable))
+        #expect(
+            store.lastDelivery()
+                == Delivery(attemptedAt: Date(timeIntervalSince1970: 1_791_000_000), outcome: .unreachable)
+        )
     }
 
 }

@@ -1,17 +1,24 @@
 #if os(macOS)
 import Foundation
 
-/// Starting a chat with each agent from the command line. Each runs without permission to
-/// change files, so the chat can only look and propose.
+/// Starting a chat with each agent from the command line.
+///
+/// Each runs without permission to change files, so the chat can only look and propose.
 enum AgentCommand {
-    /// Claude's desktop app, where new Claude Code chats open, is installed. Checks the disk.
+    /// Claude's desktop app, where new Claude Code chats open, is installed.
+    ///
+    /// Checks the disk.
     static func isClaudeAppInstalled() -> Bool {
         FileManager.default.fileExists(atPath: "/Applications/Claude.app")
     }
 
-    /// Codex's desktop app, inside the ChatGPT app or on its own, is installed. Checks the disk.
+    /// Codex's desktop app, inside the ChatGPT app or on its own, is installed.
+    ///
+    /// Checks the disk.
     static func isCodexAppInstalled() -> Bool {
-        ["/Applications/ChatGPT.app/Contents/Resources/codex-cli", "/Applications/Codex.app"].contains { FileManager.default.fileExists(atPath: $0) }
+        ["/Applications/ChatGPT.app/Contents/Resources/codex-cli", "/Applications/Codex.app"].contains {
+            FileManager.default.fileExists(atPath: $0)
+        }
     }
 
     /// The agent's command, from the places its installers put it; nil when it isn't installed.
@@ -23,8 +30,11 @@ enum AgentCommand {
             candidates = ["\(home)/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
         case .codex:
             // The copy inside the ChatGPT app comes first: it updates with the app.
-            candidates = ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
-                          "/Applications/Codex.app/Contents/Resources/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex", "\(home)/.local/bin/codex"]
+            candidates = [
+                "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+                "/Applications/Codex.app/Contents/Resources/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex",
+                "\(home)/.local/bin/codex",
+            ]
         }
         return candidates.first(where: FileManager.default.isExecutableFile(atPath:)).map(URL.init(fileURLWithPath:))
     }
@@ -50,11 +60,15 @@ enum AgentCommand {
         var didFail: Bool
     }
 
-    /// The chat a command line run started, from `codex exec --json`'s first event or the
-    /// result `claude -p --output-format json` prints.
+    /// The chat a command line run started.
+    ///
+    /// Codex reports it in the first event of `codex exec --json`, and Claude Code in the result
+    /// that `claude -p --output-format json` prints.
     static func startedChat(_ agent: Agent, in output: String) -> StartedChatOutput? {
         for line in output.split(separator: "\n") {
-            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else {
+                continue
+            }
             switch agent {
             case .codex:
                 if object["type"] as? String == "thread.started", let thread = object["thread_id"] as? String {
@@ -62,7 +76,11 @@ enum AgentCommand {
                 }
             case .claude:
                 if let session = object["session_id"] as? String ?? object["chatId"] as? String {
-                    return StartedChatOutput(chat: session, answer: object["result"] as? String, didFail: object["is_error"] as? Bool ?? false)
+                    return StartedChatOutput(
+                        chat: session,
+                        answer: object["result"] as? String,
+                        didFail: object["is_error"] as? Bool ?? false
+                    )
                 }
             }
         }
@@ -74,7 +92,11 @@ enum AgentCommand {
         for line in output.split(separator: "\n").reversed() {
             if let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] {
                 if let result = object["result"] as? String, !result.isEmpty { return result }
-                if let error = (object["error"] as? [String: Any])?["message"] as? String ?? object["message"] as? String { return error }
+                if let error = (object["error"] as? [String: Any])?["message"] as? String ?? object["message"]
+                    as? String
+                {
+                    return error
+                }
                 continue
             }
             let text = line.trimmingCharacters(in: .whitespaces)

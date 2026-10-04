@@ -16,10 +16,11 @@ enum ReportWindows {
     /// Reports whose files are being read before their window shows; a second click waits for it.
     private static var loading: [URL: Task<Void, Never>] = [:]
 
-    /// Opens the report's window, or brings it forward, in front of the other apps: Redline is
-    /// a menu bar app, so it isn't active when the panel is clicked. An open window reads the
-    /// report again, since it may have gone to a chat since it opened. The report's files are
-    /// read off the main actor first.
+    /// Opens the report's window, or brings it forward, in front of the other apps: Redline is a
+    /// menu bar app, so it isn't active when the panel is clicked.
+    ///
+    /// An open window reads the report again, since it may have gone to a chat since it opened. The
+    /// report's files are read off the main actor first.
     static func show(_ report: HubWindowModel.ReportRow) {
         let folder = report.folder
         guard loading[folder] == nil else { return }
@@ -34,12 +35,19 @@ enum ReportWindows {
         defer { NSApp.activate() }
         if let window = windows[report.folder]?.window {
             window.title = ReportViewer.title(of: report)
-            (window.contentViewController as? NSHostingController<ReportViewer>)?.rootView = ReportViewer(report: report, contents: contents)
+            (window.contentViewController as? NSHostingController<ReportViewer>)?.rootView = ReportViewer(
+                report: report,
+                contents: contents
+            )
             window.makeKeyAndOrderFront(nil)
             return
         }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 720),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1040, height: 720),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
         window.isReleasedWhenClosed = false
         window.title = ReportViewer.title(of: report)
         window.appearance = NSAppearance(named: .darkAqua)
@@ -49,7 +57,11 @@ enum ReportWindows {
         cascadePoint = window.cascadeTopLeft(from: cascadePoint)
         let folder = report.folder
         // queue: .main delivers on the main thread.
-        let observer = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { _ in
             MainActor.assumeIsolated {
                 if let observer = windows[folder]?.observer { NotificationCenter.default.removeObserver(observer) }
                 windows[folder] = nil

@@ -24,15 +24,19 @@ import Foundation
 struct ReportStore: Sendable {
     let root: URL
 
-    static let standard = ReportStore(root: URL.applicationSupportDirectory.appending(path: "Redline", directoryHint: .isDirectory))
+    static let standard = ReportStore(
+        root: URL.applicationSupportDirectory.appending(path: "Redline", directoryHint: .isDirectory)
+    )
 
     var draftDirectory: URL { root.appending(path: "draft", directoryHint: .isDirectory) }
     var reportsDirectory: URL { root.appending(path: "reports", directoryHint: .isDirectory) }
     var draftFile: URL { draftDirectory.appending(path: "annotations.json") }
     var screensFile: URL { draftDirectory.appending(path: "screens.json") }
 
-    /// The draft's notes; empty when there is no draft. Throws when the file is there but can't
-    /// be read, so a caller never mistakes it for an empty draft and saves over it.
+    /// The draft's notes; empty when there is no draft.
+    ///
+    /// Throws when the file is there but can't be read, so a caller never mistakes it for an empty
+    /// draft and saves over it.
     func loadDraft() throws -> [Annotation] {
         guard let data = try Self.contents(of: draftFile) else { return [] }
         return try Self.decoder.decode([Annotation].self, from: data)
@@ -43,23 +47,32 @@ struct ReportStore: Sendable {
         try Self.draftEncoder.encode(annotations).write(to: draftFile, options: .atomic)
     }
 
-    /// The draft's screens and captures; empty when there is no draft. Throws like `loadDraft()`.
+    /// The draft's screens and captures; empty when there is no draft.
+    ///
+    /// Throws like `loadDraft()`.
     func loadScreens() throws -> [ScreenRecord] {
         guard let data = try Self.contents(of: screensFile) else { return [] }
         return try Self.decoder.decode([ScreenRecord].self, from: data)
     }
 
-    /// Moves a draft file that can't be read out of the way, next to where it was, so the next
-    /// save starts fresh without destroying it. Returns where it went.
+    /// Moves a draft file that can't be read out of the way, next to where it was, so the next save
+    /// starts fresh without destroying it.
+    ///
+    /// Returns where it went.
     @discardableResult
     func setAsideUnreadable(_ file: URL, at date: Date = .now) throws -> URL {
-        let name = "\(file.deletingPathExtension().lastPathComponent)-unreadable-\(Self.timestampFormatter.string(from: date))"
-        let destination = file.deletingLastPathComponent().appending(path: name).appendingPathExtension(file.pathExtension)
+        let name =
+            "\(file.deletingPathExtension().lastPathComponent)-unreadable-\(Self.timestampFormatter.string(from: date))"
+        let destination = file.deletingLastPathComponent().appending(path: name).appendingPathExtension(
+            file.pathExtension
+        )
         try FileManager.default.moveItem(at: file, to: destination)
         return destination
     }
 
-    /// A file's contents, or nil when there is no such file. Any other failure throws.
+    /// A file's contents, or nil when there is no such file.
+    ///
+    /// Any other failure throws.
     private static func contents(of file: URL) throws -> Data? {
         do {
             return try Data(contentsOf: file)
@@ -82,8 +95,9 @@ struct ReportStore: Sendable {
         try? FileManager.default.removeItem(at: draftDirectory.appending(path: name))
     }
 
-    /// Starts a report: moves the whole draft into a new report folder, so new notes go into
-    /// a fresh draft while the report's pictures are drawn from the old one.
+    /// Starts a report: moves the whole draft into a new report folder, so new notes go into a
+    /// fresh draft while the report's pictures are drawn from the old one.
+    ///
     /// Returns the report's id, its folder and where the draft now is.
     func beginReport(date: Date) throws -> (id: String, folder: URL, draft: URL) {
         let files = FileManager.default
@@ -109,7 +123,9 @@ struct ReportStore: Sendable {
             try FileManager.default.removeItem(at: folder.appending(path: "draft"))
         } catch {
             // The report stays unfinished for the hub until its draft is gone.
-            Log.store.error("Couldn't remove the draft of \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            Log.store.error(
+                "Couldn't remove the draft of \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 
@@ -122,13 +138,17 @@ struct ReportStore: Sendable {
             guard let data = try Self.contents(of: hubAddressFile) else { return nil }
             return try HubLink.decode(HubLink.Address.self, from: data)
         } catch {
-            Log.store.error("hub.json could not be read; the hub may be newer: \(error.localizedDescription, privacy: .public)")
+            Log.store.error(
+                "hub.json could not be read; the hub may be newer: \(error.localizedDescription, privacy: .public)"
+            )
             return nil
         }
     }
 
-    /// Sent reports the Mac hasn't confirmed yet, oldest first. Delivered reports are skipped
-    /// before anything is read, and only each report's id and date are decoded.
+    /// Sent reports the Mac hasn't confirmed yet, oldest first.
+    ///
+    /// Delivered reports are skipped before anything is read, and only each report's id and date
+    /// are decoded.
     func undeliveredReports() -> [HubLink.OfferedReport] {
         /// The little of a report needed to offer it.
         struct Stamp: Decodable {
@@ -136,19 +156,25 @@ struct ReportStore: Sendable {
             var createdAt: Date
         }
         // No reports folder yet: nothing has been sent.
-        let folders = (try? FileManager.default.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: nil)) ?? []
+        let folders =
+            (try? FileManager.default.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: nil)) ?? []
         let waiting = folders.compactMap { folder -> (folder: String, stamp: Stamp)? in
-            guard !FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path(percentEncoded: false)) else { return nil }
+            guard
+                !FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path(percentEncoded: false))
+            else { return nil }
             do {
                 // No report.json yet: still being drawn.
                 guard let data = try Self.contents(of: folder.appending(path: "report.json")) else { return nil }
                 return (folder.lastPathComponent, try Self.decoder.decode(Stamp.self, from: data))
             } catch {
-                Log.store.notice("Skipped report \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                Log.store.notice(
+                    "Skipped report \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
                 return nil
             }
         }
-        return waiting
+        return
+            waiting
             .sorted { ($0.stamp.createdAt, $0.stamp.id) < ($1.stamp.createdAt, $1.stamp.id) }
             // Named by folder: the hub copies the report's folder.
             .map { HubLink.OfferedReport(id: $0.folder, finishedAt: $0.stamp.createdAt) }
@@ -159,10 +185,12 @@ struct ReportStore: Sendable {
     func reportFiles(_ id: String) -> [String: Data] {
         let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
         var files: [String: Data] = [:]
-        let contents = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        let contents =
+            (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey]))
+            ?? []
         for file in contents where file.lastPathComponent != "delivered" && !file.lastPathComponent.hasPrefix(".") {
             guard (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true,
-                  let data = try? Data(contentsOf: file)
+                let data = try? Data(contentsOf: file)
             else { continue }
             files[file.lastPathComponent] = data
         }
@@ -185,7 +213,10 @@ struct ReportStore: Sendable {
     func recordDelivery(_ outcome: HubLink.Outcome, at date: Date = .now) {
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            try Self.encoder.encode(Delivery(attemptedAt: date, outcome: outcome)).write(to: deliveryFile, options: .atomic)
+            try Self.encoder.encode(Delivery(attemptedAt: date, outcome: outcome)).write(
+                to: deliveryFile,
+                options: .atomic
+            )
         } catch {
             Log.store.error("Couldn't record the delivery: \(error.localizedDescription, privacy: .public)")
         }
@@ -200,15 +231,19 @@ struct ReportStore: Sendable {
                 try Data().write(to: folder.appending(path: "delivered"))
             } catch {
                 // The report is offered again next time, and the hub says it already has it.
-                Log.store.error("Couldn't mark \(id, privacy: .public) delivered: \(error.localizedDescription, privacy: .public)")
+                Log.store.error(
+                    "Couldn't mark \(id, privacy: .public) delivered: \(error.localizedDescription, privacy: .public)"
+                )
             }
         }
     }
 
-    /// Reports already sent, newest first. One still being drawn isn't listed yet, nor one
-    /// saved in an earlier format.
+    /// Reports already sent, newest first.
+    ///
+    /// One still being drawn isn't listed yet, nor one saved in an earlier format.
     func sentReports() -> [SentReport] {
-        let folders = (try? FileManager.default.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: nil)) ?? []
+        let folders =
+            (try? FileManager.default.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: nil)) ?? []
         return folders.compactMap { folder in
             let report: Report
             do {
@@ -216,10 +251,14 @@ struct ReportStore: Sendable {
                 guard let data = try Self.contents(of: folder.appending(path: "report.json")) else { return nil }
                 report = try Self.decoder.decode(Report.self, from: data)
             } catch {
-                Log.store.notice("Skipped report \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                Log.store.notice(
+                    "Skipped report \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
                 return nil
             }
-            let delivered = FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path(percentEncoded: false))
+            let delivered = FileManager.default.fileExists(
+                atPath: folder.appending(path: "delivered").path(percentEncoded: false)
+            )
             return SentReport(report: report, folder: folder, isDelivered: delivered)
         }
         .sorted { ($0.report.createdAt, $0.id) > ($1.report.createdAt, $1.id) }

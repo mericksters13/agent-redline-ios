@@ -20,8 +20,9 @@ struct ElementSnapshot: Codable, Equatable, Sendable {
     /// The longest a name runs in chips and lists, in characters, before it's cut short.
     static let shortNameLength = 34
 
-    /// The element's whole name: its label, else its identifier, else its value. Nil when it
-    /// has none.
+    /// The element's whole name: its label, else its identifier, else its value.
+    ///
+    /// Nil when it has none.
     var fullName: String? {
         label?.nonEmpty ?? identifier?.nonEmpty ?? value?.nonEmpty
     }
@@ -38,18 +39,21 @@ enum ElementSelection {
     /// How far from an element a touch can land and still pick it, in points.
     static let nearbyDistance: CGFloat = 44
 
-    /// The elements under a point, innermost first, then each bigger element
-    /// holding it. A touch that misses every element picks the nearest one within
-    /// `nearbyDistance`. Elements covering almost the whole screen are left out,
-    /// since "the whole screen" says nothing useful.
+    /// The elements under a point, innermost first, then each bigger element holding it.
+    ///
+    /// A touch that misses every element picks the nearest one within `nearbyDistance`. Elements
+    /// covering almost the whole screen are left out, since "the whole screen" says nothing useful.
     static func levels(at point: CGPoint, in elements: [ElementSnapshot], screenSize: CGSize) -> [ElementSnapshot] {
         let screenArea = screenSize.width * screenSize.height
         let usable = elements.filter { !$0.frame.isEmpty && area($0.frame) < screenArea * 0.9 }
 
         var containing = usable.filter { $0.frame.contains(point) }
         if containing.isEmpty,
-           let nearest = usable.filter({ !$0.isContainer }).min(by: { distance(from: point, to: $0.frame) < distance(from: point, to: $1.frame) }),
-           distance(from: point, to: nearest.frame) <= nearbyDistance {
+            let nearest = usable.filter({ !$0.isContainer }).min(by: {
+                distance(from: point, to: $0.frame) < distance(from: point, to: $1.frame)
+            }),
+            distance(from: point, to: nearest.frame) <= nearbyDistance
+        {
             containing = usable.filter { $0.frame.contains(nearest.frame) }
         }
 

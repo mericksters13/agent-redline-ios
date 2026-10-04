@@ -1,8 +1,9 @@
 #if REDLINE
 import Foundation
 
-/// Where the floating Redline button rests. It can be dragged anywhere, and on
-/// release it snaps to the nearest edge of the screen.
+/// Where the floating Redline button rests.
+///
+/// It can be dragged anywhere, and on release it snaps to the nearest edge of the screen.
 enum FloatingButtonPlacement {
     static let size: CGFloat = 52
     /// Gap between the button and the edge of the safe area.

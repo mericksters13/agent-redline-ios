@@ -30,7 +30,9 @@ struct ImagePlan: Equatable, Sendable {
     var segments: [Segment]
     var gaps: [Gap]
     var stitchedFrom: Int
-    /// Where content scrolls, in screen points. Nil for a picture of one capture.
+    /// Where content scrolls, in screen points.
+    ///
+    /// Nil for a picture of one capture.
     var band: ClosedRange<CGFloat>?
     var runs: [Run]
     /// Where the bottom bars start in the picture.
@@ -46,10 +48,16 @@ struct ImagePlan: Equatable, Sendable {
             return frame.offsetBy(dx: 0, dy: footerY - band.upperBound)
         }
         let content = scroll.contentY(ofScreenY: frame.minY)
-        let run = runs.first { content >= $0.contentStart - 0.5 && content <= $0.contentEnd + 0.5 }
+        let run =
+            runs.first { content >= $0.contentStart - 0.5 && content <= $0.contentEnd + 0.5 }
             ?? runs.min { abs($0.contentStart - content) < abs($1.contentStart - content) }
         guard let run else { return nil }
-        return CGRect(x: frame.minX, y: run.destinationY + content - run.contentStart, width: frame.width, height: frame.height)
+        return CGRect(
+            x: frame.minX,
+            y: run.destinationY + content - run.contentStart,
+            width: frame.width,
+            height: frame.height
+        )
     }
 }
 #endif

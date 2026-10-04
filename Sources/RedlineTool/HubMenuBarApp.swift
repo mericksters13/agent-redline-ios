@@ -2,9 +2,10 @@
 import AppKit
 import SwiftUI
 
-/// The hub as a menu bar app: the same process takes reports off phones and simulators, and
-/// its menu bar panel shows the devices that are active and the reports sent, with where each
-/// went. It refreshes only while the panel is open, so it costs nothing while closed.
+/// The hub as a menu bar app: the same process takes reports off phones and simulators, and its
+/// menu bar panel shows the devices that are active and the reports sent, with where each went.
+///
+/// It refreshes only while the panel is open, so it costs nothing while closed.
 struct HubMenuBarApp: App {
     @NSApplicationDelegateAdaptor(HubAppDelegate.self) private var delegate
     @State private var model = HubWindowModel(hub: HubAppContext.hub)
@@ -35,9 +36,23 @@ private enum MenuBarIcon {
             context.addEllipse(in: badge.insetBy(dx: -1.3, dy: -1.3))
             context.clip(using: .evenOdd)
             context.setLineWidth(1.5)
-            context.addPath(CGPath(roundedRect: CGRect(x: 4.5, y: 1.25, width: 9, height: 15.5), cornerWidth: 2.8, cornerHeight: 2.8, transform: nil))
+            context.addPath(
+                CGPath(
+                    roundedRect: CGRect(x: 4.5, y: 1.25, width: 9, height: 15.5),
+                    cornerWidth: 2.8,
+                    cornerHeight: 2.8,
+                    transform: nil
+                )
+            )
             context.strokePath()
-            context.addPath(CGPath(roundedRect: CGRect(x: 6.3, y: 7, width: 5.4, height: 3.4), cornerWidth: 1, cornerHeight: 1, transform: nil))
+            context.addPath(
+                CGPath(
+                    roundedRect: CGRect(x: 6.3, y: 7, width: 5.4, height: 3.4),
+                    cornerWidth: 1,
+                    cornerHeight: 1,
+                    transform: nil
+                )
+            )
             context.fillPath()
             context.restoreGState()
             context.fillEllipse(in: badge)
@@ -49,16 +64,19 @@ private enum MenuBarIcon {
     }()
 }
 
-/// Stops the hub when the app quits, from the panel's Quit button, the Dock or logging out, so
-/// it releases `hub.pid` and logs that it stopped. Termination signals stop it on their own.
+/// Stops the hub when the app quits, from the panel's Quit button, the Dock or logging out, so it
+/// releases `hub.pid` and logs that it stopped.
+///
+/// Termination signals stop it on their own.
 private final class HubAppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         HubAppContext.hub?.stop()
     }
 }
 
-/// Hands the running hub to the app, which SwiftUI creates on its own. Set by `redline app`
-/// before the app starts, on the main actor.
+/// Hands the running hub to the app, which SwiftUI creates on its own.
+///
+/// Set by `redline app` before the app starts, on the main actor.
 @MainActor
 enum HubAppContext {
     static var hub: Hub!

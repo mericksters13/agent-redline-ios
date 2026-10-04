@@ -14,7 +14,10 @@ struct AgentHooksTests {
 
     @Test func eachAgentReadsTheReportWhereItLooks() throws {
         let output = try #require(AgentHooks.output(for: .prompt, text: "r"))
-        #expect(try sortedJSON(output) == sortedJSON(["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": "r"]]))
+        #expect(
+            try sortedJSON(output)
+                == sortedJSON(["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": "r"]])
+        )
         // Nothing to say, nothing printed.
         #expect(AgentHooks.output(for: .prompt, text: nil) == nil)
     }

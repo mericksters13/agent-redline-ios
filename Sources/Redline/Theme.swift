@@ -1,8 +1,10 @@
 #if REDLINE && canImport(UIKit)
 import SwiftUI
 
-/// Redline's colors: black surfaces and white type, like the Dynamic Island
-/// and other system overlays. The same on top of any app, light or dark.
+/// Redline's colors: black surfaces and white type, like the Dynamic Island and other system
+/// overlays.
+///
+/// The same on top of any app, light or dark.
 enum Mono {
     static let surface = Color.black
     static let text = Color.white

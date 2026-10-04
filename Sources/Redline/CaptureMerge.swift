@@ -23,12 +23,16 @@ enum CaptureMerge {
 
     /// Whether a new capture reuses, extends or replaces the screen's picture.
     /// - Parameters:
+    ///   - previous: the screen's capture so far.
+    ///   - new: the capture just taken.
     ///   - picturesMatch: the two pictures look the same.
     ///   - overlap: how the content compares where a scrolled capture overlaps the previous one.
+    /// - Returns: What to do with the new capture.
     static func decision(previous: Capture, new: Capture, picturesMatch: Bool, overlap: OverlapCheck) -> Decision {
         guard previous.size == new.size else { return .replace }
         if let before = previous.scroll, let after = new.scroll, before.isSameView(as: after),
-           abs(before.offsetY - after.offsetY) > 2 {
+            abs(before.offsetY - after.offsetY) > 2
+        {
             // Joined only when it's proven the same content, scrolled.
             guard overlap != .differs, isScroll(from: previous, to: new) else { return .replace }
             return .stitch
@@ -36,13 +40,16 @@ enum CaptureMerge {
         return picturesMatch && isSameLayout(previous, as: new) ? .reuse(previous.id) : .replace
     }
 
-    /// Whether two captures hold the same elements in the same places. A light menu over a
-    /// light screen can look almost unchanged in a small picture, but its items are new
-    /// elements. Text may change, like a time stamp, and a label's width with it.
+    /// Whether two captures hold the same elements in the same places.
+    ///
+    /// A light menu over a light screen can look almost unchanged in a small picture, but its items
+    /// are new elements. Text may change, like a time stamp, and a label's width with it.
     static func isSameLayout(_ a: Capture, as b: Capture) -> Bool {
         guard a.elements.count == b.elements.count else { return false }
         func ordered(_ capture: Capture) -> [ElementSnapshot] {
-            capture.elements.sorted { ($0.frame.minY.rounded(), $0.frame.minX.rounded()) < ($1.frame.minY.rounded(), $1.frame.minX.rounded()) }
+            capture.elements.sorted {
+                ($0.frame.minY.rounded(), $0.frame.minX.rounded()) < ($1.frame.minY.rounded(), $1.frame.minX.rounded())
+            }
         }
         return zip(ordered(a), ordered(b)).allSatisfy { old, new in
             old.role == new.role && old.isContainer == new.isContainer
@@ -52,10 +59,12 @@ enum CaptureMerge {
     }
 
     /// Whether two captures of one scroll view show the same content at two scroll positions,
-    /// rather than different content under the same screen title (two detail pages both
-    /// called "Feed"). Elements found whole in both captures must have moved by exactly the
-    /// scroll distance; a few may stay put, like a pinned section header, but most must
-    /// agree. With nothing in common, the content must be just as long.
+    /// rather than different content under the same screen title (two detail pages both called
+    /// "Feed").
+    ///
+    /// Elements found whole in both captures must have moved by exactly the scroll distance; a few
+    /// may stay put, like a pinned section header, but most must agree. With nothing in common, the
+    /// content must be just as long.
     static func isScroll(from previous: Capture, to new: Capture) -> Bool {
         guard let before = previous.scroll, let after = new.scroll, before.isSameView(as: after) else { return false }
         let distance = after.offsetY - before.offsetY
@@ -65,7 +74,8 @@ enum CaptureMerge {
         var disagreeing = 0
         for element in new.elements where !element.isContainer && inBand(element.frame) {
             guard let match = ElementSelection.match(element, in: previous.elements), inBand(match.frame),
-                  abs(match.frame.height - element.frame.height) < 1 else { continue }
+                abs(match.frame.height - element.frame.height) < 1
+            else { continue }
             if abs(match.frame.minY - distance - element.frame.minY) <= 2 {
                 agreeing += 1
             } else {

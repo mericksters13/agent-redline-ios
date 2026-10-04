@@ -4,8 +4,10 @@ import Foundation
 
 /// Connecting to a local app's Unix socket, as the Claude Code chats and the Codex app offer.
 enum UnixSocket {
-    /// A connected socket, or nil when nothing listens at `path`. Writing after the other end
-    /// closes fails with an error instead of ending this process with SIGPIPE.
+    /// A connected socket, or nil when nothing listens at `path`.
+    ///
+    /// Writing after the other end closes fails with an error instead of ending this process with
+    /// SIGPIPE.
     static func connect(path: String) -> Int32? {
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { return nil }
@@ -16,9 +18,12 @@ enum UnixSocket {
             close(descriptor)
             return nil
         }
-        withUnsafeMutableBytes(of: &address.sun_path) { target in bytes.withUnsafeBytes { target.copyMemory(from: $0) } }
+        withUnsafeMutableBytes(of: &address.sun_path) { target in bytes.withUnsafeBytes { target.copyMemory(from: $0) }
+        }
         let connected = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
         }
         guard connected == 0 else {
             close(descriptor)

@@ -6,14 +6,21 @@ import Foundation
 enum ReportSummary {
     static func markdown(_ report: Report) -> String {
         var lines: [String] = []
-        let app = [report.app.name ?? report.app.bundleID ?? "App", report.app.version.map { "\($0)" }, report.app.build.map { "(\($0))" }]
-            .compactMap { $0 }.joined(separator: " ")
+        let app = [
+            report.app.name ?? report.app.bundleID ?? "App", report.app.version.map { "\($0)" },
+            report.app.build.map { "(\($0))" },
+        ]
+        .compactMap { $0 }.joined(separator: " ")
         lines.append("# UI report: \(app)")
         lines.append("")
         let notes = countPhrase(report.items.count, singular: "note", plural: "notes")
-        let screens = report.screens.isEmpty ? "" : " on " + countPhrase(report.screens.count, singular: "screen", plural: "screens")
-        lines.append("\(report.device.model), \(report.device.systemName) \(report.device.systemVersion). "
-            + "\(notes)\(screens). Numbers match the red numbered outlines in the pictures.")
+        let screens =
+            report.screens.isEmpty
+            ? "" : " on " + countPhrase(report.screens.count, singular: "screen", plural: "screens")
+        lines.append(
+            "\(report.device.model), \(report.device.systemName) \(report.device.systemVersion). "
+                + "\(notes)\(screens). Numbers match the red numbered outlines in the pictures."
+        )
         let items = Dictionary(uniqueKeysWithValues: report.items.map { ($0.number, $0) })
 
         for screen in report.screens {
@@ -34,11 +41,15 @@ enum ReportSummary {
                 lines.append("\(description). \(outlined) outlined and numbered on it.")
                 let skipped = current.compactMap(\.scrolledPast).reduce(0, +)
                 if skipped > 0 {
-                    lines.append("The notes are far apart: about \(skipped) pt of the screen between them wasn't captured and is marked \"Scrolled past\". Those parts aren't next to each other in the layout.")
+                    lines.append(
+                        "The notes are far apart: about \(skipped) pt of the screen between them wasn't captured and is marked \"Scrolled past\". Those parts aren't next to each other in the layout."
+                    )
                 }
             }
             for earlier in screen.images where earlier.isEarlierState {
-                lines.append("An earlier state of the same screen, before its content changed: \(earlier.file), with \(earlier.notes.count == 1 ? "note" : "notes") \(list(earlier.notes)).")
+                lines.append(
+                    "An earlier state of the same screen, before its content changed: \(earlier.file), with \(earlier.notes.count == 1 ? "note" : "notes") \(list(earlier.notes))."
+                )
             }
             lines.append("")
             for number in screen.notes {

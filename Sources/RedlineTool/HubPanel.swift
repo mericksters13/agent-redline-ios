@@ -11,8 +11,10 @@ private enum Mark {
 /// The panel: the devices, then the reports sent.
 struct HubPanel: View {
     let model: HubWindowModel
-    /// The report list's own height. A scroll view in the menu bar panel has no height of its
-    /// own, so the list sets it, up to a limit.
+    /// The report list's own height.
+    ///
+    /// A scroll view in the menu bar panel has no height of its own, so the list sets it, up to a
+    /// limit.
     @State private var listHeight: CGFloat = 0
 
     var body: some View {
@@ -166,7 +168,9 @@ private struct DeviceRowView: View {
     }
 }
 
-/// A report: its first picture, where it went and its first notes. Clicking opens it.
+/// A report: its first picture, where it went and its first notes.
+///
+/// Clicking opens it.
 private struct ReportRowView: View {
     let report: HubWindowModel.ReportRow
 
@@ -219,7 +223,9 @@ struct DestinationText: View {
     let report: HubWindowModel.ReportRow
 
     var body: some View {
-        Text("\(Text(report.agent).foregroundStyle(report.isWaiting ? .secondary : .primary))\(Text(" · ").foregroundStyle(.secondary))\(report.chat)")
+        Text(
+            "\(Text(report.agent).foregroundStyle(report.isWaiting ? .secondary : .primary))\(Text(" · ").foregroundStyle(.secondary))\(report.chat)"
+        )
     }
 }
 
@@ -253,7 +259,9 @@ private struct Thumbnail: View {
         }
         .frame(width: 56, height: 100)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+        )
         .task(id: url) {
             image = nil
             guard let url else { return }

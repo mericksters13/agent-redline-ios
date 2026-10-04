@@ -2,9 +2,11 @@
 import AppKit
 import SwiftUI
 
-/// report.json as the kit writes it (the kit's `Report`), with every field the Mac reads, read
-/// in one place. Fields that some reports leave out are optional, and each reader checks for
-/// what it needs, so a report without them reads as it always did.
+/// report.json as the kit writes it (the kit's `Report`), with every field the Mac reads, read in
+/// one place.
+///
+/// Fields that some reports leave out are optional, and each reader checks for what it needs, so a
+/// report without them reads as it always did.
 struct ReportListing: Decodable {
     struct App: Decodable {
         var name: String?

@@ -19,7 +19,14 @@ struct ReportRoutingTests {
     }
 
     private func chat(_ id: String, _ agent: String, sameWorktree: Bool) -> HubMessage.Chat {
-        HubMessage.Chat(id: id, agent: agent, title: id, folder: "wt", isSameWorktree: sameWorktree, lastActive: Date.now)
+        HubMessage.Chat(
+            id: id,
+            agent: agent,
+            title: id,
+            folder: "wt",
+            isSameWorktree: sameWorktree,
+            lastActive: Date.now
+        )
     }
 
     @Test func aReportGoesWhereThePhonePickedOrElseToItsWorktreesChat() throws {
@@ -35,17 +42,33 @@ struct ReportRoutingTests {
         let others = [chat("A", "claude", sameWorktree: true), chat("B", "codex", sameWorktree: false)]
 
         // The user's pick wins, even over the chat in the worktree.
-        #expect(route(try report(sourceFile: file, pick: ["agent": "codex", "chat": "B"]), others) == .chat(.codex, id: "B"))
-        #expect(route(try report(sourceFile: file, pick: ["agent": "codex"]), others) == .newChat(.codex, folder: folder, pick: nil))
-        #expect(route(try report(sourceFile: file, pick: ["agent": "claude", "newChat": "N1"]), others) == .newChat(.claude, folder: folder, pick: "N1"))
+        #expect(
+            route(try report(sourceFile: file, pick: ["agent": "codex", "chat": "B"]), others) == .chat(.codex, id: "B")
+        )
+        #expect(
+            route(try report(sourceFile: file, pick: ["agent": "codex"]), others)
+                == .newChat(.codex, folder: folder, pick: nil)
+        )
+        #expect(
+            route(try report(sourceFile: file, pick: ["agent": "claude", "newChat": "N1"]), others)
+                == .newChat(.claude, folder: folder, pick: "N1")
+        )
         // No pick: the one chat in the worktree, or a new chat there with the first agent.
         #expect(route(try report(sourceFile: file, pick: nil), others) == .chat(.claude, id: "A"))
-        #expect(route(try report(sourceFile: file, pick: nil), [chat("B", "codex", sameWorktree: false)]) == .newChat(.claude, folder: folder, pick: nil))
+        #expect(
+            route(try report(sourceFile: file, pick: nil), [chat("B", "codex", sameWorktree: false)])
+                == .newChat(.claude, folder: folder, pick: nil)
+        )
         // Several chats in the worktree and no pick: no guessing.
-        if case .undecided = route(try report(sourceFile: file, pick: nil), others + [chat("C", "codex", sameWorktree: true)]) {} else {
+        if case .undecided = route(
+            try report(sourceFile: file, pick: nil),
+            others + [chat("C", "codex", sameWorktree: true)]
+        ) {
+        } else {
             Issue.record("Two chats in the worktree should leave the report undecided")
         }
-        if case .undecided = route(try report(sourceFile: nil, pick: nil), others) {} else {
+        if case .undecided = route(try report(sourceFile: nil, pick: nil), others) {
+        } else {
             Issue.record("A report without its worktree should be undecided")
         }
     }

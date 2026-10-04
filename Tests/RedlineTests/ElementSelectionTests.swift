@@ -6,12 +6,31 @@ import Testing
 struct ElementSelectionTests {
     private let screen = CGSize(width: 400, height: 800)
 
-    private func element(role: String, label: String?, frame: CGRect, identifier: String? = nil, isContainer: Bool = false) -> ElementSnapshot {
-        ElementSnapshot(role: role, label: label, value: nil, identifier: identifier, className: nil, isContainer: isContainer, frame: frame)
+    private func element(
+        role: String,
+        label: String?,
+        frame: CGRect,
+        identifier: String? = nil,
+        isContainer: Bool = false
+    ) -> ElementSnapshot {
+        ElementSnapshot(
+            role: role,
+            label: label,
+            value: nil,
+            identifier: identifier,
+            className: nil,
+            isContainer: isContainer,
+            frame: frame
+        )
     }
 
     @Test func innermostElementComesFirstThenItsContainers() {
-        let card = element(role: "Group", label: "Account", frame: CGRect(x: 20, y: 100, width: 360, height: 200), isContainer: true)
+        let card = element(
+            role: "Group",
+            label: "Account",
+            frame: CGRect(x: 20, y: 100, width: 360, height: 200),
+            isContainer: true
+        )
         let row = element(role: "Button", label: "Email", frame: CGRect(x: 30, y: 120, width: 340, height: 44))
         let label = element(role: "Text", label: "Email", frame: CGRect(x: 40, y: 130, width: 100, height: 20))
         let levels = ElementSelection.levels(at: CGPoint(x: 60, y: 140), in: [card, label, row], screenSize: screen)
@@ -20,13 +39,23 @@ struct ElementSelectionTests {
 
     @Test func sameSizedWrappersCollapseIntoOneLevel() {
         let button = element(role: "Button", label: "Save", frame: CGRect(x: 20, y: 600, width: 360, height: 50))
-        let wrapper = element(role: "Group", label: "Save", frame: CGRect(x: 21, y: 601, width: 358, height: 49), isContainer: true)
+        let wrapper = element(
+            role: "Group",
+            label: "Save",
+            frame: CGRect(x: 21, y: 601, width: 358, height: 49),
+            isContainer: true
+        )
         let levels = ElementSelection.levels(at: CGPoint(x: 200, y: 620), in: [button, wrapper], screenSize: screen)
         #expect(levels.count == 1)
     }
 
     @Test func elementsCoveringTheScreenAreLeftOut() {
-        let background = element(role: "Group", label: "Main", frame: CGRect(x: 0, y: 0, width: 400, height: 800), isContainer: true)
+        let background = element(
+            role: "Group",
+            label: "Main",
+            frame: CGRect(x: 0, y: 0, width: 400, height: 800),
+            isContainer: true
+        )
         let button = element(role: "Button", label: "Save", frame: CGRect(x: 20, y: 600, width: 360, height: 50))
         let levels = ElementSelection.levels(at: CGPoint(x: 200, y: 620), in: [background, button], screenSize: screen)
         #expect(levels == [button])
@@ -45,8 +74,18 @@ struct ElementSelectionTests {
     }
 
     @Test func matchPrefersTheIdentifier() {
-        let saved = element(role: "Button", label: "Save", frame: CGRect(x: 0, y: 0, width: 10, height: 10), identifier: "save")
-        let moved = element(role: "Button", label: "Save changes", frame: CGRect(x: 0, y: 300, width: 10, height: 10), identifier: "save")
+        let saved = element(
+            role: "Button",
+            label: "Save",
+            frame: CGRect(x: 0, y: 0, width: 10, height: 10),
+            identifier: "save"
+        )
+        let moved = element(
+            role: "Button",
+            label: "Save changes",
+            frame: CGRect(x: 0, y: 300, width: 10, height: 10),
+            identifier: "save"
+        )
         let other = element(role: "Button", label: "Save", frame: CGRect(x: 0, y: 500, width: 10, height: 10))
         #expect(ElementSelection.match(saved, in: [other, moved]) == moved)
     }

@@ -14,12 +14,29 @@ final class ChatSession: Sendable {
 
     /// `id` names the chat, such as an agent's session ID, so each of its hooks finds the same
     /// record. `pid` is the process the chat lives in, when that isn't this one.
-    init(paths: HubPaths, folder: URL, extraApps: [String], agent: String, id: String? = nil, pid: Int32? = nil, startsHub: Bool = true) {
+    init(
+        paths: HubPaths,
+        folder: URL,
+        extraApps: [String],
+        agent: String,
+        id: String? = nil,
+        pid: Int32? = nil,
+        startsHub: Bool = true
+    ) {
         self.paths = paths
         self.startsHub = startsHub
         let apps = Array(Set(ProjectApps.bundleIDs(in: folder) + extraApps)).sorted()
-        record = Mutex(ChatRecord(id: id ?? UUID().uuidString, agent: agent, folder: folder.path, bundleIDs: apps,
-                                  pid: pid ?? getpid(), registeredAt: .now, lastActiveAt: .now))
+        record = Mutex(
+            ChatRecord(
+                id: id ?? UUID().uuidString,
+                agent: agent,
+                folder: folder.path,
+                bundleIDs: apps,
+                pid: pid ?? getpid(),
+                registeredAt: .now,
+                lastActiveAt: .now
+            )
+        )
     }
 
     /// Registers this process as the one waiting for the chat's reports.
@@ -28,8 +45,10 @@ final class ChatSession: Sendable {
         register()
     }
 
-    /// Registers the chat and starts the hub if it isn't running. A chat whose project builds
-    /// no iOS app stays out of it: the server is set up for every project, and most aren't apps.
+    /// Registers the chat and starts the hub if it isn't running.
+    ///
+    /// A chat whose project builds no iOS app stays out of it: the server is set up for every
+    /// project, and most aren't apps.
     func register(agent: String? = nil) {
         record.withLock { if let agent { $0.agent = agent } }
         guard !chat.bundleIDs.isEmpty else { return }
@@ -49,8 +68,10 @@ final class ChatSession: Sendable {
         save()
     }
 
-    /// Takes the reports sent to this chat, as text with pictures named by path, for agents
-    /// that get reports through hooks. Nil when there's none.
+    /// Takes the reports sent to this chat, as text with pictures named by path, for agents that
+    /// get reports through hooks.
+    ///
+    /// Nil when there's none.
     func takeAddressed() -> String? {
         let chat = self.chat
         var texts: [String] = []
@@ -61,8 +82,10 @@ final class ChatSession: Sendable {
         return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
     }
 
-    /// Takes the reports waiting for this chat's apps, oldest first. Always takes at least one
-    /// waiting report; takes more while their pictures fit in `budget` bytes.
+    /// Takes the reports waiting for this chat's apps, oldest first.
+    ///
+    /// Always takes at least one waiting report; takes more while their pictures fit in `budget`
+    /// bytes.
     func take(budget: Int) -> (items: [ReportContent.Item], taken: Int, remaining: Int) {
         let chat = self.chat
         var items: [ReportContent.Item] = []
@@ -87,9 +110,11 @@ final class ChatSession: Sendable {
     /// report, before taking it itself.
     static let deferToRecentChat: TimeInterval = 4
 
-    /// Waits until there's a report this chat should take. When several chats on the project
-    /// are waiting, the one used most recently takes it; the others take it only if it's still
-    /// waiting a moment later, such as when that chat is busy or gone.
+    /// Waits until there's a report this chat should take.
+    ///
+    /// When several chats on the project are waiting, the one used most recently takes it; the
+    /// others take it only if it's still waiting a moment later, such as when that chat is busy or
+    /// gone.
     func waitForRoutedReport(timeout: TimeInterval?, waiter: Waiter) -> Bool {
         let deadline = timeout.map { Date.now.addingTimeInterval($0) }
         while true {
@@ -138,10 +163,14 @@ final class ChatSession: Sendable {
     }
 
     /// Waits until a report for this chat's apps is waiting, `timeout` passes or the waiter is
-    /// cancelled. Woken by the inbox changing, not by checking on a timer. True when one is waiting.
+    /// cancelled.
+    ///
+    /// Woken by the inbox changing, not by checking on a timer. True when one is waiting.
     func waitForReport(timeout: TimeInterval?, waiter: Waiter) -> Bool {
         let chat = self.chat
-        return wait(timeout: timeout, waiter: waiter) { !Inbox.unclaimedReports(for: chat.bundleIDs, paths: self.paths).isEmpty }
+        return wait(timeout: timeout, waiter: waiter) {
+            !Inbox.unclaimedReports(for: chat.bundleIDs, paths: self.paths).isEmpty
+        }
     }
 
     private func wait(timeout: TimeInterval?, waiter: Waiter, until ready: () -> Bool) -> Bool {
@@ -153,7 +182,11 @@ final class ChatSession: Sendable {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let descriptor = open(folder.path, O_EVTONLY)
             guard descriptor >= 0 else { continue }
-            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: .write, queue: Self.watching)
+            let source = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: descriptor,
+                eventMask: .write,
+                queue: Self.watching
+            )
             source.setEventHandler { waiter.wake() }
             source.setCancelHandler { close(descriptor) }
             source.resume()

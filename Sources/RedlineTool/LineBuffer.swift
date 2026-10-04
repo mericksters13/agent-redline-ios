@@ -1,8 +1,9 @@
 #if os(macOS)
 import Foundation
 
-/// The bytes read from a connection, taken a line at a time. Each byte is looked at once for a
-/// newline, however many pieces a long line arrives in.
+/// The bytes read from a connection, taken a line at a time.
+///
+/// Each byte is looked at once for a newline, however many pieces a long line arrives in.
 struct LineBuffer {
     private var bytes = Data()
     /// How far the search for a newline has got.

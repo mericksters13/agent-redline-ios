@@ -12,32 +12,32 @@ let version = "0.1.0"
 
 /// The help text printed for `redline` with no or unknown arguments.
 let usage = """
-Usage:
-  redline mcp [--project <folder>] [--app <bundle ID> ...]
-      The MCP server for one agent chat. Registers the chat for the apps its project builds,
-      starts the hub if needed, and offers check_messages and wait_for_message.
-  redline check [--project <folder>] [--app <bundle ID> ...]
-      Prints the reports waiting for the project's apps and takes them, for agents without MCP.
-  redline wait [--project <folder>] [--app <bundle ID> ...] [--timeout <seconds>]
-               [--session <chat ID>] [--agent <name>]
-      Waits for the next report for the project's apps, then prints it and takes it. Run in an
-      agent's background, it wakes the chat when a report arrives. With several chats waiting,
-      the one used most recently gets the report.
-  redline setup | remove
-      Adds to (or removes from) Codex's hook settings the hook that hands reports to a chat when
-      nothing else can. Claude Code needs none. Other hooks stay as they are.
-  redline hook <claude | codex> prompt
-      Run by the agents' hooks, with the event's JSON on standard input.
-  redline hub [--app <bundle ID> ...]
-      Takes reports from phones and simulators for the open chats' apps and files them in the inbox.
-      Chats start it when it isn't running.
-  redline app
-      The hub as a menu bar app, showing the active devices and the reports sent. Opening the
-      app bundle does the same.
-  redline status
-      Shows what the hub is doing and what's in the inbox.
+    Usage:
+      redline mcp [--project <folder>] [--app <bundle ID> ...]
+          The MCP server for one agent chat. Registers the chat for the apps its project builds,
+          starts the hub if needed, and offers check_messages and wait_for_message.
+      redline check [--project <folder>] [--app <bundle ID> ...]
+          Prints the reports waiting for the project's apps and takes them, for agents without MCP.
+      redline wait [--project <folder>] [--app <bundle ID> ...] [--timeout <seconds>]
+                   [--session <chat ID>] [--agent <name>]
+          Waits for the next report for the project's apps, then prints it and takes it. Run in an
+          agent's background, it wakes the chat when a report arrives. With several chats waiting,
+          the one used most recently gets the report.
+      redline setup | remove
+          Adds to (or removes from) Codex's hook settings the hook that hands reports to a chat when
+          nothing else can. Claude Code needs none. Other hooks stay as they are.
+      redline hook <claude | codex> prompt
+          Run by the agents' hooks, with the event's JSON on standard input.
+      redline hub [--app <bundle ID> ...]
+          Takes reports from phones and simulators for the open chats' apps and files them in the inbox.
+          Chats start it when it isn't running.
+      redline app
+          The hub as a menu bar app, showing the active devices and the reports sent. Opening the
+          app bundle does the same.
+      redline status
+          Shows what the hub is doing and what's in the inbox.
 
-"""
+    """
 
 /// The options the chat commands share.
 struct ChatOptions {
@@ -133,7 +133,13 @@ case "check":
 
 case "wait":
     let options = ChatOptions.parseOrExit(arguments.dropFirst())
-    let session = ChatSession(paths: paths, folder: options.project, extraApps: options.apps, agent: options.agent, id: options.session)
+    let session = ChatSession(
+        paths: paths,
+        folder: options.project,
+        extraApps: options.apps,
+        agent: options.agent,
+        id: options.session
+    )
     guard !session.chat.bundleIDs.isEmpty else {
         print("No app found for \(options.project.path). Pass --app <bundle ID>.")
         exit(1)
@@ -165,7 +171,8 @@ case "wait":
     }
 
 case "hook":
-    guard arguments.count == 3, let agent = Agent(rawValue: arguments[1]), let event = HookEvent(rawValue: arguments[2]) else {
+    guard arguments.count == 3, let agent = Agent(rawValue: arguments[1]), let event = HookEvent(rawValue: arguments[2])
+    else {
         printError(usage)
         exit(64)
     }
@@ -192,16 +199,28 @@ case "setup", "remove":
         }
         do {
             try AgentSettings.update(agent) {
-                adding ? AgentSettings.adding(agent, to: $0, executable: executable) : AgentSettings.removing(agent, from: $0)
+                adding
+                    ? AgentSettings.adding(agent, to: $0, executable: executable)
+                    : AgentSettings.removing(agent, from: $0)
             }
-            print("\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.fileURL(for: agent).path)")
-            if adding, agent == .codex { print("  Codex runs a new hook only once you trust it: open /hooks in Codex and trust \"Report delivery\".") }
+            print(
+                "\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.fileURL(for: agent).path)"
+            )
+            if adding, agent == .codex {
+                print(
+                    "  Codex runs a new hook only once you trust it: open /hooks in Codex and trust \"Report delivery\"."
+                )
+            }
         } catch {
-            print("\(agent.name): couldn't update \(AgentSettings.fileURL(for: agent).path): \(error.localizedDescription)")
+            print(
+                "\(agent.name): couldn't update \(AgentSettings.fileURL(for: agent).path): \(error.localizedDescription)"
+            )
             failed = true
         }
     }
-    if adding { print("Reports go to the chat picked on the phone, or else the chat in the worktree the app was built from.") }
+    if adding {
+        print("Reports go to the chat picked on the phone, or else the chat in the worktree the app was built from.")
+    }
     exit(failed ? 1 : 0)
 
 case "status":
@@ -216,8 +235,9 @@ func printError(_ message: String) {
     try? FileHandle.standardError.write(contentsOf: Data((message + "\n").utf8))
 }
 
-/// Runs `cleanup` and exits on Control-C or a termination request. Called from the top-level
-/// code above, on the main actor.
+/// Runs `cleanup` and exits on Control-C or a termination request.
+///
+/// Called from the top-level code above, on the main actor.
 @MainActor
 func stopOnSignals(_ cleanup: @escaping @Sendable () -> Void) {
     for number in [SIGINT, SIGTERM, SIGHUP] {
@@ -232,21 +252,28 @@ func stopOnSignals(_ cleanup: @escaping @Sendable () -> Void) {
     }
 }
 
-/// Kept alive for as long as the process runs. A static, not a top-level variable: those
-/// start existing only when execution reaches their line, after the commands above use this.
+/// Kept alive for as long as the process runs.
+///
+/// A static, not a top-level variable: those start existing only when execution reaches their line,
+/// after the commands above use this.
 @MainActor
 enum SignalSources {
     static var all: [DispatchSourceSignal] = []
 }
 
-/// Prints the reports waiting for the session's apps and takes them. Pictures are named by
-/// path; an agent opens them with its own tools. True when it printed any.
+/// Prints the reports waiting for the session's apps and takes them.
+///
+/// Pictures are named by path; an agent opens them with its own tools. True when it printed any.
 @discardableResult
 func printReports(_ session: ChatSession, isQuietWhenNone: Bool = false) -> Bool {
     let taken = session.take(budget: Int.max)
     guard taken.taken > 0 else {
         if !isQuietWhenNone {
-            print(session.chat.bundleIDs.isEmpty ? "No app found for \(session.chat.folder). Pass --app <bundle ID>." : "No reports waiting for \(session.chat.bundleIDs.joined(separator: ", ")).")
+            print(
+                session.chat.bundleIDs.isEmpty
+                    ? "No app found for \(session.chat.folder). Pass --app <bundle ID>."
+                    : "No reports waiting for \(session.chat.bundleIDs.joined(separator: ", "))."
+            )
         }
         return false
     }
@@ -265,10 +292,18 @@ func printStatus(_ paths: HubPaths) {
     if let pid = HubProcess.running(paths) {
         do {
             let status = try decoder.decode(HubStatus.self, from: Data(contentsOf: paths.status))
-            print("Hub running (pid \(pid)) since \(status.startedAt.formatted(date: .omitted, time: .shortened)), for \(status.apps.joined(separator: ", "))")
+            print(
+                "Hub running (pid \(pid)) since \(status.startedAt.formatted(date: .omitted, time: .shortened)), for \(status.apps.joined(separator: ", "))"
+            )
             print("  Apps reach it at \(status.hosts.joined(separator: ", ")), port \(status.port)")
-            for phone in status.phones { print("  \(phone.name) (\([phone.model, phone.udid].compactMap { $0 }.joined(separator: ", "))): \(phone.state)") }
-            print("  Simulators: \(status.simulatorContainers) app \(status.simulatorContainers == 1 ? "container" : "containers") watched")
+            for phone in status.phones {
+                print(
+                    "  \(phone.name) (\([phone.model, phone.udid].compactMap { $0 }.joined(separator: ", "))): \(phone.state)"
+                )
+            }
+            print(
+                "  Simulators: \(status.simulatorContainers) app \(status.simulatorContainers == 1 ? "container" : "containers") watched"
+            )
         } catch {
             print("Hub running (pid \(pid)), but its status couldn't be read: \(error.localizedDescription)")
         }
@@ -285,7 +320,10 @@ func printStatus(_ paths: HubPaths) {
         let newest = reports.last.map { report in
             "\(report.folder.lastPathComponent), from \(report.source.deviceName), received \(report.source.receivedAt.formatted(.relative(presentation: .named)))"
         }
-        print("  \(app): \(reports.count) \(reports.count == 1 ? "report" : "reports")" + (newest.map { "; newest \($0)" } ?? ""))
+        print(
+            "  \(app): \(reports.count) \(reports.count == 1 ? "report" : "reports")"
+                + (newest.map { "; newest \($0)" } ?? "")
+        )
     }
 }
 #else

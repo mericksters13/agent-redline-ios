@@ -4,10 +4,12 @@ import Foundation
 
 /// Starting the hub from a chat, so nothing has to be started by hand.
 enum HubProcess {
-    /// Takes the hub's lock: `hub.pid`, held with an exclusive `flock` for as long as the
-    /// returned descriptor is open, with this process's pid written in it. The kernel releases
-    /// the lock however the process ends, so a file left by a hub that crashed or was killed
-    /// never names a running hub. Nil when another hub holds the lock or the file can't be opened.
+    /// Takes the hub's lock: `hub.pid`, held with an exclusive `flock` for as long as the returned
+    /// descriptor is open, with this process's pid written in it.
+    ///
+    /// The kernel releases the lock however the process ends, so a file left by a hub that crashed
+    /// or was killed never names a running hub. Nil when another hub holds the lock or the file
+    /// can't be opened.
     static func lock(_ paths: HubPaths) -> Int32? {
         // Close-on-exec, so agents and git started by the hub don't hold the lock after it ends.
         let descriptor = open(paths.pid.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
@@ -36,10 +38,14 @@ enum HubProcess {
         var bytes = [UInt8](repeating: 0, count: 32)
         let count = read(descriptor, &bytes, bytes.count)
         guard count > 0 else { return nil }
-        return Int32(String(decoding: bytes.prefix(count), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+        return Int32(
+            String(decoding: bytes.prefix(count), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 
-    /// The menu bar app, which is the hub, when it's installed. Checks the disk.
+    /// The menu bar app, which is the hub, when it's installed.
+    ///
+    /// Checks the disk.
     static func installedApp() -> URL? {
         let app = URL.homeDirectory.appending(path: "Applications/Redline.app")
         return FileManager.default.fileExists(atPath: app.path) ? app : nil
@@ -79,12 +85,15 @@ enum HubProcess {
         defer { posix_spawn_file_actions_destroy(&files) }
         for descriptor in [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO] {
             let mode = descriptor == STDIN_FILENO ? O_RDONLY : O_WRONLY
-            guard !failed("/dev/null", posix_spawn_file_actions_addopen(&files, descriptor, "/dev/null", mode, 0)) else { return }
+            guard !failed("/dev/null", posix_spawn_file_actions_addopen(&files, descriptor, "/dev/null", mode, 0))
+            else { return }
         }
         var pid: pid_t = 0
         let arguments = [executable, "hub"]
         var argv = arguments.map { strdup($0) } + [nil]
-        defer { argv.forEach { free($0) } }
+        defer {
+            for argument in argv { free(argument) }
+        }
         _ = failed("spawn", posix_spawn(&pid, executable, &files, &attributes, &argv, environ))
     }
 }

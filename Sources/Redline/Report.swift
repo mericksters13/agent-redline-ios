@@ -1,8 +1,9 @@
 #if REDLINE
 import Foundation
 
-/// What Send produces, for the agent: one picture per screen with every note on it outlined
-/// and numbered, and every note and attachment in the order the phone numbered them.
+/// What Send produces, for the agent: one picture per screen with every note on it outlined and
+/// numbered, and every note and attachment in the order the phone numbered them.
+///
 /// Screens, pictures and notes point at each other, so the agent can go either way.
 struct Report: Codable, Sendable {
     /// The app the report came from.
@@ -52,9 +53,11 @@ struct Report: Codable, Sendable {
         var viewController: String?
         /// The numbers of the notes made on this screen.
         var notes: [Int]
-        /// Usually one picture. A screen that scrolled may be stitched into one tall picture
-        /// sent in parts; a screen whose content changed between notes keeps a picture of its
-        /// earlier state for the notes that weren't on the newer one.
+        /// Usually one picture.
+        ///
+        /// A screen that scrolled may be stitched into one tall picture sent in parts; a screen
+        /// whose content changed between notes keeps a picture of its earlier state for the notes
+        /// that weren't on the newer one.
         var images: [Picture]
     }
 
@@ -72,8 +75,10 @@ struct Report: Codable, Sendable {
         var notes: [Int]
         var width: Int
         var height: Int
-        /// Points of content scrolled past between captures and not shown, marked
-        /// "Scrolled past" in the picture. Nil when nothing was skipped.
+        /// Points of content scrolled past between captures and not shown, marked "Scrolled past"
+        /// in the picture.
+        ///
+        /// Nil when nothing was skipped.
         var scrolledPast: Int? = nil
 
         private enum CodingKeys: String, CodingKey {
@@ -117,8 +122,9 @@ struct Report: Codable, Sendable {
     var items: [Item]
     /// Nil when the user didn't pick: the Mac sends it to the chat working in the worktree.
     var destination: Destination? = nil
-    /// The version of this format, raised when a field changes meaning or is removed. Nil in
-    /// reports written before the format had a version, which read as version 1.
+    /// The version of this format, raised when a field changes meaning or is removed.
+    ///
+    /// Nil in reports written before the format had a version, which read as version 1.
     var version: Int? = 1
 }
 

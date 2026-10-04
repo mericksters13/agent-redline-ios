@@ -12,11 +12,15 @@ struct AgentCommandTests {
         #expect(AgentCommand.startedChat(.claude, in: claude)?.answer == "The button is too small.")
         #expect(AgentCommand.startedChat(.claude, in: "Not logged in · Please run /login") == nil)
         // Claude Code prints a result even when it couldn't run: that's a failure, in its own words.
-        let notSignedIn = #"{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login","session_id":"s-1"}"#
+        let notSignedIn =
+            #"{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login","session_id":"s-1"}"#
         #expect(AgentCommand.startedChat(.claude, in: notSignedIn)?.didFail == true)
         #expect(AgentCommand.failure(in: notSignedIn) == "Not logged in · Please run /login")
         #expect(AgentCommand.arguments(.claude, folder: "/w", prompt: "p").contains("plan"))
-        #expect(AgentCommand.arguments(.codex, folder: "/w", prompt: "p", pictures: [URL(filePath: "/a.jpg")]).suffix(4) == ["-i", "/a.jpg", "--", "p"])
+        #expect(
+            AgentCommand.arguments(.codex, folder: "/w", prompt: "p", pictures: [URL(filePath: "/a.jpg")]).suffix(4)
+                == ["-i", "/a.jpg", "--", "p"]
+        )
     }
 }
 #endif

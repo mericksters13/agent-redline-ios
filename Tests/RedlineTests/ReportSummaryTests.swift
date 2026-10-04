@@ -18,7 +18,11 @@ struct ReportSummaryTests {
     @Test func theSummaryTellsTheAgentWhichPictureShowsEachNote() {
         let text = ReportSummary.markdown(Fixtures.report(id: "r"))
         #expect(text.contains("## Screen: Today"))
-        #expect(text.contains("One screenshot of this screen, stitched from 2 scroll positions, in 2 parts: screen-1.jpg, screen-1-part-2.jpg."))
+        #expect(
+            text.contains(
+                "One screenshot of this screen, stitched from 2 scroll positions, in 2 parts: screen-1.jpg, screen-1-part-2.jpg."
+            )
+        )
         #expect(text.contains("Notes 1 and 2 are outlined and numbered on it."))
         #expect(text.contains("1. **Save** (Button, identifier `save`): Cut off. See screen-1.jpg."))
         #expect(text.contains("## Attachments"))
@@ -28,12 +32,27 @@ struct ReportSummaryTests {
     @Test func anEarlierStateAndContentScrolledPastAreExplained() {
         var report = Fixtures.report(id: "r")
         report.screens[0].images[0].scrolledPast = 786
-        report.screens[0].images.append(Report.Picture(
-            file: "screen-1-earlier-1.jpg", part: 1, parts: 1, stitchedFrom: 1, isEarlierState: true, notes: [3], width: 563, height: 1224
-        ))
+        report.screens[0].images.append(
+            Report.Picture(
+                file: "screen-1-earlier-1.jpg",
+                part: 1,
+                parts: 1,
+                stitchedFrom: 1,
+                isEarlierState: true,
+                notes: [3],
+                width: 563,
+                height: 1224
+            )
+        )
         let text = ReportSummary.markdown(report)
-        #expect(text.contains("about 786 pt of the screen between them wasn't captured and is marked \"Scrolled past\""))
-        #expect(text.contains("An earlier state of the same screen, before its content changed: screen-1-earlier-1.jpg, with note 3."))
+        #expect(
+            text.contains("about 786 pt of the screen between them wasn't captured and is marked \"Scrolled past\"")
+        )
+        #expect(
+            text.contains(
+                "An earlier state of the same screen, before its content changed: screen-1-earlier-1.jpg, with note 3."
+            )
+        )
     }
 
     @Test func threeOrMoreNotesAreListedWithAnd() {
@@ -46,7 +65,11 @@ struct ReportSummaryTests {
     @Test func aLabelThatIsntTheTitleIsGivenToo() {
         var report = Fixtures.report(id: "r")
         report.items[0].title = "Save changes"
-        #expect(ReportSummary.markdown(report).contains(#"1. **Save changes** (Button, identifier `save`, label "Save"): Cut off."#))
+        #expect(
+            ReportSummary.markdown(report).contains(
+                #"1. **Save changes** (Button, identifier `save`, label "Save"): Cut off."#
+            )
+        )
     }
 }
 #endif

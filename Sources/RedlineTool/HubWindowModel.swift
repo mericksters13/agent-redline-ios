@@ -13,7 +13,9 @@ final class HubWindowModel {
         var kind: String
         var state: String
         var lastReport: Date?
-        /// Ready to send reports. A paired phone that isn't still shows, dimmed, with why.
+        /// Ready to send reports.
+        ///
+        /// A paired phone that isn't still shows, dimmed, with why.
         var isActive = true
         var isSimulator: Bool { kind == "Simulator" }
     }
@@ -78,9 +80,10 @@ final class HubWindowModel {
         refreshing = nil
     }
 
-    /// Reads the hub and the inbox off the main actor, then shows the result in one step. A
-    /// refresh still running when the next is due is left to finish, so results never land out
-    /// of order.
+    /// Reads the hub and the inbox off the main actor, then shows the result in one step.
+    ///
+    /// A refresh still running when the next is due is left to finish, so results never land out of
+    /// order.
     func refresh() {
         guard refreshing == nil else { return }
         let hub = hub
@@ -95,24 +98,36 @@ final class HubWindowModel {
     private func apply(_ snapshot: Snapshot) {
         let last = Dictionary(snapshot.reports.map { ($0.deviceID, $0.row.receivedAt) }, uniquingKeysWith: max)
         let phones = snapshot.status.phones.map {
-            DeviceRow(id: $0.udid, name: $0.name, kind: $0.model ?? "iPhone", state: Self.phoneState($0),
-                      lastReport: last[$0.udid], isActive: $0.phoneState?.isReady ?? $0.state.hasPrefix("Ready"))
+            DeviceRow(
+                id: $0.udid,
+                name: $0.name,
+                kind: $0.model ?? "iPhone",
+                state: Self.phoneState($0),
+                lastReport: last[$0.udid],
+                isActive: $0.phoneState?.isReady ?? $0.state.hasPrefix("Ready")
+            )
         }
-        let simulators = snapshot.simulators.map { DeviceRow(id: $0.udid, name: $0.name, kind: "Simulator", state: "Running", lastReport: last[$0.udid]) }
+        let simulators = snapshot.simulators.map {
+            DeviceRow(id: $0.udid, name: $0.name, kind: "Simulator", state: "Running", lastReport: last[$0.udid])
+        }
         // Ready phones and running simulators first, then paired phones that can't take reports now.
         // Only what changed is set, so the panel redraws only when something did.
         let newDevices = phones.filter(\.isActive) + simulators + phones.filter { !$0.isActive }
         if newDevices != devices { devices = newDevices }
         let newReports = snapshot.reports.map(\.row)
         if newReports != reports { reports = newReports }
-        let newReach = snapshot.status.hosts.first.map { "Apps reach it at \($0) · port \(snapshot.status.port)" } ?? "No local network"
+        let newReach =
+            snapshot.status.hosts.first.map { "Apps reach it at \($0) · port \(snapshot.status.port)" }
+            ?? "No local network"
         if newReach != reach { reach = newReach }
     }
 
     /// Where refreshes read the inbox and run simctl, which block.
     private nonisolated static let loader = DispatchQueue(label: "Redline.panel.loader", qos: .userInitiated)
 
-    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    /// Runs off the main actor.
+    ///
+    /// Add @concurrent when the tools version reaches 6.2.
     nonisolated static func loadSnapshot(hub: Hub) async -> Snapshot {
         await withCheckedContinuation { continuation in
             loader.async {
@@ -136,24 +151,39 @@ final class HubWindowModel {
         return state
     }
 
-    /// The newest reports in the inbox, with where each went. Only the newest `limit` are read
-    /// beyond their source.json.
+    /// The newest reports in the inbox, with where each went.
+    ///
+    /// Only the newest `limit` are read beyond their source.json.
     nonisolated static func readReports(paths: HubPaths, limit: Int = 30) -> [(deviceID: String, row: ReportRow)] {
-        let newest = Inbox.reports(for: nil, paths: paths).sorted { $0.source.receivedAt > $1.source.receivedAt }.prefix(limit)
+        let newest = Inbox.reports(for: nil, paths: paths).sorted { $0.source.receivedAt > $1.source.receivedAt }
+            .prefix(limit)
         let database = CodexThreads.newestDatabase()
         return newest.map { report in
             let folder = report.folder
             let listing = ReportListing.load(from: folder)
             let (agent, chat, isWaiting) = destination(of: folder, codexDatabase: database)
-            return (report.source.device, ReportRow(id: folder.path, folder: folder, device: report.source.deviceName, receivedAt: report.source.receivedAt,
-                                                    agent: agent, chat: chat, isWaiting: isWaiting,
-                                                    thumbnail: ReportContent.pictures(in: folder, listing: listing).first, notes: notes(of: listing)))
+            return (
+                report.source.device,
+                ReportRow(
+                    id: folder.path,
+                    folder: folder,
+                    device: report.source.deviceName,
+                    receivedAt: report.source.receivedAt,
+                    agent: agent,
+                    chat: chat,
+                    isWaiting: isWaiting,
+                    thumbnail: ReportContent.pictures(in: folder, listing: listing).first,
+                    notes: notes(of: listing)
+                )
+            )
         }
     }
 
     /// The agent and chat a report went to: what the hub saved when it delivered it, or the
     /// chat that took it through MCP or a hook.
-    nonisolated static func destination(of folder: URL, codexDatabase: URL?) -> (agent: String, chat: String, isWaiting: Bool) {
+    nonisolated static func destination(of folder: URL, codexDatabase: URL?) -> (
+        agent: String, chat: String, isWaiting: Bool
+    ) {
         if let delivery = ReportDelivery.load(from: folder) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             return (agent, delivery.title, delivery.kind == .waiting)
@@ -176,16 +206,21 @@ final class HubWindowModel {
         return folder ?? "Chat"
     }
 
-    /// The report's notes in their numbers' order, each as "Log milestone: This is ugly". None
-    /// when an item lacks its number, title or note.
+    /// The report's notes in their numbers' order, each as "Log milestone: This is ugly".
+    ///
+    /// None when an item lacks its number, title or note.
     nonisolated static func notes(in folder: URL) -> [Note] {
         notes(of: ReportListing.load(from: folder))
     }
 
     nonisolated static func notes(of listing: ReportListing?) -> [Note] {
-        guard let items = listing?.items?.map({ item in
-            item.number.flatMap { number in item.title.flatMap { title in item.note.map { (number, title, $0, item.element) } } }
-        }).allPresent() else { return [] }
+        guard
+            let items = listing?.items?.map({ item in
+                item.number.flatMap { number in
+                    item.title.flatMap { title in item.note.map { (number, title, $0, item.element) } }
+                }
+            }).allPresent()
+        else { return [] }
         return items.sorted { $0.0 < $1.0 }.map { number, title, note, element in
             let name = element?.label ?? element?.identifier ?? title
             return Note(number: number, text: "\(name): \(note.isEmpty ? "No note" : note)")

@@ -2,10 +2,12 @@
 import Darwin
 import Foundation
 
-/// Starts a turn in a chat open in the Codex app, with the report's pictures attached the way
-/// the app attaches a screenshot the user adds. It goes through the app's own socket, so the
-/// app runs the turn: the chat wakes even when idle and shows it live. The socket's protocol
-/// is the app's own, not a published one, so an update to the app can change it.
+/// Starts a turn in a chat open in the Codex app, with the report's pictures attached the way the
+/// app attaches a screenshot the user adds.
+///
+/// It goes through the app's own socket, so the app runs the turn: the chat wakes even when idle
+/// and shows it live. The socket's protocol is the app's own, not a published one, so an update to
+/// the app can change it.
 enum CodexApp {
     static let socketPath = URL.homeDirectory.appending(path: ".codex/ipc/ipc.sock").path
 
@@ -19,28 +21,48 @@ enum CodexApp {
 
     /// The input the app takes for a turn: the text, then each picture by path.
     static func input(text: String, pictures: [URL]) -> [[String: Any]] {
-        [["type": "text", "text": text, "text_elements": [Any]()]] + pictures.map { ["type": "localImage", "path": $0.path] }
+        [["type": "text", "text": text, "text_elements": [Any]()]]
+            + pictures.map { ["type": "localImage", "path": $0.path] }
     }
 
     /// Starts the turn, giving up once `timeout` seconds have passed in all, however much else
     /// the app sends meanwhile.
-    static func startTurn(thread: String, text: String, pictures: [URL], socketPath: String = socketPath, timeout: TimeInterval = 30) -> Outcome {
+    static func startTurn(
+        thread: String,
+        text: String,
+        pictures: [URL],
+        socketPath: String = socketPath,
+        timeout: TimeInterval = 30
+    ) -> Outcome {
         let deadline = ContinuousClock.now + .milliseconds(Int(timeout * 1000))
-        guard let connection = Connection(path: socketPath, deadline: deadline) else { return .failed("The Codex app isn't running") }
+        guard let connection = Connection(path: socketPath, deadline: deadline) else {
+            return .failed("The Codex app isn't running")
+        }
         let hello = UUID().uuidString
-        guard connection.send(["type": "request", "requestId": hello, "method": "initialize", "params": ["clientType": "redline"]]),
-              let reply = connection.response(to: hello),
-              let client = (reply["result"] as? [String: Any])?["clientId"] as? String
+        guard
+            connection.send([
+                "type": "request", "requestId": hello, "method": "initialize", "params": ["clientType": "redline"],
+            ]),
+            let reply = connection.response(to: hello),
+            let client = (reply["result"] as? [String: Any])?["clientId"] as? String
         else { return .failed("The Codex app didn't answer") }
 
         let turn = UUID().uuidString
         let request: [String: Any] = [
-            "type": "request", "requestId": turn, "sourceClientId": client, "version": 2, "timeoutMs": Int(timeout * 1000),
+            "type": "request", "requestId": turn, "sourceClientId": client, "version": 2,
+            "timeoutMs": Int(timeout * 1000),
             "method": "thread-follower-start-turn",
-            "params": ["conversationId": thread,
-                       "turnStart": ["request": ["threadId": thread, "input": input(text: text, pictures: pictures)], "context": [String: Any]()]],
+            "params": [
+                "conversationId": thread,
+                "turnStart": [
+                    "request": ["threadId": thread, "input": input(text: text, pictures: pictures)],
+                    "context": [String: Any](),
+                ],
+            ],
         ]
-        guard connection.send(request), let answer = connection.response(to: turn) else { return .failed("The Codex app didn't answer") }
+        guard connection.send(request), let answer = connection.response(to: turn) else {
+            return .failed("The Codex app didn't answer")
+        }
         if answer["resultType"] as? String == "success" { return .started }
         let error = answer["error"] as? String ?? "unknown error"
         return error.contains("no-client-found") ? .notOpen : .failed(error)
@@ -48,7 +70,9 @@ enum CodexApp {
 
     /// One length-prefixed JSON message: a 4-byte little-endian length, then the JSON.
     static func frame(_ message: [String: Any]) -> Data? {
-        guard let json = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) else { return nil }
+        guard let json = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) else {
+            return nil
+        }
         var length = UInt32(json.count).littleEndian
         return Data(bytes: &length, count: 4) + json
     }
@@ -76,7 +100,10 @@ enum CodexApp {
         private func limit(_ option: Int32) -> Bool {
             let left = deadline - ContinuousClock.now
             guard left > .zero else { return false }
-            let microseconds = max(left.components.seconds * 1_000_000 + left.components.attoseconds / 1_000_000_000_000, 1)
+            let microseconds = max(
+                left.components.seconds * 1_000_000 + left.components.attoseconds / 1_000_000_000_000,
+                1
+            )
             var wait = timeval(tv_sec: Int(microseconds / 1_000_000), tv_usec: Int32(microseconds % 1_000_000))
             return setsockopt(descriptor, SOL_SOCKET, option, &wait, socklen_t(MemoryLayout<timeval>.size)) == 0
         }
@@ -102,7 +129,9 @@ enum CodexApp {
         private func next() -> [String: Any]? {
             while true {
                 if buffer.count >= 4 {
-                    let length = Int(buffer.prefix(4).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }.littleEndian)
+                    let length = Int(
+                        buffer.prefix(4).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }.littleEndian
+                    )
                     guard length <= CodexApp.longestMessage else { return nil }
                     if buffer.count >= 4 + length {
                         let json = buffer.subdata(in: buffer.startIndex + 4..<buffer.startIndex + 4 + length)

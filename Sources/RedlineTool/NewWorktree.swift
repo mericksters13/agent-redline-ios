@@ -1,10 +1,11 @@
 #if os(macOS)
 import Foundation
 
-/// A worktree of its own for a chat the hub starts: a new branch from the repository's main
-/// branch, fetched first so it's current, in the repository the app was built from. The chat
-/// works without touching any other worktree. It goes where the agent keeps its own worktrees,
-/// so the chat looks like one it made.
+/// A worktree of its own for a chat the hub starts: a new branch from the repository's main branch,
+/// fetched first so it's current, in the repository the app was built from.
+///
+/// The chat works without touching any other worktree. It goes where the agent keeps its own
+/// worktrees, so the chat looks like one it made.
 enum NewWorktree {
     enum Failure: Error, LocalizedError {
         /// The folder isn't in a git repository.
@@ -20,11 +21,12 @@ enum NewWorktree {
         }
     }
 
-    /// Makes the worktree and returns its path. Throws when the folder isn't in a git
-    /// repository or git refuses.
+    /// Makes the worktree and returns its path.
+    ///
+    /// Throws when the folder isn't in a git repository or git refuses.
     static func create(from source: String, name: String, agent: Agent) throws -> String {
         guard let top = git(["rev-parse", "--show-toplevel"], in: source),
-              let common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: source)
+            let common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: source)
         else { throw Failure.notARepository(source) }
         let commonURL = URL(filePath: common)
         let repository = commonURL.lastPathComponent == ".git" ? commonURL.deletingLastPathComponent().path : top
@@ -34,12 +36,17 @@ enum NewWorktree {
         var branch = "report/\(id)"
         // A name already taken, by an earlier report with the same name, gets a number.
         var attempt = 1
-        while FileManager.default.fileExists(atPath: path) || git(["rev-parse", "--verify", "--quiet", "refs/heads/\(branch)"], in: top) != nil {
+        while FileManager.default.fileExists(atPath: path)
+            || git(["rev-parse", "--verify", "--quiet", "refs/heads/\(branch)"], in: top) != nil
+        {
             attempt += 1
             path = folder(for: agent, repository: repository, name: "\(name)-\(attempt)")
             branch = "report/\(id)-\(attempt)"
         }
-        try FileManager.default.createDirectory(at: URL(filePath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: URL(filePath: path).deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
         fetchMainBranch(of: top)
         let base = mainBranch(of: top)?.ref ?? "HEAD"
         let add = ["worktree", "add", "-b", branch, path, base]
@@ -47,8 +54,10 @@ enum NewWorktree {
         return path
     }
 
-    /// Copies a report's files into `.redline/<report>` in a worktree, a folder git
-    /// ignores there, so a chat in the worktree reads them without asking. Returns the copy.
+    /// Copies a report's files into `.redline/<report>` in a worktree, a folder git ignores there,
+    /// so a chat in the worktree reads them without asking.
+    ///
+    /// Returns the copy.
     static func copyReport(_ report: URL, into worktree: String) throws -> String {
         let folder = URL(filePath: worktree).appending(path: ".redline", directoryHint: .isDirectory)
         let copy = folder.appending(path: report.lastPathComponent, directoryHint: .isDirectory)
@@ -72,20 +81,28 @@ enum NewWorktree {
         if let branch, branch.hasPrefix("report/") { _ = git(["branch", "-D", branch], in: repository) }
     }
 
-    /// Fetches origin's default branch, so a new worktree starts from it as it is now. Best
-    /// effort, and never waiting for a password: without the network, the last fetch is used.
+    /// Fetches origin's default branch, so a new worktree starts from it as it is now.
+    ///
+    /// Best effort, and never waiting for a password: without the network, the last fetch is used.
     static func fetchMainBranch(of folder: String) {
-        guard let remote = git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: folder), remote.hasPrefix("origin/") else { return }
+        guard let remote = git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: folder),
+            remote.hasPrefix("origin/")
+        else { return }
         _ = git(["fetch", "--quiet", "origin", String(remote.dropFirst("origin/".count))], in: folder, timeout: 20)
     }
 
-    /// The repository's main branch: origin's default branch, else a local main or master.
-    /// `name` is what the phone shows. Changes nothing.
+    /// The repository's main branch: origin's default branch, else a local main or master. `name`
+    /// is what the phone shows.
+    ///
+    /// Changes nothing.
     static func mainBranch(of folder: String) -> (ref: String, name: String)? {
-        if let remote = git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: folder), remote.hasPrefix("origin/") {
+        if let remote = git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: folder),
+            remote.hasPrefix("origin/")
+        {
             return (remote, String(remote.dropFirst("origin/".count)))
         }
-        for name in ["main", "master"] where git(["rev-parse", "--verify", "--quiet", "refs/heads/\(name)"], in: folder) != nil {
+        for name in ["main", "master"]
+        where git(["rev-parse", "--verify", "--quiet", "refs/heads/\(name)"], in: folder) != nil {
             return (name, name)
         }
         return nil

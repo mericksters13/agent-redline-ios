@@ -4,15 +4,21 @@ import Testing
 @testable import Redline
 
 struct ReportDeliveryTests {
-    private let store = ReportStore(root: FileManager.default.temporaryDirectory.appending(path: "ReportDeliveryTests-\(UUID().uuidString)"))
+    private let store = ReportStore(
+        root: FileManager.default.temporaryDirectory.appending(path: "ReportDeliveryTests-\(UUID().uuidString)")
+    )
 
     /// Files one finished report and returns its id.
     private func fileReport(at seconds: TimeInterval = 1_790_000_000) throws -> String {
         try store.saveDraft([])
         let started = try store.beginReport(date: Date(timeIntervalSince1970: seconds))
         let report = Report(
-            id: started.id, createdAt: Date(timeIntervalSince1970: seconds), app: Report.App(),
-            device: Report.Device(model: "iPhone18,1", systemName: "iOS", systemVersion: "27.0"), screens: [], items: []
+            id: started.id,
+            createdAt: Date(timeIntervalSince1970: seconds),
+            app: Report.App(),
+            device: Report.Device(model: "iPhone18,1", systemName: "iOS", systemVersion: "27.0"),
+            screens: [],
+            items: []
         )
         try store.finishReport(report, in: started.folder)
         return started.id
@@ -55,13 +61,23 @@ struct ReportDeliveryTests {
     }
 
     @Test func theToastSaysWhereTheReportWent() {
-        #expect(ReportDelivery.toast(for: .delivered, notes: "2 notes", to: "Fix the paywall") == "Sent 2 notes to Fix the paywall")
+        #expect(
+            ReportDelivery.toast(for: .delivered, notes: "2 notes", to: "Fix the paywall")
+                == "Sent 2 notes to Fix the paywall"
+        )
         #expect(ReportDelivery.toast(for: .delivered, notes: "1 note") == "Sent 1 note to the Mac")
         #expect(ReportDelivery.toast(for: .noHub, notes: "1 note") == "Saved 1 note on this iPhone")
         #expect(ReportDelivery.toast(for: nil, notes: "3 notes") == "Saved 3 notes on this iPhone")
-        #expect(ReportDelivery.toast(for: .unreachable, notes: "1 note") == "Saved on this iPhone. Couldn't reach the Mac")
-        #expect(ReportDelivery.toast(for: .refused, notes: "1 note") == "Saved on this iPhone. The Mac didn't accept it")
-        #expect(ReportDelivery.toast(for: .interrupted, notes: "1 note") == "Saved on this iPhone. Sending to the Mac stopped")
+        #expect(
+            ReportDelivery.toast(for: .unreachable, notes: "1 note") == "Saved on this iPhone. Couldn't reach the Mac"
+        )
+        #expect(
+            ReportDelivery.toast(for: .refused, notes: "1 note") == "Saved on this iPhone. The Mac didn't accept it"
+        )
+        #expect(
+            ReportDelivery.toast(for: .interrupted, notes: "1 note")
+                == "Saved on this iPhone. Sending to the Mac stopped"
+        )
     }
 }
 #endif

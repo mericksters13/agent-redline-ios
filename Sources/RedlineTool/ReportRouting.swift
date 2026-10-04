@@ -21,21 +21,35 @@ enum Routing {
         ReportListing.load(from: report)?.app?.sourceFile.map(Worktree.root(of:))
     }
 
-    static func destination(of report: URL, bundleID: String, list: (_ bundleID: String, _ sourceFile: String?) -> HubMessage.ChatList) -> ReportDestination {
+    static func destination(
+        of report: URL,
+        bundleID: String,
+        list: (_ bundleID: String, _ sourceFile: String?) -> HubMessage.ChatList
+    ) -> ReportDestination {
         // A listing without its app reads as if there were none, as it always has.
         let listing = ReportListing.load(from: report).flatMap { $0.app == nil ? nil : $0 }
         let worktree = listing?.app?.sourceFile.map(Worktree.root(of:))
         if let pick = listing?.destination, let agent = Agent(rawValue: pick.agent) {
             if let chat = pick.chat { return .chat(agent, id: chat) }
-            guard let worktree else { return .undecided(reason: "The report doesn't say which worktree the app was built from") }
+            guard let worktree else {
+                return .undecided(reason: "The report doesn't say which worktree the app was built from")
+            }
             return .newChat(agent, folder: worktree, pick: pick.newChat)
         }
-        guard let worktree else { return .undecided(reason: "The report doesn't say which worktree the app was built from") }
+        guard let worktree else {
+            return .undecided(reason: "The report doesn't say which worktree the app was built from")
+        }
         let directory = list(bundleID, listing?.app?.sourceFile)
         let here = directory.chats.filter(\.isSameWorktree)
-        if here.count == 1, let chat = here.first, let agent = Agent(rawValue: chat.agent) { return .chat(agent, id: chat.id) }
-        if here.isEmpty, let agent = directory.agents.first.flatMap(Agent.init(rawValue:)) { return .newChat(agent, folder: worktree, pick: nil) }
-        return .undecided(reason: "\(here.count) chats work in \(URL(filePath: worktree).lastPathComponent); pick one on the phone")
+        if here.count == 1, let chat = here.first, let agent = Agent(rawValue: chat.agent) {
+            return .chat(agent, id: chat.id)
+        }
+        if here.isEmpty, let agent = directory.agents.first.flatMap(Agent.init(rawValue:)) {
+            return .newChat(agent, folder: worktree, pick: nil)
+        }
+        return .undecided(
+            reason: "\(here.count) chats work in \(URL(filePath: worktree).lastPathComponent); pick one on the phone"
+        )
     }
 }
 #endif

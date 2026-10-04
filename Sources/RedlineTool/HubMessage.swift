@@ -1,9 +1,10 @@
 #if os(macOS)
 import Foundation
 
-/// The messages between the kit and the hub, one line of JSON each. Must match the kit's
-/// `HubLink` exactly. On one connection: the app's `Offer`, the hub's `Answer`, an `Upload` for
-/// each report the hub wants, and the hub's `Reply`.
+/// The messages between the kit and the hub, one line of JSON each.
+///
+/// Must match the kit's `HubLink` exactly. On one connection: the app's `Offer`, the hub's
+/// `Answer`, an `Upload` for each report the hub wants, and the hub's `Reply`.
 enum HubMessage {
     /// What the hub leaves in each watched app's folder on a phone, over the device link.
     struct Address: Codable, Equatable, Sendable {
@@ -132,7 +133,9 @@ enum HubMessage {
         }
     }
 
-    /// Decodes one line. Throws a DecodingError that says which field was wrong.
+    /// Decodes one line.
+    ///
+    /// Throws a DecodingError that says which field was wrong.
     static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         try decoder.decode(type, from: data)
     }
@@ -142,7 +145,9 @@ enum HubMessage {
         switch error as? DecodingError {
         case .keyNotFound(let key, _): "no \(key.stringValue)"
         case .typeMismatch(_, let context), .valueNotFound(_, let context), .dataCorrupted(let context):
-            context.codingPath.isEmpty ? context.debugDescription : "\(context.codingPath.map(\.stringValue).joined(separator: ".")): \(context.debugDescription)"
+            context.codingPath.isEmpty
+                ? context.debugDescription
+                : "\(context.codingPath.map(\.stringValue).joined(separator: ".")): \(context.debugDescription)"
         case .none: error.localizedDescription
         @unknown default: error.localizedDescription
         }

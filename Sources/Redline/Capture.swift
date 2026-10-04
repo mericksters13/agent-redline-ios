@@ -24,8 +24,9 @@ struct ScrollState: Codable, Equatable, Sendable {
     }
 }
 
-/// One picture of a screen, kept without outlines. Outlines are drawn when the picture is
-/// shown or sent, so every note on the screen can share it.
+/// One picture of a screen, kept without outlines.
+///
+/// Outlines are drawn when the picture is shown or sent, so every note on the screen can share it.
 struct Capture: Codable, Equatable, Identifiable, Sendable {
     var id: UUID
     var file: String
@@ -34,8 +35,9 @@ struct Capture: Codable, Equatable, Identifiable, Sendable {
     var scroll: ScrollState?
     /// What was on screen, to find notes again and to tell bars from scrolled content.
     var elements: [ElementSnapshot]
-    /// Captures in the same group are stitched into one picture. A new group starts when
-    /// the screen's content changed rather than scrolled.
+    /// Captures in the same group are stitched into one picture.
+    ///
+    /// A new group starts when the screen's content changed rather than scrolled.
     var group: Int
 }
 

@@ -12,9 +12,12 @@ enum CodexThreads {
         var updatedAt: Date
     }
 
-    /// The newest of Codex's own databases of chats. Lists ~/.codex, so callers look it up once
-    /// and pass it on.
-    static func newestDatabase(in folder: URL = URL.homeDirectory.appending(path: ".codex", directoryHint: .isDirectory)) -> URL? {
+    /// The newest of Codex's own databases of chats.
+    ///
+    /// Lists ~/.codex, so callers look it up once and pass it on.
+    static func newestDatabase(
+        in folder: URL = URL.homeDirectory.appending(path: ".codex", directoryHint: .isDirectory)
+    ) -> URL? {
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
             .filter { $0.hasPrefix("state_") && $0.hasSuffix(".sqlite") }
         let newest = names.max { (Int($0.dropFirst(6).dropLast(7)) ?? 0) < (Int($1.dropFirst(6).dropLast(7)) ?? 0) }
@@ -31,7 +34,8 @@ enum CodexThreads {
         }
         defer { sqlite3_close(connection) }
         var statement: OpaquePointer?
-        let query = "SELECT COALESCE(NULLIF(name, ''), NULLIF(title, ''), SUBSTR(first_user_message, 1, 60)) FROM threads WHERE id = ?"
+        let query =
+            "SELECT COALESCE(NULLIF(name, ''), NULLIF(title, ''), SUBSTR(first_user_message, 1, 60)) FROM threads WHERE id = ?"
         guard sqlite3_prepare_v2(connection, query, -1, &statement, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(statement) }
         sqlite3_bind_text(statement, 1, thread, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
@@ -62,9 +66,17 @@ enum CodexThreads {
         sqlite3_bind_int64(statement, 1, Int64((Date.now.timeIntervalSince1970 - days * 86_400) * 1000))
         var threads: [CodexThread] = []
         while sqlite3_step(statement) == SQLITE_ROW {
-            func text(_ column: Int32) -> String { sqlite3_column_text(statement, column).map { String(cString: $0) } ?? "" }
-            threads.append(CodexThread(id: text(0), title: text(1), folder: text(2),
-                                  updatedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(statement, 3)) / 1000)))
+            func text(_ column: Int32) -> String {
+                sqlite3_column_text(statement, column).map { String(cString: $0) } ?? ""
+            }
+            threads.append(
+                CodexThread(
+                    id: text(0),
+                    title: text(1),
+                    folder: text(2),
+                    updatedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(statement, 3)) / 1000)
+                )
+            )
         }
         return threads
     }

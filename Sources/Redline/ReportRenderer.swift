@@ -2,11 +2,13 @@
 import UIKit
 
 /// Draws a screen's picture from its captures, with each note's outline and number.
+///
 /// Safe to use off the main thread.
 enum ReportRenderer {
-    /// Pixels per point in sent pictures. A phone screen comes out about 1,200 pixels tall:
-    /// sharp enough to read every label, small enough that agents don't shrink it and its
-    /// JPEG stays near 90 KB.
+    /// Pixels per point in sent pictures.
+    ///
+    /// A phone screen comes out about 1,200 pixels tall: sharp enough to read every label, small
+    /// enough that agents don't shrink it and its JPEG stays near 90 KB.
     static let sendScale: CGFloat = 1.4
 
     /// A note's outline and number, drawn on a picture.
@@ -30,10 +32,21 @@ enum ReportRenderer {
     /// The pieces are placed on whole pixels. A piece that starts or ends partway through a
     /// pixel leaves that pixel row or column partly uncovered, and the background shows
     /// through as a faint line.
-    static func render(_ plan: ImagePlan, pictures: [UUID: UIImage], outlines: [Outline], rows: ClosedRange<CGFloat>? = nil, scale: CGFloat) -> UIImage {
+    static func render(
+        _ plan: ImagePlan,
+        pictures: [UUID: UIImage],
+        outlines: [Outline],
+        rows: ClosedRange<CGFloat>? = nil,
+        scale: CGFloat
+    ) -> UIImage {
         func pixel(_ points: CGFloat) -> CGFloat { (points * scale).rounded() }
         let rows = rows ?? 0...plan.size.height
-        let visible = CGRect(x: 0, y: rows.lowerBound, width: plan.size.width, height: rows.upperBound - rows.lowerBound)
+        let visible = CGRect(
+            x: 0,
+            y: rows.lowerBound,
+            width: plan.size.width,
+            height: rows.upperBound - rows.lowerBound
+        )
         let top = pixel(rows.lowerBound)
         let size = CGSize(width: pixel(plan.size.width), height: pixel(rows.upperBound) - top)
         let format = UIGraphicsImageRendererFormat()
@@ -44,15 +57,34 @@ enum ReportRenderer {
             UIRectFill(CGRect(origin: .zero, size: size))
             for segment in plan.segments where segment.height > 0 {
                 let minY = pixel(segment.destinationY) - top
-                let destination = CGRect(x: 0, y: minY, width: size.width, height: pixel(segment.destinationY + segment.height) - top - minY)
+                let destination = CGRect(
+                    x: 0,
+                    y: minY,
+                    width: size.width,
+                    height: pixel(segment.destinationY + segment.height) - top - minY
+                )
                 guard destination.maxY > 0, destination.minY < size.height, let picture = pictures[segment.captureID],
-                      let capture = plan.captures[segment.captureID] else { continue }
-                draw(picture, pointWidth: capture.size.width, rowsFrom: segment.sourceMinY, height: segment.height, into: destination)
+                    let capture = plan.captures[segment.captureID]
+                else { continue }
+                draw(
+                    picture,
+                    pointWidth: capture.size.width,
+                    rowsFrom: segment.sourceMinY,
+                    height: segment.height,
+                    into: destination
+                )
             }
             context.cgContext.translateBy(x: 0, y: -top)
             context.cgContext.scaleBy(x: scale, y: scale)
             for gap in plan.gaps.map(\.rect) where gap.intersects(visible) {
-                drawGap(CGRect(x: 0, y: pixel(gap.minY) / scale, width: size.width / scale, height: (pixel(gap.maxY) - pixel(gap.minY)) / scale))
+                drawGap(
+                    CGRect(
+                        x: 0,
+                        y: pixel(gap.minY) / scale,
+                        width: size.width / scale,
+                        height: (pixel(gap.maxY) - pixel(gap.minY)) / scale
+                    )
+                )
             }
             for outline in outlines where outline.rect.insetBy(dx: -12, dy: -12).intersects(visible) {
                 draw(outline, within: visible)
@@ -80,12 +112,23 @@ enum ReportRenderer {
     }
 
     /// Copies rows of a capture, given in points, into the picture, on whole pixels of both.
-    private static func draw(_ picture: UIImage, pointWidth: CGFloat, rowsFrom minY: CGFloat, height: CGFloat, into destination: CGRect) {
+    private static func draw(
+        _ picture: UIImage,
+        pointWidth: CGFloat,
+        rowsFrom minY: CGFloat,
+        height: CGFloat,
+        into destination: CGRect
+    ) {
         guard let image = picture.cgImage, pointWidth > 0 else { return }
         let ratio = CGFloat(image.width) / pointWidth
         let first = (minY * ratio).rounded()
-        let source = CGRect(x: 0, y: first, width: CGFloat(image.width), height: ((minY + height) * ratio).rounded() - first)
-            .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let source = CGRect(
+            x: 0,
+            y: first,
+            width: CGFloat(image.width),
+            height: ((minY + height) * ratio).rounded() - first
+        )
+        .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
         guard !source.isEmpty, let rows = image.cropping(to: source) else { return }
         UIImage(cgImage: rows).draw(in: destination)
     }
@@ -103,8 +146,9 @@ enum ReportRenderer {
         text.draw(at: CGPoint(x: gap.midX - size.width / 2, y: gap.midY - size.height / 2), withAttributes: attributes)
     }
 
-    /// A red outline with the note's number in a red circle at its top-left corner. Red reads
-    /// on almost any app and is the usual color for markup.
+    /// A red outline with the note's number in a red circle at its top-left corner.
+    ///
+    /// Red reads on almost any app and is the usual color for markup.
     private static func draw(_ outline: Outline, within visible: CGRect) {
         let quiet = outline.style == .quiet
         let red = UIColor.systemRed.withAlphaComponent(quiet ? 0.55 : 1)
@@ -129,7 +173,10 @@ enum ReportRenderer {
             .foregroundColor: UIColor.white,
         ]
         let size = number.size(withAttributes: attributes)
-        number.draw(at: CGPoint(x: badge.midX - size.width / 2, y: badge.midY - size.height / 2), withAttributes: attributes)
+        number.draw(
+            at: CGPoint(x: badge.midX - size.width / 2, y: badge.midY - size.height / 2),
+            withAttributes: attributes
+        )
     }
 }
 #endif

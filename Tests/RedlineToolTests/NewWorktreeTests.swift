@@ -12,7 +12,10 @@ struct NewWorktreeTests {
         let repository = root.appending(path: "repo", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
         func git(_ arguments: String...) async throws {
-            try await runProcess("/usr/bin/git", ["-C", repository.path, "-c", "user.name=Test", "-c", "user.email=test@example.com"] + arguments)
+            try await runProcess(
+                "/usr/bin/git",
+                ["-C", repository.path, "-c", "user.name=Test", "-c", "user.email=test@example.com"] + arguments
+            )
         }
         try await git("init", "-q", "-b", "main")
         try "one\n".write(to: repository.appending(path: "App.swift"), atomically: true, encoding: .utf8)
@@ -48,7 +51,9 @@ struct NewWorktreeTests {
         await offPool { NewWorktree.remove(again) }
         #expect(!FileManager.default.fileExists(atPath: again))
         let notARepository = root.appending(path: "not-a-repo").path
-        await #expect(throws: NewWorktree.Failure.self) { try await offPool { try NewWorktree.create(from: notARepository, name: "x", agent: .claude) } }
+        await #expect(throws: NewWorktree.Failure.self) {
+            try await offPool { try NewWorktree.create(from: notARepository, name: "x", agent: .claude) }
+        }
 
         // The chat it started is found by the phone's pick while its worktree exists.
         try StartedChats.remember(StartedChat(chat: "s-1", folder: made, startedAt: .now), for: "N1", paths: paths)

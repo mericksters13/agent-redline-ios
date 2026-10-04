@@ -2,8 +2,10 @@
 import Foundation
 import Synchronization
 
-/// The MCP server one agent chat runs: JSON-RPC over standard input and output, one message
-/// per line. It registers the chat with the hub and hands over the reports for its project.
+/// The MCP server one agent chat runs: JSON-RPC over standard input and output, one message per
+/// line.
+///
+/// It registers the chat with the hub and hands over the reports for its project.
 final class MCPServer: Sendable {
     let session: ChatSession
     /// Writes one response line; standard output unless a test passes its own.
@@ -16,26 +18,33 @@ final class MCPServer: Sendable {
     private let outputQueue = DispatchQueue(label: "Redline.mcp.output")
     private let inFlight = DispatchGroup()
 
-    /// The most picture bytes in one reply. Agent apps cap a tool result's size; Claude's
-    /// desktop app refuses results over 1 MB, and pictures grow by a third when encoded.
+    /// The most picture bytes in one reply.
+    ///
+    /// Agent apps cap a tool result's size; Claude's desktop app refuses results over 1 MB, and
+    /// pictures grow by a third when encoded.
     static let budget = 700_000
     static let defaultWait: TimeInterval = 50
     static let longestWait: TimeInterval = 600
 
     static let instructions = """
-    Delivers UI reports the user sends from their iPhone or a simulator with Redline, for the app this project builds. \
-    A report has numbered notes about elements on screen, and screenshots where each note's element is outlined in red with the same number. \
-    Call check_messages when the user mentions a report, notes or screenshots from their phone, or asks you to check. \
-    Find the code for a note by the element's identifier or label, and its parents.
-    """
+        Delivers UI reports the user sends from their iPhone or a simulator with Redline, for the app this project builds. \
+        A report has numbered notes about elements on screen, and screenshots where each note's element is outlined in red with the same number. \
+        Call check_messages when the user mentions a report, notes or screenshots from their phone, or asks you to check. \
+        Find the code for a note by the element's identifier or label, and its parents.
+        """
 
-    /// A parsed request, handed to the queue or thread that answers it. JSONSerialization's
-    /// dictionary isn't Sendable, but each request is read by one thread at a time.
+    /// A parsed request, handed to the queue or thread that answers it.
+    ///
+    /// JSONSerialization's dictionary isn't Sendable, but each request is read by one thread at a
+    /// time.
     private struct Request: @unchecked Sendable {
         let message: [String: Any]
     }
 
-    init(session: ChatSession, write: @escaping @Sendable (Data) -> Void = { try? FileHandle.standardOutput.write(contentsOf: $0) }) {
+    init(
+        session: ChatSession,
+        write: @escaping @Sendable (Data) -> Void = { try? FileHandle.standardOutput.write(contentsOf: $0) }
+    ) {
         self.session = session
         self.write = write
     }
@@ -50,11 +59,13 @@ final class MCPServer: Sendable {
         finish()
     }
 
-    /// Takes one line from the chat. A wait gets a thread of its own, so it never holds up other
-    /// requests; everything else is answered on `work`, in order.
+    /// Takes one line from the chat.
+    ///
+    /// A wait gets a thread of its own, so it never holds up other requests; everything else is
+    /// answered on `work`, in order.
     func receive(_ line: String) {
         guard let data = line.data(using: .utf8),
-              let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
         guard let id = message["id"] else {
             notice(message)
@@ -89,7 +100,8 @@ final class MCPServer: Sendable {
     }
 
     private static func isWait(_ message: [String: Any]) -> Bool {
-        message["method"] as? String == "tools/call" && (message["params"] as? [String: Any])?["name"] as? String == "wait_for_message"
+        message["method"] as? String == "tools/call"
+            && (message["params"] as? [String: Any])?["name"] as? String == "wait_for_message"
     }
 
     /// A request ID as a key: a number and a string that read the same stay apart.
@@ -106,12 +118,15 @@ final class MCPServer: Sendable {
         case "initialize":
             let client = (params["clientInfo"] as? [String: Any])?["name"] as? String
             session.register(agent: client ?? "unknown")
-            return response(id: id, result: [
-                "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
-                "capabilities": ["tools": [String: Any]()],
-                "serverInfo": ["name": "redline", "version": version],
-                "instructions": Self.instructions,
-            ])
+            return response(
+                id: id,
+                result: [
+                    "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
+                    "capabilities": ["tools": [String: Any]()],
+                    "serverInfo": ["name": "redline", "version": version],
+                    "instructions": Self.instructions,
+                ]
+            )
         case "ping":
             return response(id: id, result: [String: Any]())
         case "tools/list":
@@ -134,37 +149,45 @@ final class MCPServer: Sendable {
 
     // MARK: - Tools
 
-    static var tools: [[String: Any]] { [
+    static var tools: [[String: Any]] {
         [
-            "name": "check_messages",
-            "description": """
-            Returns the UI reports waiting for the app this project builds, sent from the user's iPhone or a simulator, \
-            and marks them as taken by this chat. Each has numbered notes and screenshots with matching numbered outlines. \
-            Call it when the user mentions a report or notes from their phone, or asks you to check.
-            """,
-            "inputSchema": ["type": "object", "properties": [String: Any]()],
-        ],
-        [
-            "name": "wait_for_message",
-            "description": """
-            Waits for the next UI report for this project and returns it, for when the user is about to send one. \
-            Returns after timeout_seconds with no report if none arrived; that isn't an error.
-            """,
-            "inputSchema": [
-                "type": "object",
-                "properties": ["timeout_seconds": ["type": "number", "description": "How long to wait, 1 to 600 seconds. Default 50."]],
+            [
+                "name": "check_messages",
+                "description": """
+                Returns the UI reports waiting for the app this project builds, sent from the user's iPhone or a simulator, \
+                and marks them as taken by this chat. Each has numbered notes and screenshots with matching numbered outlines. \
+                Call it when the user mentions a report or notes from their phone, or asks you to check.
+                """,
+                "inputSchema": ["type": "object", "properties": [String: Any]()],
             ],
-        ],
-    ] }
+            [
+                "name": "wait_for_message",
+                "description": """
+                Waits for the next UI report for this project and returns it, for when the user is about to send one. \
+                Returns after timeout_seconds with no report if none arrived; that isn't an error.
+                """,
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "timeout_seconds": [
+                            "type": "number", "description": "How long to wait, 1 to 600 seconds. Default 50.",
+                        ]
+                    ],
+                ],
+            ],
+        ]
+    }
 
     private func takeReports() -> [String: Any] {
         session.touch()
         let chat = session.chat
         guard !chat.bundleIDs.isEmpty else {
-            return text("""
-            No app found for this project: no PRODUCT_BUNDLE_IDENTIFIER in an Xcode project or project.yml under \(chat.folder). \
-            Add `--app <bundle ID>` to this MCP server's arguments.
-            """)
+            return text(
+                """
+                No app found for this project: no PRODUCT_BUNDLE_IDENTIFIER in an Xcode project or project.yml under \(chat.folder). \
+                Add `--app <bundle ID>` to this MCP server's arguments.
+                """
+            )
         }
         let taken = session.take(budget: Self.budget)
         guard taken.taken > 0 else {
@@ -172,7 +195,11 @@ final class MCPServer: Sendable {
         }
         var content = taken.items.map(Self.encode)
         if taken.remaining > 0 {
-            content.append(["type": "text", "text": "\(taken.remaining) more \(taken.remaining == 1 ? "report is" : "reports are") waiting. Call check_messages again."])
+            content.append([
+                "type": "text",
+                "text":
+                    "\(taken.remaining) more \(taken.remaining == 1 ? "report is" : "reports are") waiting. Call check_messages again.",
+            ])
         }
         return ["content": content]
     }
@@ -188,16 +215,20 @@ final class MCPServer: Sendable {
 
     // MARK: - Messages
 
-    /// A notification from the chat. A cancelled request stops its wait.
+    /// A notification from the chat.
+    ///
+    /// A cancelled request stops its wait.
     private func notice(_ message: [String: Any]) {
         guard message["method"] as? String == "notifications/cancelled",
-              let request = (message["params"] as? [String: Any])?["requestId"]
+            let request = (message["params"] as? [String: Any])?["requestId"]
         else { return }
         waiters.withLock { $0[Self.key(request)] }?.cancel()
     }
 
     private func send(_ message: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) else { return }
+        guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) else {
+            return
+        }
         outputQueue.sync { write(data + Data("\n".utf8)) }
     }
 
@@ -218,7 +249,10 @@ final class MCPServer: Sendable {
         case .text(let string):
             ["type": "text", "text": string]
         case .image(let file, let data):
-            ["type": "image", "data": data.base64EncodedString(), "mimeType": file.pathExtension == "png" ? "image/png" : "image/jpeg"]
+            [
+                "type": "image", "data": data.base64EncodedString(),
+                "mimeType": file.pathExtension == "png" ? "image/png" : "image/jpeg",
+            ]
         }
     }
 }

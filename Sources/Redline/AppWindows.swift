@@ -9,7 +9,9 @@ enum AppWindows {
     static func all(in scene: UIWindowScene?) -> [UIWindow] {
         guard let scene else { return [] }
         return scene.windows
-            .filter { !($0 is OverlayWindow) && !$0.isHidden && !String(describing: type(of: $0)).contains("TextEffects") }
+            .filter {
+                !($0 is OverlayWindow) && !$0.isHidden && !String(describing: type(of: $0)).contains("TextEffects")
+            }
             .sorted { $0.windowLevel < $1.windowLevel }
     }
 
@@ -21,10 +23,13 @@ enum AppWindows {
                 let offset = scrollView.contentOffset
                 let maxX = max(-inset.left, scrollView.contentSize.width - scrollView.bounds.width + inset.right)
                 let maxY = max(-inset.top, scrollView.contentSize.height - scrollView.bounds.height + inset.bottom)
-                scrollView.setContentOffset(CGPoint(
-                    x: min(max(offset.x, -inset.left), maxX),
-                    y: min(max(offset.y, -inset.top), maxY)
-                ), animated: false)
+                scrollView.setContentOffset(
+                    CGPoint(
+                        x: min(max(offset.x, -inset.left), maxX),
+                        y: min(max(offset.y, -inset.top), maxY)
+                    ),
+                    animated: false
+                )
             }
             for subview in view.subviews { visit(subview) }
         }
@@ -53,7 +58,8 @@ enum AppWindows {
                 let frame = scrollView.convert(scrollView.bounds, to: nil)
                 let visible = frame.intersection(screenBounds)
                 let inset = scrollView.adjustedContentInset
-                let scrollsVertically = scrollView.contentSize.height > scrollView.bounds.height - inset.top - inset.bottom + 1
+                let scrollsVertically =
+                    scrollView.contentSize.height > scrollView.bounds.height - inset.top - inset.bottom + 1
                 let area = visible.isNull ? 0 : visible.width * visible.height
                 if scrollsVertically, area > (best?.area ?? 0) { best = (scrollView, frame, area) }
             }
@@ -63,8 +69,11 @@ enum AppWindows {
         guard let best, best.area > screenBounds.width * screenBounds.height * 0.3 else { return nil }
         let inset = best.view.adjustedContentInset
         return ScrollState(
-            frame: best.frame, offsetY: best.view.contentOffset.y,
-            insetTop: inset.top, insetBottom: inset.bottom, contentHeight: best.view.contentSize.height
+            frame: best.frame,
+            offsetY: best.view.contentOffset.y,
+            insetTop: inset.top,
+            insetBottom: inset.bottom,
+            contentHeight: best.view.contentSize.height
         )
     }
 }

@@ -6,6 +6,7 @@ import XCTest
 
 /// Measures the kit's hot paths with realistic sizes: picking runs on every drag frame, the
 /// comparisons and the plan on every saved note, and the store scan on every activation.
+///
 /// XCTest only for `measure`, which Swift Testing doesn't have.
 final class KitPerformanceTests: XCTestCase {
     private let screen = CGSize(width: 402, height: 874)
@@ -15,11 +16,19 @@ final class KitPerformanceTests: XCTestCase {
         (0..<count).map { index in
             let row = CGFloat(index / 4)
             let inRow = index % 4
-            let frame = inRow == 0
+            let frame =
+                inRow == 0
                 ? CGRect(x: 16, y: row * 60 - offsetY, width: 370, height: 56)
                 : CGRect(x: 24 + CGFloat(inRow - 1) * 120, y: row * 60 + 8 - offsetY, width: 110, height: 40)
-            return ElementSnapshot(role: inRow == 0 ? "Group" : "Button", label: "Item \(index)", value: nil,
-                                   identifier: "item.\(index)", className: nil, isContainer: inRow == 0, frame: frame)
+            return ElementSnapshot(
+                role: inRow == 0 ? "Group" : "Button",
+                label: "Item \(index)",
+                value: nil,
+                identifier: "item.\(index)",
+                className: nil,
+                isContainer: inRow == 0,
+                frame: frame
+            )
         }
     }
 
@@ -33,12 +42,23 @@ final class KitPerformanceTests: XCTestCase {
 
     func testPictureComparisonOnFullCaptures() throws {
         func capture(shift: Int) throws -> CGImage {
-            let context = try XCTUnwrap(CGContext(data: nil, width: 786, height: 1704, bitsPerComponent: 8, bytesPerRow: 0,
-                                                  space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue))
+            let context = try XCTUnwrap(
+                CGContext(
+                    data: nil,
+                    width: 786,
+                    height: 1704,
+                    bitsPerComponent: 8,
+                    bytesPerRow: 0,
+                    space: CGColorSpaceCreateDeviceGray(),
+                    bitmapInfo: CGImageAlphaInfo.none.rawValue
+                )
+            )
             context.setFillColor(gray: 1, alpha: 1)
             context.fill(CGRect(x: 0, y: 0, width: 786, height: 1704))
             context.setFillColor(gray: 0.2, alpha: 1)
-            for row in stride(from: 0, to: 1704, by: 120) { context.fill(CGRect(x: 32, y: row + shift, width: 720, height: 80)) }
+            for row in stride(from: 0, to: 1704, by: 120) {
+                context.fill(CGRect(x: 32, y: row + shift, width: 720, height: 80))
+            }
             return try XCTUnwrap(context.makeImage())
         }
         let before = try capture(shift: 0)
@@ -52,10 +72,21 @@ final class KitPerformanceTests: XCTestCase {
     func testPlanForAStitchedScreen() {
         let captures = (0..<4).map { index -> Capture in
             let offset = CGFloat(index) * 500 - 62
-            let scroll = ScrollState(frame: CGRect(origin: .zero, size: screen), offsetY: offset,
-                                     insetTop: 62, insetBottom: 34, contentHeight: 6000)
-            return Capture(id: UUID(), file: "c\(index).png", size: screen, scroll: scroll,
-                           elements: elements(count: 300, offsetY: offset), group: 0)
+            let scroll = ScrollState(
+                frame: CGRect(origin: .zero, size: screen),
+                offsetY: offset,
+                insetTop: 62,
+                insetBottom: 34,
+                contentHeight: 6000
+            )
+            return Capture(
+                id: UUID(),
+                file: "c\(index).png",
+                size: screen,
+                scroll: scroll,
+                elements: elements(count: 300, offsetY: offset),
+                group: 0
+            )
         }
         measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
             _ = ScreenComposition.plan(for: captures)
@@ -64,7 +95,9 @@ final class KitPerformanceTests: XCTestCase {
     }
 
     func testUndeliveredWith200Reports() throws {
-        let store = ReportStore(root: FileManager.default.temporaryDirectory.appending(path: "KitPerformanceTests-\(UUID().uuidString)"))
+        let store = ReportStore(
+            root: FileManager.default.temporaryDirectory.appending(path: "KitPerformanceTests-\(UUID().uuidString)")
+        )
         defer { try? FileManager.default.removeItem(at: store.root) }
         var ids: [String] = []
         for index in 0..<200 {

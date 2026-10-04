@@ -18,7 +18,9 @@ import Foundation
 struct HubPaths: Sendable {
     let root: URL
 
-    static let standard = HubPaths(root: URL.applicationSupportDirectory.appending(path: "Redline", directoryHint: .isDirectory))
+    static let standard = HubPaths(
+        root: URL.applicationSupportDirectory.appending(path: "Redline", directoryHint: .isDirectory)
+    )
 
     var inbox: URL { root.appending(path: "inbox", directoryHint: .isDirectory) }
     var hub: URL { root.appending(path: "hub", directoryHint: .isDirectory) }

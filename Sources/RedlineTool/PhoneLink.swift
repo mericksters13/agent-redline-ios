@@ -1,9 +1,11 @@
 #if os(macOS)
 import Foundation
 
-/// One paired phone. Leaves the hub's address and a token in each watched app's folder on it,
-/// once and again only when the address changes. The apps send their reports themselves, so
-/// nothing runs while the phone is quiet.
+/// One paired phone.
+///
+/// Leaves the hub's address and a token in each watched app's folder on it, once and again only
+/// when the address changes. The apps send their reports themselves, so nothing runs while the
+/// phone is quiet.
 ///
 /// Thread safety: `address`, `given`, `missing`, `retryDelay`, `retryAt` and `lastWakeTry` are
 /// read and written only on `queue`.
@@ -19,8 +21,9 @@ final class PhoneLink: @unchecked Sendable {
     private var missing = Set<String>()
     private var retryDelay = PhoneLink.firstRetry
     private var retryAt: Date?
-    /// When a wake last made this phone try. One wake is often announced on more than one
-    /// network interface, and should lead to one try.
+    /// When a wake last made this phone try.
+    ///
+    /// One wake is often announced on more than one network interface, and should lead to one try.
     private var lastWakeTry = Date.distantPast
 
     static let firstRetry: TimeInterval = 30
@@ -51,10 +54,11 @@ final class PhoneLink: @unchecked Sendable {
         }
     }
 
-    /// A phone woke up somewhere on the network. If this one is still waiting to try again, try
-    /// now instead of waiting out the delay, which grows while a phone sleeps: it's awake and
-    /// likely about to be used. The wake also starts the delays over, so a try made before the
-    /// phone's link is fully up is followed soon by another.
+    /// A phone woke up somewhere on the network.
+    ///
+    /// If this one is still waiting to try again, try now instead of waiting out the delay, which
+    /// grows while a phone sleeps: it's awake and likely about to be used. The wake also starts the
+    /// delays over, so a try made before the phone's link is fully up is followed soon by another.
     func phoneDidWake() {
         queue.async {
             guard self.retryAt != nil, Date.now.timeIntervalSince(self.lastWakeTry) >= Self.wakeSpacing else { return }
@@ -71,13 +75,17 @@ final class PhoneLink: @unchecked Sendable {
         var unreachable = false
         // Read once: an app added during this pass waits for the next one.
         let apps = hub.apps
-        let addresses = Dictionary(uniqueKeysWithValues: apps.map { bundleID in
-            var app = address
-            app.token = hub.issueToken(device: phone.udid, bundleID: bundleID)
-            return (bundleID, app)
-        })
-        for (bundleID, address) in addresses.sorted(by: { $0.key < $1.key }) where given[bundleID] != address && !missing.contains(bundleID) {
-            if hub.devicectl.write(HubMessage.encode(address), to: HubMessage.addressPath, of: bundleID, on: phone.udid) {
+        let addresses = Dictionary(
+            uniqueKeysWithValues: apps.map { bundleID in
+                var app = address
+                app.token = hub.issueToken(device: phone.udid, bundleID: bundleID)
+                return (bundleID, app)
+            }
+        )
+        for (bundleID, address) in addresses.sorted(by: { $0.key < $1.key })
+        where given[bundleID] != address && !missing.contains(bundleID) {
+            if hub.devicectl.write(HubMessage.encode(address), to: HubMessage.addressPath, of: bundleID, on: phone.udid)
+            {
                 given[bundleID] = address
                 hub.log("Gave \(bundleID) on \(phone.name) the hub's address")
                 continue

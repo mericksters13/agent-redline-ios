@@ -9,9 +9,11 @@ enum TouchableArea: Hashable {
     case suggestion
 }
 
-/// Redline's own window, above the app. Touches pass through to the app
-/// except while Redline is active or on the floating button. Screenshots are
-/// drawn from the app's windows only, so nothing in this window ever appears in them.
+/// Redline's own window, above the app.
+///
+/// Touches pass through to the app except while Redline is active or on the floating button.
+/// Screenshots are drawn from the app's windows only, so nothing in this window ever appears in
+/// them.
 final class OverlayWindow: UIWindow {
     var claimsAllTouches = false
     /// Where each area that takes touches while Redline is idle sits.

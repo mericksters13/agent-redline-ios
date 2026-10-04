@@ -1,21 +1,26 @@
 #if REDLINE
 import Foundation
 
-/// Hands sent reports to the Mac's hub, and says how that went. Free of UIKit, so it is
-/// tested on the Mac.
+/// Hands sent reports to the Mac's hub, and says how that went.
+///
+/// Free of UIKit, so it is tested on the Mac.
 enum ReportDelivery {
     /// Set once a report has reached the Mac's hub, and so iOS has allowed local network access.
     static let hubReachedKey = "RedlineHubReached"
 
-    /// How long to wait for the hub. The first time, iOS asks about local network access
-    /// before the hub can answer, so the wait is longer until a report has reached it once.
+    /// How long to wait for the hub.
+    ///
+    /// The first time, iOS asks about local network access before the hub can answer, so the wait
+    /// is longer until a report has reached it once.
     static var patience: TimeInterval {
         UserDefaults.standard.bool(forKey: hubReachedKey) ? 8 : 60
     }
 
     /// Sends every report the Mac hasn't confirmed to its hub, notes the ones it now has, and
-    /// records how it went. Nil when there's nothing to send, or no bundle ID to send it as.
-    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    /// records how it went.
+    ///
+    /// Nil when there's nothing to send, or no bundle ID to send it as. Runs off the main actor.
+    /// Add @concurrent when the tools version reaches 6.2.
     static func deliver(from store: ReportStore, bundleID: String?, patience: TimeInterval) async -> HubLink.Outcome? {
         guard let bundleID else { return nil }
         let reports = store.undeliveredReports()
@@ -30,7 +35,13 @@ enum ReportDelivery {
             store.recordDelivery(.delivered)
             return .delivered
         }
-        let result = await HubLink.deliver(reports, bundleID: bundleID, address: address, files: { store.reportFiles($0) }, patience: patience)
+        let result = await HubLink.deliver(
+            reports,
+            bundleID: bundleID,
+            address: address,
+            files: { store.reportFiles($0) },
+            patience: patience
+        )
         store.markDelivered(result.delivered)
         store.recordDelivery(result.outcome)
         // The hub answered, so iOS has allowed local network access.

@@ -60,18 +60,34 @@ struct HubTests {
 
     @Test func aReportWhoseSourceCantBeSavedIsNotFiled() throws {
         let hub = try hub()
-        let source = ReportSource(kind: .phone, device: phone, deviceName: "Test iPhone", bundleID: app, reportID: "20261004-031600", receivedAt: .now)
+        let source = ReportSource(
+            kind: .phone,
+            device: phone,
+            deviceName: "Test iPhone",
+            bundleID: app,
+            reportID: "20261004-031600",
+            receivedAt: .now
+        )
         // The copy works, but source.json can't be written: a folder is in its place.
         #expect(throws: (any Error).self) {
             try hub.receive(source) { destination in
-                try FileManager.default.createDirectory(at: destination.appending(path: "source.json"), withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(
+                    at: destination.appending(path: "source.json"),
+                    withIntermediateDirectories: true
+                )
             }
         }
         let inbox = paths.inbox.appending(path: app)
         #expect(try FileManager.default.contentsOfDirectory(atPath: inbox.path).isEmpty)
         // Not counted as delivered, so it's offered again.
         hub.startTrackingIfNeeded(device: phone, bundleID: app)
-        #expect(hub.reportIDsToCopy(device: phone, bundleID: app, finished: [FinishedReport(id: "20261004-031600", finishedAt: Date.now)]) == ["20261004-031600"])
+        #expect(
+            hub.reportIDsToCopy(
+                device: phone,
+                bundleID: app,
+                finished: [FinishedReport(id: "20261004-031600", finishedAt: Date.now)]
+            ) == ["20261004-031600"]
+        )
         // Queued writes land before the test's folder is removed.
         hub.flushWrites()
     }
@@ -103,14 +119,25 @@ struct HubTests {
 
         // Unsafe file names and reports without their report.json are turned down.
         #expect(throws: Hub.FilingError.unusableUpload) {
-            try hub.storeNow(HubMessage.Upload(id: new.id, files: ["../escape.jpg": Data([1]), "report.json": Data("{}".utf8)]), offeredIn: offered)
+            try hub.storeNow(
+                HubMessage.Upload(id: new.id, files: ["../escape.jpg": Data([1]), "report.json": Data("{}".utf8)]),
+                offeredIn: offered
+            )
         }
-        #expect(throws: Hub.FilingError.unusableUpload) { try hub.storeNow(HubMessage.Upload(id: new.id, files: ["screen-1.jpg": Data([1])]), offeredIn: offered) }
+        #expect(throws: Hub.FilingError.unusableUpload) {
+            try hub.storeNow(HubMessage.Upload(id: new.id, files: ["screen-1.jpg": Data([1])]), offeredIn: offered)
+        }
 
-        let files = ["report.json": Data("{}".utf8), "report.md": Data("# Report".utf8), "screen-1.jpg": Data([0xFF, 0xD8])]
+        let files = [
+            "report.json": Data("{}".utf8), "report.md": Data("# Report".utf8), "screen-1.jpg": Data([0xFF, 0xD8]),
+        ]
         try hub.storeNow(HubMessage.Upload(id: new.id, files: files), offeredIn: offered)
         let folder = paths.inbox.appending(path: "\(app)/20261004-031600-00000001", directoryHint: .isDirectory)
-        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted() == ["report.json", "report.md", "screen-1.jpg", "source.json"])
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted() == [
+                "report.json", "report.md", "screen-1.jpg", "source.json",
+            ]
+        )
         // Offered again, it's on the Mac now.
         let again = hub.answerNow(offered)
         #expect(again.want.isEmpty)

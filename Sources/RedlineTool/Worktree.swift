@@ -7,7 +7,9 @@ enum Worktree {
         let files = FileManager.default
         var folder = URL(filePath: path).standardizedFileURL
         var isFolder: ObjCBool = false
-        if !files.fileExists(atPath: folder.path, isDirectory: &isFolder) || !isFolder.boolValue || folder.pathExtension == "xcodeproj" {
+        if !files.fileExists(atPath: folder.path, isDirectory: &isFolder) || !isFolder.boolValue
+            || folder.pathExtension == "xcodeproj"
+        {
             folder = folder.deletingLastPathComponent()
         }
         var candidate = folder

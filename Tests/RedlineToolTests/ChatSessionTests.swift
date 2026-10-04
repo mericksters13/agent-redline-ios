@@ -13,8 +13,15 @@ struct ChatSessionTests {
         let folder = root.appending(path: "ExampleApp", directoryHint: .isDirectory)
         let files = FileManager.default
         try files.createDirectory(at: folder.appending(path: "App/App.xcodeproj"), withIntermediateDirectories: true)
-        try files.createDirectory(at: folder.appending(path: "Pods/Vendor.xcodeproj"), withIntermediateDirectories: true)
-        try "targets:\n  App:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.app\n".write(to: folder.appending(path: "App/project.yml"), atomically: true, encoding: .utf8)
+        try files.createDirectory(
+            at: folder.appending(path: "Pods/Vendor.xcodeproj"),
+            withIntermediateDirectories: true
+        )
+        try "targets:\n  App:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.app\n".write(
+            to: folder.appending(path: "App/project.yml"),
+            atomically: true,
+            encoding: .utf8
+        )
         try """
         { objects = {
             T1 = {isa = PBXNativeTarget; productType = "com.apple.product-type.application"; buildConfigurationList = L1; };
@@ -29,17 +36,33 @@ struct ChatSessionTests {
             L1 = {isa = XCConfigurationList; buildConfigurations = (C1); };
             C1 = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_BUNDLE_IDENTIFIER = org.cocoapods.vendor; }; };
         }; }
-        """.write(to: folder.appending(path: "Pods/Vendor.xcodeproj/project.pbxproj"), atomically: true, encoding: .utf8)
+        """.write(
+            to: folder.appending(path: "Pods/Vendor.xcodeproj/project.pbxproj"),
+            atomically: true,
+            encoding: .utf8
+        )
         return folder
     }
 
     /// A report in the inbox with a screen picture and one attached to a note, `pictureBytes` each.
     @discardableResult
     private func inboxReport(_ id: String, bundleID: String = "com.example.app", pictureBytes: Int = 10) throws -> URL {
-        let listing: [String: Any] = ["screens": [["images": [["file": "screen-1.jpg"]]]], "items": [["attachments": [String]()], ["attachments": ["note-2.jpg"]]]]
-        return try fileInboxReport("\(id)-00000001", bundleID: bundleID, in: paths, listing: listing,
-                                   pictures: ["screen-1.jpg": Data(repeating: 0xFF, count: pictureBytes), "note-2.jpg": Data(repeating: 0xD8, count: pictureBytes)],
-                                   summary: "# UI report: Example\n\n1. **Milk stash**: Test.\n", receivedAt: Date(timeIntervalSince1970: 1_791_000_000))
+        let listing: [String: Any] = [
+            "screens": [["images": [["file": "screen-1.jpg"]]]],
+            "items": [["attachments": [String]()], ["attachments": ["note-2.jpg"]]],
+        ]
+        return try fileInboxReport(
+            "\(id)-00000001",
+            bundleID: bundleID,
+            in: paths,
+            listing: listing,
+            pictures: [
+                "screen-1.jpg": Data(repeating: 0xFF, count: pictureBytes),
+                "note-2.jpg": Data(repeating: 0xD8, count: pictureBytes),
+            ],
+            summary: "# UI report: Example\n\n1. **Milk stash**: Test.\n",
+            receivedAt: Date(timeIntervalSince1970: 1_791_000_000)
+        )
     }
 
     private func session(_ folder: URL) -> ChatSession {
@@ -56,7 +79,8 @@ struct ChatSessionTests {
     @Test func onlyOneChatTakesAReport() throws {
         let folder = try project()
         _ = try inboxReport("20261003-223449")
-        let first = session(folder), second = session(folder)
+        let first = session(folder)
+        let second = session(folder)
         #expect(first.take(budget: 1_000_000).taken == 1)
         #expect(second.take(budget: 1_000_000).taken == 0)
         let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
@@ -67,19 +91,37 @@ struct ChatSessionTests {
         _ = try inboxReport("20261003-223449")
         let other = root.appending(path: "Other", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
-        try "PRODUCT_BUNDLE_IDENTIFIER: com.example.other".write(to: other.appending(path: "project.yml"), atomically: true, encoding: .utf8)
+        try "PRODUCT_BUNDLE_IDENTIFIER: com.example.other".write(
+            to: other.appending(path: "project.yml"),
+            atomically: true,
+            encoding: .utf8
+        )
         #expect(session(other).take(budget: 1_000_000).taken == 0)
     }
 
     @Test func theMoreRecentChatGetsTheReportEvenAfterEarlierChanges() async throws {
         let folder = try project()
-        let older = ChatSession(paths: paths, folder: folder, extraApps: [], agent: "test", id: "older", startsHub: false)
+        let older = ChatSession(
+            paths: paths,
+            folder: folder,
+            extraApps: [],
+            agent: "test",
+            id: "older",
+            startsHub: false
+        )
         older.registerWaiting()
         // Used a minute ago: saved times have whole seconds.
         var record = older.chat
         record.lastActiveAt = Date.now.addingTimeInterval(-60)
         try Chats.register(record, paths: paths)
-        let recent = ChatSession(paths: paths, folder: folder, extraApps: [], agent: "test", id: "recent", startsHub: false)
+        let recent = ChatSession(
+            paths: paths,
+            folder: folder,
+            extraApps: [],
+            agent: "test",
+            id: "recent",
+            startsHub: false
+        )
         recent.registerWaiting()
         _ = try inboxReport("20261003-231000")
         // A change the older chat's wait already counted, left over from before.
@@ -110,10 +152,24 @@ struct ChatSessionTests {
     @Test func anotherHookKeepsTheChatsWaiter() throws {
         let folder = root.appending(path: "App", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let waiting = ChatSession(paths: paths, folder: folder, extraApps: ["com.example.app"], agent: "claude", id: "claude-s1", startsHub: false)
+        let waiting = ChatSession(
+            paths: paths,
+            folder: folder,
+            extraApps: ["com.example.app"],
+            agent: "claude",
+            id: "claude-s1",
+            startsHub: false
+        )
         waiting.registerWaiting()
         // A prompt hook, in another process, saves the same chat without a waiter of its own.
-        let prompt = ChatSession(paths: paths, folder: folder, extraApps: ["com.example.app"], agent: "claude", id: "claude-s1", startsHub: false)
+        let prompt = ChatSession(
+            paths: paths,
+            folder: folder,
+            extraApps: ["com.example.app"],
+            agent: "claude",
+            id: "claude-s1",
+            startsHub: false
+        )
         prompt.touch()
         let saved = try #require(Chats.record("claude-s1", paths: paths))
         #expect(saved.waiter == getpid())
