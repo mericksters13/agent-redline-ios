@@ -60,9 +60,11 @@ struct ChatOptions {
 
 var arguments = Array(CommandLine.arguments.dropFirst())
 let paths = HubPaths.standard
-HubPaths.moveFromOldName(to: paths)
 // Opened as an app bundle, it's the menu bar app.
 if arguments.isEmpty, Bundle.main.bundleURL.pathExtension == "app" { arguments = ["app"] }
+// A hub of the earlier version stopped so its folder could move: this version's takes over
+// right away, whatever the command, so reports keep coming. The app and hub commands are it.
+if HubPaths.moveFromOldName(to: paths), !["app", "hub"].contains(arguments.first) { HubProcess.startIfNeeded(paths) }
 
 switch arguments.first {
 case "app":
@@ -180,7 +182,7 @@ case "setup", "remove":
         }
         do {
             try AgentSettings.update(agent) {
-                adding ? AgentSettings.adding(agent, to: $0, executable: executable) : AgentSettings.removing(agent, from: $0)
+                adding ? AgentSettings.adding(agent, to: $0, executable: executable) : AgentSettings.removing(agent, from: $0, executable: executable)
             }
             if adding, AgentSettings.hooks(agent, executable: executable).isEmpty {
                 print("\(agent.name): no hooks needed")

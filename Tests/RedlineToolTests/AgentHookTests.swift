@@ -38,7 +38,7 @@ struct AgentHookTests {
         // Run again, nothing changes.
         #expect(json(AgentSettings.adding(.codex, to: added, executable: executable)) == json(added))
         // Removed, the file is as it was.
-        #expect(json(AgentSettings.removing(.codex, from: added)) == json(codexSettings))
+        #expect(json(AgentSettings.removing(.codex, from: added, executable: executable)) == json(codexSettings))
     }
 
     @Test func setupReplacesTheHookFromBeforeTheRename() {
@@ -50,7 +50,13 @@ struct AgentHookTests {
         #expect(commands(added, "UserPromptSubmit") == ["'\(executable)' hook codex prompt"])
         // A command of another tool that happens to have a hook subcommand stays.
         let other: [String: Any] = ["hooks": ["Stop": [["hooks": [["type": "command", "command": "'/opt/bin/other' hook stop"]]]]]]
-        #expect(json(AgentSettings.removing(.codex, from: other)) == json(other))
+        #expect(json(AgentSettings.removing(.codex, from: other, executable: executable)) == json(other))
+        // Nor does another tool's command that is also named redline, in another folder.
+        let namesake: [String: Any] = ["hooks": ["Stop": [["hooks": [["type": "command", "command": "'/opt/bin/redline' hook codex stop"]]]]]]
+        #expect(json(AgentSettings.removing(.codex, from: namesake, executable: executable)) == json(namesake))
+        // Nor a command under the old name with other arguments.
+        let lookalike: [String: Any] = ["hooks": ["Stop": [["hooks": [["type": "command", "command": "'/opt/bin/agentic-debugging' hook stop --all"]]]]]]
+        #expect(json(AgentSettings.removing(.codex, from: lookalike, executable: executable)) == json(lookalike))
     }
 
     @Test func anEarlierVersionsFolderMovesOnce() throws {
@@ -58,7 +64,8 @@ struct AgentHookTests {
         let old = support.appending(path: "iOSAgenticDebuggingKit/inbox", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
         let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
-        HubPaths.moveFromOldName(to: paths)
+        // No hub was running, so none is started for it.
+        #expect(!HubPaths.moveFromOldName(to: paths))
         #expect(FileManager.default.fileExists(atPath: paths.inbox.path))
         #expect(!FileManager.default.fileExists(atPath: old.path))
         // Once there's a folder under the new name, an old one is left alone.
@@ -83,7 +90,8 @@ struct AgentHookTests {
         try "\(hub.processIdentifier)".write(to: old.pid, atomically: false, encoding: .utf8)
         close(descriptor)
         let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
-        HubPaths.moveFromOldName(to: paths)
+        // It says it stopped the hub, so the command that moved the folder starts this version's.
+        #expect(HubPaths.moveFromOldName(to: paths))
         hub.waitUntilExit()
         #expect(hub.terminationReason == .uncaughtSignal)
         #expect(FileManager.default.fileExists(atPath: paths.hub.path))
@@ -102,7 +110,7 @@ struct AgentHookTests {
         defer { other.terminate() }
         try "\(other.processIdentifier)".write(to: old.pid, atomically: true, encoding: .utf8)
         let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
-        HubPaths.moveFromOldName(to: paths)
+        #expect(!HubPaths.moveFromOldName(to: paths))
         #expect(other.isRunning)
         #expect(FileManager.default.fileExists(atPath: paths.hub.path))
     }
@@ -117,7 +125,7 @@ struct AgentHookTests {
         #expect(stop?["command"] as? String == "'\(executable)' hook cursor stop")
         #expect(stop?["loop_limit"] is NSNull)
         #expect(stop?["timeout"] as? Int == Int(AgentHooks.holdOpen) + 60)
-        #expect(json(AgentSettings.removing(.cursor, from: cursor)) == json(["version": 1]))
+        #expect(json(AgentSettings.removing(.cursor, from: cursor, executable: executable)) == json(["version": 1]))
     }
 
     @Test func hooksFindTheChatInEachAgentsInput() {

@@ -329,7 +329,36 @@ enum ReportSummary {
 struct ReportStore: Sendable {
     let root: URL
 
-    static let standard = ReportStore(root: URL.applicationSupportDirectory.appending(path: "Redline", directoryHint: .isDirectory))
+    static let standard: ReportStore = {
+        let store = ReportStore(root: URL.applicationSupportDirectory.appending(path: "Redline", directoryHint: .isDirectory))
+        store.moveFromOldName()
+        return store
+    }()
+
+    /// Moves what an earlier version kept under its old name, iOSAgenticDebuggingKit, here, so
+    /// the draft and the reports the Mac hasn't collected carry over a rebuild with the new name.
+    /// The hub may already have left its address here, so each item moves on its own, and only
+    /// when nothing of that name is here yet.
+    func moveFromOldName() {
+        let old = root.deletingLastPathComponent().appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory)
+        let files = FileManager.default
+        guard files.fileExists(atPath: old.path) else { return }
+        try? files.createDirectory(at: root, withIntermediateDirectories: true)
+        func move(from source: URL, to destination: URL) {
+            for item in (try? files.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)) ?? [] {
+                let target = destination.appending(path: item.lastPathComponent)
+                if !files.fileExists(atPath: target.path) { try? files.moveItem(at: item, to: target) }
+            }
+        }
+        move(from: old, to: root)
+        // Reports were already here: the old ones join them, each in its own folder.
+        move(from: old.appending(path: "reports"), to: reportsDirectory)
+        // An older hub address is the only thing left that a newer one replaces. The folders go
+        // only when empty (rmdir), so anything else left stays where it is.
+        try? files.removeItem(at: old.appending(path: "hub.json"))
+        rmdir(old.appending(path: "reports").path)
+        rmdir(old.path)
+    }
 
     var draftDirectory: URL { root.appending(path: "draft", directoryHint: .isDirectory) }
     var reportsDirectory: URL { root.appending(path: "reports", directoryHint: .isDirectory) }
