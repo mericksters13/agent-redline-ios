@@ -33,6 +33,8 @@ final class ChatSession: @unchecked Sendable {
     func register(agent: String? = nil) {
         lock.withLock { if let agent { record.agent = agent } }
         guard !chat.bundleIDs.isEmpty else { return }
+        // Noted before the chat's file appears, so the hub sees both when it looks.
+        ProjectHistory.note(chat, paths: paths)
         save()
         if startsHub { HubProcess.startIfNeeded(paths) }
     }
@@ -52,9 +54,10 @@ final class ChatSession: @unchecked Sendable {
     /// that get reports through hooks. Nil when there's none.
     func takeAddressed() -> String? {
         let chat = self.chat
-        let texts = InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths)
+        let reports = InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths)
             .filter { InboxQueue.claim($0, for: chat) }
-            .map(ReportContent.text(for:))
+        let texts = reports.map(ReportContent.text(for:))
+        reports.forEach(InboxQueue.handedOver)
         return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
     }
 
@@ -77,6 +80,7 @@ final class ChatSession: @unchecked Sendable {
             // Another chat may have taken it a moment ago.
             guard InboxQueue.claim(report, for: chat) else { continue }
             let content = ReportContent.items(for: report, budget: max(budget - used, 0))
+            InboxQueue.handedOver(report)
             items += content.items
             used += content.bytes
             taken += 1

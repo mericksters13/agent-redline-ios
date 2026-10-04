@@ -111,10 +111,9 @@ enum HubLink {
             let line = Line(host: host, port: port)
             guard await line.open(patience: patience) else { continue }
             defer { line.close() }
-            guard await line.send(encode(request)), let data = await line.read(), let list = decode(ChatList.self, from: data),
-                  list.refused == nil
-            else { return nil }
-            return list
+            // Something else may answer at an old address; the hub may be at the next one.
+            guard await line.send(encode(request)), let data = await line.read(), let list = decode(ChatList.self, from: data) else { continue }
+            return list.refused == nil ? list : nil
         }
         return nil
     }
@@ -154,12 +153,15 @@ enum HubLink {
                         files: @Sendable (String) -> [String: Data], patience: TimeInterval) async -> (outcome: Outcome, delivered: [String]) {
         guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return (.refused, []) }
         let offer = Offer(device: address.device, bundleID: bundleID, token: token, reports: reports)
+        var outcome = Outcome.unreachable
         for host in address.hosts {
             let line = Line(host: host, port: port)
             guard await line.open(patience: patience) else { continue }
             defer { line.close() }
+            // Something else may answer at an old address; the hub may be at the next one.
             guard await line.send(encode(offer)), let answerData = await line.read(), let answer = decode(Answer.self, from: answerData) else {
-                return (.interrupted, [])
+                outcome = .interrupted
+                continue
             }
             if answer.refused != nil { return (.refused, answer.delivered) }
             var delivered = answer.delivered
@@ -172,7 +174,7 @@ enum HubLink {
             let offered = Set(reports.map(\.id))
             return (offered.isSubset(of: Set(delivered)) ? .delivered : .interrupted, delivered)
         }
-        return (.unreachable, [])
+        return (outcome, [])
     }
 
     /// A connection that sends and reads whole lines.

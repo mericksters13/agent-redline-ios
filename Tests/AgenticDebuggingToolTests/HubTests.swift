@@ -144,6 +144,18 @@ struct HubTests {
         #expect(HubProcess.running(paths) == nil)
     }
 
+    @Test func anAppStaysWatchedAfterItsLastChatCloses() throws {
+        let hub = try hub()
+        let other = "com.example.other"
+        let chat = ChatSession(paths: paths, folder: paths.root, extraApps: [other], agent: "test", startsHub: false)
+        chat.register()
+        hub.updateApps(starting: true)
+        #expect(hub.apps.contains(other))
+        chat.unregister()
+        hub.updateApps(starting: true)
+        #expect(hub.apps.contains(other))
+    }
+
     @Test func aTokenOutlivesTheHub() throws {
         let token = try hub().token(device: phone, bundleID: app)
         #expect(token.count == 64)
