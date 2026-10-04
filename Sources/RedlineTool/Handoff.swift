@@ -98,11 +98,16 @@ final class Handoff: @unchecked Sendable {
             sendToClaude(report, session: id, worktree: worktree)
         case .chat(.codex, let id):
             sendToCodex(report, thread: id)
+        case .chat(.cursor, let id) where !Chats.live(paths).contains(where: { $0.id == "cursor-\(id)" }):
+            // A Cursor chat gets reports only through its own hooks, which a closed chat never runs.
+            hub.log("The Cursor chat \(id) for report \(source.reportID) is closed; it waits in the inbox")
+            Self.notify(title: "Report from \(source.deviceName)", message: "The Cursor chat it was sent to is closed. The report waits in the inbox.")
         case .chat(.cursor, let id):
             InboxQueue.setAddress(Address(chat: "cursor-\(id)", agent: Agent.cursor.rawValue, folder: worktree ?? ""), of: report.folder)
+            // Saved before the chat's hook wakes, so a claim it makes is always newer than this.
+            ReportDelivery.save(.init(agent: .cursor, chat: id, title: "Cursor chat", kind: .nextMessage), in: report.folder)
             InboxQueue.signal(source.bundleID, paths: paths)
             hub.log("Report \(source.reportID) goes to the Cursor chat \(id) when its hooks next run")
-            ReportDelivery.save(.init(agent: .cursor, chat: id, title: "Cursor chat", kind: .nextMessage), in: report.folder)
             Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Cursor chat after its next reply or with your next message there.")
         case .newChat(let agent, let folder, let pick):
             // The chat this pick started for an earlier report, while its worktree exists.
@@ -146,11 +151,12 @@ final class Handoff: @unchecked Sendable {
         guard InboxQueue.claim(report, for: chat) else { return }
         let name = session.title ?? Self.folderName(session.folder)
         if ClaudeSessions.send(ReportContent.text(for: report), to: session) {
+            InboxQueue.handedOver(report)
             hub.log("Sent report \(source.reportID) to the Claude Code chat \(name), in \(session.folder)")
             ReportDelivery.save(.init(agent: .claude, chat: id, title: name, kind: .sent), in: report.folder)
             Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Claude Code chat \(name).")
         } else {
-            try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+            InboxQueue.release(report)
             hub.log("The Claude Code chat \(name) didn't take report \(source.reportID); it waits in the inbox")
             Self.notify(title: "Report from \(source.deviceName)", message: "The Claude Code chat \(name) didn't take it. It waits in the inbox.")
         }
@@ -174,12 +180,13 @@ final class Handoff: @unchecked Sendable {
             outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
         }
         if outcome == .started {
+            InboxQueue.handedOver(report)
             hub.log("Sent report \(source.reportID) with \(pictures.count) pictures to the Codex chat \(thread)")
             ReportDelivery.save(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread) ?? "Codex chat", kind: .sent), in: report.folder)
             Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Codex chat, with its pictures.")
             return
         }
-        try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+        InboxQueue.release(report)
         InboxQueue.setAddress(Address(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
         hub.log("The Codex app didn't take report \(source.reportID) (\(outcome)); it goes in with the chat's next message")
         ReportDelivery.save(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread) ?? "Codex chat", kind: .nextMessage), in: report.folder)
@@ -249,7 +256,11 @@ final class Handoff: @unchecked Sendable {
     /// time, the report goes in with the claude command instead.
     private func openClaude(_ id: String, in folder: String, thenSend text: String, for report: InboxReport) {
         let source = report.source
-        guard let claude = AgentCommand.locate(.claude) else { return }
+        guard let claude = AgentCommand.locate(.claude) else {
+            InboxQueue.release(report)
+            hub.log("Couldn't find the claude command to open the chat for report \(source.reportID); it waits in the inbox")
+            return
+        }
         if AgentCommand.hasClaudeApp {
             // claude --desktop refuses to run without a terminal; script gives it one.
             Self.run("/usr/bin/script", ["-q", "/dev/null", claude.path, "--desktop", "--resume", id], in: folder)
@@ -261,6 +272,7 @@ final class Handoff: @unchecked Sendable {
         queue.async { [self] in
             for _ in 0..<60 {
                 if let session = ClaudeSessions.open().first(where: { $0.id == id }), ClaudeSessions.send(text, to: session) {
+                    InboxQueue.handedOver(report)
                     hub.log("Sent report \(source.reportID) to the Claude Code chat \(id), now open")
                     ReportDelivery.save(.init(agent: .claude, chat: id, title: session.title ?? "New chat in \(place)", kind: .newChat), in: report.folder)
                     Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code is looking into it in \(AgentCommand.hasClaudeApp ? "the Claude app" : "Terminal"), in worktree \(place).")
@@ -271,6 +283,7 @@ final class Handoff: @unchecked Sendable {
             // Not open after a minute: the report goes in anyway, and shows when the chat is opened.
             hub.log("The Claude Code chat \(id) didn't open in time; giving it report \(source.reportID) with the claude command")
             Self.run(claude.path, ["-p", text, "--resume", id, "--permission-mode", "plan"], in: folder)
+            InboxQueue.handedOver(report)
             Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code looked into it. Open the chat in worktree \(place) to see it.")
         }
     }
@@ -299,11 +312,18 @@ final class Handoff: @unchecked Sendable {
         guard InboxQueue.claim(report, for: chat) else { return }
 
         // A new chat works in a worktree of its own; a continued one is already in its own.
+        // Without its own worktree, a new chat would work in the user's checkout: it doesn't start.
         let workFolder: String
-        var madeWorktree = false
-        if resuming == nil, let made = NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: agent) {
+        let madeWorktree = resuming == nil
+        if resuming == nil {
+            guard let made = NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: agent) else {
+                InboxQueue.release(report)
+                hub.log("Couldn't make a worktree from the main branch of \(folder) for report \(source.reportID); it waits in the inbox")
+                Self.notify(title: "Report from \(source.deviceName)",
+                            message: "Couldn't make a worktree for a new \(agent.name) chat from the main branch of \(Self.folderName(folder)). The report waits in the inbox.")
+                return
+            }
             workFolder = made
-            madeWorktree = true
             hub.log("Made worktree \(made) for report \(source.reportID)")
         } else {
             workFolder = folder
@@ -311,7 +331,7 @@ final class Handoff: @unchecked Sendable {
         let pictures = ReportContent.pictures(in: report.folder)
         var reportPrompt = ReportContent.text(for: report)
         // A Claude Code chat reads the pictures from a copy in its worktree, without asking.
-        if agent == .claude, resuming == nil, madeWorktree, let copy = NewWorktree.copyReport(report.folder, into: workFolder) {
+        if agent == .claude, madeWorktree, let copy = NewWorktree.copyReport(report.folder, into: workFolder) {
             reportPrompt = reportPrompt.replacingOccurrences(of: report.folder.path, with: copy)
         }
         // A Claude Code chat is only opened by the claude command, with a line that takes
@@ -333,14 +353,13 @@ final class Handoff: @unchecked Sendable {
         }
         let paths = hub.paths
         let place = Self.folderName(workFolder)
-        let madeWorktreeForThis = madeWorktree
         process.terminationHandler = { [hub, self] finished in
             let text = (try? String(contentsOf: output, encoding: .utf8)) ?? ""
             let started = AgentCommand.startedChat(agent, in: text)
             guard finished.terminationStatus == 0, let started, !started.failed else {
                 // Free the report for a chat that opens later, and take back the unused worktree.
-                try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
-                if madeWorktreeForThis { NewWorktree.remove(workFolder) }
+                InboxQueue.release(report)
+                if madeWorktree { NewWorktree.remove(workFolder) }
                 let reason = AgentCommand.failure(in: text)
                 hub.log("The \(agent.name) chat for report \(source.reportID) failed (\(finished.terminationStatus)): \(reason)")
                 Handoff.notify(title: "Couldn't start a \(agent.name) chat", message: "\(reason). The report waits in the inbox.")
@@ -351,6 +370,8 @@ final class Handoff: @unchecked Sendable {
             if let answer = started.answer {
                 try? answer.write(to: report.folder.appending(path: "answer.md"), atomically: true, encoding: .utf8)
             }
+            // A Claude Code chat has the report once it's sent into the open chat.
+            if agent != .claude { InboxQueue.handedOver(report) }
             if agent == .codex {
                 // Shown in the Codex app, or in a terminal without it.
                 if AgentCommand.hasCodexApp {
@@ -365,6 +386,7 @@ final class Handoff: @unchecked Sendable {
                 self.openClaude(started.chat, in: workFolder, thenSend: reportText, for: report)
             } else {
                 hub.log("The \(agent.name) chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
+                ReportDelivery.save(.init(agent: agent, chat: started.chat, title: "New chat in \(place)", kind: .newChat), in: report.folder)
                 Handoff.notify(title: "\(agent.name) looked into a report", message: "Its answer is in the report's folder, answer.md. Worktree \(place).")
             }
         }
@@ -373,7 +395,8 @@ final class Handoff: @unchecked Sendable {
             hub.log("\(resuming == nil ? "Started" : "Continued") a \(agent.name) chat in \(workFolder) for report \(source.reportID)")
             Self.notify(title: "\(agent.name) is looking into a report", message: "From \(source.deviceName), in worktree \(place).")
         } catch {
-            try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+            InboxQueue.release(report)
+            if madeWorktree { NewWorktree.remove(workFolder) }
             hub.log("Couldn't start a \(agent.name) chat for report \(source.reportID): \(error.localizedDescription)")
         }
     }

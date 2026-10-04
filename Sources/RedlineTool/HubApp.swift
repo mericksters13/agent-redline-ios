@@ -149,7 +149,8 @@ final class HubWindowModel {
     /// one, from every report in the inbox rather than only those shown.
     nonisolated static func readReports(paths: HubPaths, limit: Int = 30) -> (rows: [ReportRow], lastReport: [String: Date]) {
         let files = FileManager.default
-        var found: [(device: String, row: ReportRow)] = []
+        // Only source.json for every report; the rest only for the newest, which are shown.
+        var found: [(folder: URL, source: ReportSource)] = []
         for app in (try? files.contentsOfDirectory(atPath: paths.inbox.path)) ?? [] where !app.hasPrefix(".") {
             let appFolder = paths.inbox.appending(path: app, directoryHint: .isDirectory)
             for name in (try? files.contentsOfDirectory(atPath: appFolder.path)) ?? [] where !name.hasPrefix(".") {
@@ -157,15 +158,17 @@ final class HubWindowModel {
                 guard let data = try? Data(contentsOf: folder.appending(path: "source.json")),
                       let source = try? Chats.decoder.decode(ReportSource.self, from: data)
                 else { continue }
-                let (agent, chat, waiting) = destination(of: folder)
-                found.append((source.device, ReportRow(id: folder.path, folder: folder, device: source.deviceName, receivedAt: source.receivedAt,
-                                                       agent: agent, chat: chat, waiting: waiting,
-                                                       thumbnail: ReportContent.pictures(in: folder).first, notes: notes(in: folder))))
+                found.append((folder, source))
             }
         }
-        let lastReport = Dictionary(found.map { ($0.device, $0.row.receivedAt) }, uniquingKeysWith: max)
-        let rows = found.map(\.row).sorted { $0.receivedAt > $1.receivedAt }.prefix(limit)
-        return (Array(rows), lastReport)
+        let lastReport = Dictionary(found.map { ($0.source.device, $0.source.receivedAt) }, uniquingKeysWith: max)
+        let rows = found.sorted { $0.source.receivedAt > $1.source.receivedAt }.prefix(limit).map { folder, source in
+            let (agent, chat, waiting) = destination(of: folder)
+            return ReportRow(id: folder.path, folder: folder, device: source.deviceName, receivedAt: source.receivedAt,
+                             agent: agent, chat: chat, waiting: waiting,
+                             thumbnail: ReportContent.pictures(in: folder).first, notes: notes(in: folder))
+        }
+        return (rows, lastReport)
     }
 
     /// The agent and chat a report went to: what the hub saved when it delivered it, or the

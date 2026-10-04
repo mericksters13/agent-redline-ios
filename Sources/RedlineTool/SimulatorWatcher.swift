@@ -9,7 +9,9 @@ final class SimulatorWatcher: @unchecked Sendable {
     private unowned let hub: Hub
     private let queue = DispatchQueue(label: "simulators")
     private let devices = URL.libraryDirectory.appending(path: "Developer/CoreSimulator/Devices", directoryHint: .isDirectory)
-    /// Every app data container seen so far and the app it belongs to, so a rescan reads only new ones.
+    /// Every app data container seen so far and the app it belongs to, so a rescan reads only
+    /// new ones. A container whose metadata couldn't be read yet, such as while the app is
+    /// still installing, isn't kept, so the next rescan reads it again.
     private var owners: [String: String] = [:]
     /// The watched apps' containers.
     private var watched: [String: String] = [:]
@@ -75,7 +77,7 @@ final class SimulatorWatcher: @unchecked Sendable {
                 if owners[path] == nil {
                     let metadata = URL(fileURLWithPath: path).appending(path: ".com.apple.mobile_container_manager.metadata.plist")
                     let plist = (try? Data(contentsOf: metadata)).flatMap { try? PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: Any] }
-                    owners[path] = plist?["MCMMetadataIdentifier"] as? String ?? ""
+                    if let owner = plist?["MCMMetadataIdentifier"] as? String, !owner.isEmpty { owners[path] = owner }
                 }
                 if let owner = owners[path], hub.apps.contains(owner) { found[path] = owner }
             }

@@ -366,30 +366,47 @@ struct ReportStore: Sendable {
     }
 
     /// Starts a report: moves the whole draft into a new report folder, so new notes go into
-    /// a fresh draft while the report's pictures are drawn from the old one.
+    /// a fresh draft while the report's pictures are drawn from the old one. If the move
+    /// fails, the draft stays as it was and no report folder is left behind.
     /// Returns the report's id, its folder and where the draft now is.
     func beginReport(date: Date) throws -> (id: String, folder: URL, draft: URL) {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let stamp = formatter.string(from: date)
         let files = FileManager.default
-        var id = formatter.string(from: date)
-        var suffix = 2
-        while files.fileExists(atPath: reportsDirectory.appending(path: id).path) {
-            id = formatter.string(from: date) + "-\(suffix)"
-            suffix += 1
+        try files.createDirectory(at: reportsDirectory, withIntermediateDirectories: true)
+
+        // Creating the folder itself fails when it exists, so two reports in the same
+        // second, or a clock set back, get their own folders instead of sharing one.
+        var id = stamp
+        var folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+        var attempt = 1
+        while true {
+            do {
+                try files.createDirectory(at: folder, withIntermediateDirectories: false)
+                break
+            } catch CocoaError.fileWriteFileExists where attempt < 100 {
+                attempt += 1
+                id = "\(stamp)-\(attempt)"
+                folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+            }
         }
-        let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
         let draft = folder.appending(path: "draft", directoryHint: .isDirectory)
-        try files.createDirectory(at: folder, withIntermediateDirectories: true)
-        try files.moveItem(at: draftDirectory, to: draft)
+        do {
+            try files.moveItem(at: draftDirectory, to: draft)
+        } catch {
+            try? files.removeItem(at: folder)
+            throw error
+        }
         return (id, folder, draft)
     }
 
-    /// Finishes a report: writes `report.json` and `report.md` and removes the old draft.
+    /// Finishes a report: writes `report.md` and `report.json` and removes the old draft.
+    /// `report.json` goes last, so a report is listed as sent only once it is complete.
     func finishReport(_ report: Report, in folder: URL) throws {
-        try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)
         try Data(ReportSummary.markdown(report).utf8).write(to: folder.appending(path: "report.md"), options: .atomic)
+        try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)
         try? FileManager.default.removeItem(at: folder.appending(path: "draft"))
     }
 

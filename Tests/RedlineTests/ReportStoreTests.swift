@@ -248,5 +248,14 @@ struct ReportStoreTests {
             ]
         )
     }
+
+    @Test func aFailedStartLeavesNoReportBehind() throws {
+        // No draft on disk to move, so starting the report fails after its folder is made.
+        #expect(throws: (any Error).self) {
+            try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        }
+        let reports = try FileManager.default.contentsOfDirectory(atPath: store.reportsDirectory.path)
+        #expect(reports.isEmpty)
+    }
 }
 #endif
