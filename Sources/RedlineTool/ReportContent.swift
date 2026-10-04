@@ -140,7 +140,9 @@ enum ReportContent {
         var used = text.utf8.count
         var unnamed = 0
         for picture in pictures {
-            guard let data = try? Data(contentsOf: picture) else { continue }
+            // Mapped rather than read: the command line names pictures by path and never reads
+            // their bytes, so a backlog of large reports doesn't fill memory.
+            guard let data = try? Data(contentsOf: picture, options: .mappedIfSafe) else { continue }
             let label = picture.lastPathComponent + ":"
             if used + label.utf8.count + data.count > budget {
                 let notice = "\(picture.lastPathComponent) isn't attached, to keep this reply small. Open it at \(picture.path)."
