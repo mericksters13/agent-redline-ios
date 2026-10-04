@@ -156,15 +156,19 @@ final class DebugSession {
     @ObservationIgnored private let selectionFeedback = UISelectionFeedbackGenerator()
     @ObservationIgnored private let logger = Logger(subsystem: "Redline", category: "session")
 
-    private init() {}
+    private init() {
+        // Before anything reads a setting: the chat picked for reports is read just below, and
+        // it may still be saved under the name from before the rename.
+        if let bundleID = Bundle.main.bundleIdentifier {
+            ReportStore.moveSettingsFromOldName(in: .standard, domain: bundleID)
+        }
+        destination = Self.savedDestination()
+    }
 
     // MARK: - Install
 
     func install(in scene: UIWindowScene) {
         guard window == nil else { return }
-        if let bundleID = Bundle.main.bundleIdentifier {
-            ReportStore.moveSettingsFromOldName(in: .standard, domain: bundleID)
-        }
         AccessibilityTree.enableAutomation()
 
         let window = OverlayWindow(windowScene: scene)
@@ -757,7 +761,8 @@ final class DebugSession {
 
     /// Where reports from this build go, as the user picked. Kept per worktree the app was built
     /// from, so a build from another worktree starts with that worktree's chat.
-    private(set) var destination: Report.Destination? = DebugSession.savedDestination()
+    /// Read when the session is made, once settings from before the rename have moved.
+    private(set) var destination: Report.Destination? = nil
     private(set) var chatList: ChatListState = .loading
     /// The agent whose chats the picker shows.
     var pickerAgent: String?

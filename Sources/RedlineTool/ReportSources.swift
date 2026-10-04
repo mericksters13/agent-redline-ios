@@ -92,6 +92,10 @@ enum HubMessage {
 
     /// Where the kit looks for the hub's address, inside an app's data container.
     static let addressPath = "Library/Application Support/Redline/hub.json"
+    /// Where a build from before the rename looks for it. The hub leaves the address there as
+    /// well, so such a build installed after the Mac tool is updated still reaches the hub. A
+    /// build with the new name removes that file when it moves its old folder over.
+    static let earlierAddressPath = "Library/Application Support/iOSAgenticDebuggingKit/hub.json"
 
     static func encode<T: Encodable>(_ value: T) -> Data {
         let encoder = JSONEncoder()

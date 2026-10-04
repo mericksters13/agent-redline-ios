@@ -45,26 +45,33 @@ mkdir -p "$destination"
 # seconds is killed only when it isn't handing a report over: killed mid hand-over, the next hub
 # would hand the report over again while the chat the old one started still has it.
 running=false
-inbox="$HOME/Library/Application Support/Redline/inbox"
-if pkill -TERM -f "$app/Contents/MacOS/" 2>/dev/null; then
+stop_running_copy() {
+    local bundle="$1" inbox="$2"
+    pkill -TERM -f "$bundle/Contents/MacOS/" 2>/dev/null || return 0
     running=true
-    for _ in {1..50}; do pgrep -f "$app/Contents/MacOS/" >/dev/null || break; sleep 0.3; done
-    if pgrep -f "$app/Contents/MacOS/" >/dev/null; then
+    for _ in {1..50}; do pgrep -f "$bundle/Contents/MacOS/" >/dev/null || break; sleep 0.3; done
+    if pgrep -f "$bundle/Contents/MacOS/" >/dev/null; then
         # A report being handed over has a claim naming the process handing it over.
-        for pid in $(pgrep -f "$app/Contents/MacOS/"); do
+        for pid in $(pgrep -f "$bundle/Contents/MacOS/"); do
             if grep -rlsqE --include=claim.json "\"handingOverIn\" *: *$pid([^0-9]|\$)" "$inbox"; then
-                echo "The running copy of $app is handing a report over to its chat and quits once the chat has it; run this again then." >&2
+                echo "The running copy of $bundle is handing a report over to its chat and quits once the chat has it; run this again then." >&2
                 exit 1
             fi
         done
-        pkill -KILL -f "$app/Contents/MacOS/" 2>/dev/null || true
-        for _ in {1..20}; do pgrep -f "$app/Contents/MacOS/" >/dev/null || break; sleep 0.1; done
+        pkill -KILL -f "$bundle/Contents/MacOS/" 2>/dev/null || true
+        for _ in {1..20}; do pgrep -f "$bundle/Contents/MacOS/" >/dev/null || break; sleep 0.1; done
     fi
-    if pgrep -f "$app/Contents/MacOS/" >/dev/null; then
-        echo "The running copy of $app did not exit; quit it and run this again." >&2
+    if pgrep -f "$bundle/Contents/MacOS/" >/dev/null; then
+        echo "The running copy of $bundle did not exit; quit it and run this again." >&2
         exit 1
     fi
-fi
+}
+stop_running_copy "$app" "$HOME/Library/Application Support/Redline/inbox"
+# The app from before the rename is replaced the same way. Its inbox is still under its own name
+# while it runs: the new app moves that folder when it starts.
+legacy="$destination/Agentic Debugging.app"
+stop_running_copy "$legacy" "$HOME/Library/Application Support/iOSAgenticDebuggingKit/inbox"
+rm -rf "$legacy"
 rm -rf "$app"
 mv "$staging" "$app"
 # Registered with Launch Services, so chats find the app by its identifier in any folder.
