@@ -108,6 +108,33 @@ enum CodexThreads {
         return newest.map { folder.appending(path: $0) }
     }
 
+    /// Where the user uses Codex: wherever their most recent chat came from, leaving out
+    /// background runs (`codex exec`, which the hub uses too). The Codex app when there's no
+    /// chat to go by and the app is installed.
+    static func usesDesktopApp(in database: URL? = database) -> Bool {
+        guard let database else { return AgentCommand.hasCodexApp }
+        var connection: OpaquePointer?
+        guard sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(connection)
+            return AgentCommand.hasCodexApp
+        }
+        defer { sqlite3_close(connection) }
+        let query = """
+            SELECT COALESCE(originator, ''), COALESCE(source, '') FROM threads
+            WHERE agent_role IS NULL AND (thread_source IS NULL OR thread_source = 'user')
+              AND source NOT LIKE '%subagent%' AND source != 'exec'
+            ORDER BY updated_at_ms DESC LIMIT 1
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(connection, query, -1, &statement, nil) == SQLITE_OK else { return AgentCommand.hasCodexApp }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { return AgentCommand.hasCodexApp }
+        let originator = sqlite3_column_text(statement, 0).map { String(cString: $0) } ?? ""
+        let source = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
+        if source == "cli" { return false }
+        return originator.localizedCaseInsensitiveContains("desktop") || AgentCommand.hasCodexApp
+    }
+
     /// Chats the user had, used in the last `days`, newest first: not archived, and not the
     /// reviews, subagents and automations Codex runs on its own.
     static func recent(days: Double = 14, in database: URL? = database) -> [Thread] {

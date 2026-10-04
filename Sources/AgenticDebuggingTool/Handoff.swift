@@ -329,8 +329,8 @@ final class Handoff: @unchecked Sendable {
                 try? answer.write(to: report.folder.appending(path: "answer.md"), atomically: true, encoding: .utf8)
             }
             if agent == .codex {
-                // Shown where the user carries on: the Codex app, or a terminal without it.
-                if AgentCommand.hasCodexApp {
+                // Shown where the user uses Codex: the Codex app, or a terminal.
+                if CodexThreads.usesDesktopApp() {
                     Handoff.open("codex://threads/\(started.chat)")
                 } else {
                     Handoff.openTerminal(in: workFolder, running: executable.path, arguments: ["resume"], with: started.chat)

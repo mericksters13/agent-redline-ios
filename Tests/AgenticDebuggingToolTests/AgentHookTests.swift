@@ -261,6 +261,24 @@ struct AgentHookTests {
         #expect(!FileManager.default.fileExists(atPath: file.path))
     }
 
+    @Test func aNewCodexChatOpensWhereTheLastRealChatRan() throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        func database(_ rows: [(originator: String, source: String, at: Int)]) throws -> URL {
+            let file = root.appending(path: "state_\(UUID().uuidString.prefix(6)).sqlite")
+            let inserts = rows.map { "INSERT INTO threads VALUES ('\($0.originator)', '\($0.source)', \($0.at), NULL, 'user');" }.joined()
+            let sqlite = Process()
+            sqlite.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+            sqlite.arguments = [file.path, "CREATE TABLE threads (originator TEXT, source TEXT, updated_at_ms INTEGER, agent_role TEXT, thread_source TEXT);" + inserts]
+            try sqlite.run()
+            sqlite.waitUntilExit()
+            return file
+        }
+        // Last used in a terminal; a newer background run, such as one the hub started, doesn't count.
+        #expect(!CodexThreads.usesDesktopApp(in: try database([("Codex Desktop", "vscode", 1), ("codex_cli_rs", "cli", 2), ("codex_exec", "exec", 3)])))
+        // Last used in the Codex app.
+        #expect(CodexThreads.usesDesktopApp(in: try database([("codex_cli_rs", "cli", 1), ("Codex Desktop", "vscode", 2)])))
+    }
+
     @Test func codexChatsLeaveOutWhatCodexRunsOnItsOwn() throws {
         let database = root.appending(path: "state_5.sqlite")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
