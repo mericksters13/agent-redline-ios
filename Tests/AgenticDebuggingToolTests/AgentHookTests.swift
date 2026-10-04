@@ -163,13 +163,16 @@ struct AgentHookTests {
         #expect(build.folder == project.standardizedFileURL.path)
         // Another chat's next command doesn't take the credit, even a build command elsewhere.
         #expect(Builds.record(chat: "claude-B", agent: "claude", folder: project.path, paths: paths, roots: [derived]) { ["com.example.app"] }.isEmpty)
-        #expect(Builds.record(chat: "claude-B", agent: "claude", folder: "/elsewhere", paths: paths, roots: [derived], anyFolder: true) { [] }.isEmpty)
+        #expect(Builds.record(chat: "claude-B", agent: "claude", folder: "/elsewhere", paths: paths, roots: [derived], buildCommand: "xcodebuild -project \(project.path)/App.xcodeproj") { [] }.isEmpty)
         // A build command in a chat working elsewhere counts for the build it just made.
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)],
                                               ofItemAtPath: derived.appending(path: "Build/Products/Debug-iphoneos/App.app/App").path)
         #expect(Builds.record(chat: "claude-C", agent: "claude", folder: "/elsewhere", paths: paths, roots: [derived], now: Date().addingTimeInterval(6)) { [] }.isEmpty)
+        // A build command that doesn't name the folder doesn't get the build another chat just made.
+        #expect(Builds.record(chat: "claude-C", agent: "claude", folder: "/elsewhere", paths: paths, roots: [derived],
+                              now: Date().addingTimeInterval(6), buildCommand: "xcodebuild -project /elsewhere/Other.xcodeproj") { [] }.isEmpty)
         let elsewhere = Builds.record(chat: "claude-C", agent: "claude", folder: "/elsewhere", paths: paths, roots: [derived],
-                                      now: Date().addingTimeInterval(6), anyFolder: true) { [] }
+                                      now: Date().addingTimeInterval(6), buildCommand: "cd \(project.path)/App && xcodebuild build") { [] }
         #expect(elsewhere.first?.folder == project.standardizedFileURL.path)
         #expect(HookInput(.claude, json: Data(#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{"command":"cd x && xcodebuild -scheme App build"}}"#.utf8))?.ranABuild == true)
         #expect(HookInput(.codex, json: Data(#"{"session_id":"s","cwd":"/p","tool_name":"mcp__XcodeBuildMCP__build_sim"}"#.utf8))?.ranABuild == true)

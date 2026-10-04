@@ -60,8 +60,10 @@ struct HookInput: Equatable {
             chat = id
             folder = root
         }
-        let input = object["tool_input"] as? [String: Any]
-        tool = [object["tool_name"] as? String, input?["command"] as? String, object["command"] as? String].compactMap { $0 }.joined(separator: " ")
+        // The tool's name and its whole input, which names the project or folder it built.
+        let input = (object["tool_input"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.withoutEscapingSlashes]) }
+            .map { String(decoding: $0, as: UTF8.self) }
+        tool = [object["tool_name"] as? String, input, object["command"] as? String].compactMap { $0 }.joined(separator: " ")
     }
 }
 
@@ -81,7 +83,8 @@ enum AgentHooks {
 
         if event == .built {
             // Runs after every command, so it looks for a new build before reading the project.
-            let recorded = Builds.record(chat: id, agent: agent.rawValue, folder: input.folder, paths: paths, anyFolder: input.ranABuild) {
+            let recorded = Builds.record(chat: id, agent: agent.rawValue, folder: input.folder, paths: paths,
+                                         buildCommand: input.ranABuild ? input.tool : nil) {
                 ProjectApps.bundleIDs(in: folder)
             }
             guard let build = recorded.last else { return 0 }

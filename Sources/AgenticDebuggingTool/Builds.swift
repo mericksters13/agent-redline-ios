@@ -25,6 +25,8 @@ struct BuiltApp: Equatable {
     var modified: Date
     /// The worktree its project is in.
     var folder: String
+    /// The derived data folder it was built into.
+    var derivedData: URL
 }
 
 enum Builds {
@@ -33,7 +35,7 @@ enum Builds {
     static let freshness: TimeInterval = 900
     static let kept = 300
     /// A build from another folder counts as the chat's only right after the chat ran a build
-    /// command, and only if it finished this recently.
+    /// command that names that folder, and only if it finished this recently.
     static let justBuilt: TimeInterval = 120
 
     static func file(_ paths: HubPaths) -> URL { paths.hub.appending(path: "builds.json") }
@@ -56,15 +58,18 @@ enum Builds {
     /// Records the apps built from the chat's worktree since the last look as the chat's.
     /// Returns what it recorded.
     @discardableResult
-    /// `anyFolder` is for a build command just run, which may build a project outside the
-    /// chat's folder. `bundleIDs` is asked for only when there's a new build in the chat's own
-    /// folder: it reads the project.
+    /// `buildCommand` is a build command the chat just ran, which may build a project outside
+    /// the chat's folder: a build there counts only if the command names its folder, so a
+    /// build another chat finished at the same moment doesn't. `bundleIDs` is asked for only
+    /// when there's a new build in the chat's own folder: it reads the project.
     static func record(chat: String, agent: String, folder: String, paths: HubPaths, roots: [URL]? = nil,
-                       now: Date = Date(), anyFolder: Bool = false, bundleIDs: () -> [String]) -> [BuildRecord] {
+                       now: Date = Date(), buildCommand: String? = nil, bundleIDs: () -> [String]) -> [BuildRecord] {
         let worktree = worktreeRoot(of: folder)
         let fresh = builtApps(roots: roots ?? derivedDataFolders(around: worktree)).filter {
             let age = now.timeIntervalSince($0.modified)
-            return ($0.folder == worktree && age < freshness) || (anyFolder && age < justBuilt)
+            if $0.folder == worktree { return age < freshness }
+            guard let command = buildCommand, age < justBuilt else { return false }
+            return command.contains($0.folder) || command.contains($0.derivedData.path)
         }
         guard !fresh.isEmpty else { return [] }
         return withLock(paths) {
@@ -132,12 +137,14 @@ enum Builds {
             for configuration in (try? files.contentsOfDirectory(at: products, includingPropertiesForKeys: nil)) ?? [] {
                 for app in (try? files.contentsOfDirectory(at: configuration, includingPropertiesForKeys: nil)) ?? [] where app.pathExtension == "app" {
                     guard let plist = NSDictionary(contentsOf: app.appending(path: "Info.plist")),
-                          let bundleID = plist["CFBundleIdentifier"] as? String, let executable = plist["CFBundleExecutable"] as? String
+                          let bundleID = plist["CFBundleIdentifier"] as? String, let executable = plist["CFBundleExecutable"] as? String,
+                          // UI test runners never send reports.
+                          !bundleID.hasSuffix(".xctrunner")
                     else { continue }
                     let binaries = [executable, executable + ".debug.dylib"].map { app.appending(path: $0) }.filter { files.fileExists(atPath: $0.path) }
                     let modified = binaries.compactMap { (try? files.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date }.max()
                     guard let modified else { continue }
-                    apps.append(BuiltApp(app: app, bundleID: bundleID, binaries: binaries, modified: modified, folder: folder))
+                    apps.append(BuiltApp(app: app, bundleID: bundleID, binaries: binaries, modified: modified, folder: folder, derivedData: root))
                 }
             }
         }
