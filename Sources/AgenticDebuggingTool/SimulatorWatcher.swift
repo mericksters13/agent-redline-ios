@@ -148,10 +148,17 @@ final class SimulatorWatcher: @unchecked Sendable {
             return ("\(reportID)/\(name)", attributes?[.modificationDate] as? Date)
         }
         let finished = ReportFolder.finished(in: entries)
-        guard !hub.toCopy(device: path.device, bundleID: bundleID, finished: finished).isEmpty else { return }
-        let source = ReportSource(kind: .simulator, device: path.device, deviceName: name(of: path.device), bundleID: bundleID, reportID: reportID, receivedAt: Date())
-        hub.receive(source) { destination in
-            (try? files.copyItem(at: folder, to: destination)) != nil
+        if !hub.toCopy(device: path.device, bundleID: bundleID, finished: finished).isEmpty {
+            let source = ReportSource(kind: .simulator, device: path.device, deviceName: name(of: path.device), bundleID: bundleID, reportID: reportID, receivedAt: Date())
+            let copied = hub.receive(source) { destination in
+                (try? files.copyItem(at: folder, to: destination)) != nil
+            }
+            guard copied else { return }
+        }
+        // The mark the app shows as "On the Mac"; a phone's app makes it when the hub's reply says so.
+        let mark = folder.appending(path: ReportFolder.deliveredMark)
+        if hub.settled(device: path.device, bundleID: bundleID, finished: finished).contains(reportID), !files.fileExists(atPath: mark.path) {
+            files.createFile(atPath: mark.path, contents: nil)
         }
     }
 

@@ -122,7 +122,7 @@ enum CodexThreads {
             SELECT id, COALESCE(NULLIF(name, ''), NULLIF(title, ''), SUBSTR(first_user_message, 1, 60), 'Untitled'), cwd, updated_at_ms
             FROM threads
             WHERE archived = 0 AND agent_role IS NULL AND (thread_source IS NULL OR thread_source = 'user')
-              AND source NOT LIKE '%subagent%' AND updated_at_ms > ?
+              AND (source IS NULL OR source NOT LIKE '%subagent%') AND updated_at_ms > ?
             ORDER BY updated_at_ms DESC LIMIT 200
             """
         var statement: OpaquePointer?

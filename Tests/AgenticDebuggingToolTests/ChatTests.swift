@@ -121,14 +121,30 @@ struct ChatTests {
         let folder = try inboxReport("20261003-223449", pictureBytes: 600)
         #expect(ReportContent.pictures(in: folder).map(\.lastPathComponent) == ["screen-1.jpg", "note-2.jpg"])
         let report = try #require(InboxQueue.reports(for: ["com.markbuot.AthenaTracker"], paths: paths).first)
-        let content = ReportContent.items(for: report, budget: 1_000)
+        let content = ReportContent.items(for: report, budget: 1_200)
         // The summary, then the first picture; the second doesn't fit and is named by path.
-        #expect(content.bytes == 600)
         guard case .text(let summary) = content.items[0] else { Issue.record("No summary first"); return }
+        #expect(content.bytes == summary.utf8.count + 600)
         #expect(summary.contains("from Mark iPhone (iPhone)"))
         #expect(summary.contains("1. **Milk stash**: Test."))
         #expect(content.items.contains { if case .image(let file, _) = $0 { file.lastPathComponent == "screen-1.jpg" } else { false } })
         #expect(content.items.contains { if case .text(let text) = $0 { text.contains("note-2.jpg isn't attached") } else { false } })
+    }
+
+    @Test func aLongPastedNoteStaysWithinTheReplyBudget() throws {
+        let folder = try inboxReport("20261003-223449")
+        try ("# UI report\n\n1. **Log**: " + String(repeating: "é", count: 200_000)).write(to: folder.appending(path: "report.md"), atomically: true, encoding: .utf8)
+        _ = try inboxReport("20261003-223500")
+        let report = try #require(InboxQueue.reports(for: ["com.markbuot.AthenaTracker"], paths: paths).first)
+        let content = ReportContent.items(for: report, budget: 700_000)
+        guard case .text(let summary) = content.items[0] else { Issue.record("No summary first"); return }
+        #expect(summary.utf8.count <= ReportContent.longestText)
+        #expect(summary.hasSuffix("The rest is in \(folder.path)/report.md."))
+        #expect(content.bytes == summary.utf8.count + 20)
+        // Text counts toward the budget: the second report waits when its text might not fit.
+        let taken = session(try project()).take(budget: ReportContent.longestText + 30)
+        #expect(taken.taken == 1)
+        #expect(taken.remaining == 1)
     }
 
     @Test func theMCPServerHandsOverReportsWithTheirPictures() throws {

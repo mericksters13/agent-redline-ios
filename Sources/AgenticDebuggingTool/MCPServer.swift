@@ -11,8 +11,8 @@ final class MCPServer: @unchecked Sendable {
     private let work = DispatchQueue(label: "mcp", attributes: .concurrent)
     private let inFlight = DispatchGroup()
 
-    /// The most picture bytes in one reply. Agent apps cap a tool result's size; Claude's
-    /// desktop app refuses results over 1 MB, and pictures grow by a third when encoded.
+    /// The most bytes of text and pictures in one reply. Agent apps cap a tool result's size;
+    /// Claude's desktop app refuses results over 1 MB, and pictures grow by a third when encoded.
     static let budget = 700_000
     static let defaultWait: TimeInterval = 50
     static let longestWait: TimeInterval = 600
