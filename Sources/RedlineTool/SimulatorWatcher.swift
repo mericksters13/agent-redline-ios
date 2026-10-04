@@ -99,11 +99,21 @@ final class SimulatorWatcher: @unchecked Sendable {
         guard let path = SimulatorReportPath.parse(container + "/" + ReportFolder.path + "/x/") else { return }
         let address = HubMessage.Address(device: path.device, hosts: ["127.0.0.1"], port: HubListener.port,
                                          token: hub.token(device: path.device, bundleID: bundleID), uploads: false)
-        let file = URL(fileURLWithPath: container).appending(path: HubMessage.addressPath)
         let data = HubMessage.encode(address)
-        guard (try? Data(contentsOf: file)) != data else { return }
-        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: file, options: .atomic)
+        for file in Self.addressFiles(in: container) where (try? Data(contentsOf: file)) != data {
+            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: file, options: .atomic)
+        }
+    }
+
+    /// Where to leave the hub's address in a simulator app's folder: under the new name, and
+    /// under the old one while a build from before the rename has its folder there. Only then,
+    /// so a renamed build, which removes that folder, doesn't get it back.
+    static func addressFiles(in container: String) -> [URL] {
+        let base = URL(fileURLWithPath: container)
+        let earlier = base.appending(path: HubMessage.earlierAddressPath)
+        let earlierKit = earlier.deletingLastPathComponent().path
+        return [base.appending(path: HubMessage.addressPath)] + (FileManager.default.fileExists(atPath: earlierKit) ? [earlier] : [])
     }
 
     /// The kit's folders where they exist, so the app's own writes don't wake the hub; the whole

@@ -100,7 +100,12 @@ final class PhoneLink: @unchecked Sendable {
         for (bundleID, address) in addresses.sorted(by: { $0.key < $1.key })
         where (given[bundleID] != address || recheck.contains(bundleID)) && !missing.contains(bundleID) {
             let rechecking = recheck.remove(bundleID) != nil && given[bundleID] == address
-            if hub.devicectl.write(HubMessage.encode(address), to: HubMessage.addressPath, of: bundleID, on: phone.udid) {
+            let data = HubMessage.encode(address)
+            if hub.devicectl.write(data, to: HubMessage.addressPath, of: bundleID, on: phone.udid) {
+                // The phone can't tell the hub which name the installed build has, so a build from
+                // before the rename gets the address under its old name too. That copy is extra:
+                // the app counts as ready once the renamed one is written.
+                _ = hub.devicectl.write(data, to: HubMessage.earlierAddressPath, of: bundleID, on: phone.udid)
                 if !rechecking { hub.log("Gave \(bundleID) on \(phone.name) the hub's address") }
                 given[bundleID] = address
                 continue

@@ -77,6 +77,22 @@ struct ReportSourcesTests {
                                                                   container.path + "/Library/Application Support/iOSAgenticDebuggingKit"].sorted())
     }
 
+    @Test func aBuildFromBeforeTheRenameGetsTheAddressUnderItsOldName() throws {
+        let files = FileManager.default
+        let container = files.temporaryDirectory.appending(path: "ReportSourcesTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? files.removeItem(at: container) }
+        let renamed = container.appending(path: "Library/Application Support/Redline/hub.json")
+        let earlier = container.appending(path: "Library/Application Support/iOSAgenticDebuggingKit/hub.json")
+        // Next to the reports folder of a build from before the rename, as that build reads it.
+        #expect(HubMessage.earlierAddressPath == (ReportFolder.earlierPath as NSString).deletingLastPathComponent + "/hub.json")
+        // A renamed build, or one that hasn't written anything yet: only the new name.
+        try files.createDirectory(at: container, withIntermediateDirectories: true)
+        #expect(SimulatorWatcher.addressFiles(in: container.path).map(\.path) == [renamed.path])
+        // A build from before the rename has its folder there.
+        try files.createDirectory(at: earlier.deletingLastPathComponent(), withIntermediateDirectories: true)
+        #expect(SimulatorWatcher.addressFiles(in: container.path).map(\.path) == [renamed.path, earlier.path])
+    }
+
     @Test func inboxFoldersSortByTimeAndKeepPhonesApart() {
         // Two iPhones of one model share the start of their UDID, so the end tells them apart.
         #expect(Inbox.folderName(reportID: "20261003-202235", device: "00008150-00123C360CF3C01C") == "20261003-202235-0CF3C01C")
