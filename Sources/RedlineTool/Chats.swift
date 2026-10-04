@@ -194,6 +194,15 @@ enum InboxQueue {
         defer { close(descriptor) }
         return data.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) } == data.count
     }
+
+    /// Records where the chat that took a report works, once that is known: a chat the hub
+    /// starts takes the report before its worktree exists, and is resumed from the worktree.
+    static func moveClaim(of report: URL, to folder: String) {
+        let file = report.appending(path: claimFile)
+        guard var claim = (try? Data(contentsOf: file)).flatMap({ try? Chats.decoder.decode(Claim.self, from: $0) }) else { return }
+        claim.folder = folder
+        try? Chats.coder.encode(claim).write(to: file, options: .atomic)
+    }
 }
 /// Where the hub sent a report, saved next to it so the hub's window shows exactly what
 /// happened: the agent, its chat and the chat's title.

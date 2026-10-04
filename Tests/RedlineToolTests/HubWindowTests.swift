@@ -130,6 +130,10 @@ struct HubWindowTests {
         try claim("started-codex-20261004-140200", agent: "codex", folder: "/repo", in: started)
         try #"{"type":"thread.started","thread_id":"t-2"}"#.write(to: started.appending(path: "new-chat-output.jsonl"), atomically: true, encoding: .utf8)
         #expect(HubWindowModel.chat(of: started)?.id == "t-2")
+        // It took the report before its worktree existed, and is resumed from the worktree.
+        InboxQueue.moveClaim(of: started, to: "/repo-worktrees/report-1")
+        #expect(HubWindowModel.chat(of: started)?.folder == "/repo-worktrees/report-1")
+        #expect(HubWindowModel.chat(of: started)?.id == "t-2")
 
         // Waiting, or with Cursor: nothing to open.
         let waiting = try report("20261004-140300", at: Date())

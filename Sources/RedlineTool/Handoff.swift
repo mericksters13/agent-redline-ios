@@ -333,6 +333,7 @@ final class Handoff: @unchecked Sendable {
         if resuming == nil, let made = NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: agent) {
             workFolder = made
             madeWorktree = true
+            InboxQueue.moveClaim(of: report.folder, to: made)
             hub.log("Made worktree \(made) for report \(source.reportID)")
         } else {
             workFolder = folder
