@@ -22,7 +22,7 @@ npx --yes agent-redline-ios@latest --no-input
 If `npx` is not installed, or npm can't find the package yet, download the script first and then run it. Don't pipe curl into bash: if the download fails, bash runs an empty script and exits 0, and you would think Redline is installed.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "${TMPDIR:-/tmp}/redline-install.sh" && /bin/bash "${TMPDIR:-/tmp}/redline-install.sh" --no-input
+(f="$(mktemp)" && trap 'rm -f "$f"' EXIT && curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "$f" && /bin/bash "$f" --no-input)
 ```
 
 (`npx --yes github:mericksters13/agent-redline-ios --no-input` also works.)

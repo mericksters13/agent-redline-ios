@@ -156,10 +156,10 @@ There are three ways in, and all three run the same installer, [`install.sh`](in
 3. **curl:**
 
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "${TMPDIR:-/tmp}/redline-install.sh" && bash "${TMPDIR:-/tmp}/redline-install.sh"
+   (f="$(mktemp)" && trap 'rm -f "$f"' EXIT && curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "$f" && bash "$f")
    ```
 
-   It saves the script first and runs it only when the download worked, so a failed download ends with an error instead of an empty run that exits 0. The script then downloads the `main` branch. To install a particular branch, tag or commit, set `REDLINE_REF`: `REDLINE_REF=<commit> bash "${TMPDIR:-/tmp}/redline-install.sh"`.
+   It saves the script to a new private temporary file, runs it only when the download worked, and deletes it afterwards, so a failed download ends with an error instead of an empty run that exits 0. The script then downloads the `main` branch. To install a particular branch, tag or commit, set `REDLINE_REF` in front of `bash`: `... && REDLINE_REF=<commit> bash "$f")`.
 
 The installer asks for nothing it can do without: with `--no-input` (for example `npx agent-redline-ios --no-input`), or when a coding agent or CI runs it, it never waits for an answer and lists what is left for you.
 
@@ -214,7 +214,7 @@ npx agent-redline-ios uninstall
 or
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "${TMPDIR:-/tmp}/redline-install.sh" && bash "${TMPDIR:-/tmp}/redline-install.sh" uninstall
+(f="$(mktemp)" && trap 'rm -f "$f"' EXIT && curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "$f" && bash "$f" uninstall)
 ```
 
 It removes Redline's hooks (with `redline remove`, or by itself when the command is already gone; other hooks stay), the MCP entry in Claude Code (not another tool's server named `redline`), the login item, `Redline.app`, `~/.local/bin/redline`, the line it added to `~/.zprofile`, and its download cache. Reports stay in `~/Library/Application Support/Redline` until you delete that folder, and so do the `.before-redline` backups of your settings. If the app, the command, the login item, a hook or the MCP entry can't be removed, or Redline doesn't stop when asked, the checklist says so under Needs you and the uninstaller exits with status 1. In your app, remove the `.redline()` line and the package.

@@ -9,7 +9,7 @@ import Foundation
 /// and shows it live. The socket's protocol is the app's own, not a published one, so an update to
 /// the app can change it.
 enum CodexApp {
-    static let socketPath = URL.homeDirectory.appending(path: ".codex/ipc/ipc.sock").path
+    static let socketPath = AgentSettings.homeDirectory().appending(path: ".codex/ipc/ipc.sock").path
 
     /// How starting a turn went.
     enum Outcome: Equatable {

@@ -7,8 +7,10 @@ import Foundation
 ///
 /// Running it twice changes nothing.
 enum AgentSettings {
-    /// The home folder in `HOME`, where the agents themselves look for their settings, so setup
-    /// run with another `HOME` changes the settings there.
+    /// The home folder in `HOME`, where the agents themselves keep their settings and chats.
+    ///
+    /// Every home-relative path Redline uses comes from here, so Redline run with another `HOME`
+    /// uses the settings, chats, app and data there.
     ///
     /// Foundation's home folder ignores `HOME` on macOS. Only an absolute path counts: an empty or
     /// relative one would point at the current folder.
