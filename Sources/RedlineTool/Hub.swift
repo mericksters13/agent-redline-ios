@@ -59,6 +59,8 @@ final class Hub: @unchecked Sendable {
         /// Reports being moved into the inbox, by source key and report ID, so a second copy of one
         /// that arrives at the same time isn't filed too.
         var filing: Set<String> = []
+        /// Set once `stop()` has drained the inbox: no report is filed after the last writes.
+        var isStopping = false
     }
 
     private enum SavedFile: CustomStringConvertible {
@@ -153,6 +155,9 @@ final class Hub: @unchecked Sendable {
         network.cancel()
         listener?.stop()
         simulators?.stop()
+        // A connection the listener took can still be filing a report: it finishes, with its
+        // delivered ID queued to write, and later uploads are turned down.
+        inbox.sync { state.withLock { $0.isStopping = true } }
         log("Hub stopped")
         // Queued writes land before the process exits.
         flushWrites()
@@ -351,6 +356,8 @@ final class Hub: @unchecked Sendable {
     enum FilingError: Error {
         /// No report.json, a file name the hub can't use, or too big.
         case unusableUpload
+        /// The hub is stopping; the report is offered again to the next hub.
+        case stopping
     }
 
     // Connections are served from Swift tasks, which must never block their thread: these run
@@ -494,6 +501,10 @@ final class Hub: @unchecked Sendable {
         let filingKey = key + "|" + source.reportID
         let files = FileManager.default
         let started = Date.now
+        guard !state.withLock({ $0.isStopping }) else {
+            log("Didn't file report \(source.reportID) of \(source.bundleID): the hub is stopping")
+            throw FilingError.stopping
+        }
         // The menu bar app has no window, so App Nap would slow filing a report the user just sent.
         let activity = ProcessInfo.processInfo.beginActivity(
             options: .userInitiatedAllowingIdleSystemSleep,
