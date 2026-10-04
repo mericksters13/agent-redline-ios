@@ -135,6 +135,10 @@ struct AgentHookTests {
         }
         try "\(hub.processIdentifier)".write(to: old.pid, atomically: false, encoding: .utf8)
         close(descriptor)
+        let status = HubStatus(pid: hub.processIdentifier, startedAt: Date(), apps: [], hosts: [], port: 0, phones: [], simulatorContainers: 0)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(status).write(to: old.status)
         let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
         // The command is told to stop, and the old folder stays where the old hub uses it.
         guard case .blocked = HubPaths.moveFromOldName(to: paths) else {
@@ -144,6 +148,35 @@ struct AgentHookTests {
         #expect(hub.isRunning)
         #expect(!FileManager.default.fileExists(atPath: paths.root.path))
         #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: old.root.path)) == nil)
+    }
+
+    @Test func anEarlierVersionsHubThatDoesntSayItsAppsIsLeftRunning() throws {
+        let support = root.appending(path: "unsaid", directoryHint: .isDirectory)
+        let old = HubPaths(root: support.appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
+        try FileManager.default.createDirectory(at: old.hub, withIntermediateDirectories: true)
+        // Stands in for an old hub still starting: it holds the lock but hasn't saved its status,
+        // so the apps it was given on the command line aren't known.
+        let descriptor = open(old.pid.path, O_RDWR | O_CREAT, 0o644)
+        #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+        let hub = Process()
+        hub.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        hub.arguments = ["30"]
+        hub.standardInput = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+        try hub.run()
+        defer {
+            kill(hub.processIdentifier, SIGKILL)
+            hub.waitUntilExit()
+        }
+        try "\(hub.processIdentifier)".write(to: old.pid, atomically: false, encoding: .utf8)
+        close(descriptor)
+        let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
+        // It isn't stopped, so the apps it watches keep being watched, and nothing moves.
+        guard case .blocked = HubPaths.moveFromOldName(to: paths) else {
+            Issue.record("The earlier version's hub was stopped without its apps being known")
+            return
+        }
+        #expect(hub.isRunning)
+        #expect(!FileManager.default.fileExists(atPath: paths.root.path))
     }
 
     @Test func aPidLeftByAnEarlierHubThatCrashedIsNeverSignaled() throws {
@@ -506,11 +539,14 @@ struct AgentHookTests {
             "app": ["name": "Tiny Tally", "version": "1.0.9", "build": "41"],
             "screens": [["images": [["file": "screen-1.jpg", "notes": [1]]]], ["images": [["file": "screen-2.jpg", "notes": [3]]]]],
             "items": [
-                ["number": 1, "title": "Log milestone", "note": "This is ugly", "attachments": [String](),
+                ["number": 1, "title": "Log milestone", "note": "This is ugly", "attachments": [String](), "picture": "screen-1.jpg",
                  "element": ["identifier": "today.milestones", "label": "Log milestone", "role": "Button"],
                  "ancestors": [["role": "Group"], ["identifier": "today.card", "label": "Milestones", "role": "Group"]]],
                 ["number": 2, "title": "History", "note": "The list breaks", "attachments": ["note-2.jpg"]],
                 ["number": 3, "title": "growth.card", "note": "", "attachments": [String](), "element": ["identifier": "growth.card", "role": "Group"]],
+                // An element note made before notes on one screen shared its picture keeps its own.
+                ["number": 4, "title": "Save", "note": "Too small", "attachments": [String](), "picture": "note-4.jpg",
+                 "element": ["label": "Save", "role": "Button"]],
             ],
         ]
         try JSONSerialization.data(withJSONObject: listing).write(to: report.appending(path: "report.json"))
@@ -527,7 +563,14 @@ struct AgentHookTests {
 
             \(report.path)/note-2.jpg
             2. History: The list breaks
+
+            \(report.path)/note-4.jpg
+            4. Save (Button): Too small
             """)
+        for file in ["screen-1.jpg", "screen-2.jpg", "note-2.jpg", "note-4.jpg"] {
+            FileManager.default.createFile(atPath: report.appending(path: file).path, contents: Data([0xFF]))
+        }
+        #expect(ReportContent.pictures(in: report).map(\.lastPathComponent) == ["screen-1.jpg", "screen-2.jpg", "note-2.jpg", "note-4.jpg"])
 
         // A long pasted note is cut, so the text fits in a command's arguments; report.md has the rest.
         var long = listing

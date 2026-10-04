@@ -52,10 +52,23 @@ struct HubPaths: Sendable {
         var stoppedHub = false
         var fixedApps: [String] = []
         if let running = HubProcess.running(old), running != getpid() {
-            // Read before it stops: the apps it was given on the command line. A hub from before
-            // fixedApps was saved lists them only among all its apps.
-            if let status = HubWindowModel.savedStatus(old), status.pid == running { fixedApps = status.fixedApps ?? status.apps }
-            kill(running, SIGTERM)
+            // Read before it stops: the apps it was given on the command line. A hub saves its
+            // status, with those apps, as it starts; give one starting now a moment. One that
+            // doesn't say which apps it watches is left running, as the app's takeover leaves
+            // one, so its apps aren't silently dropped.
+            var status = HubWindowModel.savedStatus(old)
+            for _ in 0..<50 where status?.pid != running && HubProcess.running(old) == running {
+                usleep(100_000)
+                status = HubWindowModel.savedStatus(old)
+            }
+            if HubProcess.running(old) == running {
+                guard let status, status.pid == running else {
+                    return .blocked("The hub of an earlier version (pid \(running)) didn't say which apps it watches, so it was left running and its folder can't move to Redline's yet. Run redline again in a moment, or stop that hub first.")
+                }
+                // A hub from before fixedApps was saved lists them only among all its apps.
+                fixedApps = status.fixedApps ?? status.apps
+                kill(running, SIGTERM)
+            }
             for _ in 0..<30 where HubProcess.running(old) != nil { usleep(100_000) }
             guard HubProcess.running(old) == nil else {
                 return .blocked("The hub of an earlier version (pid \(running)) is still running, so its folder can't move to Redline's yet. It stops on its own once the reports it's handing over reach their chats; run redline again then.")
@@ -208,7 +221,7 @@ final class Hub: @unchecked Sendable {
         guard !stopped else { return }
         stopped = true
         discovery?.cancel()
-        chatsWatchers.forEach { $0.cancel() }
+        lock.withLock { chatsWatchers }.forEach { $0.cancel() }
         network.cancel()
         listener?.stop()
         // Before the simulator watcher: stopping it waits for a rescan under way, and hand-overs
@@ -262,14 +275,36 @@ final class Hub: @unchecked Sendable {
         let folder = Chats.folder(paths)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for folder in [folder.path] + ClaudeSessions.configFolders.map({ $0 + "/sessions" }) {
-            let descriptor = open(folder, O_EVTONLY)
-            guard descriptor >= 0 else { continue }
-            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: .write, queue: queue)
-            source.setEventHandler { [weak self] in self?.updateApps(starting: false) }
-            source.setCancelHandler { close(descriptor) }
-            source.resume()
-            chatsWatchers.append(source)
+            watch(folder)
         }
+    }
+
+    /// Watches a folder of chat records. Claude Code makes its sessions folder with its first
+    /// chat, which can come after the hub starts: until then the folder above it is watched,
+    /// and the sessions folder once it appears.
+    private func watch(_ folder: String) {
+        let descriptor = open(folder, O_EVTONLY)
+        if descriptor >= 0 {
+            addWatcher(descriptor) { [weak self] _ in self?.updateApps(starting: false) }
+            return
+        }
+        let parent = open((folder as NSString).deletingLastPathComponent, O_EVTONLY)
+        guard parent >= 0 else { return }
+        addWatcher(parent) { [weak self] source in
+            guard let self, FileManager.default.fileExists(atPath: folder) else { return }
+            source.cancel()
+            watch(folder)
+            updateApps(starting: false)
+        }
+    }
+
+    /// Runs `changed` on the hub's queue each time the folder open at `descriptor` changes.
+    private func addWatcher(_ descriptor: Int32, changed: @escaping (DispatchSourceFileSystemObject) -> Void) {
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: .write, queue: queue)
+        source.setEventHandler { [unowned source] in changed(source) }
+        source.setCancelHandler { close(descriptor) }
+        source.resume()
+        lock.withLock { chatsWatchers.append(source) }
     }
 
     func updateApps(starting: Bool) {
@@ -289,11 +324,12 @@ final class Hub: @unchecked Sendable {
     }
 
     /// Notes the apps open Claude Code chats work on, as other agents' chats note theirs when
-    /// they register, so the hub watches them. Only apps not noted yet are written.
+    /// they register, so the hub watches them and a new chat for one starts with the agent used
+    /// last. Only apps not noted since the chat was last active are written.
     private func noteClaudeChats() {
         let known = ProjectHistory.all(paths)
         for session in claudeChats() {
-            let new = ChatDirectory.apps.bundleIDs(in: session.folder).filter { known[$0] == nil }
+            let new = ChatDirectory.apps.bundleIDs(in: session.folder).filter { known[$0].map { $0.at < session.updatedAt } ?? true }
             guard !new.isEmpty else { continue }
             ProjectHistory.note(ChatRecord(id: "claude-\(session.id)", agent: Agent.claude.rawValue, folder: session.folder, bundleIDs: new,
                                            pid: getpid(), registeredAt: Date(), lastActiveAt: session.updatedAt), paths: paths)

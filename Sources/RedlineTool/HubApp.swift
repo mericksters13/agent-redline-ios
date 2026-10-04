@@ -248,7 +248,8 @@ final class HubWindowModel {
         }
     }
 
-    /// Simulators that are booted, from `simctl`.
+    /// Simulators that are booted, from `simctl`. None when `simctl` fails or takes longer than
+    /// 10 seconds, so a stalled CoreSimulator can't hold up every later refresh of the panel.
     nonisolated static func bootedSimulators() -> [(udid: String, name: String)] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
@@ -257,9 +258,11 @@ final class HubWindowModel {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return [] }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10) { if process.isRunning { process.terminate() } }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard process.terminationStatus == 0,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let runtimes = object["devices"] as? [String: [[String: Any]]]
         else { return [] }
         return runtimes.values.flatMap { $0 }.compactMap { device in

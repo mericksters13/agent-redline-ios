@@ -62,6 +62,15 @@ var arguments = Array(CommandLine.arguments.dropFirst())
 let paths = HubPaths.standard
 // Opened as an app bundle, it's the menu bar app.
 if arguments.isEmpty, Bundle.main.bundleURL.pathExtension == "app" { arguments = ["app"] }
+// What the app and hub commands need is checked before the folder moves, which stops a hub of
+// the earlier version that works, so it's never stopped for one that can't start.
+let hubDevicectl = ["app", "hub"].contains(arguments.first) ? Devicectl.locate() : nil
+if ["app", "hub"].contains(arguments.first), hubDevicectl == nil {
+    let reason = "Couldn't find devicectl. Install Xcode and select it with xcode-select."
+    if arguments.first == "app" { failToStart(reason) }
+    print(reason)
+    exit(1)
+}
 // The apps a hub of the earlier version was given on the command line, when it stopped so its
 // folder could move. This version's takes over right away, whatever the command, so reports
 // keep coming from them too. The app and hub commands are it.
@@ -98,10 +107,8 @@ case "app":
     // already running steps aside, and the apps it was told to watch on the command line stay
     // watched. Only a process holding the PID file's lock counts as running, so a pid left
     // behind and reused is never signaled.
-    // What the app needs is checked first, so a hub that works is never stopped for one that can't start.
-    guard let devicectl = Devicectl.locate() else {
-        failToStart("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
-    }
+    // What the app needs was checked first, so a hub that works is never stopped for one that can't start.
+    guard let devicectl = hubDevicectl else { exit(1) }
     var keptApps = ChatOptions(arguments.dropFirst()).apps + (movedApps ?? [])
     if let running = HubProcess.running(paths), running != getpid() {
         // A hub saves its status, with those apps, as it starts; give one starting now a moment.
@@ -182,10 +189,7 @@ case "hub":
         print("A hub is already running (pid \(running)).")
         exit(1)
     }
-    guard let devicectl = Devicectl.locate() else {
-        print("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
-        exit(1)
-    }
+    guard let devicectl = hubDevicectl else { exit(1) }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: unique(options.apps + (movedApps ?? [])))
     guard hub.start() else {
         print("A hub is already running (pid \(HubProcess.running(paths).map(String.init) ?? "unknown")).")
