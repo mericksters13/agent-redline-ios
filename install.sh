@@ -216,24 +216,42 @@ find_claude() {
     fi
 }
 
-# The command line of Claude Code's user-scoped MCP server named $1, or nothing. Read from the
-# settings file, because "claude mcp get" starts the server to check it.
+# Claude Code's settings file, which holds its user-scoped MCP servers.
+claude_config() {
+    printf '%s' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+}
+
+# The command line of Claude Code's user-scoped MCP server named $1, or nothing. A server that
+# runs no command, such as one reached by URL, gives its URL or type instead. Read from the
+# settings file, because "claude mcp get" starts the server to check it. Fails when the file is
+# there but can't be read or isn't valid JSON, so a broken file isn't taken for a missing entry.
 mcp_entry() {
-    local config="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+    local config
+    config="$(claude_config)"
     [ -f "$config" ] || return 0
     /usr/bin/osascript -l JavaScript - "$config" "$1" 2>/dev/null <<'JS'
 function run(argv) {
     ObjC.import("Foundation");
     var text = $.NSString.stringWithContentsOfFileEncodingError(argv[0], $.NSUTF8StringEncoding, null);
-    if (text.isNil()) return "";
-    try {
-        var server = (JSON.parse(text.js).mcpServers || {})[argv[1]];
-        return server ? [server.command].concat(server.args || []).join(" ") : "";
-    } catch (error) {
-        return "";
-    }
+    if (text.isNil()) throw new Error("unreadable");
+    var server = (JSON.parse(text.js).mcpServers || {})[argv[1]];
+    if (!server) return "";
+    if (typeof server.command !== "string") return String(server.url || server.type || "a server with no command");
+    return [server.command].concat(server.args || []).join(" ");
 }
 JS
+}
+
+# Whether the MCP server command line $2, of the entry named $1, is one Redline added: the redline
+# command's mcp, or the earlier version's agentic-debugging mcp. Another tool's server with the
+# same name is not Redline's, so the installer neither replaces nor removes it.
+mcp_entry_is_ours() {
+    case "$1:$2" in
+        "redline:$COMMAND mcp" | "redline:$COMMAND mcp "*) return 0 ;;
+        "agentic-debugging:agentic-debugging mcp" | "agentic-debugging:agentic-debugging mcp "*) return 0 ;;
+        "agentic-debugging:"*"/agentic-debugging mcp" | "agentic-debugging:"*"/agentic-debugging mcp "*) return 0 ;;
+    esac
+    return 1
 }
 
 # Removes Redline's hooks from the agent settings file $1 without the redline command, for
@@ -565,16 +583,29 @@ remove_old_install() {
             "Quit it from its menu bar icon, then run the installer again."
     else
         if [ "$status" -eq 0 ]; then removed="stopped it"; fi
-        if [ -e "$OLD_APP" ] && rm -rf "$OLD_APP"; then removed="${removed:+$removed, }removed $OLD_APP"; fi
+        if remove_old_file "$OLD_APP"; then removed="${removed:+$removed, }removed $OLD_APP"; fi
     fi
-    if [ -e "$OLD_COMMAND" ]; then
+    if [ -e "$OLD_COMMAND" ] || [ -L "$OLD_COMMAND" ]; then
         if ! $SETUP_OK; then
             item "Skipped" "Earlier version: kept $OLD_COMMAND until redline setup succeeds, because hooks may still run it"
-        elif rm -f "$OLD_COMMAND"; then
+        elif remove_old_file "$OLD_COMMAND"; then
             removed="${removed:+$removed, }removed $OLD_COMMAND"
         fi
     fi
     if [ -n "$removed" ]; then item "Done" "Earlier version (Agentic Debugging): $removed"; fi
+}
+
+# Deletes the earlier version's file or folder at $1. Returns 0 when it was there and is gone, and
+# 1 when it wasn't there or couldn't be deleted, which adds a Needs you item: a leftover app could
+# be opened again and run its hub next to Redline's.
+remove_old_file() {
+    [ -e "$1" ] || [ -L "$1" ] || return 1
+    rm -rf "$1" >>"$LOG" 2>&1
+    if [ -e "$1" ] || [ -L "$1" ]; then
+        item "Needs you" "Earlier version (Agentic Debugging): couldn't delete $1 (see $LOG)." \
+            "Check its owner, permissions and flags with ls -ldO ${1// /\\ }, then delete it."
+        return 1
+    fi
 }
 
 # What the claude command still needs, from the user, to start new chats.
@@ -604,10 +635,15 @@ check_claude() {
 
 # Registers Redline's MCP server with Claude Code once, replacing the entry from before the rename.
 register_mcp() {
-    local have note=""
+    local old have note=""
     [ -n "$CLAUDE" ] || return 0
     step "Adding Redline's MCP server to Claude Code"
-    if [ -n "$(mcp_entry agentic-debugging)" ]; then
+    if ! old="$(mcp_entry agentic-debugging)" || ! have="$(mcp_entry redline)"; then
+        item "Needs you" "MCP server: couldn't read $(claude_config) as JSON, so Redline's MCP server wasn't added." \
+            "Fix that file, then run the installer again."
+        return
+    fi
+    if [ -n "$old" ] && mcp_entry_is_ours agentic-debugging "$old"; then
         if "$CLAUDE" mcp remove --scope user agentic-debugging >>"$LOG" 2>&1; then
             note="; removed the old agentic-debugging entry"
         else
@@ -615,9 +651,13 @@ register_mcp() {
                 "Run: claude mcp remove --scope user agentic-debugging"
         fi
     fi
-    have="$(mcp_entry redline)"
     if [ "$have" = "$COMMAND mcp" ]; then
         item "Done" "MCP server: Claude Code already runs redline mcp$note"
+        return
+    fi
+    if [ -n "$have" ] && ! mcp_entry_is_ours redline "$have"; then
+        item "Needs you" "MCP server: Claude Code already has another MCP server named redline, which runs $have, so Redline's wasn't added." \
+            "If you no longer need it, run: claude mcp remove --scope user redline" "Then run the installer again."
         return
     fi
     [ -z "$have" ] || "$CLAUDE" mcp remove --scope user redline >>"$LOG" 2>&1
@@ -742,9 +782,11 @@ Next: add Redline to your iOS app. Add the package https://github.com/merickster
 
 # Takes Redline's hooks out of the agents' settings: with redline remove when the command is
 # installed, then by scanning the settings files, so no hook is left running a missing command.
-# The scan also catches hooks that an older installed command doesn't know about, such as Cursor's.
+# The scan also catches hooks that an older installed command doesn't know about, such as Cursor's,
+# and runs even when redline remove failed without naming the file. Returns 1 when hooks may be
+# left, because the uninstall deletes the command they run.
 remove_hooks() {
-    local output status file result failed="" delegated=false found=false
+    local output status file result failed="" delegated=false unexplained=false found=false kept=false
     if [ -x "$COMMAND" ]; then
         delegated=true
         output="$("$COMMAND" remove 2>&1)"
@@ -754,10 +796,14 @@ remove_hooks() {
             item "Done" "Hooks: removed Redline's hooks; other hooks stay"
         else
             failed="$(failed_settings_file "$output")"
-            item "Needs you" "Hooks: couldn't update ${failed:-a settings file} (see $LOG)." \
-                "Fix that file, then run: $COMMAND remove" "Or delete the hooks whose command ends in \"redline hook ...\" by hand."
-            # Without the file's name, the scan could report the same file twice.
-            [ -n "$failed" ] || return
+            if [ -n "$failed" ]; then
+                kept=true
+                item "Needs you" "Hooks: couldn't update $failed (see $LOG)." \
+                    "Fix that file, then run the same command again." "Or delete the hooks whose command ends in \"redline hook ...\" by hand."
+            else
+                # Reported after the scan, which names any file it couldn't change.
+                unexplained=true
+            fi
         fi
     fi
     for file in "$HOME/.codex/hooks.json" "$HOME/.claude/settings.json" "$HOME/.cursor/hooks.json"; do
@@ -770,30 +816,50 @@ remove_hooks() {
         if [ "$result" = "removed" ]; then
             item "Done" "Hooks: removed Redline's hooks from $file; other hooks stay"
         else
+            kept=true
             item "Needs you" "Hooks: couldn't remove Redline's hooks from $file (${result:-failed})." \
                 "Delete the hooks whose command ends in \"redline hook ...\" by hand."
         fi
     done
+    if $unexplained && ! $found; then
+        kept=true
+        item "Needs you" "Hooks: redline remove failed (see $LOG), and the installer found none of Redline's hooks to take out itself." \
+            "Read $LOG for the reason, then run the same command again." \
+            "Or delete the hooks whose command ends in \"redline hook ...\" by hand."
+    fi
     $found || $delegated || item "Skipped" "Hooks: none of Redline's were found"
+    ! $kept
 }
 
 uninstall() {
-    local domain have tmp rc artifact left=""
+    local domain name have tmp rc artifact left=""
     start_log
     step "Removing Redline"
 
-    remove_hooks
+    remove_hooks || left="${left:+$left and }Redline's hooks"
 
     find_claude
-    for have in redline agentic-debugging; do
-        [ -n "$(mcp_entry "$have")" ] || continue
+    for name in redline agentic-debugging; do
+        if ! have="$(mcp_entry "$name")"; then
+            left="${left:+$left and }Redline's MCP server entries"
+            item "Needs you" "MCP server: couldn't read $(claude_config) as JSON, so Redline's entries may still be in it." \
+                "Fix that file, then run the same command again."
+            break
+        fi
+        [ -n "$have" ] || continue
+        if ! mcp_entry_is_ours "$name" "$have"; then
+            item "Skipped" "MCP server: kept the $name entry, which runs $have, not Redline"
+            continue
+        fi
         if [ -z "$CLAUDE" ]; then
-            item "Needs you" "MCP server: the claude command isn't installed, so the $have entry is still in ~/.claude.json." \
-                "Delete \"$have\" under \"mcpServers\" in ~/.claude.json, or run claude mcp remove --scope user $have once claude is installed."
-        elif "$CLAUDE" mcp remove --scope user "$have" >>"$LOG" 2>&1; then
-            item "Done" "MCP server: removed $have from Claude Code"
+            left="${left:+$left and }the $name MCP server entry"
+            item "Needs you" "MCP server: the claude command isn't installed, so the $name entry is still in $(claude_config)." \
+                "Delete \"$name\" under \"mcpServers\" in that file, or run claude mcp remove --scope user $name once claude is installed."
+        elif "$CLAUDE" mcp remove --scope user "$name" >>"$LOG" 2>&1; then
+            item "Done" "MCP server: removed $name from Claude Code"
         else
-            item "Needs you" "MCP server: couldn't remove $have (see $LOG)." "Run: claude mcp remove --scope user $have"
+            left="${left:+$left and }the $name MCP server entry"
+            item "Needs you" "MCP server: couldn't remove $name (see $LOG)." "Run: claude mcp remove --scope user $name"
         fi
     done
 
