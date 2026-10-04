@@ -14,8 +14,8 @@ extension HubWindowModel {
         var mainFor: [Int] = []
     }
 
-    /// The report's pictures in the order the agent gets them: each screen's pictures, then the
-    /// pictures attached to notes. Only the files `ReportContent.pictures(in:)` reads, so a name
+    /// The report's pictures in the order the agent gets them: each screen's pictures, then each
+    /// note's own pictures, including the picture of an element note from an older report. Only the files `ReportContent.pictures(in:)` reads, so a name
     /// that leads out of the report's folder, or a link to another file on the Mac, is left out.
     nonisolated static func pictures(in folder: URL) -> [Picture] {
         struct Listing: Decodable {
@@ -49,8 +49,9 @@ extension HubWindowModel {
                 Picture(file: folder.appending(path: $0.file), title: screen.title ?? "Screen", notes: $0.notes, mainFor: mainFor($0.file))
             }
         }
+        let screenFiles = listing.screens.flatMap { $0.images.map(\.file) }
         let attached = listing.items.flatMap { item in
-            item.attachments.map {
+            ReportContent.ownPictures(picture: item.picture, attachments: item.attachments, screenPictures: screenFiles).map {
                 Picture(file: folder.appending(path: $0), title: item.screenTitle ?? item.title, notes: [item.number],
                         mainFor: item.picture == $0 ? [item.number] : [])
             }
@@ -139,6 +140,9 @@ struct ReportViewer: View {
     private let pictures: [HubWindowModel.Picture]
     private let images: [URL: NSImage]
     private let chat: (agent: Agent, id: String, folder: String?)?
+    /// Where the report went, read again with `chat`: the panel's row may be older than a
+    /// delivery that happened while the panel was closed.
+    private let destination: (agent: String, chat: String, waiting: Bool)
     @State private var selected: Int?
 
     init(report: HubWindowModel.ReportRow) {
@@ -146,6 +150,7 @@ struct ReportViewer: View {
         pictures = HubWindowModel.pictures(in: report.folder)
         images = Dictionary(pictures.compactMap { picture in NSImage(contentsOf: picture.file).map { (picture.file, $0) } }) { first, _ in first }
         chat = HubWindowModel.chat(of: report.folder)
+        destination = HubWindowModel.destination(of: report.folder)
     }
 
     static func title(of report: HubWindowModel.ReportRow) -> String {
@@ -227,9 +232,9 @@ struct ReportViewer: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                (Text(report.agent).foregroundStyle(report.waiting ? .secondary : .primary)
+                (Text(destination.agent).foregroundStyle(destination.waiting ? .secondary : .primary)
                     + Text(" · ").foregroundStyle(.secondary)
-                    + Text(report.chat))
+                    + Text(destination.chat))
                     .font(.callout.weight(.semibold))
                     .lineLimit(2)
             }

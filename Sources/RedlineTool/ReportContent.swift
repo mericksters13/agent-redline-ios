@@ -35,7 +35,7 @@ enum ReportContent {
 
     /// A note's pictures that aren't a screen's: its attachments, and the picture of an element
     /// note made before notes on one screen shared its picture.
-    private static func ownPictures(picture: String?, attachments: [String], screenPictures: [String]) -> [String] {
+    static func ownPictures(picture: String?, attachments: [String], screenPictures: [String]) -> [String] {
         (picture.map { screenPictures.contains($0) ? [] : [$0] } ?? []) + attachments
     }
 
