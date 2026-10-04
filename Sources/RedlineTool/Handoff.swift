@@ -331,6 +331,13 @@ final class Handoff: @unchecked Sendable {
     /// installed, else in a terminal window in `folder` that resumes it. True when it opened.
     @discardableResult
     static func openChat(_ agent: Agent, id: String, in folder: String) -> Bool {
+        // The Claude app's link copies a chat started in one of its tabs into a second tab that
+        // no longer follows the first, and no link opens the first one
+        // (https://github.com/anthropics/claude-code/issues/80773), so the app only comes forward.
+        if agent == .claude, AgentCommand.hasClaudeApp, ClaudeSessions.open().contains(where: { $0.id == id && $0.isAppTab }) {
+            open("-b", AgentCommand.claudeAppID)
+            return true
+        }
         if let link = appLink(agent, id: id) {
             open(link)
             return true
@@ -356,10 +363,10 @@ final class Handoff: @unchecked Sendable {
         }
     }
 
-    private static func open(_ link: String) {
+    private static func open(_ arguments: String...) {
         let open = Process()
         open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        open.arguments = [link]
+        open.arguments = arguments
         try? open.run()
         open.waitUntilExit()
     }
@@ -623,6 +630,8 @@ final class Handoff: @unchecked Sendable {
 enum AgentCommand {
     /// Claude's desktop app, where new Claude Code chats open.
     static var hasClaudeApp: Bool { FileManager.default.fileExists(atPath: "/Applications/Claude.app") }
+
+    static let claudeAppID = "com.anthropic.claudefordesktop"
 
     /// Codex's desktop app, inside the ChatGPT app or on its own.
     static var hasCodexApp: Bool {

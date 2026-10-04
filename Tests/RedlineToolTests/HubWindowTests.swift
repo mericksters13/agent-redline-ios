@@ -327,5 +327,17 @@ struct HubWindowTests {
         #expect(Handoff.appLink(.codex, id: "t-1", hasClaudeApp: true, hasCodexApp: false) == nil)
         #expect(Handoff.appLink(.cursor, id: "c-1", hasClaudeApp: true, hasCodexApp: true) == nil)
     }
+
+    @Test func aChatStartedInAClaudeAppTabIsToldApartFromOneTheAppTookOver() throws {
+        func session(tab: String?) throws -> ClaudeSessions.Session {
+            var object: [String: Any] = ["sessionId": "c28a", "cwd": "/repo", "messagingSocketPath": "/tmp/s.sock",
+                                         "pid": Int(ProcessInfo.processInfo.processIdentifier), "kind": "interactive"]
+            object["hostSessionId"] = tab
+            return try #require(ClaudeSessions.session(from: try JSONSerialization.data(withJSONObject: object)))
+        }
+        #expect(try session(tab: "local_5f1e").isAppTab)
+        #expect(try !session(tab: "local_c28a").isAppTab)
+        #expect(try !session(tab: nil).isAppTab)
+    }
 }
 #endif

@@ -16,6 +16,9 @@ enum ClaudeSessions {
         var isIdle: Bool
         /// The chat's name in Claude Code, when it has one.
         var title: String? = nil
+        /// Started in a tab of the Claude app. A chat the app took over from the claude command
+        /// has a tab named after it instead: "local_" and the chat's id.
+        var isAppTab = false
     }
 
     /// The interactive chats that are still running.
@@ -46,8 +49,10 @@ enum ClaudeSessions {
         let started = (object["startedAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
         guard started.map({ Chats.isRunning(Int32(pid), since: $0) }) ?? Chats.isRunning(Int32(pid)) else { return nil }
         let updated = (object["updatedAt"] as? Double) ?? (object["startedAt"] as? Double) ?? 0
+        let tab = object["hostSessionId"] as? String
         return Session(id: id, folder: folder, socket: socket, updatedAt: Date(timeIntervalSince1970: updated / 1000),
-                       isIdle: object["status"] as? String == "idle", title: object["name"] as? String)
+                       isIdle: object["status"] as? String == "idle", title: object["name"] as? String,
+                       isAppTab: tab.map { $0 != "local_\(id)" } ?? false)
     }
 
     /// The line a chat's socket takes: one message, as if typed by another of the user's chats.
