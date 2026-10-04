@@ -110,6 +110,15 @@ enum CodexThreads {
 
     /// A Codex chat's title.
     static func title(of thread: String, in database: URL? = database) -> String? {
+        value("COALESCE(NULLIF(name, ''), NULLIF(title, ''), SUBSTR(first_user_message, 1, 60))", of: thread, in: database)
+    }
+
+    /// The folder a Codex chat works in, which `codex resume` should start in to reopen it there.
+    static func folder(of thread: String, in database: URL? = database) -> String? {
+        value("NULLIF(cwd, '')", of: thread, in: database)
+    }
+
+    private static func value(_ expression: String, of thread: String, in database: URL?) -> String? {
         guard let database else { return nil }
         var connection: OpaquePointer?
         guard sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
@@ -118,7 +127,7 @@ enum CodexThreads {
         }
         defer { sqlite3_close(connection) }
         var statement: OpaquePointer?
-        let query = "SELECT COALESCE(NULLIF(name, ''), NULLIF(title, ''), SUBSTR(first_user_message, 1, 60)) FROM threads WHERE id = ?"
+        let query = "SELECT \(expression) FROM threads WHERE id = ?"
         guard sqlite3_prepare_v2(connection, query, -1, &statement, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(statement) }
         sqlite3_bind_text(statement, 1, thread, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))

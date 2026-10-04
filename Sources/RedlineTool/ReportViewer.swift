@@ -215,8 +215,12 @@ struct ReportViewer: View {
             HStack(spacing: 8) {
                 if let chat {
                     Button("Open in \(chat.agent.name)") {
-                        let folder = chat.folder ?? NSHomeDirectory()
-                        Task.detached { Handoff.openChat(chat.agent, id: chat.id, in: folder) }
+                        Task.detached {
+                            // A report sent to an existing Codex chat records no folder; Codex
+                            // keeps the chat's own, and `codex resume` reopens it there.
+                            let folder = chat.folder ?? (chat.agent == .codex ? CodexThreads.folder(of: chat.id) : nil) ?? NSHomeDirectory()
+                            Handoff.openChat(chat.agent, id: chat.id, in: folder)
+                        }
                     }
                     .buttonStyle(ViewerButtonStyle(prominent: true))
                     .help("Opens the chat this report went to")

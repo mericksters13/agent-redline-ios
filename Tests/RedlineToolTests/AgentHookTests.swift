@@ -425,6 +425,10 @@ struct AgentHookTests {
         #expect(threads.map(\.id) == ["t-user", "t-older", "t-no-source"])
         // A chat without a name goes by its first message.
         #expect(threads[1].title == "Why is the outline wide")
+        // The viewer reopens a Codex chat in the folder Codex keeps for it.
+        #expect(CodexThreads.folder(of: "t-user", in: database) == "/p")
+        #expect(CodexThreads.folder(of: "t-missing", in: database) == nil)
+        #expect(CodexThreads.title(of: "t-older", in: database) == "Why is the outline wide")
     }
 
     @Test func onlyTheAddressedChatTakesAReport() throws {
