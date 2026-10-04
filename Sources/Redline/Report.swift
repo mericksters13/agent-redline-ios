@@ -7,12 +7,17 @@ import Foundation
 struct Report: Codable, Sendable {
     /// The app the report came from.
     struct App: Codable, Sendable {
-        var bundleIdentifier: String?
+        var bundleID: String?
         var name: String?
         var version: String?
         var build: String?
         /// The project file that attached the kit, naming the worktree the app was built from.
         var sourceFile: String? = nil
+
+        private enum CodingKeys: String, CodingKey {
+            case bundleID = "bundleIdentifier"
+            case name, version, build, sourceFile
+        }
     }
 
     /// Where the user picked for the report to go, on the phone.
@@ -28,7 +33,7 @@ struct Report: Codable, Sendable {
         var newChat: String? = nil
 
         /// The same choice in the picker: the same chat, or "New chat" for the same agent.
-        func sameChoice(as other: Destination?) -> Bool {
+        func isSameChoice(as other: Destination?) -> Bool {
             other?.agent == agent && other?.chat == chat
         }
     }
@@ -62,7 +67,7 @@ struct Report: Codable, Sendable {
         /// How many captures at different scroll positions were stitched into the picture.
         var stitchedFrom: Int
         /// True for a picture of the screen before its content changed.
-        var earlierState: Bool
+        var isEarlierState: Bool
         /// The notes outlined on this part.
         var notes: [Int]
         var width: Int
@@ -70,6 +75,11 @@ struct Report: Codable, Sendable {
         /// Points of content scrolled past between captures and not shown, marked
         /// "Scrolled past" in the picture. Nil when nothing was skipped.
         var scrolledPast: Int? = nil
+
+        private enum CodingKeys: String, CodingKey {
+            case file, part, parts, stitchedFrom, notes, width, height, scrolledPast
+            case isEarlierState = "earlierState"
+        }
     }
 
     /// A box in a picture's pixels.

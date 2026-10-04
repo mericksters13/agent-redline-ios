@@ -122,7 +122,7 @@ struct ScreenCompositionTests {
         #expect(plan.size == size)
         #expect(plan.stitchedFrom == 1)
         let note = CGRect(x: 20, y: 300, width: 100, height: 40)
-        #expect(plan.place(note, from: only.id) == note)
+        #expect(plan.position(of: note, from: only.id) == note)
     }
 
     @Test func overlappingCapturesStitchIntoOneTallPicture() throws {
@@ -134,13 +134,13 @@ struct ScreenCompositionTests {
         #expect(plan.gaps.isEmpty)
         // Top bars from the capture scrolled highest, bottom bars from the lowest; the older
         // capture fills only the content the newer one doesn't show.
-        #expect(plan.segments.map(\.capture) == [top.id, top.id, lower.id, lower.id])
+        #expect(plan.segments.map(\.captureID) == [top.id, top.id, lower.id, lower.id])
         #expect(plan.segments[1].height == 462)
         // Notes keep their place in the content.
-        #expect(plan.place(CGRect(x: 20, y: 100, width: 100, height: 40), from: top.id)?.minY == 100)
-        #expect(plan.place(CGRect(x: 20, y: 500, width: 100, height: 40), from: lower.id)?.minY == 962)
+        #expect(plan.position(of: CGRect(x: 20, y: 100, width: 100, height: 40), from: top.id)?.minY == 100)
+        #expect(plan.position(of: CGRect(x: 20, y: 500, width: 100, height: 40), from: lower.id)?.minY == 962)
         // A note on the bottom bars sits at the bottom of the picture.
-        #expect(plan.place(CGRect(x: 20, y: 850, width: 100, height: 20), from: top.id)?.minY == plan.footerY + 11)
+        #expect(plan.position(of: CGRect(x: 20, y: 850, width: 100, height: 20), from: top.id)?.minY == plan.footerY + 11)
     }
 
     @Test func capturesFarApartAreJoinedAcrossAMarkedGap() throws {
@@ -150,7 +150,7 @@ struct ScreenCompositionTests {
         // The top capture ends at 777 in the content; the far one starts at 1563.
         #expect(plan.gaps.map(\.skippedHeight) == [786])
         #expect(plan.size.height == 63 + 776 + ScreenComposition.gapHeight + 776 + 35)
-        #expect(plan.place(CGRect(x: 20, y: 100, width: 100, height: 40), from: far.id)?.minY == 63 + 776 + ScreenComposition.gapHeight + 37)
+        #expect(plan.position(of: CGRect(x: 20, y: 100, width: 100, height: 40), from: far.id)?.minY == 63 + 776 + ScreenComposition.gapHeight + 37)
     }
 
     @Test func aNoteShowsOnAnotherCaptureOnlyWhenItWasInView() {

@@ -97,7 +97,7 @@ final class DebugSession {
     private(set) var keyboardTop = CGFloat.infinity
     /// True from the moment the note card asks for the keyboard until the keyboard
     /// reports its frame, so the card can open where it will end up.
-    private(set) var awaitingKeyboard = false
+    private(set) var isAwaitingKeyboard = false
     /// Center of the floating button, in screen points. Nil until the window has a size.
     private(set) var buttonCenter: CGPoint?
     /// The screen being picked on.
@@ -190,7 +190,7 @@ final class DebugSession {
     @ObservationIgnored private var keyboardWait: Task<Void, Never>?
     @ObservationIgnored private var suggestionTimer: Task<Void, Never>?
     /// True while a finger is down in pick mode.
-    @ObservationIgnored private var touchIsDown = false
+    @ObservationIgnored private var isTouchDown = false
     @ObservationIgnored private let store = ReportStore.standard
     @ObservationIgnored private let selectionFeedback = UISelectionFeedbackGenerator()
     @ObservationIgnored private let logger = Log.session
@@ -345,10 +345,10 @@ final class DebugSession {
 
     func hover(at point: CGPoint) {
         guard mode == .picking else { return }
-        if !touchIsDown {
+        if !isTouchDown {
             // Each new touch reads the screen again, so positions, saved-note markers
             // and the report screenshot match what is on screen right now.
-            touchIsDown = true
+            isTouchDown = true
             readScreen()
         }
         let found = ElementSelection.levels(at: point, in: elements, screenSize: screenSize)
@@ -362,7 +362,7 @@ final class DebugSession {
 
     func finishHover(at point: CGPoint) {
         hover(at: point)
-        touchIsDown = false
+        isTouchDown = false
         guard selected != nil else {
             nudge()
             return
@@ -464,7 +464,7 @@ final class DebugSession {
         if attachment.sendsReport {
             noteText = ""
             keyboardWait?.cancel()
-            awaitingKeyboard = false
+            isAwaitingKeyboard = false
             send()
         } else {
             endNoting(returningTo: notingReturnMode)
@@ -521,7 +521,8 @@ final class DebugSession {
     }
 
     /// One of the item's images at full size: its screen's picture with every note on it
-    /// outlined and this one standing out, or an attached image.
+    /// outlined and this one standing out, or an attached image. Cached with the few
+    /// around it; the oldest are dropped first.
     func fullImage(for annotation: Annotation, at index: Int) -> UIImage? {
         if let captureID = annotation.captureID { return screenPicture(for: annotation, on: captureID) }
         guard annotation.screenshots.indices.contains(index) else { return nil }
@@ -693,7 +694,7 @@ final class DebugSession {
         let candidates = assets.compactMap { asset in
             asset.creationDate.map { ScreenshotSuggestion.Candidate(id: asset.localIdentifier, createdAt: $0) }
         }
-        guard let pick = ScreenshotSuggestion.pick(newest: candidates, now: .now, offered: offeredPhotoIDs, inAppCaptures: inAppCaptureDates),
+        guard let pick = ScreenshotSuggestion.candidateToOffer(among: candidates, now: .now, offered: offeredPhotoIDs, inAppCaptures: inAppCaptureDates),
               let asset = assets.first(where: { $0.localIdentifier == pick.id })
         else { return }
         markOffered(pick.id)
@@ -803,7 +804,7 @@ final class DebugSession {
         let patience = ReportDelivery.patience
         let sourceFile = sourceFile
         chatsRequest = Task {
-            let list = await HubLink.chats(bundleID: bundleID, address: address, sourceFile: sourceFile, patience: patience)
+            let list = await HubLink.requestChats(bundleID: bundleID, address: address, sourceFile: sourceFile, patience: patience)
             // The hub answered, so iOS has allowed local network access, even if this picker is gone.
             if list != nil { UserDefaults.standard.set(true, forKey: ReportDelivery.hubReachedKey) }
             guard !Task.isCancelled, mode == .destination else { return }
@@ -816,7 +817,7 @@ final class DebugSession {
             if let choice = pickerChoice, let chat = choice.chat, !list.chats.contains(where: { $0.id == chat && $0.agent == choice.agent }) {
                 pickerChoice = nil
             }
-            if pickerChoice == nil, let here = list.chats.first(where: \.sameWorktree) {
+            if pickerChoice == nil, let here = list.chats.first(where: \.isSameWorktree) {
                 pickerChoice = Report.Destination(agent: here.agent, chat: here.id, title: here.title)
             }
             if pickerAgent == nil || !list.agents.contains(pickerAgent ?? "") {
@@ -1035,6 +1036,7 @@ final class DebugSession {
         writeImages([image], named: [capture.file], asPNG: true)
     }
 
+    /// A capture's picture, loaded from the draft the first time and kept while it's in use.
     private func captureImage(_ capture: Capture) -> UIImage? {
         if let cached = captureImages[capture.id] { return cached }
         guard let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: capture.file).path(percentEncoded: false)) else { return nil }
@@ -1063,7 +1065,7 @@ final class DebugSession {
     }
 
     /// The capture a note was made on, with every note of its screen that's in view
-    /// outlined and numbered, the note itself standing out.
+    /// outlined and numbered, the note itself standing out. Cached like `fullImage(for:at:)`.
     private func screenPicture(for annotation: Annotation, on captureID: UUID) -> UIImage? {
         let key = "\(annotation.id.uuidString)-screen" as NSString
         if let cached = fullImages.object(forKey: key) { return cached }
@@ -1153,7 +1155,7 @@ final class DebugSession {
     }
 
     /// A small picture of the item for the notes list: a close crop around its element,
-    /// or the top of its first image.
+    /// or the top of its first image. Cached for the life of the draft.
     func thumbnail(for annotation: Annotation) -> UIImage? {
         if let cached = thumbnails[annotation.id] { return cached }
         if let captureID = annotation.captureID, let element = annotation.element {
@@ -1178,7 +1180,7 @@ final class DebugSession {
     /// frame, the last keyboard height stands in for it, so the card opens where it will
     /// end up instead of jumping when the keyboard arrives.
     var noteKeyboardTop: CGFloat {
-        awaitingKeyboard ? screenSize.height - expectedKeyboardHeight : keyboardTop
+        isAwaitingKeyboard ? screenSize.height - expectedKeyboardHeight : keyboardTop
     }
 
     /// The note card's top edge.
@@ -1319,14 +1321,14 @@ final class DebugSession {
     // MARK: - Noting
 
     private func beginNoting() {
-        awaitingKeyboard = keyboardTop == .infinity
+        isAwaitingKeyboard = keyboardTop == .infinity
         setMode(.noting)
         // A hardware keyboard never shows the on-screen one; stop waiting for it.
         keyboardWait?.cancel()
         keyboardWait = Task {
             try? await Task.sleep(for: .seconds(0.8))
-            guard !Task.isCancelled, awaitingKeyboard else { return }
-            withAnimation(.smooth(duration: 0.25)) { awaitingKeyboard = false }
+            guard !Task.isCancelled, isAwaitingKeyboard else { return }
+            withAnimation(.smooth(duration: 0.25)) { isAwaitingKeyboard = false }
         }
     }
 
@@ -1334,7 +1336,7 @@ final class DebugSession {
         noteText = ""
         keyboardWait?.cancel()
         keyboardWait = nil
-        awaitingKeyboard = false
+        isAwaitingKeyboard = false
         setMode(next)
     }
 
@@ -1460,7 +1462,7 @@ final class DebugSession {
         withAnimation(.timingCurve(0.38, 0.7, 0.125, 1, duration: max(duration, 0.2))) {
             if visible, let frame {
                 if keyboardTop != frame.minY { keyboardTop = frame.minY }
-                if awaitingKeyboard { awaitingKeyboard = false }
+                if isAwaitingKeyboard { isAwaitingKeyboard = false }
                 let height = Double(screenSize.height - frame.minY)
                 if UserDefaults.standard.double(forKey: Self.keyboardHeightKey) != height {
                     UserDefaults.standard.set(height, forKey: Self.keyboardHeightKey)

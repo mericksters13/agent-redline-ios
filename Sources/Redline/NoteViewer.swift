@@ -59,7 +59,7 @@ struct NoteViewer: View {
         pages.first { $0.id == shownID && $0.annotation.id == session.viewerID }
             ?? pages.first { $0.annotation.id == session.viewerID }
     }
-    private var detailsVisible: Bool { showsDetails && !isZoomed }
+    private var areDetailsVisible: Bool { showsDetails && !isZoomed }
     private var size: CGSize { session.screenSize }
     /// The details panel rises with the keyboard while a note is edited.
     private var panelBottom: CGFloat { min(session.keyboardTop, size.height - session.safeAreaInsets.bottom) - 8 }
@@ -83,7 +83,7 @@ struct NoteViewer: View {
             pager(pages: pages, shown: shown)
                 .frame(height: imageHeight)
                 .padding(.top, imageTop)
-            if detailsVisible {
+            if areDetailsVisible {
                 topBar(index: index)
                     .transition(.opacity)
                 details(index: index, shown: shown)
@@ -95,7 +95,7 @@ struct NoteViewer: View {
         .frame(width: size.width, height: size.height)
         // The panel follows the keyboard itself; SwiftUI must not also push the whole viewer up.
         .ignoresSafeArea()
-        .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.25), value: detailsVisible)
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.25), value: areDetailsVisible)
         .onChange(of: session.viewerID, initial: true) { _, _ in
             saveDraft()
             draftOwner = session.viewerID
@@ -153,8 +153,8 @@ struct NoteViewer: View {
         if isNear, let image = session.fullImage(for: page.annotation, at: page.index) {
             ZoomableScreenshot(
                 image: image,
-                zoomChanged: { isZoomed = $0 },
-                tapped: {
+                onZoomChange: { isZoomed = $0 },
+                onTap: {
                     if isEditingNote {
                         isEditingNote = false
                     } else {
@@ -340,10 +340,10 @@ struct NoteViewer: View {
 private struct ZoomableScreenshot: UIViewRepresentable {
     let image: UIImage
     /// Reports whether the screenshot is zoomed in, so the details can step out of the way.
-    let zoomChanged: (Bool) -> Void
-    let tapped: () -> Void
+    let onZoomChange: (_ isZoomed: Bool) -> Void
+    let onTap: () -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(zoomChanged: zoomChanged, tapped: tapped) }
+    func makeCoordinator() -> Coordinator { Coordinator(onZoomChange: onZoomChange, onTap: onTap) }
 
     func makeUIView(context: Context) -> ZoomView {
         let view = ZoomView()
@@ -359,19 +359,19 @@ private struct ZoomableScreenshot: UIViewRepresentable {
     }
 
     func updateUIView(_ view: ZoomView, context: Context) {
-        context.coordinator.zoomChanged = zoomChanged
-        context.coordinator.tapped = tapped
+        context.coordinator.onZoomChange = onZoomChange
+        context.coordinator.onTap = onTap
         if view.photo.image !== image { view.show(image) }
     }
 
     final class Coordinator: NSObject, UIScrollViewDelegate {
-        var zoomChanged: (Bool) -> Void
-        var tapped: () -> Void
+        var onZoomChange: (_ isZoomed: Bool) -> Void
+        var onTap: () -> Void
         private var wasZoomed = false
 
-        init(zoomChanged: @escaping (Bool) -> Void, tapped: @escaping () -> Void) {
-            self.zoomChanged = zoomChanged
-            self.tapped = tapped
+        init(onZoomChange: @escaping (_ isZoomed: Bool) -> Void, onTap: @escaping () -> Void) {
+            self.onZoomChange = onZoomChange
+            self.onTap = onTap
         }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { (scrollView as? ZoomView)?.photo }
@@ -381,10 +381,10 @@ private struct ZoomableScreenshot: UIViewRepresentable {
             let isZoomed = scrollView.zoomScale > scrollView.minimumZoomScale + 0.01
             guard isZoomed != wasZoomed else { return }
             wasZoomed = isZoomed
-            zoomChanged(isZoomed)
+            onZoomChange(isZoomed)
         }
 
-        @objc func singleTapped() { tapped() }
+        @objc func singleTapped() { onTap() }
 
         @objc func doubleTapped(_ gesture: UITapGestureRecognizer) {
             guard let view = gesture.view as? ZoomView else { return }

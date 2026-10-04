@@ -14,15 +14,16 @@ struct SentReportsView: View {
     @State private var reports: [SentReport]?
     /// The last attempt to hand reports to the Mac, read with the list.
     @State private var lastDelivery: Delivery?
-    @State private var open: SentReport?
+    /// The report opened from the list, if any.
+    @State private var shownReport: SentReport?
 
     private var size: CGSize { session.screenSize }
 
     var body: some View {
         ZStack(alignment: .top) {
             Color.black
-            if let open {
-                ReportDetail(sent: open, session: session, lastDelivery: lastDelivery) { show(nil) }
+            if let shownReport {
+                ReportDetail(sent: shownReport, session: session, lastDelivery: lastDelivery) { show(nil) }
                     .transition(reduceMotion ? .opacity : .move(edge: .trailing))
             } else {
                 list
@@ -41,7 +42,7 @@ struct SentReportsView: View {
     }
 
     private func show(_ report: SentReport?) {
-        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.3)) { open = report }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.3)) { shownReport = report }
     }
 
     // MARK: - List
@@ -87,7 +88,7 @@ struct SentReportsView: View {
                     Text(sent.report.screenNames)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Mono.text)
-                    Text(sent.delivered ? sent.report.contents : "\(sent.report.contents) · Not on the Mac yet")
+                    Text(sent.isDelivered ? sent.report.contents : "\(sent.report.contents) · Not on the Mac yet")
                         .font(.caption)
                         .foregroundStyle(Mono.secondary)
                 }
@@ -141,7 +142,7 @@ private struct ReportDetail: View {
     let sent: SentReport
     let session: DebugSession
     let lastDelivery: Delivery?
-    let back: () -> Void
+    let onBack: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var report: Report { sent.report }
@@ -152,7 +153,7 @@ private struct ReportDetail: View {
         let items = Dictionary(report.items.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
         let attachments = report.items.filter { $0.screen == nil }
         VStack(spacing: 0) {
-            ViewerBar(title: SentReportsView.time(report.createdAt), icon: "chevron.left", label: "Back", top: session.safeAreaTop, action: back)
+            ViewerBar(title: SentReportsView.time(report.createdAt), icon: "chevron.left", label: "Back", top: session.safeAreaTop, action: onBack)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 32) {
@@ -177,9 +178,9 @@ private struct ReportDetail: View {
 
     /// Whether the Mac has it, and if not, why, from the last attempt to send.
     private var delivery: String {
-        guard !sent.delivered else { return "On the Mac" }
+        guard !sent.isDelivered else { return "On the Mac" }
         guard let last = lastDelivery else { return "Not on the Mac yet" }
-        let when = SentReportsView.time(last.at)
+        let when = SentReportsView.time(last.attemptedAt)
         return switch last.outcome {
         case .noHub: "Not on the Mac yet: no Mac has set up this app"
         case .unreachable: "Not on the Mac yet: couldn't reach it at \(when)"
@@ -191,7 +192,7 @@ private struct ReportDetail: View {
 
     /// What was reported from where, such as "3 notes, 1 screen · Example 1.0 (1)".
     private var about: String {
-        let app = [report.app.name ?? report.app.bundleIdentifier, report.app.version, report.app.build.map { "(\($0))" }]
+        let app = [report.app.name ?? report.app.bundleID, report.app.version, report.app.build.map { "(\($0))" }]
             .compactMap { $0 }.joined(separator: " ")
         return app.isEmpty ? report.contents : "\(report.contents) · \(app)"
     }
@@ -200,7 +201,7 @@ private struct ReportDetail: View {
 
     private func section(_ screen: Report.Screen, items: [Int: Report.Item], proxy: ScrollViewProxy) -> some View {
         // The screen as it was last, then any earlier state kept for notes it no longer showed.
-        let pictures = screen.images.filter { !$0.earlierState } + screen.images.filter(\.earlierState)
+        let pictures = screen.images.filter { !$0.isEarlierState } + screen.images.filter(\.isEarlierState)
         return VStack(alignment: .leading, spacing: 12) {
             Text(screen.title ?? screen.viewController ?? "Untitled")
                 .font(.title3.weight(.semibold))
@@ -223,7 +224,7 @@ private struct ReportDetail: View {
 
     private func caption(for picture: Report.Picture) -> String? {
         var parts: [String] = []
-        if picture.earlierState { parts.append("Earlier state, before the screen changed") }
+        if picture.isEarlierState { parts.append("Earlier state, before the screen changed") }
         if picture.stitchedFrom > 1, picture.part == 1 { parts.append("Stitched from \(picture.stitchedFrom) scroll positions") }
         if picture.parts > 1 { parts.append("Part \(picture.part) of \(picture.parts)") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
@@ -259,7 +260,7 @@ private struct ReportDetail: View {
 
     // MARK: - Notes
 
-    private func notes(_ list: [Report.Item], jump: ((Int) -> Void)?) -> some View {
+    private func notes(_ list: [Report.Item], jump: ((_ itemNumber: Int) -> Void)?) -> some View {
         VStack(spacing: 0) {
             ForEach(Array(list.enumerated()), id: \.element.number) { index, item in
                 if index > 0 {
@@ -438,7 +439,7 @@ private struct ReportPicture: View {
 extension SentReport {
     /// The picture shown in the list: the first screen as it was last, or the first attachment.
     fileprivate var cover: URL? {
-        let picture = report.screens.first.flatMap { screen in screen.images.first { !$0.earlierState } ?? screen.images.first }
+        let picture = report.screens.first.flatMap { screen in screen.images.first { !$0.isEarlierState } ?? screen.images.first }
         let file = picture?.file ?? report.items.lazy.flatMap(\.attachments).first
         return file.map { folder.appending(path: $0) }
     }

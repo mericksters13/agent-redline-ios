@@ -9,14 +9,14 @@ import UIKit
 /// (https://github.com/Connected-Mate/AnnotateKit, MIT).
 @MainActor
 enum AccessibilityTree {
-    private static var automationEnabled = false
+    private static var isAutomationEnabled = false
 
     /// SwiftUI builds its accessibility tree only when an assistive client is
     /// connected. Turn on the automation mode UI testing uses so the tree exists
     /// when we read it. Debug builds only.
     static func enableAutomation() {
-        guard !automationEnabled else { return }
-        automationEnabled = true
+        guard !isAutomationEnabled else { return }
+        isAutomationEnabled = true
         guard let handle = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW) else {
             Log.accessibility.error("Couldn't open libAccessibility; SwiftUI screens may show no elements")
             return

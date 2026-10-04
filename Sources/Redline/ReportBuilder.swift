@@ -61,7 +61,7 @@ enum ReportBuilder {
                 })
                 let outlines = notes.compactMap { note -> ReportRenderer.Outline? in
                     guard let number = numbers[note.id], let frame = note.element?.frame, let captureID = note.captureID,
-                          let rect = plan.place(frame, from: captureID) else { return nil }
+                          let rect = plan.position(of: frame, from: captureID) else { return nil }
                     return ReportRenderer.Outline(number: number, rect: rect, style: .normal)
                 }
                 screenNotes += outlines.map(\.number)
@@ -71,7 +71,7 @@ enum ReportBuilder {
                 let base = earlier ? "\(screenID)-earlier-\(groupIndex + 1)" : screenID
                 // Everything that was on screen, where it sits in the picture, so cuts fall between rows and sections.
                 let onScreen = group.flatMap { capture in
-                    capture.elements.compactMap { plan.place($0.frame, from: capture.id) }
+                    capture.elements.compactMap { plan.position(of: $0.frame, from: capture.id) }
                 }
                 let parts = ScreenComposition.parts(
                     height: plan.size.height,
@@ -95,7 +95,7 @@ enum ReportBuilder {
                     let shown = CGRect(x: 0, y: rows.lowerBound, width: plan.size.width, height: rows.upperBound - rows.lowerBound)
                     let skipped = plan.gaps.filter { shown.intersects($0.rect) }.map(\.skippedHeight).reduce(0, +)
                     pictures.append(Report.Picture(
-                        file: file, part: partIndex + 1, parts: parts.count, stitchedFrom: plan.stitchedFrom, earlierState: earlier,
+                        file: file, part: partIndex + 1, parts: parts.count, stitchedFrom: plan.stitchedFrom, isEarlierState: earlier,
                         notes: outlines.filter { $0.rect.intersects(shown) }.map(\.number).sorted(),
                         width: Int((image.size.width * image.scale).rounded()), height: Int((image.size.height * image.scale).rounded()),
                         scrolledPast: skipped > 0 ? Int(skipped.rounded()) : nil

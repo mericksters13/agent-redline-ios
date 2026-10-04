@@ -17,7 +17,7 @@ private enum Markup {
 struct OverlayView: View {
     @Bindable var session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @FocusState private var noteFocused: Bool
+    @FocusState private var isNoteFocused: Bool
     @State private var cardHeight: CGFloat = 0
     /// The card's height when it opened, before any typing.
     @State private var openingCardHeight: CGFloat = 0
@@ -388,7 +388,7 @@ struct OverlayView: View {
                 .foregroundStyle(Mono.text)
                 .tint(Color.white)
                 .lineLimit(2...5)
-                .focused($noteFocused)
+                .focused($isNoteFocused)
                 .padding(12)
                 .background(Mono.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
@@ -423,7 +423,7 @@ struct OverlayView: View {
         }
         .padding(.leading, panelLeading)
         .padding(.top, top)
-        .onAppear { noteFocused = true }
+        .onAppear { isNoteFocused = true }
         .onDisappear {
             cardHeight = 0
             openingCardHeight = 0
@@ -675,11 +675,11 @@ struct OverlayView: View {
                             press = ButtonPress(center: center, hold: Task {
                                 try? await Task.sleep(for: .seconds(ButtonPress.holdDuration))
                                 guard !Task.isCancelled, press?.isDragging == false else { return }
-                                press?.held = true
+                                press?.isHeld = true
                                 session.openSentReports()
                             })
                         }
-                        guard let current = press, !current.held else { return }
+                        guard let current = press, !current.isHeld else { return }
                         if !current.isDragging {
                             guard hypot(value.translation.width, value.translation.height) >= ButtonPress.dragDistance else { return }
                             current.hold.cancel()
@@ -695,7 +695,7 @@ struct OverlayView: View {
                         guard let current = press else { return }
                         press = nil
                         current.hold.cancel()
-                        if current.held { return }
+                        if current.isHeld { return }
                         guard current.isDragging else {
                             session.enterPicking()
                             return
@@ -795,7 +795,7 @@ private struct CaptureFlight: View {
     let screenSize: CGSize
     /// Read here rather than by the overlay, so only this view follows the landing slot.
     let session: DebugSession
-    let landed: () -> Void
+    let onLand: () -> Void
 
     /// Where it lands. It follows the slot as the note box rises with the keyboard.
     private var slot: CGRect { session.attachmentSlot }
@@ -839,7 +839,7 @@ private struct CaptureFlight: View {
             ) {
                 isLanding = true
             } completion: {
-                landed()
+                onLand()
             }
         }
     }
@@ -856,7 +856,7 @@ private struct ButtonPress {
     /// Opens the sent reports once the press has been held long enough.
     var hold: Task<Void, Never>
     var isDragging = false
-    var held = false
+    var isHeld = false
 }
 
 /// A quick side-to-side shake, played each time `phase` steps up by one.

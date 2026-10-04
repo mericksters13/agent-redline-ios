@@ -6,7 +6,7 @@ extension Report.App {
     static func current(sourceFile: String?) -> Report.App {
         let info = Bundle.main.infoDictionary ?? [:]
         return Report.App(
-            bundleIdentifier: Bundle.main.bundleIdentifier,
+            bundleID: Bundle.main.bundleIdentifier,
             name: (info["CFBundleDisplayName"] ?? info["CFBundleName"]) as? String,
             version: info["CFBundleShortVersionString"] as? String,
             build: info["CFBundleVersion"] as? String,

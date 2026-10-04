@@ -33,13 +33,13 @@ enum CaptureMerge {
             guard overlap != .differs, isScroll(from: previous, to: new) else { return .replace }
             return .stitch
         }
-        return picturesMatch && sameLayout(previous, new) ? .reuse(previous.id) : .replace
+        return picturesMatch && isSameLayout(previous, as: new) ? .reuse(previous.id) : .replace
     }
 
     /// Whether two captures hold the same elements in the same places. A light menu over a
     /// light screen can look almost unchanged in a small picture, but its items are new
     /// elements. Text may change, like a time stamp, and a label's width with it.
-    static func sameLayout(_ a: Capture, _ b: Capture) -> Bool {
+    static func isSameLayout(_ a: Capture, as b: Capture) -> Bool {
         guard a.elements.count == b.elements.count else { return false }
         func ordered(_ capture: Capture) -> [ElementSnapshot] {
             capture.elements.sorted { ($0.frame.minY.rounded(), $0.frame.minX.rounded()) < ($1.frame.minY.rounded(), $1.frame.minX.rounded()) }

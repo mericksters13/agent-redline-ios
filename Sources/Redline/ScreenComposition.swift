@@ -48,7 +48,7 @@ enum ScreenComposition {
         guard captures.count > 1, scrolls.count == captures.count, let band = band(for: captures) else {
             return ImagePlan(
                 size: reference.size,
-                segments: [.init(capture: reference.id, sourceMinY: 0, height: reference.size.height, destinationY: 0)],
+                segments: [.init(captureID: reference.id, sourceMinY: 0, height: reference.size.height, destinationY: 0)],
                 gaps: [], stitchedFrom: 1, band: nil, runs: [], footerY: reference.size.height,
                 captures: [reference.id: reference]
             )
@@ -56,7 +56,7 @@ enum ScreenComposition {
 
         let topmost = scrolls.min { $0.scroll.offsetY < $1.scroll.offsetY }?.capture ?? reference
         let bottommost = scrolls.max { $0.scroll.offsetY < $1.scroll.offsetY }?.capture ?? reference
-        var segments = [ImagePlan.Segment(capture: topmost.id, sourceMinY: 0, height: band.lowerBound, destinationY: 0)]
+        var segments = [ImagePlan.Segment(captureID: topmost.id, sourceMinY: 0, height: band.lowerBound, destinationY: 0)]
         let ranges = scrolls.map { entry -> (capture: Capture, scroll: ScrollState, range: ClosedRange<CGFloat>) in
             (entry.capture, entry.scroll, entry.scroll.contentY(ofScreenY: band.lowerBound)...entry.scroll.contentY(ofScreenY: band.upperBound))
         }
@@ -81,11 +81,11 @@ enum ScreenComposition {
                 pendingGap = false
             }
             let source = owner.scroll.screenY(ofContentY: start)
-            if let last = segments.last, segments.count > 1, last.capture == owner.capture.id,
+            if let last = segments.last, segments.count > 1, last.captureID == owner.capture.id,
                abs(last.sourceMinY + last.height - source) < 0.5, abs(last.destinationY + last.height - y) < 0.5 {
                 segments[segments.count - 1].height += end - start
             } else {
-                segments.append(.init(capture: owner.capture.id, sourceMinY: source, height: end - start, destinationY: y))
+                segments.append(.init(captureID: owner.capture.id, sourceMinY: source, height: end - start, destinationY: y))
             }
             if let last = runs.last, abs(last.contentEnd - start) < 0.5, abs(last.destinationY + (last.contentEnd - last.contentStart) - y) < 0.5 {
                 runs[runs.count - 1].contentEnd = end
@@ -96,7 +96,7 @@ enum ScreenComposition {
             lastEnd = end
         }
         let footerY = y
-        segments.append(.init(capture: bottommost.id, sourceMinY: band.upperBound, height: reference.size.height - band.upperBound, destinationY: y))
+        segments.append(.init(captureID: bottommost.id, sourceMinY: band.upperBound, height: reference.size.height - band.upperBound, destinationY: y))
         y += reference.size.height - band.upperBound
         return ImagePlan(
             size: CGSize(width: reference.size.width, height: y),

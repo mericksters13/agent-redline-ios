@@ -31,28 +31,33 @@ enum HubLink {
         var acceptsUploads: Bool { uploads ?? true }
     }
 
+    /// A report the Mac hasn't confirmed, named by its folder.
+    struct OfferedReport: Codable, Equatable, Sendable {
+        var id: String
+        var finishedAt: Date
+    }
+
     /// Step 1: the reports the phone offers the hub, oldest first.
     struct Offer: Codable, Equatable, Sendable {
-        /// A report the Mac hasn't confirmed, named by its folder.
-        struct Report: Codable, Equatable, Sendable {
-            var id: String
-            var finishedAt: Date
-        }
-
         var device: String
         var bundleID: String
         var token: String
-        var reports: [Report]
+        var reports: [OfferedReport]
     }
 
     /// Step 2: which offered reports the hub wants, and which it already has.
     struct Answer: Codable, Equatable, Sendable {
         /// Reports to send now.
-        var want: [String]
+        var wanted: [String]
         /// Reports the Mac already has, or doesn't take: the app can stop offering them.
         var delivered: [String]
         /// Why the hub turned the offer down, when it did.
         var refused: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case wanted = "want"
+            case delivered, refused
+        }
     }
 
     /// Step 3: one wanted report's files.
@@ -86,8 +91,13 @@ enum HubLink {
         /// The last part of the chat's folder.
         var folder: String
         /// The chat works in the worktree the app was built from.
-        var sameWorktree: Bool
+        var isSameWorktree: Bool
         var lastActive: Date
+
+        private enum CodingKeys: String, CodingKey {
+            case id, agent, title, folder, lastActive
+            case isSameWorktree = "sameWorktree"
+        }
     }
 
     /// The hub's answer to a chats request.
@@ -114,7 +124,7 @@ enum HubLink {
 
     /// Asks the hub which chats a report from this app can go to. Nil when the hub can't be
     /// reached or turns the question down.
-    static func chats(bundleID: String, address: Address, sourceFile: String?, patience: TimeInterval) async -> ChatList? {
+    static func requestChats(bundleID: String, address: Address, sourceFile: String?, patience: TimeInterval) async -> ChatList? {
         guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return nil }
         let request: Data
         do {
@@ -189,8 +199,8 @@ enum HubLink {
     /// connection, which includes iOS asking about local network access the first time.
     /// Returns how it went and the reports the Mac now has.
     /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
-    static func deliver(_ reports: [Offer.Report], bundleID: String, address: Address,
-                        files: @Sendable (String) -> [String: Data], patience: TimeInterval) async -> (outcome: Outcome, delivered: [String]) {
+    static func deliver(_ reports: [OfferedReport], bundleID: String, address: Address,
+                        files: @Sendable (_ reportID: String) -> [String: Data], patience: TimeInterval) async -> (outcome: Outcome, delivered: [String]) {
         guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return (.refused, []) }
         let offer: Data
         do {
@@ -220,8 +230,8 @@ enum HubLink {
                 return (.refused, answer.delivered)
             }
             var delivered = answer.delivered
-            guard !answer.want.isEmpty else { return (.delivered, delivered) }
-            for id in answer.want {
+            guard !answer.wanted.isEmpty else { return (.delivered, delivered) }
+            for id in answer.wanted {
                 let upload: Data
                 do {
                     upload = try encode(Upload(id: id, files: files(id)))

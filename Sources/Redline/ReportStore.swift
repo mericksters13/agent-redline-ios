@@ -129,7 +129,7 @@ struct ReportStore: Sendable {
 
     /// Sent reports the Mac hasn't confirmed yet, oldest first. Delivered reports are skipped
     /// before anything is read, and only each report's id and date are decoded.
-    func undeliveredReports() -> [HubLink.Offer.Report] {
+    func undeliveredReports() -> [HubLink.OfferedReport] {
         /// The little of a report needed to offer it.
         struct Stamp: Decodable {
             var id: String
@@ -151,7 +151,7 @@ struct ReportStore: Sendable {
         return waiting
             .sorted { ($0.stamp.createdAt, $0.stamp.id) < ($1.stamp.createdAt, $1.stamp.id) }
             // Named by folder: the hub copies the report's folder.
-            .map { HubLink.Offer.Report(id: $0.folder, finishedAt: $0.stamp.createdAt) }
+            .map { HubLink.OfferedReport(id: $0.folder, finishedAt: $0.stamp.createdAt) }
     }
 
     /// A sent report's files, as the hub keeps them: everything in its folder but the draft
@@ -185,7 +185,7 @@ struct ReportStore: Sendable {
     func recordDelivery(_ outcome: HubLink.Outcome, at date: Date = .now) {
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            try Self.encoder.encode(Delivery(at: date, outcome: outcome)).write(to: deliveryFile, options: .atomic)
+            try Self.encoder.encode(Delivery(attemptedAt: date, outcome: outcome)).write(to: deliveryFile, options: .atomic)
         } catch {
             Log.store.error("Couldn't record the delivery: \(error.localizedDescription, privacy: .public)")
         }
@@ -220,7 +220,7 @@ struct ReportStore: Sendable {
                 return nil
             }
             let delivered = FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path(percentEncoded: false))
-            return SentReport(report: report, folder: folder, delivered: delivered)
+            return SentReport(report: report, folder: folder, isDelivered: delivered)
         }
         .sorted { ($0.report.createdAt, $0.id) > ($1.report.createdAt, $1.id) }
     }

@@ -66,18 +66,18 @@ struct DestinationPicker: View {
     private func agents(_ agents: [String]) -> some View {
         HStack(spacing: 8) {
             ForEach(agents, id: \.self) { agent in
-                let selected = session.pickerAgent == agent
+                let isSelected = session.pickerAgent == agent
                 Button { session.choose(agent: agent) } label: {
                     Text(HubLink.agentName(agent))
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(selected ? Color.black : Mono.text)
+                        .foregroundStyle(isSelected ? Color.black : Mono.text)
                         .padding(.horizontal, 14)
                         .frame(height: 34)
-                        .background(selected ? Color.white : Mono.fill, in: Capsule(style: .continuous))
+                        .background(isSelected ? Color.white : Mono.fill, in: Capsule(style: .continuous))
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
                 }
-                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
     }
@@ -91,7 +91,7 @@ struct DestinationPicker: View {
                     choice: Report.Destination(agent: agent, chat: nil, title: "a new \(HubLink.agentName(agent)) chat"))
                 ForEach(chats) { chat in
                     Rectangle().fill(Mono.hairline).frame(height: 1)
-                    row(title: chat.title, detail: detail(chat), tag: chat.sameWorktree ? "This build" : nil, icon: nil,
+                    row(title: chat.title, detail: detail(chat), tag: chat.isSameWorktree ? "This build" : nil, icon: nil,
                         choice: Report.Destination(agent: agent, chat: chat.id, title: chat.title))
                 }
                 if chats.isEmpty {
@@ -113,7 +113,7 @@ struct DestinationPicker: View {
     }
 
     private func row(title: String, detail: String, tag: String?, icon: String?, choice: Report.Destination) -> some View {
-        let selected = choice.sameChoice(as: session.pickerChoice)
+        let isSelected = choice.isSameChoice(as: session.pickerChoice)
         return Button { session.choose(choice) } label: {
             HStack(spacing: 12) {
                 if let icon {
@@ -147,14 +147,14 @@ struct DestinationPicker: View {
                 Image(systemName: "checkmark")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(Mono.text)
-                    .opacity(selected ? 1 : 0)
+                    .opacity(isSelected ? 1 : 0)
             }
             .padding(.vertical, 10)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     /// The picker opened from Send sends; opened from the notes, it only keeps the pick.

@@ -45,8 +45,8 @@ enum ReportRenderer {
             for segment in plan.segments where segment.height > 0 {
                 let minY = pixel(segment.destinationY) - top
                 let destination = CGRect(x: 0, y: minY, width: size.width, height: pixel(segment.destinationY + segment.height) - top - minY)
-                guard destination.maxY > 0, destination.minY < size.height, let picture = pictures[segment.capture],
-                      let capture = plan.captures[segment.capture] else { continue }
+                guard destination.maxY > 0, destination.minY < size.height, let picture = pictures[segment.captureID],
+                      let capture = plan.captures[segment.captureID] else { continue }
                 draw(picture, pointWidth: capture.size.width, rowsFrom: segment.sourceMinY, height: segment.height, into: destination)
             }
             context.cgContext.translateBy(x: 0, y: -top)

@@ -17,7 +17,7 @@ struct HubLinkTests {
 
     @Test func answerDecodes() throws {
         let answer = try HubLink.decode(HubLink.Answer.self, from: Data(#"{"delivered":[],"want":["20261003-215826"]}"#.utf8))
-        #expect(answer == HubLink.Answer(want: ["20261003-215826"], delivered: []))
+        #expect(answer == HubLink.Answer(wanted: ["20261003-215826"], delivered: []))
         let refused = try HubLink.decode(HubLink.Answer.self, from: Data(#"{"delivered":["a"],"refused":"Pair again","want":[]}"#.utf8))
         #expect(refused.refused == "Pair again")
     }
@@ -41,9 +41,17 @@ struct HubLinkTests {
         let list = #"{"agents":["claude"],"chats":[{"agent":"claude","folder":"wt","id":"s1","lastActive":"2026-10-03T04:00:00Z","sameWorktree":true,"title":"Let"}],"worktree":"wt"}"#
         #expect(try HubLink.decode(HubLink.ChatList.self, from: Data(list.utf8)) == HubLink.ChatList(
             agents: ["claude"],
-            chats: [HubLink.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt", sameWorktree: true, lastActive: finishedAt)],
+            chats: [HubLink.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt", isSameWorktree: true, lastActive: finishedAt)],
             worktree: "wt"
         ))
+    }
+
+    @Test func renamedFieldsKeepTheirWireNames() throws {
+        let chat = HubLink.Chat(id: "s1", agent: "codex", title: "Let", folder: "wt", isSameWorktree: false, lastActive: finishedAt)
+        let line = String(decoding: try HubLink.encode(chat), as: UTF8.self)
+        #expect(line == #"{"agent":"codex","folder":"wt","id":"s1","lastActive":"2026-10-03T04:00:00Z","sameWorktree":false,"title":"Let"}"# + "\n")
+        let answer = String(decoding: try HubLink.encode(HubLink.Answer(wanted: ["r"], delivered: [])), as: UTF8.self)
+        #expect(answer == #"{"delivered":[],"want":["r"]}"# + "\n")
     }
 
     @Test func aMalformedLineThrows() {

@@ -5,7 +5,7 @@ import Foundation
 struct ImagePlan: Equatable, Sendable {
     /// Rows copied from a capture into the picture.
     struct Segment: Equatable, Sendable {
-        var capture: UUID
+        var captureID: UUID
         var sourceMinY: CGFloat
         var height: CGFloat
         var destinationY: CGFloat
@@ -38,7 +38,7 @@ struct ImagePlan: Equatable, Sendable {
     var captures: [UUID: Capture]
 
     /// Where a note made on `capture` sits in this picture.
-    func place(_ frame: CGRect, from captureID: UUID) -> CGRect? {
+    func position(of frame: CGRect, from captureID: UUID) -> CGRect? {
         guard let capture = captures[captureID] else { return nil }
         guard let band, let scroll = capture.scroll else { return frame }
         if frame.midY < band.lowerBound { return frame }

@@ -14,7 +14,7 @@ struct AttachmentPicker: View {
     let session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var expanded = false
+    @State private var isExpanded = false
     /// Made in `.task`, so a parent update never builds a model only to throw it away.
     @State private var library: RecentPhotos?
     @State private var selectedIDs: [String] = []
@@ -53,10 +53,10 @@ struct AttachmentPicker: View {
     var body: some View {
         let anchor = session.attachAnchor
         let corner = AttachmentPlacement.corner(for: anchor, in: bounds)
-        let frame = AttachmentPlacement.expanded(
+        let frame = AttachmentPlacement.expandedFrame(
             anchor: anchor,
             in: bounds,
-            contentHeight: photosHeight(width: AttachmentPlacement.expanded(anchor: anchor, in: bounds).width)
+            contentHeight: photosHeight(width: AttachmentPlacement.expandedFrame(anchor: anchor, in: bounds).width)
         )
         ZStack(alignment: .topLeading) {
             Color.clear
@@ -75,15 +75,15 @@ struct AttachmentPicker: View {
             .shadow(color: .black.opacity(0.35), radius: 24, y: 10)
             // Starts the size of the button and grows from the button's corner.
             .scaleEffect(
-                x: expanded ? 1 : max(1, anchor.width) / max(frame.width, 1),
-                y: expanded ? 1 : max(1, anchor.height) / max(frame.height, 1),
+                x: isExpanded ? 1 : max(1, anchor.width) / max(frame.width, 1),
+                y: isExpanded ? 1 : max(1, anchor.height) / max(frame.height, 1),
                 anchor: corner.unitPoint
             )
-            .opacity(expanded ? 1 : 0)
+            .opacity(isExpanded ? 1 : 0)
             .position(x: frame.midX, y: frame.midY)
         }
         .buttonStyle(.plain)
-        .onAppear { withAnimation(motion) { expanded = true } }
+        .onAppear { withAnimation(motion) { isExpanded = true } }
         .task {
             let recent = RecentPhotos()
             library = recent
@@ -218,7 +218,7 @@ struct AttachmentPicker: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func tile(_ item: RecentPhotos.Item) -> some View {
+    private func tile(_ item: RecentPhotos.Photo) -> some View {
         let order = selectedIDs.firstIndex(of: item.id)
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
         return Button {
@@ -281,7 +281,7 @@ struct AttachmentPicker: View {
 
     private func close() {
         withAnimation(motion, completionCriteria: .removed) {
-            expanded = false
+            isExpanded = false
         } completion: {
             session.closeAttachments()
         }
@@ -291,7 +291,7 @@ struct AttachmentPicker: View {
     /// enough to stall the UI. Keeps the order they were chosen in.
     /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
     nonisolated private static func images(from items: [PhotosPickerItem]) async -> [UIImage] {
-        await withTaskGroup(of: (Int, UIImage?).self) { group in
+        await withTaskGroup(of: (index: Int, image: UIImage?).self) { group in
             for (index, item) in items.enumerated() {
                 group.addTask {
                     do {
@@ -317,13 +317,13 @@ struct AttachmentPicker: View {
 @MainActor
 @Observable
 private final class RecentPhotos {
-    struct Item: Identifiable, Sendable {
+    struct Photo: Identifiable, Sendable {
         let id: String
         let createdAt: Date
         let thumbnail: UIImage
     }
 
-    private(set) var items: [Item] = []
+    private(set) var items: [Photo] = []
     private(set) var isLoaded = false
     @ObservationIgnored private var assets: [String: PHAsset] = [:]
 
@@ -360,12 +360,12 @@ private final class RecentPhotos {
         }
         let found = PhotoLibrary.newestPhotos(limit: 30)
         assets = Dictionary(found.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
-        var loaded: [Item] = []
+        var loaded: [Photo] = []
         for asset in found {
             // The panel closed: stop loading thumbnails nobody will see.
             guard !Task.isCancelled else { return }
             if let thumbnail = await PhotoLibrary.image(for: asset, pixels: 480) {
-                loaded.append(Item(id: asset.localIdentifier, createdAt: asset.creationDate ?? .distantPast, thumbnail: thumbnail))
+                loaded.append(Photo(id: asset.localIdentifier, createdAt: asset.creationDate ?? .distantPast, thumbnail: thumbnail))
             }
         }
         guard !Task.isCancelled else { return }
@@ -393,11 +393,11 @@ private final class RecentPhotos {
 extension RecentPhotos {
     /// The sample images, decoded at grid size.
     /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
-    nonisolated private static func sampleItems() async -> [Item] {
+    nonisolated private static func sampleItems() async -> [Photo] {
         sampleFiles().compactMap { file in
             guard let image = UIImage(contentsOfFile: file.url.path(percentEncoded: false)) else { return nil }
             let thumbnail = image.preparingThumbnail(of: CGSize(width: 240, height: 240 * image.size.height / max(image.size.width, 1))) ?? image
-            return Item(id: file.url.path(percentEncoded: false), createdAt: file.date, thumbnail: thumbnail)
+            return Photo(id: file.url.path(percentEncoded: false), createdAt: file.date, thumbnail: thumbnail)
         }
     }
 

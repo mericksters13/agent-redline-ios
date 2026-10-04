@@ -201,6 +201,19 @@ struct ReportStoreTests {
         #expect(ReportStore.standard.hubAddressFile.path(percentEncoded: false).hasSuffix("Library/Application Support/Redline/hub.json"))
     }
 
+    @Test func reportFieldsKeepTheirNamesOnDisk() throws {
+        try store.saveDraft([])
+        let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        try store.finishReport(sampleReport(id: started.id), in: started.folder)
+        let json = try String(decoding: Data(contentsOf: started.folder.appending(path: "report.json")), as: UTF8.self)
+        #expect(json.contains(#""bundleIdentifier" : "com.example.app""#))
+        #expect(json.contains(#""earlierState" : false"#))
+        #expect(!json.contains("isEarlierState"))
+        store.recordDelivery(.refused, at: Date(timeIntervalSince1970: 1_791_000_000))
+        let delivery = try String(decoding: Data(contentsOf: store.root.appending(path: "delivery.json")), as: UTF8.self)
+        #expect(delivery.contains(#""at" : "2026-10-03T04:00:00Z""#))
+    }
+
     @Test func aReportSaysWhichVersionOfTheFormatItIs() throws {
         try store.saveDraft([])
         let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
@@ -220,7 +233,7 @@ struct ReportStoreTests {
 
     @Test func thePickedChatIsSavedWithTheReport() throws {
         let report = Report(id: "r", createdAt: Date(timeIntervalSince1970: 1_791_000_000),
-                            app: Report.App(bundleIdentifier: "com.example.app", sourceFile: "/w/App.swift"),
+                            app: Report.App(bundleID: "com.example.app", sourceFile: "/w/App.swift"),
                             device: Report.Device(model: "iPhone18,1", systemName: "iOS", systemVersion: "27.0"), screens: [], items: [],
                             destination: Report.Destination(agent: "codex", chat: "t-1", title: "Fix the paywall"))
         let decoded = try JSONDecoder().decode(Report.self, from: JSONEncoder().encode(report))
@@ -235,13 +248,13 @@ struct ReportStoreTests {
         try store.finishReport(sampleReport(id: started.id), in: started.folder)
         store.markDelivered([started.id])
         #expect(store.reportFiles(started.id).keys.sorted() == ["report.json", "report.md", "screen-1.jpg"])
-        #expect(store.sentReports().first?.delivered == true)
+        #expect(store.sentReports().first?.isDelivered == true)
     }
 
     @Test func theLastDeliveryIsRemembered() {
         #expect(store.lastDelivery() == nil)
         store.recordDelivery(.unreachable, at: Date(timeIntervalSince1970: 1_791_000_000))
-        #expect(store.lastDelivery() == Delivery(at: Date(timeIntervalSince1970: 1_791_000_000), outcome: .unreachable))
+        #expect(store.lastDelivery() == Delivery(attemptedAt: Date(timeIntervalSince1970: 1_791_000_000), outcome: .unreachable))
     }
 
     @Test func aSentReportIsSummedUpForTheList() {
@@ -275,11 +288,11 @@ struct ReportStoreTests {
         return Report(
             id: id,
             createdAt: Date(timeIntervalSince1970: 1_790_000_000),
-            app: Report.App(bundleIdentifier: "com.example.app", name: "Example", version: "1.0", build: "1"),
+            app: Report.App(bundleID: "com.example.app", name: "Example", version: "1.0", build: "1"),
             device: Report.Device(model: "iPhone18,1", systemName: "iOS", systemVersion: "27.0"),
             screens: [Report.Screen(id: "screen-1", title: "Today", viewController: "Home", notes: [1, 2], images: [
-                Report.Picture(file: "screen-1.jpg", part: 1, parts: 2, stitchedFrom: 2, earlierState: false, notes: [1, 2], width: 563, height: 1224),
-                Report.Picture(file: "screen-1-part-2.jpg", part: 2, parts: 2, stitchedFrom: 2, earlierState: false, notes: [2], width: 563, height: 700),
+                Report.Picture(file: "screen-1.jpg", part: 1, parts: 2, stitchedFrom: 2, isEarlierState: false, notes: [1, 2], width: 563, height: 1224),
+                Report.Picture(file: "screen-1-part-2.jpg", part: 2, parts: 2, stitchedFrom: 2, isEarlierState: false, notes: [2], width: 563, height: 700),
             ])],
             items: [
                 item(1, "Cut off", picture: "screen-1.jpg"),

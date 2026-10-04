@@ -16,7 +16,7 @@ final class OverlayWindow: UIWindow {
     var claimsAllTouches = false
     /// Where each area that takes touches while Redline is idle sits.
     var touchableRects: [TouchableArea: CGRect] = [:]
-    var onLayout: ((OverlayWindow) -> Void)?
+    var onLayout: ((_ window: OverlayWindow) -> Void)?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard claimsAllTouches || touchableRects.values.contains(where: { $0.contains(point) }) else { return nil }

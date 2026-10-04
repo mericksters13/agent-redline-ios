@@ -6,7 +6,7 @@ import Foundation
 enum ReportSummary {
     static func markdown(_ report: Report) -> String {
         var lines: [String] = []
-        let app = [report.app.name ?? report.app.bundleIdentifier ?? "App", report.app.version.map { "\($0)" }, report.app.build.map { "(\($0))" }]
+        let app = [report.app.name ?? report.app.bundleID ?? "App", report.app.version.map { "\($0)" }, report.app.build.map { "(\($0))" }]
             .compactMap { $0 }.joined(separator: " ")
         lines.append("# UI report: \(app)")
         lines.append("")
@@ -20,7 +20,7 @@ enum ReportSummary {
             lines.append("")
             lines.append("## Screen: \(screen.title ?? screen.viewController ?? "Untitled")")
             lines.append("")
-            let current = screen.images.filter { !$0.earlierState }
+            let current = screen.images.filter { !$0.isEarlierState }
             if let first = current.first {
                 var description = "One screenshot of this screen"
                 if first.stitchedFrom > 1 { description += ", stitched from \(first.stitchedFrom) scroll positions" }
@@ -37,7 +37,7 @@ enum ReportSummary {
                     lines.append("The notes are far apart: about \(skipped) pt of the screen between them wasn't captured and is marked \"Scrolled past\". Those parts aren't next to each other in the layout.")
                 }
             }
-            for earlier in screen.images where earlier.earlierState {
+            for earlier in screen.images where earlier.isEarlierState {
                 lines.append("An earlier state of the same screen, before its content changed: \(earlier.file), with \(earlier.notes.count == 1 ? "note" : "notes") \(list(earlier.notes)).")
             }
             lines.append("")

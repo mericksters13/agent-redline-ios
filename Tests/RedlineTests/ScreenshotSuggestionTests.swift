@@ -11,31 +11,31 @@ struct ScreenshotSuggestionTests {
     }
 
     @Test func aRecentScreenshotIsOffered() {
-        let picked = ScreenshotSuggestion.pick(newest: [shot("a", minutesAgo: 2)], now: now, offered: [], inAppCaptures: [])
+        let picked = ScreenshotSuggestion.candidateToOffer(among: [shot("a", minutesAgo: 2)], now: now, offered: [], inAppCaptures: [])
         #expect(picked?.id == "a")
     }
 
     @Test func onlyTheNewestCounts() {
         let shots = [shot("old", minutesAgo: 5), shot("new", minutesAgo: 1)]
-        #expect(ScreenshotSuggestion.pick(newest: shots, now: now, offered: [], inAppCaptures: [])?.id == "new")
+        #expect(ScreenshotSuggestion.candidateToOffer(among: shots, now: now, offered: [], inAppCaptures: [])?.id == "new")
         // Once the newest has been offered, an older one never turns up.
-        #expect(ScreenshotSuggestion.pick(newest: shots, now: now, offered: ["new"], inAppCaptures: []) == nil)
+        #expect(ScreenshotSuggestion.candidateToOffer(among: shots, now: now, offered: ["new"], inAppCaptures: []) == nil)
     }
 
     @Test func screenshotsOlderThanTenMinutesAreLeftAlone() {
-        #expect(ScreenshotSuggestion.pick(newest: [shot("a", minutesAgo: 11)], now: now, offered: [], inAppCaptures: []) == nil)
+        #expect(ScreenshotSuggestion.candidateToOffer(among: [shot("a", minutesAgo: 11)], now: now, offered: [], inAppCaptures: []) == nil)
     }
 
     @Test func aScreenshotTheAppAlreadyCapturedIsNotOfferedTwice() {
         let taken = shot("a", minutesAgo: 1)
         let captured = taken.createdAt.addingTimeInterval(0.8)
-        #expect(ScreenshotSuggestion.pick(newest: [taken], now: now, offered: [], inAppCaptures: [captured]) == nil)
+        #expect(ScreenshotSuggestion.candidateToOffer(among: [taken], now: now, offered: [], inAppCaptures: [captured]) == nil)
         let earlier = taken.createdAt.addingTimeInterval(-60)
-        #expect(ScreenshotSuggestion.pick(newest: [taken], now: now, offered: [], inAppCaptures: [earlier])?.id == "a")
+        #expect(ScreenshotSuggestion.candidateToOffer(among: [taken], now: now, offered: [], inAppCaptures: [earlier])?.id == "a")
     }
 
     @Test func nothingToOfferWhenThereAreNoScreenshots() {
-        #expect(ScreenshotSuggestion.pick(newest: [], now: now, offered: [], inAppCaptures: []) == nil)
+        #expect(ScreenshotSuggestion.candidateToOffer(among: [], now: now, offered: [], inAppCaptures: []) == nil)
     }
 }
 #endif
