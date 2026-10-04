@@ -41,7 +41,7 @@ one to the Claude Code or Codex chat picked on the phone.
 ### Release builds
 
 Everything in the kit compiles only in Debug builds. In Release builds, including
-TestFlight, ``SwiftUI/View/redline(sourceFile:)`` returns the view unchanged: there is
+TestFlight, ``SwiftUICore/View/redline(sourceFile:)`` returns the view unchanged: there is
 no overlay, no private API and no permission prompt, and the caller's file path is not
 kept in the binary.
 
@@ -49,4 +49,4 @@ kept in the binary.
 
 ### Adding Redline
 
-- ``SwiftUI/View/redline(sourceFile:)``
+- ``SwiftUICore/View/redline(sourceFile:)``
