@@ -188,6 +188,9 @@ struct AgentHookTests {
         // The same name again gets a number rather than failing.
         let again = try #require(NewWorktree.create(from: repository.path, name: "report-1", agent: .claude))
         #expect(again.hasSuffix("/report-1-2"))
+        // A worktree for a chat that didn't start is taken back, with its branch.
+        NewWorktree.remove(again)
+        #expect(!FileManager.default.fileExists(atPath: again))
         #expect(NewWorktree.create(from: root.appending(path: "not-a-repo").path, name: "x", agent: .claude) == nil)
 
         // The chat it started is found by the phone's pick while its worktree exists.
@@ -205,6 +208,10 @@ struct AgentHookTests {
         #expect(AgentCommand.startedChat(.claude, in: claude)?.chat == "s-9")
         #expect(AgentCommand.startedChat(.claude, in: claude)?.answer == "The button is too small.")
         #expect(AgentCommand.startedChat(.claude, in: "Not logged in · Please run /login") == nil)
+        // Claude Code prints a result even when it couldn't run: that's a failure, in its own words.
+        let notSignedIn = #"{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login","session_id":"s-1"}"#
+        #expect(AgentCommand.startedChat(.claude, in: notSignedIn)?.failed == true)
+        #expect(AgentCommand.failure(in: notSignedIn) == "Not logged in · Please run /login")
         #expect(AgentCommand.arguments(.claude, folder: "/w", prompt: "p", resuming: "s-9").suffix(2) == ["--resume", "s-9"])
         #expect(AgentCommand.arguments(.codex, folder: "/w", prompt: "p", pictures: [URL(fileURLWithPath: "/a.jpg")]).suffix(4) == ["-i", "/a.jpg", "--", "p"])
     }

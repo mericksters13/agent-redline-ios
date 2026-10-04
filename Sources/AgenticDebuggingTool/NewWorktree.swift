@@ -29,6 +29,16 @@ enum NewWorktree {
         return path
     }
 
+    /// Takes back a worktree made for a chat that didn't start, and its branch, which holds
+    /// nothing but main's commit.
+    static func remove(_ path: String) {
+        let branch = git(path, ["branch", "--show-current"])
+        guard let common = git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"]) else { return }
+        let repository = URL(fileURLWithPath: common).deletingLastPathComponent().path
+        _ = git(repository, ["worktree", "remove", "--force", path])
+        if let branch, branch.hasPrefix("report/") { _ = git(repository, ["branch", "-D", branch]) }
+    }
+
     /// The repository's main branch: origin's default branch, fetched first when `fetching`,
     /// else a local main or master. `name` is what the phone shows.
     static func mainBranch(of folder: String, fetching: Bool = false) -> (ref: String, name: String)? {

@@ -193,8 +193,10 @@ final class Handoff: @unchecked Sendable {
 
         // A new chat works in a worktree of its own; a continued one is already in its own.
         let workFolder: String
+        var madeWorktree = false
         if resuming == nil, let made = NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: agent) {
             workFolder = made
+            madeWorktree = true
             hub.log("Made worktree \(made) for report \(source.reportID)")
         } else {
             workFolder = folder
@@ -215,15 +217,17 @@ final class Handoff: @unchecked Sendable {
         }
         let paths = hub.paths
         let place = Self.folderName(workFolder)
+        let madeWorktreeForThis = madeWorktree
         process.terminationHandler = { [hub] finished in
             let text = (try? String(contentsOf: output, encoding: .utf8)) ?? ""
             let started = AgentCommand.startedChat(agent, in: text)
-            guard finished.terminationStatus == 0, let started else {
-                // Free the report for a chat that opens later.
+            guard finished.terminationStatus == 0, let started, !started.failed else {
+                // Free the report for a chat that opens later, and take back the unused worktree.
                 try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
-                let lastLine = text.split(separator: "\n").last.map(String.init) ?? ""
-                hub.log("The \(agent.name) chat for report \(source.reportID) failed (\(finished.terminationStatus)): \(lastLine)")
-                Handoff.notify(title: "Couldn't start a \(agent.name) chat", message: lastLine.isEmpty ? "The report waits in the inbox." : String(lastLine.prefix(200)))
+                if madeWorktreeForThis { NewWorktree.remove(workFolder) }
+                let reason = AgentCommand.failure(in: text)
+                hub.log("The \(agent.name) chat for report \(source.reportID) failed (\(finished.terminationStatus)): \(reason)")
+                Handoff.notify(title: "Couldn't start a \(agent.name) chat", message: "\(reason). The report waits in the inbox.")
                 return
             }
             // Later reports with the same pick go to this chat.
@@ -300,19 +304,34 @@ enum AgentCommand {
         }
     }
 
-    /// The chat a command line run started or continued, and its answer when it gives one:
-    /// `codex exec --json`'s first event, or the result `claude -p --output-format json` prints.
-    static func startedChat(_ agent: Agent, in output: String) -> (chat: String, answer: String?)? {
+    /// The chat a command line run started or continued, its answer when it gives one, and
+    /// whether the run reported an error: `codex exec --json`'s first event, or the result
+    /// `claude -p --output-format json` prints.
+    static func startedChat(_ agent: Agent, in output: String) -> (chat: String, answer: String?, failed: Bool)? {
         for line in output.split(separator: "\n") {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
             if agent == .codex, object["type"] as? String == "thread.started", let thread = object["thread_id"] as? String {
-                return (thread, nil)
+                return (thread, nil, false)
             }
             if agent != .codex, let session = object["session_id"] as? String ?? object["chatId"] as? String {
-                return (session, object["result"] as? String)
+                return (session, object["result"] as? String, object["is_error"] as? Bool ?? false)
             }
         }
         return nil
+    }
+
+    /// Why a run failed, in the agent's own words where it gives them.
+    static func failure(in output: String) -> String {
+        for line in output.split(separator: "\n").reversed() {
+            if let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] {
+                if let result = object["result"] as? String, !result.isEmpty { return result }
+                if let error = (object["error"] as? [String: Any])?["message"] as? String ?? object["message"] as? String { return error }
+                continue
+            }
+            let text = line.trimmingCharacters(in: .whitespaces)
+            if !text.isEmpty { return String(text.prefix(200)) }
+        }
+        return "It stopped without saying why"
     }
 
 }
