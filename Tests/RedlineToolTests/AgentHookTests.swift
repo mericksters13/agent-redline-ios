@@ -317,6 +317,8 @@ struct AgentHookTests {
     @Test func aReportGoesWhereThePhonePickedOrElseToItsWorktreesChat() throws {
         let worktree = root.appending(path: "worktree-a", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: worktree.appending(path: ".git"), withIntermediateDirectories: true)
+        try "targets:\n  App:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.app\n"
+            .write(to: worktree.appending(path: "project.yml"), atomically: true, encoding: .utf8)
         let file = worktree.appending(path: "App/AppMain.swift").path
         let folder = worktree.standardizedFileURL.path
         func route(_ report: URL, _ chats: [HubMessage.Chat]) -> Destination {
@@ -352,6 +354,15 @@ struct AgentHookTests {
         }
         if case .undecided = route(try report(sourceFile: nil, pick: nil), others) {} else {
             Issue.record("A report without its worktree should be undecided")
+        }
+        // The phone writes the report: a folder that doesn't build the app gets no new chat.
+        let elsewhere = root.appending(path: "other-project", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: elsewhere.appending(path: ".git"), withIntermediateDirectories: true)
+        let foreign = elsewhere.appending(path: "Sources/Main.swift").path
+        for pick: [String: Any]? in [["agent": "codex"], ["agent": "claude", "newChat": "N2"], nil] {
+            if case .undecided = route(try report(sourceFile: foreign, pick: pick), []) {} else {
+                Issue.record("A worktree that doesn't build the app should leave the report undecided")
+            }
         }
     }
 
@@ -517,6 +528,14 @@ struct AgentHookTests {
             \(report.path)/note-2.jpg
             2. History: The list breaks
             """)
+
+        // A long pasted note is cut, so the text fits in a command's arguments; report.md has the rest.
+        var long = listing
+        long["items"] = [["number": 1, "title": "Log milestone", "note": String(repeating: "pasted ", count: 20_000), "attachments": [String]()]]
+        try JSONSerialization.data(withJSONObject: long).write(to: report.appending(path: "report.json"))
+        let cut = ReportContent.text(for: InboxReport(folder: report, source: source, claim: nil))
+        #expect(cut.utf8.count <= ReportContent.longestText)
+        #expect(cut.hasSuffix("The rest is in \(report.path)/report.md."))
     }
 
     @Test func codexChatsLeaveOutWhatCodexRunsOnItsOwn() throws {

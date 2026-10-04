@@ -21,7 +21,7 @@ enum ChatDirectory {
 
     /// What each folder's projects build, kept a while: reading a big folder's projects can
     /// take seconds, and the phone waits for the answer.
-    private static let apps = FolderApps()
+    static let apps = FolderApps()
 
     /// Reads the folders of every open chat ahead of time, so the first question is quick too.
     static func warm(paths: HubPaths) {
@@ -33,8 +33,9 @@ enum ChatDirectory {
     }
 
     static func list(bundleID: String, sourceFile: String?, paths: HubPaths) -> HubMessage.ChatList {
-        let worktree = sourceFile.map(Worktree.root(of:))
         func buildsApp(_ folder: String) -> Bool { apps.bundleIDs(in: folder).contains(bundleID) }
+        // The phone names the worktree; one that doesn't build the app isn't used.
+        let worktree = sourceFile.map(Worktree.root(of:)).flatMap { buildsApp($0) ? $0 : nil }
         func chat(_ agent: Agent, id: String, title: String, folder: String, lastActive: Date) -> HubMessage.Chat {
             HubMessage.Chat(id: id, agent: agent.rawValue, title: title, folder: URL(fileURLWithPath: folder).lastPathComponent,
                             sameWorktree: worktree != nil && Worktree.root(of: folder) == worktree, lastActive: lastActive)

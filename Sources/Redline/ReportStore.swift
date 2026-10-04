@@ -389,12 +389,21 @@ struct ReportStore: Sendable {
 
     var draftDirectory: URL { root.appending(path: "draft", directoryHint: .isDirectory) }
     var reportsDirectory: URL { root.appending(path: "reports", directoryHint: .isDirectory) }
+    /// Drafts that could not be read, each kept whole in its own folder for recovery.
+    var unreadableDraftsDirectory: URL { root.appending(path: "unreadable-drafts", directoryHint: .isDirectory) }
     private var draftFile: URL { draftDirectory.appending(path: "annotations.json") }
     private var screensFile: URL { draftDirectory.appending(path: "screens.json") }
 
+    /// The saved draft. A draft file that no longer decodes, such as after a change to the
+    /// note format, is moved with its screenshots to `unreadableDraftsDirectory` and an
+    /// empty draft starts, so the next note can't write over it.
     func loadDraft() -> [Annotation] {
         guard let data = try? Data(contentsOf: draftFile) else { return [] }
-        return (try? Self.decoder.decode([Annotation].self, from: data)) ?? []
+        if let annotations = try? Self.decoder.decode([Annotation].self, from: data) { return annotations }
+        let files = FileManager.default
+        try? files.createDirectory(at: unreadableDraftsDirectory, withIntermediateDirectories: true)
+        try? files.moveItem(at: draftDirectory, to: unreadableDraftsDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory))
+        return []
     }
 
     func saveDraft(_ annotations: [Annotation]) throws {
