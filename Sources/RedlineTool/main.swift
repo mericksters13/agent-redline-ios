@@ -127,7 +127,9 @@ case "app":
     // What the app needs was checked first, so a hub that works is never stopped for one that can't
     // start.
     guard let devicectl = hubDevicectl else { exit(1) }
-    var keptApps = (ChatOptions.parse(arguments.dropFirst())?.apps ?? []) + (movedApps ?? [])
+    let given = arguments.dropFirst()
+    let givenApps = zip(given, given.dropFirst()).filter { $0.0 == "--app" }.map(\.1)
+    var keptApps = givenApps + (movedApps ?? [])
     if let running = HubProcess.running(paths), running != getpid() {
         // A hub saves its status, with those apps, as it starts; give one starting now a moment.
         var status = savedStatus(paths)
@@ -295,16 +297,18 @@ case "setup", "remove":
             if adding { print("\(agent.name): not used on this Mac, skipped.") }
             continue
         }
-        // An agent that needs no hooks is left alone: its settings file isn't touched.
-        if adding, AgentSettings.hooks(agent, executable: executable).isEmpty {
-            print("\(agent.name): no hooks needed")
-            continue
-        }
+        // An agent that needs no hooks only loses any an earlier version added; without those its
+        // settings file isn't touched.
+        let needsNoHooks = adding && AgentSettings.hooks(agent, executable: executable).isEmpty
         do {
             try AgentSettings.update(agent) {
                 adding
                     ? AgentSettings.adding(agent, to: $0, executable: executable)
                     : AgentSettings.removing(agent, from: $0, executable: executable)
+            }
+            if needsNoHooks {
+                print("\(agent.name): no hooks needed")
+                continue
             }
             print(
                 "\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.fileURL(for: agent).path)"

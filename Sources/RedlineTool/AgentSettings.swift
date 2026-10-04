@@ -123,7 +123,7 @@ enum AgentSettings {
     /// Changes a settings file.
     ///
     /// A change that leaves the settings as they were writes nothing, not even the copy, so the
-    /// file keeps its own formatting. A file that exists but can't be read throws, so it's never
+    /// file keeps its own formatting and a missing one stays missing. A file that exists but can't be read throws, so it's never
     /// written over as if it were empty.
     static func update(_ file: URL, applying change: (_ settings: [String: Any]) -> [String: Any]) throws {
         let files = FileManager.default
@@ -136,7 +136,7 @@ enum AgentSettings {
             current = object
         }
         let changed = change(current)
-        if data != nil, NSDictionary(dictionary: changed).isEqual(to: current) { return }
+        if NSDictionary(dictionary: changed).isEqual(to: current) { return }
         try files.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let data {
             let backup = file.appendingPathExtension("before-redline")
