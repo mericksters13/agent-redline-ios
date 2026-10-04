@@ -11,13 +11,15 @@ struct ClaudeSessionsTests {
         kind: String = "interactive",
         pid: Int32 = getpid(),
         updatedAt: Double? = 1_791_000_000_500,
-        startedAt: Double? = nil
+        startedAt: Double? = nil,
+        tab: String? = nil
     ) throws -> Data {
         var object: [String: Any] = [
             "sessionId": "s-1", "cwd": "/w", "messagingSocketPath": "/tmp/s.sock", "pid": pid, "kind": kind,
             "name": "Fix the paywall", "startedAt": startedAt ?? self.startedAt,
         ]
         if let updatedAt { object["updatedAt"] = updatedAt }
+        if let tab { object["hostSessionId"] = tab }
         return try JSONSerialization.data(withJSONObject: object)
     }
 
@@ -48,6 +50,12 @@ struct ClaudeSessionsTests {
         let earlier = (processStart.timeIntervalSince1970 - 60) * 1000
         #expect(try ClaudeSessions.session(from: file(startedAt: earlier)) == nil)
         #expect(ClaudeSessions.session(from: Data("not json".utf8)) == nil)
+    }
+
+    @Test func aChatStartedInAClaudeAppTabIsToldApartFromOneTheAppTookOver() throws {
+        #expect(try ClaudeSessions.session(from: file(tab: "local_5f1e"))?.isAppTab == true)
+        #expect(try ClaudeSessions.session(from: file(tab: "local_s-1"))?.isAppTab == false)
+        #expect(try ClaudeSessions.session(from: file(tab: nil))?.isAppTab == false)
     }
 }
 #endif

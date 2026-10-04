@@ -12,7 +12,7 @@ enum ReportContent {
     }
 
     /// The pictures a report refers to, in the order its summary lists them: each screen's
-    /// pictures, then attachments.
+    /// pictures, then each note's own pictures.
     ///
     /// Without a report.json that lists them, the folder's pictures by name. Only regular files
     /// directly in the report's folder: the phone or simulator wrote report.json, so a name that
@@ -27,7 +27,12 @@ enum ReportContent {
         if let listing, let screens = listing.screens, let items = listing.items,
             let attachments = items.map(\.attachments).allPresent()
         {
-            names = screens.flatMap { $0.images.map(\.file) } + attachments.flatMap { $0 }
+            let screenPictures = screens.flatMap { $0.images.map(\.file) }
+            names =
+                screenPictures
+                + zip(items, attachments).flatMap { item, attachments in
+                    ownPictures(picture: item.picture, attachments: attachments, screenPictures: screenPictures)
+                }
         } else {
             names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
                 .filter { $0.hasSuffix(".jpg") || $0.hasSuffix(".png") }.sorted()
@@ -35,6 +40,12 @@ enum ReportContent {
         return names.compactMap { file($0, in: folder) }.filter {
             (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.type] as? FileAttributeType == .typeRegular
         }
+    }
+
+    /// A note's pictures that aren't a screen's: its attachments, and the picture of an element
+    /// note made before notes on one screen shared its picture.
+    private static func ownPictures(picture: String?, attachments: [String], screenPictures: [String]) -> [String] {
+        (picture.map { screenPictures.contains($0) ? [] : [$0] } ?? []) + attachments
     }
 
     /// The file a report names, when the name is a plain file name in its folder.
@@ -71,11 +82,12 @@ enum ReportContent {
                 ([file(image.file, in: report.folder)?.path].compactMap { $0 } + notes).joined(separator: "\n")
             )
         }
-        for item in items where !item.attachments.isEmpty {
+        let screenPictures = images.map(\.file)
+        for item in items {
+            let own = ownPictures(picture: item.picture, attachments: item.attachments, screenPictures: screenPictures)
+            guard !own.isEmpty else { continue }
             blocks.append(
-                (item.attachments.compactMap { file($0, in: report.folder)?.path } + [line(item)]).joined(
-                    separator: "\n"
-                )
+                (own.compactMap { file($0, in: report.folder)?.path } + [line(item)]).joined(separator: "\n")
             )
         }
         return (["UI report from \(report.source.deviceName) · \(app.name ?? report.source.bundleID)"] + blocks).joined(
@@ -91,6 +103,8 @@ enum ReportContent {
         var element: ReportListing.Item.Element?
         /// The elements holding it, innermost first.
         var ancestors: [ReportListing.Item.Element]
+        /// The picture its outline is drawn on.
+        var picture: String?
         var attachments: [String]
 
         init?(_ item: ReportListing.Item) {
@@ -102,6 +116,7 @@ enum ReportContent {
             self.note = note
             element = item.element
             ancestors = item.ancestors ?? []
+            picture = item.picture
             self.attachments = attachments
         }
     }

@@ -79,6 +79,17 @@ let paths = HubPaths.standard
 // Opened as an app bundle, it's the menu bar app.
 if arguments.isEmpty, Bundle.main.bundleURL.pathExtension == "app" { arguments = ["app"] }
 
+// What the app and hub commands need is checked before the folder moves, which stops a hub of the
+// earlier version that works, so it's never stopped for one that can't start.
+let isHubCommand = ["app", "hub"].contains(arguments.first)
+let hubDevicectl = isHubCommand ? Devicectl.locate() : nil
+if isHubCommand, hubDevicectl == nil {
+    let reason = "Couldn't find devicectl. Install Xcode and select it with xcode-select."
+    if arguments.first == "app" { failToStart(reason) }
+    printError(reason)
+    exit(1)
+}
+
 // The folder an earlier version kept under the old name moves here before anything uses this one.
 // A hub of that version stopped for the move is replaced at once, watching the apps it was given
 // on the command line, so reports keep coming from them; the app and hub commands are that hub.
@@ -106,18 +117,16 @@ case .blocked(let reason):
         break
     }
 }
-if let movedApps, !["app", "hub"].contains(arguments.first) { HubProcess.startIfNeeded(paths, apps: movedApps) }
+if let movedApps, !isHubCommand { HubProcess.startIfNeeded(paths, apps: movedApps) }
 
 switch arguments.first {
 case "app":
     // The menu bar app is the hub: one process. It watches the apps given with --app. A hub
     // already running steps aside, and the apps it was told to watch on the command line stay
     // watched. Launch Services may add arguments of its own, so ones it doesn't know are ignored.
-    // What the app needs is checked first, so a hub that works is never stopped for one that can't
+    // What the app needs was checked first, so a hub that works is never stopped for one that can't
     // start.
-    guard let devicectl = Devicectl.locate() else {
-        failToStart("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
-    }
+    guard let devicectl = hubDevicectl else { exit(1) }
     var keptApps = (ChatOptions.parse(arguments.dropFirst())?.apps ?? []) + (movedApps ?? [])
     if let running = HubProcess.running(paths), running != getpid() {
         // A hub saves its status, with those apps, as it starts; give one starting now a moment.
@@ -205,10 +214,7 @@ case "hub":
         print("A hub is already running (pid \(running)).")
         exit(1)
     }
-    guard let devicectl = Devicectl.locate() else {
-        print("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
-        exit(1)
-    }
+    guard let devicectl = hubDevicectl else { exit(1) }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: unique(options.apps + (movedApps ?? [])))
     guard hub.start() else {
         print("A hub is already running\(HubProcess.running(paths).map { " (pid \($0))" } ?? "").")
