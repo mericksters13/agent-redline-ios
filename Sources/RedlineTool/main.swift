@@ -18,9 +18,9 @@ Usage:
       agent's background, it wakes the chat when a report arrives. With several chats waiting,
       the one used most recently gets the report.
   redline setup | remove
-      Adds to (or removes from) Codex's and Cursor's hook settings the hooks that hand reports to
-      a chat when nothing else can. Claude Code needs none. Other hooks stay as they are.
-  redline hook <claude | codex | cursor> <start | prompt | stop | end>
+      Adds to (or removes from) Codex's hook settings the hook that hands reports to a chat when
+      nothing else can. Claude Code needs none. Other hooks stay as they are.
+  redline hook <claude | codex> prompt
       Run by the agents' hooks, with the event's JSON on standard input.
   redline hub [--app <bundle ID> ...]
       Takes reports from phones and simulators for the open chats' apps and files them in the inbox.
@@ -60,7 +60,6 @@ struct ChatOptions {
 
 var arguments = Array(CommandLine.arguments.dropFirst())
 let paths = HubPaths.standard
-HubPaths.moveFromOldName(to: paths)
 // Opened as an app bundle, it's the menu bar app.
 if arguments.isEmpty, Bundle.main.bundleURL.pathExtension == "app" { arguments = ["app"] }
 

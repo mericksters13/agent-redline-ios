@@ -21,29 +21,6 @@ struct HubPaths: Sendable {
     var log: URL { hub.appending(path: "hub.log") }
     /// The token each app on each phone was given; secret, readable only by the user.
     var tokens: URL { hub.appending(path: "tokens.json") }
-
-    /// Moves the folder an earlier version kept under its old name, iOSAgenticDebuggingKit, to
-    /// this one, so reports, chats and settings carry over. Only while nothing is here yet. A hub
-    /// of the earlier version that is still running knows only the old folder, so it's stopped
-    /// first; if it won't stop, nothing moves.
-    static func moveFromOldName(to paths: HubPaths) {
-        let old = HubPaths(root: paths.root.deletingLastPathComponent().appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
-        let files = FileManager.default
-        guard files.fileExists(atPath: old.root.path), !files.fileExists(atPath: paths.root.path) else { return }
-        if let running = HubProcess.running(old), running != getpid() {
-            kill(running, SIGTERM)
-            for _ in 0..<30 where kill(running, 0) == 0 { usleep(100_000) }
-            guard kill(running, 0) != 0 else {
-                FileHandle.standardError.write(Data("The hub of an earlier version (pid \(running)) is still running. Quit Agentic Debugging, then run redline again.\n".utf8))
-                return
-            }
-        }
-        do {
-            try files.moveItem(at: old.root, to: paths.root)
-        } catch {
-            FileHandle.standardError.write(Data("Couldn't move \(old.root.path) to \(paths.root.path): \(error.localizedDescription)\n".utf8))
-        }
-    }
 }
 
 /// Where a report came from, saved next to it in the inbox.

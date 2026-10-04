@@ -65,7 +65,7 @@ enum HubMessage {
     struct Chat: Codable, Equatable, Sendable {
         /// The agent's own ID for the chat: Claude Code's session ID, Codex's thread ID.
         var id: String
-        /// `claude`, `codex` or `cursor`.
+        /// `claude` or `codex`.
         var agent: String
         var title: String
         /// The last part of the chat's folder.

@@ -49,13 +49,6 @@ enum NewWorktree {
         return copy.path
     }
 
-    /// The repository's main checkout for a folder in it or in one of its worktrees.
-    static func repository(of folder: String) -> String? {
-        guard let common = git(folder, ["rev-parse", "--path-format=absolute", "--git-common-dir"]) else { return nil }
-        let url = URL(fileURLWithPath: common)
-        return url.lastPathComponent == ".git" ? url.deletingLastPathComponent().path : git(folder, ["rev-parse", "--show-toplevel"])
-    }
-
     /// Takes back a worktree made for a chat that didn't start, and its branch, which holds
     /// nothing but main's commit.
     static func remove(_ path: String) {
@@ -85,7 +78,6 @@ enum NewWorktree {
         switch agent {
         case .claude: "\(repository)/.claude/worktrees/\(name)"
         case .codex: "\(NSHomeDirectory())/.codex/worktrees/\(name)/\(URL(fileURLWithPath: repository).lastPathComponent)"
-        case .cursor: "\(repository)/.cursor/worktrees/\(name)"
         }
     }
 
@@ -96,7 +88,7 @@ enum NewWorktree {
     }
 
     /// A command's standard output; nil when it fails or runs past `timeout`.
-    private static func run(_ executable: String, _ arguments: [String], input: Data? = nil, timeout: TimeInterval = 60) -> Data? {
+    private static func run(_ executable: String, _ arguments: [String], timeout: TimeInterval = 60) -> Data? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -106,14 +98,9 @@ enum NewWorktree {
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        let stdin = Pipe()
-        process.standardInput = input == nil ? FileHandle.nullDevice : stdin
+        process.standardInput = FileHandle.nullDevice
         do { try process.run() } catch { return nil }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { if process.isRunning { process.terminate() } }
-        if let input {
-            stdin.fileHandleForWriting.write(input)
-            try? stdin.fileHandleForWriting.close()
-        }
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return process.terminationStatus == 0 ? data : nil

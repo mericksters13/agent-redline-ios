@@ -37,8 +37,7 @@ enum Routing {
             .app.sourceFile.map(Worktree.root(of:))
     }
 
-    static func destination(of report: URL, bundleID: String, paths: HubPaths,
-                            list: (String, String?) -> HubMessage.ChatList) -> Destination {
+    static func destination(of report: URL, bundleID: String, list: (String, String?) -> HubMessage.ChatList) -> Destination {
         let listing = (try? Data(contentsOf: report.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }
         let worktree = listing?.app.sourceFile.map(Worktree.root(of:))
         if let pick = listing?.destination, let agent = Agent(rawValue: pick.agent) {
@@ -58,8 +57,8 @@ enum Routing {
 /// Sends each report where the user picked on the phone, or else to the chat working in the
 /// worktree the app was built from. A Claude Code chat gets it through its socket, which
 /// starts a turn even when the chat is idle. A Codex chat gets it through the Codex app with
-/// its pictures attached. A Cursor chat gets it when its hooks next run. A new chat starts in
-/// the worktree and looks into the report without changing code.
+/// its pictures attached. A new chat starts in the worktree and looks into the report without
+/// changing code.
 final class Handoff: @unchecked Sendable {
     private unowned let hub: Hub
     private let queue = DispatchQueue(label: "handoff")
@@ -78,7 +77,7 @@ final class Handoff: @unchecked Sendable {
     /// Hands over reports that arrived shortly before the hub started and no chat took.
     func handOverRecent(within interval: TimeInterval = 3600) {
         queue.async { [self] in
-            let apps = Set(Chats.live(hub.paths).flatMap(\.bundleIDs) + ProjectHistory.all(hub.paths).keys)
+            let apps = Set(Chats.live(hub.paths).flatMap(\.bundleIDs))
             for report in InboxQueue.waiting(for: Array(apps), paths: hub.paths)
             where Date().timeIntervalSince(report.source.receivedAt) < interval && InboxQueue.address(of: report.folder) == nil {
                 deliver(report)
@@ -89,7 +88,7 @@ final class Handoff: @unchecked Sendable {
     private func deliver(_ report: InboxReport) {
         let source = report.source
         let paths = hub.paths
-        let destination = Routing.destination(of: report.folder, bundleID: source.bundleID, paths: paths) { bundleID, sourceFile in
+        let destination = Routing.destination(of: report.folder, bundleID: source.bundleID) { bundleID, sourceFile in
             ChatDirectory.list(bundleID: bundleID, sourceFile: sourceFile, paths: paths)
         }
         let worktree = Routing.worktree(of: report.folder)
@@ -98,19 +97,12 @@ final class Handoff: @unchecked Sendable {
             sendToClaude(report, session: id, worktree: worktree)
         case .chat(.codex, let id):
             sendToCodex(report, thread: id)
-        case .chat(.cursor, let id):
-            InboxQueue.setAddress(Address(chat: "cursor-\(id)", agent: Agent.cursor.rawValue, folder: worktree ?? ""), of: report.folder)
-            InboxQueue.signal(source.bundleID, paths: paths)
-            hub.log("Report \(source.reportID) goes to the Cursor chat \(id) when its hooks next run")
-            ReportDelivery.save(.init(agent: .cursor, chat: id, title: "Cursor chat", kind: .nextMessage), in: report.folder)
-            Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Cursor chat after its next reply or with your next message there.")
         case .newChat(let agent, let folder, let pick):
             // The chat this pick started for an earlier report, while its worktree exists.
             if let pick, let started = StartedChats.find(pick, paths: paths) {
                 switch agent {
                 case .codex: sendToCodex(report, thread: started.chat)
                 case .claude: sendToClaude(report, session: started.chat, worktree: started.folder)
-                case .cursor: startChat(agent, in: started.folder, for: report, resuming: started.chat)
                 }
             } else if agent == .claude, !ClaudeCLI.ready() {
                 waitForClaudeSignIn(report)
@@ -243,7 +235,7 @@ final class Handoff: @unchecked Sendable {
             open(link)
             return true
         }
-        guard agent != .cursor, let command = AgentCommand.locate(agent) else { return false }
+        guard let command = AgentCommand.locate(agent) else { return false }
         return openTerminal(in: folder, running: command.path, arguments: agent == .codex ? ["resume"] : ["--resume"], with: id)
     }
 
@@ -406,7 +398,6 @@ final class Handoff: @unchecked Sendable {
         URL(fileURLWithPath: path).lastPathComponent
     }
 
-    /// A Mac notification, through AppleScript so the tool needs no app bundle.
     /// Shows a notification. Inside Redline.app it comes from Redline; the bare command has no
     /// app of its own, so it goes through osascript.
     static func notify(title: String, message: String) {
@@ -448,8 +439,6 @@ enum AgentCommand {
             // The copy inside the ChatGPT app comes first: it updates with the app.
             candidates = ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
                           "/Applications/Codex.app/Contents/Resources/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex", "\(home)/.local/bin/codex"]
-        case .cursor:
-            candidates = ["\(home)/.local/bin/cursor-agent", "\(home)/.local/bin/agent", "/opt/homebrew/bin/cursor-agent", "/usr/local/bin/cursor-agent"]
         }
         return candidates.first(where: FileManager.default.isExecutableFile(atPath:)).map(URL.init(fileURLWithPath:))
     }
@@ -462,9 +451,6 @@ enum AgentCommand {
         case .codex:
             ["exec", "-C", folder, "--sandbox", "read-only", "--skip-git-repo-check", "--json"]
                 + pictures.flatMap { ["-i", $0.path] } + ["--", prompt]
-        // Without --force, Cursor's command line only proposes changes.
-        case .cursor:
-            ["-p", "--workspace", folder, "--output-format", "json", prompt] + (resuming.map { ["--resume", $0] } ?? [])
         }
     }
 

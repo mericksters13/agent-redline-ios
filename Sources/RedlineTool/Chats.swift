@@ -4,8 +4,8 @@ import Foundation
 /// An open chat, registered with the hub by its MCP copy or its agent's hooks.
 struct ChatRecord: Codable, Equatable, Sendable {
     var id: String
-    /// The agent: `claude`, `codex` or `cursor` when registered by hooks, or the name it gave
-    /// when its MCP copy connected.
+    /// The agent: `claude` or `codex` when registered by hooks, or the name it gave when its MCP
+    /// copy connected.
     var agent: String
     var folder: String
     var bundleIDs: [String]
@@ -85,50 +85,6 @@ enum Chats {
     }()
 }
 
-/// Held by the one process waiting for a chat's reports, so a chat never has two. Released
-/// when the process ends, however it ends.
-final class WaitLock {
-    private let descriptor: Int32
-
-    init?(chat: String, paths: HubPaths) {
-        try? FileManager.default.createDirectory(at: Chats.folder(paths), withIntermediateDirectories: true)
-        let descriptor = open(Chats.folder(paths).appending(path: "\(chat).lock").path, O_RDWR | O_CREAT, 0o600)
-        guard descriptor >= 0 else { return nil }
-        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
-            close(descriptor)
-            return nil
-        }
-        self.descriptor = descriptor
-    }
-
-    deinit {
-        close(descriptor)
-    }
-}
-
-/// The agent and folder last used for each app, so the hub can start a chat there when a
-/// report arrives and none is open.
-struct ProjectUse: Codable, Equatable, Sendable {
-    var agent: String
-    var folder: String
-    var at: Date
-}
-
-enum ProjectHistory {
-    static func file(_ paths: HubPaths) -> URL { paths.hub.appending(path: "projects.json") }
-
-    static func all(_ paths: HubPaths) -> [String: ProjectUse] {
-        (try? Data(contentsOf: file(paths))).flatMap { try? Chats.decoder.decode([String: ProjectUse].self, from: $0) } ?? [:]
-    }
-
-    static func note(_ chat: ChatRecord, paths: HubPaths) {
-        var uses = all(paths)
-        for bundleID in chat.bundleIDs { uses[bundleID] = ProjectUse(agent: chat.agent, folder: chat.folder, at: Date()) }
-        try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        try? Chats.coder.encode(uses).write(to: file(paths), options: .atomic)
-    }
-}
-
 /// The chat a report is for: the one that built the app it came from.
 struct Address: Codable, Equatable, Sendable {
     var chat: String
@@ -152,13 +108,6 @@ enum InboxQueue {
     /// Reports for this chat that it hasn't taken yet, oldest first.
     static func addressed(to chat: String, bundleIDs: [String], paths: HubPaths) -> [InboxReport] {
         waiting(for: bundleIDs, paths: paths).filter { address(of: $0.folder)?.chat == chat }
-    }
-
-    /// Wakes chats waiting on an app's reports, after a report already in the inbox changed.
-    static func signal(_ bundleID: String, paths: HubPaths) {
-        let marker = paths.inbox.appending(path: "\(bundleID)/.changed-\(UUID().uuidString)")
-        FileManager.default.createFile(atPath: marker.path, contents: nil)
-        try? FileManager.default.removeItem(at: marker)
     }
 
     /// Every report for these apps, oldest first.

@@ -58,12 +58,6 @@ final class ChatSession: @unchecked Sendable {
         return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
     }
 
-    /// Waits until a report is sent to this chat, `timeout` passes or the waiter is cancelled.
-    func waitForAddressed(timeout: TimeInterval?, waiter: Waiter) -> Bool {
-        let chat = self.chat
-        return wait(timeout: timeout, waiter: waiter) { !InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: self.paths).isEmpty }
-    }
-
     /// Takes the reports waiting for this chat's apps, oldest first. Always takes at least one
     /// waiting report; takes more while their pictures fit in `budget` bytes.
     func take(budget: Int) -> (items: [ReportContent.Item], taken: Int, remaining: Int) {

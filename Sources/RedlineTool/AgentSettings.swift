@@ -9,7 +9,6 @@ enum AgentSettings {
         switch agent {
         case .claude: return home.appending(path: ".claude/settings.json")
         case .codex: return home.appending(path: ".codex/hooks.json")
-        case .cursor: return home.appending(path: ".cursor/hooks.json")
         }
     }
 
@@ -26,9 +25,7 @@ enum AgentSettings {
     /// commands and MCP tools where an agent supports one.
     static func hooks(_ agent: Agent, executable: String) -> [(event: String, matcher: String?, hooks: [[String: Any]])] {
         func hook(_ event: HookEvent, _ extra: [String: Any] = [:]) -> [String: Any] {
-            var hook: [String: Any] = ["command": command(executable, agent, event)]
-            if agent != .cursor { hook["type"] = "command" }
-            return hook.merging(extra) { $1 }
+            ["type": "command", "command": command(executable, agent, event)].merging(extra) { $1 }
         }
         switch agent {
         case .claude:
@@ -38,24 +35,18 @@ enum AgentSettings {
             // Codex chats are reached through the Codex app. This hook is the safety net for a
             // report the app didn't take: it goes in with the chat's next message.
             return [("UserPromptSubmit", nil, [hook(.prompt, ["statusMessage": "Report delivery"])])]
-        case .cursor:
-            // Cursor's chats can't be found or woken from outside, so its hooks register them and
-            // hand reports over. A little longer than the hold, so Cursor never cuts it short.
-            let stop = hook(.stop, ["timeout": Int(AgentHooks.holdOpen) + 60, "loop_limit": NSNull()])
-            return [("sessionStart", nil, [hook(.start)]), ("beforeSubmitPrompt", nil, [hook(.prompt)]), ("stop", nil, [stop]),
-                    ("sessionEnd", nil, [hook(.end)])]
         }
     }
 
-    /// The names this tool's command has had. A hook that runs any of them, from any folder, is
-    /// an older copy of this tool's, such as one from before the rename or a move.
-    static let commandNames = ["redline", "agentic-debugging"]
+    /// The tool's command name. A hook that runs it, from any folder, is a copy of this tool's,
+    /// such as one from before a move.
+    static let commandName = "redline"
 
     static func isOurs(_ hook: Any) -> Bool {
         guard let command = (hook as? [String: Any])?["command"] as? String, command.hasPrefix("'"),
               let end = command.range(of: "' hook ") else { return false }
         let path = command[command.index(after: command.startIndex)..<end.lowerBound].replacingOccurrences(of: "'\\''", with: "'")
-        return commandNames.contains(URL(fileURLWithPath: path).lastPathComponent)
+        return URL(fileURLWithPath: path).lastPathComponent == commandName
     }
 
     /// The settings with this tool's hooks in place, replacing any older copy of them.
@@ -64,22 +55,17 @@ enum AgentSettings {
         var events = settings["hooks"] as? [String: Any] ?? [:]
         for (event, matcher, hooks) in self.hooks(agent, executable: executable) {
             var entries = events[event] as? [Any] ?? []
-            // Claude Code and Codex group hooks under a matcher; Cursor lists them directly.
-            if agent == .cursor {
-                entries += hooks
-            } else {
-                var group: [String: Any] = ["hooks": hooks]
-                if let matcher { group["matcher"] = matcher }
-                entries.append(group)
-            }
+            // Claude Code and Codex group hooks under a matcher.
+            var group: [String: Any] = ["hooks": hooks]
+            if let matcher { group["matcher"] = matcher }
+            entries.append(group)
             events[event] = entries
         }
         settings["hooks"] = events.isEmpty ? nil : events
-        if agent == .cursor, settings["version"] == nil { settings["version"] = 1 }
         return settings
     }
 
-    /// The settings without this tool's hooks, under any of its names; everything else stays.
+    /// The settings without this tool's hooks; everything else stays.
     static func removing(_ agent: Agent, from settings: [String: Any]) -> [String: Any] {
         var settings = settings
         guard var events = settings["hooks"] as? [String: Any] else { return settings }

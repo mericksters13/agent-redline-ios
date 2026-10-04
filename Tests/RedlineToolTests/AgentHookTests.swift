@@ -39,82 +39,28 @@ struct AgentHookTests {
         #expect(json(AgentSettings.adding(.codex, to: added, executable: executable)) == json(added))
         // Removed, the file is as it was.
         #expect(json(AgentSettings.removing(.codex, from: added)) == json(codexSettings))
-    }
-
-    @Test func setupReplacesTheHookFromBeforeTheRename() {
-        var old = codexSettings
-        var events = old["hooks"] as! [String: Any]
-        events["UserPromptSubmit"] = [["hooks": [["type": "command", "command": "'/Users/someone/.local/bin/agentic-debugging' hook codex prompt"]]]]
-        old["hooks"] = events
-        let added = AgentSettings.adding(.codex, to: old, executable: executable)
-        #expect(commands(added, "UserPromptSubmit") == ["'\(executable)' hook codex prompt"])
         // A command of another tool that happens to have a hook subcommand stays.
         let other: [String: Any] = ["hooks": ["Stop": [["hooks": [["type": "command", "command": "'/opt/bin/other' hook stop"]]]]]]
         #expect(json(AgentSettings.removing(.codex, from: other)) == json(other))
     }
 
-    @Test func anEarlierVersionsFolderMovesOnce() throws {
-        let support = root.appending(path: "support", directoryHint: .isDirectory)
-        let old = support.appending(path: "iOSAgenticDebuggingKit/inbox", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
-        let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
-        HubPaths.moveFromOldName(to: paths)
-        #expect(FileManager.default.fileExists(atPath: paths.inbox.path))
-        #expect(!FileManager.default.fileExists(atPath: old.path))
-        // Once there's a folder under the new name, an old one is left alone.
-        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
-        HubPaths.moveFromOldName(to: paths)
-        #expect(FileManager.default.fileExists(atPath: old.path))
-    }
-
-    @Test func aRunningHubOfTheEarlierVersionStopsBeforeItsFolderMoves() throws {
-        let support = root.appending(path: "running", directoryHint: .isDirectory)
-        let old = HubPaths(root: support.appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
-        try FileManager.default.createDirectory(at: old.hub, withIntermediateDirectories: true)
-        // Stands in for the old hub: a process whose pid is in the old folder's pid file.
-        let hub = Process()
-        hub.executableURL = URL(fileURLWithPath: "/bin/sleep")
-        hub.arguments = ["30"]
-        try hub.run()
-        try "\(hub.processIdentifier)".write(to: old.pid, atomically: true, encoding: .utf8)
-        let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
-        HubPaths.moveFromOldName(to: paths)
-        hub.waitUntilExit()
-        #expect(hub.terminationReason == .uncaughtSignal)
-        #expect(FileManager.default.fileExists(atPath: paths.hub.path))
-        #expect(!FileManager.default.fileExists(atPath: old.root.path))
-    }
-
     @Test func eachAgentGetsItsOwnShape() {
         // Claude Code chats are found from their own records: no hooks, and the file is left as it was.
         #expect(json(AgentSettings.adding(.claude, to: ["model": "opus"], executable: executable)) == json(["model": "opus"]))
-
-        let cursor = AgentSettings.adding(.cursor, to: [:], executable: executable)
-        #expect(cursor["version"] as? Int == 1)
-        let stop = ((cursor["hooks"] as? [String: Any])?["stop"] as? [[String: Any]])?.first
-        #expect(stop?["command"] as? String == "'\(executable)' hook cursor stop")
-        #expect(stop?["loop_limit"] is NSNull)
-        #expect(stop?["timeout"] as? Int == Int(AgentHooks.holdOpen) + 60)
-        #expect(json(AgentSettings.removing(.cursor, from: cursor)) == json(["version": 1]))
     }
 
     @Test func hooksFindTheChatInEachAgentsInput() {
-        let claude = HookInput(.claude, json: Data(#"{"session_id":"s1","cwd":"/p","hook_event_name":"Stop"}"#.utf8))
-        #expect(claude == HookInput(.codex, json: Data(#"{"session_id":"s1","cwd":"/p"}"#.utf8)))
-        #expect(claude?.chat == "s1")
-        let cursor = HookInput(.cursor, json: Data(#"{"conversation_id":"c1","workspace_roots":["/w"],"status":"completed"}"#.utf8))
-        #expect(cursor?.chat == "c1")
-        #expect(cursor?.folder == "/w")
-        #expect(HookInput(.claude, json: Data("not json".utf8)) == nil)
+        let input = HookInput(json: Data(#"{"session_id":"s1","cwd":"/p","hook_event_name":"UserPromptSubmit"}"#.utf8))
+        #expect(input == HookInput(json: Data(#"{"session_id":"s1","cwd":"/p"}"#.utf8)))
+        #expect(input?.chat == "s1")
+        #expect(input?.folder == "/p")
+        #expect(HookInput(json: Data("not json".utf8)) == nil)
     }
 
     @Test func eachAgentReadsTheReportWhereItLooks() {
-        #expect(json(AgentHooks.output(.claude, .prompt, "r")!) == json(["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": "r"]]))
-        #expect(json(AgentHooks.output(.codex, .stop, "r")!) == json(["decision": "block", "reason": "r"]))
-        #expect(json(AgentHooks.output(.cursor, .stop, "r")!) == json(["followup_message": "r"]))
-        // Nothing to say, nothing printed; except Cursor's prompt hook, which must let the prompt through.
-        #expect(AgentHooks.output(.codex, .stop, nil) == nil)
-        #expect(json(AgentHooks.output(.cursor, .prompt, nil)!) == json(["continue": true]))
+        #expect(json(AgentHooks.output(.prompt, "r")!) == json(["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": "r"]]))
+        // Nothing to say, nothing printed.
+        #expect(AgentHooks.output(.prompt, nil) == nil)
     }
 
     @Test func anotherHookKeepsTheChatsWaiter() throws {
@@ -132,14 +78,6 @@ struct AgentHookTests {
         var gone = saved
         gone.waiter = Int32.max
         #expect(!gone.isWaiting)
-    }
-
-    @Test func onlyOneProcessWaitsForAChat() {
-        let first = WaitLock(chat: "claude-s1", paths: paths)
-        #expect(first != nil)
-        #expect(WaitLock(chat: "claude-s1", paths: paths) == nil)
-        #expect(WaitLock(chat: "claude-s2", paths: paths) != nil)
-        withExtendedLifetime(first) {}
     }
 
     /// A report in the inbox the way the hub files it, with the build UUIDs the app sends.
@@ -183,7 +121,7 @@ struct AgentHookTests {
         let file = worktree.appending(path: "App/AppMain.swift").path
         let folder = worktree.standardizedFileURL.path
         func route(_ report: URL, _ chats: [HubMessage.Chat]) -> Destination {
-            Routing.destination(of: report, bundleID: "com.example.app", paths: paths) { _, _ in
+            Routing.destination(of: report, bundleID: "com.example.app") { _, _ in
                 HubMessage.ChatList(agents: ["claude", "codex"], chats: chats)
             }
         }
@@ -243,9 +181,6 @@ struct AgentHookTests {
         // The same name again gets a number rather than failing.
         let again = try #require(NewWorktree.create(from: repository.path, name: "report-1", agent: .claude))
         #expect(again.hasSuffix("/report-1-2"))
-        // Its repository is the main checkout, from the worktree too.
-        #expect(NewWorktree.repository(of: made) == NewWorktree.repository(of: repository.path))
-        #expect(NewWorktree.repository(of: made)?.hasSuffix("/repo") == true)
 
         // A report copied into the worktree is ignored by git there.
         let report = root.appending(path: "inbox-report", directoryHint: .isDirectory)

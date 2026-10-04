@@ -54,17 +54,17 @@ extension HubWindowModel {
 
     /// The chat a report went to, to open it again: from what the hub saved when it delivered
     /// the report, or else the chat that took it. `folder` is where that chat works, when known.
-    /// Nil when the report went to no chat, or to an agent other than Claude Code and Codex.
+    /// Nil when the report went to no chat.
     nonisolated static func chat(of report: URL) -> (agent: Agent, id: String, folder: String?)? {
         let claim = (try? Data(contentsOf: report.appending(path: InboxQueue.claimFile))).flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
         let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
         if let delivery = ReportDelivery.load(from: report) {
-            guard delivery.kind != .waiting, let agent = delivery.agent.flatMap(Agent.init(rawValue:)), agent != .cursor,
+            guard delivery.kind != .waiting, let agent = delivery.agent.flatMap(Agent.init(rawValue:)),
                   let id = delivery.chat
             else { return nil }
             return (agent, id, folder)
         }
-        guard let claim, let agent = Agent(rawValue: claim.agent), agent != .cursor else { return nil }
+        guard let claim, let agent = Agent(rawValue: claim.agent) else { return nil }
         if claim.chat.hasPrefix("\(agent.rawValue)-") {
             return (agent, String(claim.chat.dropFirst(agent.rawValue.count + 1)), folder)
         }

@@ -99,13 +99,10 @@ struct HubWindowTests {
         try #"{"type":"thread.started","thread_id":"t-2"}"#.write(to: started.appending(path: "new-chat-output.jsonl"), atomically: true, encoding: .utf8)
         #expect(HubWindowModel.chat(of: started)?.id == "t-2")
 
-        // Waiting, or with Cursor: nothing to open.
+        // Waiting: nothing to open.
         let waiting = try report("20261004-140300", at: Date())
         ReportDelivery.save(.init(agent: .claude, chat: nil, title: "Waiting for claude auth login", kind: .waiting), in: waiting)
         #expect(HubWindowModel.chat(of: waiting) == nil)
-        let cursor = try report("20261004-140400", at: Date())
-        ReportDelivery.save(.init(agent: .cursor, chat: "c-1", title: "Cursor chat", kind: .nextMessage), in: cursor)
-        #expect(HubWindowModel.chat(of: cursor) == nil)
         #expect(HubWindowModel.chat(of: try report("20261004-140500", at: Date())) == nil)
     }
 
@@ -116,7 +113,6 @@ struct HubWindowTests {
         // Without the app, a terminal resumes the chat instead.
         #expect(Handoff.appLink(.claude, id: "s-1", hasClaudeApp: false, hasCodexApp: true) == nil)
         #expect(Handoff.appLink(.codex, id: "t-1", hasClaudeApp: true, hasCodexApp: false) == nil)
-        #expect(Handoff.appLink(.cursor, id: "c-1", hasClaudeApp: true, hasCodexApp: true) == nil)
     }
 }
 #endif
