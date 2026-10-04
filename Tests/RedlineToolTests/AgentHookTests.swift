@@ -67,11 +67,18 @@ struct AgentHookTests {
         // No hub was running, so none is started for it.
         #expect(!HubPaths.moveFromOldName(to: paths))
         #expect(FileManager.default.fileExists(atPath: paths.inbox.path))
-        #expect(!FileManager.default.fileExists(atPath: old.path))
+        // The old name now leads to the new folder, so an MCP server of the earlier version
+        // still serving a chat sees what this version's hub writes.
+        let oldRoot = old.deletingLastPathComponent()
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: oldRoot.path) == paths.root.path)
+        try Data("report".utf8).write(to: paths.inbox.appending(path: "new.txt"))
+        #expect(FileManager.default.fileExists(atPath: old.appending(path: "new.txt").path))
         // Once there's a folder under the new name, an old one is left alone.
+        try FileManager.default.removeItem(at: oldRoot)
         try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
         HubPaths.moveFromOldName(to: paths)
         #expect(FileManager.default.fileExists(atPath: old.path))
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: oldRoot.path)) == nil)
     }
 
     @Test func aRunningHubOfTheEarlierVersionStopsBeforeItsFolderMoves() throws {
@@ -95,7 +102,7 @@ struct AgentHookTests {
         hub.waitUntilExit()
         #expect(hub.terminationReason == .uncaughtSignal)
         #expect(FileManager.default.fileExists(atPath: paths.hub.path))
-        #expect(!FileManager.default.fileExists(atPath: old.root.path))
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: old.root.path) == paths.root.path)
     }
 
     @Test func aPidLeftByAnEarlierHubThatCrashedIsNeverSignaled() throws {

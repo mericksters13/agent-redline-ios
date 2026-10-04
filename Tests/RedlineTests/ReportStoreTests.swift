@@ -279,5 +279,26 @@ struct ReportStoreTests {
         #expect(try Data(contentsOf: new.hubAddressFile) == Data("new".utf8))
         #expect(!files.fileExists(atPath: old.root.path))
     }
+
+    @Test func settingsUnderTheOldNameMoveOver() throws {
+        let domain = "ReportStoreSettings-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        defaults.set(true, forKey: "AgenticDebuggingHubReached")
+        defaults.set([0.2, 0.7], forKey: "AgenticDebuggingButtonPosition")
+        defaults.set(Data("old".utf8), forKey: "AgenticDebuggingDestination|com.example.app")
+        // Saved under the new name already: kept.
+        defaults.set(Data("new".utf8), forKey: "RedlineDestination|com.example.app")
+        defaults.set("other", forKey: "UnrelatedSetting")
+
+        ReportStore.moveSettingsFromOldName(in: defaults, domain: domain)
+
+        #expect(defaults.bool(forKey: "RedlineHubReached"))
+        #expect(defaults.array(forKey: "RedlineButtonPosition") as? [Double] == [0.2, 0.7])
+        #expect(defaults.data(forKey: "RedlineDestination|com.example.app") == Data("new".utf8))
+        #expect(defaults.string(forKey: "UnrelatedSetting") == "other")
+        let left = defaults.persistentDomain(forName: domain)?.keys.filter { $0.hasPrefix("AgenticDebugging") } ?? []
+        #expect(left.isEmpty)
+    }
 }
 #endif

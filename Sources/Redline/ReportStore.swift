@@ -360,6 +360,20 @@ struct ReportStore: Sendable {
         rmdir(old.path)
     }
 
+    /// Moves the settings an earlier version saved under its old prefix, AgenticDebugging, to
+    /// Redline's, so a report waiting to reach the Mac is still offered again, and the button
+    /// stays where it was put. Only what the app saved moves, not launch arguments, and a
+    /// setting already saved under the new name is kept.
+    static func moveSettingsFromOldName(in defaults: UserDefaults, domain: String) {
+        let oldPrefix = "AgenticDebugging"
+        guard let saved = defaults.persistentDomain(forName: domain) else { return }
+        for (key, value) in saved where key.hasPrefix(oldPrefix) {
+            let renamed = "Redline" + key.dropFirst(oldPrefix.count)
+            if saved[renamed] == nil { defaults.set(value, forKey: renamed) }
+            defaults.removeObject(forKey: key)
+        }
+    }
+
     var draftDirectory: URL { root.appending(path: "draft", directoryHint: .isDirectory) }
     var reportsDirectory: URL { root.appending(path: "reports", directoryHint: .isDirectory) }
     private var draftFile: URL { draftDirectory.appending(path: "annotations.json") }

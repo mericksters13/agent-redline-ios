@@ -27,6 +27,9 @@ struct HubPaths: Sendable {
     /// of the earlier version that is still running knows only the old folder, so it's stopped
     /// first; if it won't stop, nothing moves. Only a process holding the old PID file's lock is
     /// that hub, so a pid left behind by a hub that crashed, and since reused, is never signaled.
+    /// The old name is left as a link to the new folder: an MCP server of the earlier version
+    /// still serving an open chat knows only the old folder, and through the link it keeps
+    /// reading the same inbox and chat records as this version's hub.
     /// True when it stopped that hub, so this version's has to take over.
     @discardableResult
     static func moveFromOldName(to paths: HubPaths) -> Bool {
@@ -45,6 +48,7 @@ struct HubPaths: Sendable {
         }
         do {
             try files.moveItem(at: old.root, to: paths.root)
+            try files.createSymbolicLink(at: old.root, withDestinationURL: paths.root)
         } catch {
             FileHandle.standardError.write(Data("Couldn't move \(old.root.path) to \(paths.root.path): \(error.localizedDescription)\n".utf8))
         }
@@ -142,6 +146,9 @@ final class Hub: @unchecked Sendable {
         guard let pidFile = HubProcess.claim(paths) else { return false }
         self.pidFile = pidFile
         updateApps(starting: true)
+        // Before anything else, so the menu bar app taking over from this hub finds the apps
+        // it was given on the command line.
+        writeStatus()
         log(apps.isEmpty ? "Hub started; no chats open yet" : "Hub started for \(apps.joined(separator: ", "))")
         watchChats()
         handoff = Handoff(hub: self)

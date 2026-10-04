@@ -26,6 +26,8 @@ cat > "$staging/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key><string>0.1</string>
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>LSUIElement</key><true/>
+    <key>NSLocalNetworkUsageDescription</key><string>Redline takes the reports your apps send from iPhones on this network, and notices when a paired iPhone wakes.</string>
+    <key>NSBonjourServices</key><array><string>_remotepairing._tcp</string></array>
 </dict>
 </plist>
 PLIST

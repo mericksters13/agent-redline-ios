@@ -152,6 +152,9 @@ final class DebugSession {
 
     func install(in scene: UIWindowScene) {
         guard window == nil else { return }
+        if let bundleID = Bundle.main.bundleIdentifier {
+            ReportStore.moveSettingsFromOldName(in: .standard, domain: bundleID)
+        }
         AccessibilityTree.enableAutomation()
 
         let window = OverlayWindow(windowScene: scene)
