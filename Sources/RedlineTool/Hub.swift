@@ -78,6 +78,8 @@ final class Hub: @unchecked Sendable {
     private var handoff: Handoff?
     private let queue = DispatchQueue(label: "hub")
     private var discovery: DispatchSourceTimer?
+    /// The descriptor that holds the lock on `hub.pid` while the hub runs.
+    private var pidLock: Int32 = -1
     private let network = NWPathMonitor()
 
     /// A report finished up to this long before the hub first looked at its app still counts
@@ -102,9 +104,17 @@ final class Hub: @unchecked Sendable {
         }
     }
 
-    func start() {
+    /// Starts taking reports. False when another hub holds the lock on `hub.pid`, or it can't
+    /// be taken; then nothing starts.
+    @discardableResult
+    func start() -> Bool {
         try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        try? Data("\(getpid())".utf8).write(to: paths.pid, options: .atomic)
+        guard let pidLock = HubProcess.lock(paths) else {
+            log(HubProcess.running(paths).map { "Another hub is running (pid \($0)); this one doesn't start" }
+                ?? "Couldn't open \(paths.pid.path); the hub doesn't start")
+            return false
+        }
+        self.pidLock = pidLock
         updateApps(starting: true)
         log(apps.isEmpty ? "Hub started; no chats open yet" : "Hub started for \(apps.joined(separator: ", "))")
         watchChats()
@@ -127,6 +137,7 @@ final class Hub: @unchecked Sendable {
             self.discover(rediscover: false)
         }
         network.start(queue: queue)
+        return true
     }
 
     func stop() {
@@ -135,8 +146,11 @@ final class Hub: @unchecked Sendable {
         network.cancel()
         listener?.stop()
         simulators?.stop()
-        try? FileManager.default.removeItem(at: paths.pid)
         log("Hub stopped")
+        // The file goes first, then the lock, so no other hub ever reads this pid as running.
+        try? FileManager.default.removeItem(at: paths.pid)
+        if pidLock >= 0 { close(pidLock) }
+        pidLock = -1
     }
 
     /// Gives every paired phone's watched apps the hub's current address. `rediscover` also

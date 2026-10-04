@@ -75,7 +75,10 @@ case "app":
         exit(1)
     }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: [])
-    hub.start()
+    guard hub.start() else {
+        print("Another hub is running and didn't stop. Quit it, then open Redline again.")
+        exit(1)
+    }
     stopOnSignals { hub.stop() }
     HubAppContext.hub = hub
     // Report notifications come from Redline; macOS asks the user once.
@@ -94,7 +97,10 @@ case "hub":
         exit(1)
     }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: options.apps)
-    hub.start()
+    guard hub.start() else {
+        print("A hub is already running\(HubProcess.running(paths).map { " (pid \($0))" } ?? "").")
+        exit(1)
+    }
     stopOnSignals { hub.stop() }
     dispatchMain()
 

@@ -171,12 +171,39 @@ final class ChatSession: @unchecked Sendable {
 
 /// Starting the hub from a chat, so nothing has to be started by hand.
 enum HubProcess {
-    /// The pid of a hub that's running, if any.
+    /// Takes the hub's lock: `hub.pid`, held with an exclusive `flock` for as long as the
+    /// returned descriptor is open, with this process's pid written in it. The kernel releases
+    /// the lock however the process ends, so a file left by a hub that crashed or was killed
+    /// never names a running hub. Nil when another hub holds the lock or the file can't be opened.
+    static func lock(_ paths: HubPaths) -> Int32? {
+        // Close-on-exec, so agents and git started by the hub don't hold the lock after it ends.
+        let descriptor = open(paths.pid.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+        guard descriptor >= 0 else { return nil }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            close(descriptor)
+            return nil
+        }
+        let pid = Data("\(getpid())".utf8)
+        ftruncate(descriptor, 0)
+        _ = pid.withUnsafeBytes { pwrite(descriptor, $0.baseAddress, $0.count, 0) }
+        return descriptor
+    }
+
+    /// The pid of a hub that's running, if any: one that holds the lock on `hub.pid`.
     static func running(_ paths: HubPaths) -> Int32? {
-        guard let text = try? String(contentsOf: paths.pid, encoding: .utf8), let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)),
-              kill(pid, 0) == 0
-        else { return nil }
-        return pid
+        let descriptor = open(paths.pid.path, O_RDONLY | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        defer { close(descriptor) }
+        // Nobody holds the lock: whatever pid the file names, that hub is gone.
+        if flock(descriptor, LOCK_SH | LOCK_NB) == 0 {
+            flock(descriptor, LOCK_UN)
+            return nil
+        }
+        guard errno == EWOULDBLOCK else { return nil }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        let count = read(descriptor, &bytes, bytes.count)
+        guard count > 0 else { return nil }
+        return Int32(String(decoding: bytes.prefix(count), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// The menu bar app, which is the hub, when it's installed.

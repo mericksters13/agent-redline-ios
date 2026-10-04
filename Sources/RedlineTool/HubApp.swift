@@ -6,6 +6,7 @@ import SwiftUI
 /// its menu bar panel shows the devices that are active and the reports sent, with where each
 /// went. It refreshes only while the panel is open, so it costs nothing while closed.
 struct HubMenuBarApp: App {
+    @NSApplicationDelegateAdaptor(HubAppDelegate.self) private var delegate
     @State private var model = HubWindowModel(hub: HubAppContext.hub)
 
     var body: some Scene {
@@ -45,6 +46,14 @@ enum MenuBarIcon {
         image.accessibilityDescription = "Redline"
         return image
     }()
+}
+
+/// Stops the hub when the app quits, from the panel's Quit button, the Dock or logging out, so
+/// it releases `hub.pid` and logs that it stopped. Termination signals stop it on their own.
+final class HubAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillTerminate(_ notification: Notification) {
+        HubAppContext.hub?.stop()
+    }
 }
 
 /// Hands the running hub to the app, which SwiftUI creates on its own.
