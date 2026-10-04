@@ -85,6 +85,12 @@ struct HubWindowTests {
         let claim = Claim(chat: "cursor-c-1", agent: "cursor", folder: "/repo/wt", claimedAt: delivered.addingTimeInterval(0.5))
         try Chats.coder.encode(claim).write(to: folder.appending(path: InboxQueue.claimFile))
         #expect(!HubWindowModel.destination(of: folder).waiting)
+        // In the same millisecond, or dated a moment before the wait it came after, the claim still shows.
+        for offset in [0.0002, -0.01] {
+            let taken = Claim(chat: "cursor-c-1", agent: "cursor", folder: "/repo/wt", claimedAt: delivered.addingTimeInterval(offset))
+            try Chats.coder.encode(taken).write(to: folder.appending(path: InboxQueue.claimFile))
+            #expect(HubWindowModel.destination(of: folder) == ("Cursor", "wt", false))
+        }
         // Dates saved before milliseconds were kept still read.
         let older = Data(#"{"agent":"claude","chat":"c","claimedAt":"2026-10-04T13:31:12Z","folder":"/repo"}"#.utf8)
         #expect(try Chats.decoder.decode(Claim.self, from: older).claimedAt == Date(timeIntervalSince1970: 1_791_120_672))
@@ -116,10 +122,74 @@ struct HubWindowTests {
         #expect(destination.waiting)
     }
 
+    @Test func aWaitSavedAfterAChatTookTheReportDoesntHideIt() throws {
+        // A chat whose wait woke when the report was filed took it before the hub decided.
+        let taken = try report("20261004-140000", at: Date())
+        try Chats.coder.encode(Claim(chat: "claude-s-2", agent: "claude", folder: "/repo/wt", claimedAt: Date()))
+            .write(to: taken.appending(path: InboxQueue.claimFile))
+        ReportDelivery.save(.init(agent: nil, chat: nil, title: "2 chats work in wt; pick one on the phone", kind: .waiting), in: taken)
+        ReportDelivery.save(.init(agent: .cursor, chat: "c-1", title: "Cursor chat", kind: .nextMessage), in: taken)
+        #expect(ReportDelivery.load(from: taken) == nil)
+        let destination = HubWindowModel.destination(of: taken)
+        #expect(destination.chat == "wt")
+        #expect(!destination.waiting)
+
+        // A hand-over this process claimed and couldn't finish still says why the report waits.
+        let failed = try report("20261004-141000", at: Date())
+        let chat = ChatRecord(id: "claude-s-3", agent: "claude", folder: "/repo/wt", bundleIDs: ["com.example.app"], pid: getpid(),
+                              registeredAt: Date(), lastActiveAt: Date())
+        let inbox = try #require(InboxQueue.reports(for: ["com.example.app"], paths: paths).first { $0.folder == failed })
+        #expect(InboxQueue.claim(inbox, for: chat))
+        ReportDelivery.save(.init(agent: .claude, chat: "s-3", title: "wt didn't take it", kind: .waiting), in: failed)
+        InboxQueue.release(inbox)
+        #expect(HubWindowModel.destination(of: failed).chat == "wt didn't take it")
+        #expect(HubWindowModel.destination(of: failed).waiting)
+    }
+
+    @Test func aStoppingHubWaitsOnlyForTheReportsItIsHandingOver() throws {
+        let first = try report("20261004-150000", at: Date())
+        _ = try report("20261004-151000", at: Date())
+        let chat = ChatRecord(id: "claude-s-4", agent: "claude", folder: "/repo/wt", bundleIDs: ["com.example.app"], pid: getpid(),
+                              registeredAt: Date(), lastActiveAt: Date())
+        #expect(InboxQueue.handingOver(by: getpid(), paths: paths) == 0)
+        let inbox = try #require(InboxQueue.reports(for: ["com.example.app"], paths: paths).first { $0.folder == first })
+        #expect(InboxQueue.claim(inbox, for: chat))
+        #expect(InboxQueue.handingOver(by: getpid(), paths: paths) == 1)
+        // Another process's hand-over isn't this one's to wait for.
+        #expect(InboxQueue.handingOver(by: getpid() + 1, paths: paths) == 0)
+        // Stopping waits until the chat has the report.
+        let hub = Hub(paths: paths, devicectl: Devicectl(executable: URL(fileURLWithPath: "/usr/bin/false")), apps: [])
+        let handoff = Handoff(hub: hub)
+        let started = Date()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.6) { InboxQueue.handedOver(inbox) }
+        handoff.finish()
+        #expect(Date().timeIntervalSince(started) >= 0.6)
+        #expect(InboxQueue.handingOver(by: getpid(), paths: paths) == 0)
+        withExtendedLifetime(hub) {}
+    }
+
+    @Test func thePanelFitsOnShortScreens() {
+        #expect(HubPanel.largestContentHeight(screen: 1_400) == 720)
+        // On a short screen the header and footer stay on it.
+        #expect(HubPanel.largestContentHeight(screen: 640) == 480)
+        #expect(HubPanel.largestContentHeight(screen: nil) == 520)
+    }
+
+    @Test func theHeaderSaysWhereAppsReachTheHubOnlyWhileItCan() {
+        var status = HubStatus(pid: 1, startedAt: Date(), apps: [], hosts: ["192.168.1.20", "mac.local"], port: 8765, phones: [],
+                               simulatorContainers: 0)
+        #expect(HubWindowModel.reach(nil) == "Starting")
+        #expect(HubWindowModel.reach(status) == "Apps reach it at 192.168.1.20 · port 8765")
+        // The Mac left its network: the old address is gone.
+        status.hosts = []
+        #expect(HubWindowModel.reach(status) == "Not on a network, so apps can't reach it")
+    }
+
     @Test func phonesSayWhyTheyCantTakeReports() {
         #expect(HubWindowModel.phoneState("Ready for com.example.app") == "Ready")
         #expect(HubWindowModel.phoneState("Not reachable, trying again in 30 s or when a phone wakes") == "Not reachable")
         #expect(HubWindowModel.phoneState("None of the watched apps installed") == "No watched app installed")
+        #expect(HubWindowModel.phoneState(PhoneLink.macOfflineState) == "Mac offline")
     }
 
     @Test func aReportTakenBeforeDeliveriesWereSavedNamesItsChat() throws {

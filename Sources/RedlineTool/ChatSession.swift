@@ -51,14 +51,20 @@ final class ChatSession: @unchecked Sendable {
     }
 
     /// Takes the reports sent to this chat, as text with pictures named by path, for agents
-    /// that get reports through hooks. Nil when there's none.
-    func takeAddressed() -> String? {
+    /// that get reports through hooks. Nil when there's none. The reports stay claimed by this
+    /// process until the caller has written the text out and calls `settle`.
+    func takeAddressed() -> (text: String, reports: [InboxReport])? {
         let chat = self.chat
         let reports = InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths)
             .filter { InboxQueue.claim($0, for: chat) }
-        let texts = reports.map(ReportContent.text(for:))
-        reports.forEach(InboxQueue.handedOver)
-        return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
+        guard !reports.isEmpty else { return nil }
+        return (reports.map(ReportContent.text(for:)).joined(separator: "\n\n"), reports)
+    }
+
+    /// Settles reports this process took: they're the chat's once what carries them was
+    /// written out (`delivered`); otherwise they're freed for the chat to take again.
+    static func settle(_ reports: [InboxReport], delivered: Bool) {
+        reports.forEach(delivered ? InboxQueue.handedOver : InboxQueue.release)
     }
 
     /// Waits until a report is sent to this chat, `timeout` passes or the waiter is cancelled.
@@ -67,25 +73,26 @@ final class ChatSession: @unchecked Sendable {
         return wait(timeout: timeout, waiter: waiter) { !InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: self.paths).isEmpty }
     }
 
-    /// Takes the reports waiting for this chat's apps, oldest first. Always takes at least one
-    /// waiting report; takes more while their text and pictures fit in `budget` bytes.
-    func take(budget: Int) -> (items: [ReportContent.Item], taken: Int, remaining: Int) {
+    /// Takes the reports waiting for this chat's apps that were sent to it or sent nowhere,
+    /// oldest first. Always takes at least one such report; takes more while their text and
+    /// pictures fit in `budget` bytes. The reports stay claimed by this process until the caller
+    /// has written the items out and calls `settle`.
+    func take(budget: Int) -> (items: [ReportContent.Item], reports: [InboxReport], remaining: Int) {
         let chat = self.chat
         var items: [ReportContent.Item] = []
         var used = 0
-        var taken = 0
-        for report in InboxQueue.waiting(for: chat.bundleIDs, paths: paths) {
+        var taken: [InboxReport] = []
+        for report in InboxQueue.takeable(by: chat, paths: paths) {
             // Another report's text, however long, must fit too.
-            if taken > 0, budget - used < ReportContent.longestText { break }
+            if !taken.isEmpty, budget - used < ReportContent.longestText { break }
             // Another chat may have taken it a moment ago.
             guard InboxQueue.claim(report, for: chat) else { continue }
             let content = ReportContent.items(for: report, budget: max(budget - used, 0))
-            InboxQueue.handedOver(report)
             items += content.items
             used += content.bytes
-            taken += 1
+            taken.append(report)
         }
-        return (items, taken, InboxQueue.waiting(for: chat.bundleIDs, paths: paths).count)
+        return (items, taken, InboxQueue.takeable(by: chat, paths: paths).count)
     }
 
     /// How long a chat that wasn't used most recently waits for the one that was to take a
@@ -110,7 +117,7 @@ final class ChatSession: @unchecked Sendable {
             _ = waiter.signal.wait(timeout: .now() + Self.deferToRecentChat)
             if waiter.isCancelled { return false }
             // Still there: the more recent chat didn't take it.
-            if !InboxQueue.waiting(for: chat.bundleIDs, paths: paths).isEmpty { return true }
+            if !InboxQueue.takeable(by: chat, paths: paths).isEmpty { return true }
         }
     }
 
@@ -128,11 +135,11 @@ final class ChatSession: @unchecked Sendable {
         }
     }
 
-    /// Waits until a report for this chat's apps is waiting, `timeout` passes or the waiter is
+    /// Waits until a report this chat may take is waiting, `timeout` passes or the waiter is
     /// cancelled. Woken by the inbox changing, not by checking on a timer. True when one is waiting.
     func waitForReport(timeout: TimeInterval?, waiter: Waiter) -> Bool {
         let chat = self.chat
-        return wait(timeout: timeout, waiter: waiter) { !InboxQueue.waiting(for: chat.bundleIDs, paths: self.paths).isEmpty }
+        return wait(timeout: timeout, waiter: waiter) { !InboxQueue.takeable(by: chat, paths: self.paths).isEmpty }
     }
 
     private func wait(timeout: TimeInterval?, waiter: Waiter, until ready: () -> Bool) -> Bool {
@@ -214,12 +221,24 @@ enum HubProcess {
 
     /// The menu bar app, which is the hub, when it's installed: in ~/Applications, where
     /// scripts/build-hub-app.sh puts it by default, or wherever else Launch Services knows it by
-    /// its identifier, such as /Applications.
+    /// its identifier, such as /Applications. With more than one copy, the newest build.
     static var app: URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications/Redline.app")
-        if FileManager.default.fileExists(atPath: home.path) { return home }
-        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID)
-            .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+        return newestApp(among: [home] + NSWorkspace.shared.urlsForApplications(withBundleIdentifier: appBundleID))
+    }
+
+    /// The copy whose program was built last. Every build has the same version, so a copy left
+    /// in one folder by an earlier install would otherwise be as likely to open as the one
+    /// installed since in another. Copies in the Trash don't count.
+    static func newestApp(among copies: [URL]) -> URL? {
+        let dated = copies.compactMap { app -> (app: URL, built: Date)? in
+            let program = app.appending(path: "Contents/MacOS/redline")
+            guard !app.standardizedFileURL.pathComponents.contains(".Trash"),
+                  let built = (try? FileManager.default.attributesOfItem(atPath: program.path))?[.modificationDate] as? Date
+            else { return nil }
+            return (app, built)
+        }
+        return dated.max { $0.built < $1.built }?.app
     }
 
     /// Starts the hub in its own session, so it keeps running after the chat that started it

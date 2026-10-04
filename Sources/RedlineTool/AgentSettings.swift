@@ -48,16 +48,17 @@ enum AgentSettings {
     }
 
     /// This tool's hook: one that runs this executable, or one the tool left under its name
-    /// before the rename, `agentic-debugging`, with exactly a hook's arguments. A command of
-    /// another tool, even one also named `redline`, is never taken for it.
+    /// before the rename, `agentic-debugging`, from any folder it was installed in, with exactly
+    /// a hook's arguments. A command of another tool, even one also named `redline`, is never
+    /// taken for it.
     static func isOurs(_ hook: Any, executable: String) -> Bool {
         guard let command = (hook as? [String: Any])?["command"] as? String else { return false }
         if command.hasPrefix("'\(executable.replacingOccurrences(of: "'", with: "'\\''"))' hook ") { return true }
-        guard command.hasPrefix("'"), let end = command.range(of: "' hook ") else { return false }
+        guard command.hasPrefix("'"), let end = command.range(of: "' hook ", options: .backwards) else { return false }
         let path = command[command.index(after: command.startIndex)..<end.lowerBound].replacingOccurrences(of: "'\\''", with: "'")
-        let arguments = command[end.upperBound...].split(separator: " ", omittingEmptySubsequences: false)
-        return URL(fileURLWithPath: path).lastPathComponent == "agentic-debugging" && arguments.count == 2
-            && Agent(rawValue: String(arguments[0])) != nil && HookEvent(rawValue: String(arguments[1])) != nil
+        let words = command[end.upperBound...].split(separator: " ", omittingEmptySubsequences: false)
+        return URL(fileURLWithPath: path).lastPathComponent == "agentic-debugging" && words.count == 2
+            && Agent(rawValue: String(words[0])) != nil && HookEvent(rawValue: String(words[1])) != nil
     }
 
     /// The settings with this tool's hooks in place, replacing any older copy of them.

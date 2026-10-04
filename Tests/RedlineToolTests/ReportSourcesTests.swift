@@ -32,20 +32,22 @@ struct ReportSourcesTests {
             ("20261003-202235", at), ("20261003-202235/report.json", at), ("20261003-202235/draft", at),
             // Just started: no report.json yet.
             ("20261003-202300", at), ("20261003-202300/draft/annotations.json", at),
+            // Already on a Mac.
+            ("20261002-135144", at), ("20261002-135144/report.json", at), ("20261002-135144/delivered", at),
         ]
         #expect(ReportFolder.finished(in: entries) == [FinishedReport(id: "20261003-150846", finishedAt: at)])
     }
 
-    @Test func reportsFromBeforeTheHubFirstLookedStayOnThePhone() {
-        let since = Date(timeIntervalSince1970: 1_791_030_000)
-        var state = SourceState(since: since)
-        let old = FinishedReport(id: "20261002-135144", finishedAt: since.addingTimeInterval(-86_400))
-        let new = FinishedReport(id: "20261003-202235", finishedAt: since.addingTimeInterval(30))
-        #expect(state.toCopy(from: [old, new]) == ["20261003-202235"])
+    @Test func reportsAreSettledOnlyOnceCopied() {
+        var state = SourceState()
+        let old = FinishedReport(id: "20261002-135144", finishedAt: Date(timeIntervalSince1970: 1_791_030_000))
+        let new = FinishedReport(id: "20261003-202235", finishedAt: Date(timeIntervalSince1970: 1_791_116_430))
+        // However old, a report the app offers is one the Mac doesn't have yet.
+        #expect(state.toCopy(from: [old, new]) == ["20261002-135144", "20261003-202235"])
+        #expect(state.settled([old, new]).isEmpty)
         state.delivered.append("20261003-202235")
-        #expect(state.toCopy(from: [old, new]).isEmpty)
-        // The app can stop offering both: one is on the Mac, the other is from before.
-        #expect(state.settled([old, new]) == ["20261002-135144", "20261003-202235"])
+        #expect(state.toCopy(from: [old, new]) == ["20261002-135144"])
+        #expect(state.settled([old, new]) == ["20261003-202235"])
     }
 
     @Test func aSimulatorReportIsFoundFromAnyFileInIt() {

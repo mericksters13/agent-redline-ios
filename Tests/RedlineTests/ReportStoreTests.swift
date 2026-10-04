@@ -196,6 +196,15 @@ struct ReportStoreTests {
         #expect(HubLink.decode(HubLink.ChatList.self, from: Data(list.utf8)) == HubLink.ChatList(
             agents: ["claude"], chats: [HubLink.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt", sameWorktree: true,
                                                      lastActive: Date(timeIntervalSince1970: 1_791_000_000))], worktree: "wt"))
+        // A Mac from before newChats offers new chats with every agent; a newer one names them.
+        #expect(HubLink.decode(HubLink.ChatList.self, from: Data(list.utf8))?.startsNewChats("cursor") == true)
+        let named = HubLink.decode(HubLink.ChatList.self, from: Data(#"{"agents":["claude","cursor"],"chats":[],"newChats":["claude"]}"#.utf8))
+        #expect(named?.startsNewChats("claude") == true)
+        #expect(named?.startsNewChats("cursor") == false)
+        // With no open chat and no agent that starts one, there's nothing to pick.
+        #expect(named?.offersDestination == true)
+        #expect(HubLink.decode(HubLink.ChatList.self, from: Data(#"{"agents":["cursor"],"chats":[],"newChats":[]}"#.utf8))?.offersDestination == false)
+        #expect(HubLink.decode(HubLink.ChatList.self, from: Data(#"{"agents":[],"chats":[]}"#.utf8))?.offersDestination == false)
         // A simulator app's address says it doesn't upload.
         try Data(#"{"device":"S","hosts":["127.0.0.1"],"port":47361,"token":"t","uploads":false}"#.utf8).write(to: store.hubAddressFile)
         #expect(store.hubAddress()?.uploads == false)
@@ -219,6 +228,23 @@ struct ReportStoreTests {
         store.markDelivered([started.id])
         #expect(store.reportFiles(started.id).keys.sorted() == ["report.json", "report.md", "screen-1.jpg"])
         #expect(store.sentReports().first?.delivered == true)
+        // A picture that can't be read sends nothing, so the hub doesn't take the report without it.
+        let picture = started.folder.appending(path: "screen-1.jpg")
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: picture.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: picture.path) }
+        #expect(store.reportFiles(started.id).isEmpty)
+    }
+
+    @Test func aReportTooBigForTheMacIsCaughtBeforeItIsFinished() throws {
+        try store.saveDraft([annotation("Too small")])
+        let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        try Data(count: 4_000).write(to: started.folder.appending(path: "note-1.jpg"))
+        // The draft isn't sent, so it doesn't count.
+        try Data(count: 50_000).write(to: started.draft.appending(path: "big.png"))
+        let report = sampleReport(id: started.id)
+        try store.checkSize(of: report, in: started.folder, limit: 10_000)
+        #expect(throws: ReportStore.TooLarge.self) { try store.checkSize(of: report, in: started.folder, limit: 4_000) }
+        #expect(ReportStore.largestReport == 50_000_000)
     }
 
     @Test func theLastDeliveryIsRemembered() {
@@ -243,16 +269,22 @@ struct ReportStoreTests {
         #expect(text.contains("## Screen: Today"))
         #expect(text.contains("One screenshot of this screen, stitched from 2 scroll positions, in 2 parts: screen-1.jpg, screen-1-part-2.jpg."))
         #expect(text.contains("Notes 1 and 2 are outlined and numbered on it."))
-        #expect(text.contains("1. **Save** (Button, identifier `save`): Cut off. See screen-1.jpg."))
+        #expect(text.contains("1. **Save** (Button, identifier `save`), in Cell \"Milestones\" `today.row` in List `today.list`: Cut off. See screen-1.jpg."))
         #expect(text.contains("## Attachments"))
         #expect(text.contains("3. **2 images from Photos**: Same bug. Images: note-3-1.jpg, note-3-2.jpg."))
     }
 
     private func sampleReport(id: String) -> Report {
         let element = ElementSnapshot(role: "Button", label: "Save", value: nil, identifier: "save", className: nil, isContainer: false, frame: CGRect(x: 1, y: 2, width: 3, height: 4))
+        func container(_ role: String, label: String?, identifier: String?) -> ElementSnapshot {
+            ElementSnapshot(role: role, label: label, value: nil, identifier: identifier, className: nil, isContainer: true, frame: .zero)
+        }
+        // Unnamed holders don't help find the code, so they're left out.
+        let ancestors = [container("Cell", label: "Milestones", identifier: "today.row"), container("Group", label: nil, identifier: nil),
+                         container("List", label: nil, identifier: "today.list")]
         func item(_ number: Int, _ note: String, picture: String) -> Report.Item {
             Report.Item(number: number, kind: .element, note: note, createdAt: Date(timeIntervalSince1970: 1_790_000_000), title: "Save",
-                        element: element, ancestors: [], screen: "screen-1", screenTitle: "Today", picture: picture,
+                        element: element, ancestors: ancestors, screen: "screen-1", screenTitle: "Today", picture: picture,
                         outline: Report.Box(x: 10, y: 20, width: 30, height: 40), attachments: [])
         }
         return Report(
@@ -363,6 +395,47 @@ struct ReportStoreTests {
         #expect(store.loadDraft() == [later])
         store.discardReport(started.folder)
         #expect(try files.contentsOfDirectory(atPath: store.reportsDirectory.path).isEmpty)
+    }
+
+    @Test func aReportCutShortPutsItsNotesBackAtTheNextLaunch() throws {
+        let files = FileManager.default
+        let capture = Capture(id: UUID(), file: "capture.png", size: CGSize(width: 402, height: 874), scroll: nil, elements: [], group: 0)
+        let screen = ScreenRecord(id: UUID(), info: ScreenInfo(title: "Today", viewController: "Home"), captures: [capture])
+        // Two reports the app was killed while drawing, the older one first.
+        let first = annotation("Cut off")
+        try store.saveScreens([screen])
+        try store.saveDraft([first])
+        try store.saveScreenshot(Data([1]), named: first.screenshots[0])
+        try store.saveScreenshot(Data([3]), named: capture.file)
+        _ = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        let second = annotation("Wrong color")
+        try store.saveDraft([second])
+        try store.saveScreenshot(Data([2]), named: second.screenshots[0])
+        _ = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_060))
+        // One that finished but was killed before its draft was removed.
+        try store.saveDraft([annotation("Sent")])
+        let finished = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_120))
+        try store.finishReport(sampleReport(id: finished.id), in: finished.folder)
+        try files.createDirectory(at: finished.draft, withIntermediateDirectories: true)
+        // A note made after them, and an empty folder left by a start cut short.
+        let latest = annotation("Too small")
+        try store.saveDraft([latest])
+        try files.createDirectory(at: store.reportsDirectory.appending(path: "20260923-000000"), withIntermediateDirectories: true)
+
+        store.recoverInterruptedReports()
+        #expect(store.loadDraft() == [first, second, latest])
+        #expect(store.loadScreens() == [screen])
+        #expect(try Data(contentsOf: store.draftDirectory.appending(path: first.screenshots[0])) == Data([1]))
+        #expect(try Data(contentsOf: store.draftDirectory.appending(path: second.screenshots[0])) == Data([2]))
+        #expect(try Data(contentsOf: store.draftDirectory.appending(path: capture.file)) == Data([3]))
+        #expect(try files.contentsOfDirectory(atPath: store.reportsDirectory.path) == [finished.id])
+        #expect(!files.fileExists(atPath: finished.draft.path))
+        #expect(store.sentReports().map(\.folder.lastPathComponent) == [finished.id])
+
+        // Running again changes nothing.
+        store.recoverInterruptedReports()
+        #expect(store.loadDraft() == [first, second, latest])
+        #expect(store.loadScreens() == [screen])
     }
 }
 #endif

@@ -30,24 +30,39 @@ enum HookEvent: String, Sendable {
     case end
 }
 
-/// Which chat a hook call is for, and its folder, from the agent's JSON.
+/// Which chat a hook call is for, and its folders, from the agent's JSON.
 struct HookInput: Equatable {
     var chat: String
-    var folder: String
+    /// Where the chat works, most likely first. A Cursor window can hold several folders: the
+    /// one holding the chat's working folder comes first, then the others in Cursor's order.
+    var folders: [String]
+
+    var folder: String { folders[0] }
 
     init?(_ agent: Agent, json: Data) {
         guard let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any] else { return nil }
+        let cwd = (object["cwd"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         switch agent {
         case .claude, .codex:
-            guard let id = object["session_id"] as? String, let cwd = object["cwd"] as? String else { return nil }
+            guard let id = object["session_id"] as? String, let cwd else { return nil }
             chat = id
-            folder = cwd
+            folders = [cwd]
         case .cursor:
-            guard let id = object["conversation_id"] as? String ?? object["session_id"] as? String,
-                  let root = (object["workspace_roots"] as? [String])?.first ?? object["cwd"] as? String
-            else { return nil }
+            guard let id = object["conversation_id"] as? String ?? object["session_id"] as? String else { return nil }
+            let roots = (object["workspace_roots"] as? [String] ?? []).filter { !$0.isEmpty }
+            func holds(_ root: String, _ path: String) -> Bool {
+                let root = URL(fileURLWithPath: root).standardizedFileURL.path
+                let path = URL(fileURLWithPath: path).standardizedFileURL.path
+                return path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+            }
+            var found = roots.isEmpty ? [cwd].compactMap { $0 } : roots
+            // The innermost root holding the working folder, when one does.
+            if let cwd, let first = roots.filter({ holds($0, cwd) }).max(by: { $0.count < $1.count }) {
+                found = [first] + roots.filter { $0 != first }
+            }
+            guard !found.isEmpty else { return nil }
             chat = id
-            folder = root
+            folders = found
         }
     }
 }
@@ -64,12 +79,9 @@ enum AgentHooks {
         let input = HookInput(agent, json: FileHandle.standardInput.readDataToEndOfFile())
         guard let input, ProcessInfo.processInfo.environment[startedByHub] == nil else { return answer(agent, event, nil) }
         let id = "\(agent.rawValue)-\(input.chat)"
-        let folder = URL(fileURLWithPath: input.folder)
-
-        let session = ChatSession(paths: paths, folder: folder, extraApps: [], agent: agent.rawValue, id: id,
-                                  pid: AgentProcess.find(agent, chat: input.chat))
+        let pid = AgentProcess.find(agent, chat: input.chat)
         // Not an app project: nothing to do, in every project the agent opens.
-        guard !session.chat.bundleIDs.isEmpty else { return answer(agent, event, nil) }
+        guard let session = Self.session(for: input, agent: agent, id: id, pid: pid, paths: paths) else { return answer(agent, event, nil) }
 
         switch event {
         case .start:
@@ -78,10 +90,13 @@ enum AgentHooks {
 
         case .prompt:
             session.touch()
+            // Cursor's prompt hook can't add text: a report taken here would be lost, so it
+            // stays in the inbox for the stop hook.
+            guard agent != .cursor else { return answer(agent, event, nil) }
             return answer(agent, event, session.takeAddressed())
 
         case .stop:
-            if let text = session.takeAddressed() { return answer(agent, event, text) }
+            if let taken = session.takeAddressed() { return answer(agent, event, taken) }
             // Only a chat a report was sent to waits for more; any other stops as usual.
             guard !InboxQueue.reports(for: session.chat.bundleIDs, paths: paths).filter({ InboxQueue.address(of: $0.folder)?.chat == id }).isEmpty,
                   let lock = WaitLock(chat: id, paths: paths) else { return answer(agent, event, nil) }
@@ -89,9 +104,9 @@ enum AgentHooks {
             let waiter = ChatSession.Waiter()
             let deadline = Date().addingTimeInterval(holdOpen)
             while session.waitForAddressed(timeout: deadline.timeIntervalSinceNow, waiter: waiter) {
-                guard let text = session.takeAddressed() else { continue }
+                guard let taken = session.takeAddressed() else { continue }
                 withExtendedLifetime(lock) {}
-                return answer(agent, event, text)
+                return answer(agent, event, taken)
             }
             return answer(agent, event, nil)
 
@@ -101,12 +116,30 @@ enum AgentHooks {
         }
     }
 
-    /// Prints what the agent expects from this event, carrying `text` when there is any.
-    static func answer(_ agent: Agent, _ event: HookEvent, _ text: String?) -> Int32 {
-        if let output = output(agent, event, text),
-           let data = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys, .withoutEscapingSlashes]) {
-            FileHandle.standardOutput.write(data + Data("\n".utf8))
+    /// The chat's session: it works in the first of its folders that builds an app, and takes
+    /// reports from the apps every one of its folders builds. Nil when none builds an app.
+    static func session(for input: HookInput, agent: Agent, id: String, pid: Int32?, paths: HubPaths, startsHub: Bool = true) -> ChatSession? {
+        func make(in folder: String, apps: [String]) -> ChatSession? {
+            let session = ChatSession(paths: paths, folder: URL(fileURLWithPath: folder), extraApps: apps, agent: agent.rawValue, id: id, pid: pid,
+                                      startsHub: startsHub)
+            return session.chat.bundleIDs.isEmpty ? nil : session
         }
+        // Most chats have just one folder.
+        guard input.folders.count > 1 else { return make(in: input.folder, apps: []) }
+        let apps = input.folders.map { ProjectApps.bundleIDs(in: URL(fileURLWithPath: $0)) }
+        guard let first = apps.firstIndex(where: { !$0.isEmpty }) else { return nil }
+        return make(in: input.folders[first], apps: apps.flatMap { $0 })
+    }
+
+    /// Prints what the agent expects from this event, carrying the reports taken when there are
+    /// any. They're the chat's only once the answer is written out.
+    static func answer(_ agent: Agent, _ event: HookEvent, _ taken: (text: String, reports: [InboxReport])?) -> Int32 {
+        var written = false
+        if let output = output(agent, event, taken?.text),
+           let data = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys, .withoutEscapingSlashes]) {
+            written = (try? FileHandle.standardOutput.write(contentsOf: data + Data("\n".utf8))) != nil
+        }
+        if let taken { ChatSession.settle(taken.reports, delivered: written) }
         return 0
     }
 

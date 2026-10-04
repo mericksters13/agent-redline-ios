@@ -65,6 +65,19 @@ final class PhoneLink: @unchecked Sendable {
         }
     }
 
+    /// The Mac is off every network, so the phone can't reach it. The phone keeps the address it
+    /// has and the link stops trying until `update` brings the Mac's address, which also
+    /// says again whether the phone is ready.
+    func macOffline() {
+        queue.async {
+            guard !self.unpaired else { return }
+            self.retryAt = nil
+            self.hub.phoneChanged(self.phone, state: PhoneLink.macOfflineState)
+        }
+    }
+
+    static let macOfflineState = "Mac not on a network, so the phone can't reach it"
+
     /// The phone is no longer paired: the link stops trying, and `done` runs once a try in
     /// progress has finished, so nothing it reports comes after.
     func unpair(then done: @escaping @Sendable () -> Void) {

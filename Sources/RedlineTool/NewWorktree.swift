@@ -172,11 +172,16 @@ enum StartedChats {
         all(paths)[pick].flatMap { FileManager.default.fileExists(atPath: $0.folder) ? $0 : nil }
     }
 
+    /// Chats started for different picks can finish at the same time, each on its own thread.
+    private static let lock = NSLock()
+
     static func remember(_ chat: StartedChat, for pick: String, paths: HubPaths) {
-        var chats = all(paths)
-        chats[pick] = chat
-        try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        try? Chats.coder.encode(chats).write(to: file(paths), options: .atomic)
+        lock.withLock {
+            var chats = all(paths)
+            chats[pick] = chat
+            try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
+            try? Chats.coder.encode(chats).write(to: file(paths), options: .atomic)
+        }
     }
 }
 #endif

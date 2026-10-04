@@ -20,9 +20,14 @@ final class SimulatorWatcher: @unchecked Sendable {
     private var names: [String: String] = [:]
     private var stream: FSEventStreamRef?
     private var count = 0
+    private var simulators: Set<String> = []
     private let lock = NSLock()
 
     var containerCount: Int { lock.withLock { count } }
+
+    /// The simulators with a watched app installed. Read under the lock, so the menu bar panel
+    /// never waits for a rescan.
+    var simulatorIDs: Set<String> { lock.withLock { simulators } }
 
     init(hub: Hub) {
         self.hub = hub
@@ -39,17 +44,20 @@ final class SimulatorWatcher: @unchecked Sendable {
             guard found != self.watched || roots != self.roots else { return }
             self.watched = found
             self.roots = roots
-            self.lock.withLock { self.count = found.count }
+            let simulators = Self.simulatorIDs(of: Array(found.keys))
+            self.lock.withLock {
+                self.count = found.count
+                self.simulators = simulators
+            }
             self.watch(roots)
             for container in found.keys { self.takeNewReports(in: container) }
             self.hub.writeStatus()
         }
     }
 
-    /// The simulators with a watched app installed, from their containers' paths.
-    var simulatorIDs: Set<String> {
-        let containers = queue.sync { Array(watched.keys) }
-        return Set(containers.compactMap { path in
+    /// The simulators these containers are in, from their paths.
+    static func simulatorIDs(of containers: [String]) -> Set<String> {
+        Set(containers.compactMap { path in
             let parts = path.split(separator: "/")
             return parts.firstIndex(of: "Devices").flatMap { parts.indices.contains($0 + 1) ? String(parts[$0 + 1]) : nil }
         })
@@ -116,11 +124,14 @@ final class SimulatorWatcher: @unchecked Sendable {
         }
         guard !roots.isEmpty else { return }
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
-        let callback: FSEventStreamCallback = { _, info, count, paths, _, _ in
+        let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
             guard let info else { return }
             let watcher = Unmanaged<SimulatorWatcher>.fromOpaque(info).takeUnretainedValue()
             let changed = unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []
-            watcher.changed(Array(changed.prefix(count)))
+            // macOS dropped events or merged them into a folder: the paths don't name every change.
+            let incomplete = FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped)
+            let dropped = (0..<count).contains { flags[$0] & incomplete != 0 }
+            watcher.changed(Array(changed.prefix(count)), dropped: dropped)
         }
         let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes)
         guard let stream = FSEventStreamCreate(nil, callback, &context, roots as CFArray,
@@ -134,8 +145,13 @@ final class SimulatorWatcher: @unchecked Sendable {
         self.stream = stream
     }
 
-    /// Runs on `queue`, called by the event stream.
-    private func changed(_ paths: [String]) {
+    /// Runs on `queue`, called by the event stream. When events were `dropped`, every watched
+    /// app's reports are looked at, so none waits for the next unrelated change.
+    private func changed(_ paths: [String], dropped: Bool) {
+        if dropped {
+            for container in watched.keys { takeNewReports(in: container) }
+            return
+        }
         let reports = Set(paths.compactMap { SimulatorReportPath.parse($0).map { "\($0.container)\n\($0.reportID)" } })
         for key in reports {
             let parts = key.split(separator: "\n").map(String.init)
@@ -162,7 +178,13 @@ final class SimulatorWatcher: @unchecked Sendable {
         if !hub.toCopy(device: path.device, bundleID: bundleID, finished: finished).isEmpty {
             let source = ReportSource(kind: .simulator, device: path.device, deviceName: name(of: path.device), bundleID: bundleID, reportID: reportID, receivedAt: Date())
             let copied = hub.receive(source) { destination in
-                (try? files.copyItem(at: folder, to: destination)) != nil
+                guard (try? files.copyItem(at: folder, to: destination)) != nil else { return false }
+                // The copy keeps links as links. Checked in the copy, which the app can't change.
+                guard Self.holdsOnlyFilesAndFolders(destination) else {
+                    hub.log("Report \(reportID) of \(bundleID) holds a link or another special file; not taken")
+                    return false
+                }
+                return true
             }
             guard copied else { return }
         }
@@ -170,6 +192,23 @@ final class SimulatorWatcher: @unchecked Sendable {
         let mark = folder.appending(path: ReportFolder.deliveredMark)
         if hub.settled(device: path.device, bundleID: bundleID, finished: finished).contains(reportID), !files.fileExists(atPath: mark.path) {
             files.createFile(atPath: mark.path, contents: nil)
+        }
+    }
+
+    /// True when `item` is a folder of plain files and folders, or a plain file: no symbolic
+    /// link, hard link, device or pipe. A simulator app writes its report folder itself, so a
+    /// link in it could lead the hub, or a chat reading the report, to any file on the Mac.
+    static func holdsOnlyFilesAndFolders(_ item: URL) -> Bool {
+        var info = stat()
+        guard lstat(item.path, &info) == 0 else { return false }
+        switch info.st_mode & S_IFMT {
+        case S_IFREG:
+            return info.st_nlink == 1
+        case S_IFDIR:
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: item.path) else { return false }
+            return names.allSatisfy { holdsOnlyFilesAndFolders(item.appending(path: $0)) }
+        default:
+            return false
         }
     }
 

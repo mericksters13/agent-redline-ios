@@ -32,6 +32,12 @@ enum Routing {
         var destination: Pick?
     }
 
+    /// The user's pick, saved with the report on the phone. Nil when there's none.
+    static func pick(of report: URL) -> Listing.Pick? {
+        (try? Data(contentsOf: report.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }?
+            .destination.flatMap { Agent(rawValue: $0.agent) == nil ? nil : $0 }
+    }
+
     static func worktree(of report: URL) -> String? {
         (try? Data(contentsOf: report.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }?
             .app.sourceFile.map(Worktree.root(of:))
@@ -50,7 +56,12 @@ enum Routing {
         let directory = list(bundleID, listing?.app.sourceFile)
         let here = directory.chats.filter(\.sameWorktree)
         if here.count == 1, let chat = here.first, let agent = Agent(rawValue: chat.agent) { return .chat(agent, id: chat.id) }
-        if here.isEmpty, let agent = directory.agents.first.flatMap(Agent.init(rawValue:)) { return .newChat(agent, folder: worktree, pick: nil) }
+        // A new chat with the agent last used on the app, while it can start one; else the first that can.
+        let startable = directory.newChats ?? directory.agents
+        let last = ProjectHistory.all(paths)[bundleID]?.agent
+        if here.isEmpty, let agent = (startable.first { $0 == last } ?? startable.first).flatMap(Agent.init(rawValue:)) {
+            return .newChat(agent, folder: worktree, pick: nil)
+        }
         return .undecided("\(here.count) chats work in \(URL(fileURLWithPath: worktree).lastPathComponent); pick one on the phone")
     }
 }
@@ -66,9 +77,34 @@ final class Handoff: @unchecked Sendable {
     /// "New chat" picks whose first report is still starting the chat, with the reports that
     /// arrived for them meanwhile. They go to that chat once it's started. Used on `queue`.
     private var startingPicks: [String: [InboxReport]] = [:]
+    /// Set once the hub is stopping: no new hand-over starts. Set outside `queue`, so work
+    /// already queued there sees it at once rather than after it has run.
+    private let finishing = NSLock()
+    private var isFinishing = false
 
     init(hub: Hub) {
         self.hub = hub
+    }
+
+    /// Starts no new hand-overs, and waits for those under way to reach their chats or give
+    /// their reports back. A hand-over cut off by the hub exiting looks interrupted, and the
+    /// next hub would hand the report over again while the chat or command this one started
+    /// still has it. The reports not handed over wait in the inbox for the next hub.
+    func finish() {
+        finishing.withLock { isFinishing = true }
+        // A hand-over that started before the flag was set has made its claim once this returns,
+        // so the wait below sees it.
+        queue.sync {}
+        var logged = false
+        while true {
+            let count = InboxQueue.handingOver(by: getpid(), paths: hub.paths)
+            guard count > 0 else { return }
+            if !logged {
+                hub.log("Stopping once \(count == 1 ? "the report being handed over reaches its chat" : "the \(count) reports being handed over reach their chats")")
+                logged = true
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
     }
 
     func reportFiled(_ folder: URL, source: ReportSource) {
@@ -78,19 +114,33 @@ final class Handoff: @unchecked Sendable {
         }
     }
 
-    /// Hands over reports that arrived shortly before the hub started and no chat took.
+    /// Hands over the reports no chat took while the hub was down: those sent to a chat on the
+    /// phone or cut off mid hand-over, however long ago, and the others that arrived shortly
+    /// before the hub started.
     func handOverRecent(within interval: TimeInterval = 3600) {
         queue.async { [self] in
             // Every watched app, including those given on the command line.
-            for report in InboxQueue.waiting(for: hub.apps, paths: hub.paths)
-            where Date().timeIntervalSince(report.source.receivedAt) < interval && InboxQueue.address(of: report.folder) == nil {
+            for report in InboxQueue.waiting(for: hub.apps, paths: hub.paths) where Self.replays(report, within: interval) {
                 deliver(report)
             }
         }
     }
 
+    /// Whether a report waiting when the hub starts is handed over again. One already addressed
+    /// to a chat waits for that chat's hooks. One the user sent to a chat, or whose hand-over was
+    /// cut off, was promised to a chat. Any other goes only while recent: a chat started for it
+    /// long after it was sent would surprise the user.
+    static func replays(_ report: InboxReport, within interval: TimeInterval, now: Date = Date()) -> Bool {
+        guard InboxQueue.address(of: report.folder) == nil else { return false }
+        return report.claim != nil || Routing.pick(of: report.folder) != nil || now.timeIntervalSince(report.source.receivedAt) < interval
+    }
+
     private func deliver(_ report: InboxReport) {
         let source = report.source
+        guard !finishing.withLock({ isFinishing }) else {
+            hub.log("Report \(source.reportID) waits in the inbox for the next hub: this one is stopping")
+            return
+        }
         let paths = hub.paths
         let destination = Routing.destination(of: report.folder, bundleID: source.bundleID, paths: paths) { bundleID, sourceFile in
             ChatDirectory.list(bundleID: bundleID, sourceFile: sourceFile, paths: paths)
@@ -101,18 +151,21 @@ final class Handoff: @unchecked Sendable {
             sendToClaude(report, session: id, worktree: worktree)
         case .chat(.codex, let id):
             sendToCodex(report, thread: id)
-        case .chat(.cursor, let id) where !Chats.live(paths).contains(where: { $0.id == "cursor-\(id)" }):
-            // A Cursor chat gets reports only through its own hooks, which a closed chat never runs.
-            hub.log("The Cursor chat \(id) for report \(source.reportID) is closed; it waits in the inbox")
-            Self.leaveWaiting(report, agent: .cursor, chat: id, because: "The chat is closed")
-            Self.notify(title: "Report from \(source.deviceName)", message: "The Cursor chat it was sent to is closed. The report waits in the inbox.")
         case .chat(.cursor, let id):
+            // A Cursor chat gets reports only through its own hooks. One that closed since the
+            // phone listed it runs them again when the user reopens it, so it's addressed too.
             InboxQueue.setAddress(Address(chat: "cursor-\(id)", agent: Agent.cursor.rawValue, folder: worktree ?? ""), of: report.folder)
             // Saved before the chat's hook wakes, so a claim it makes is always newer than this.
             ReportDelivery.save(.init(agent: .cursor, chat: id, title: "Cursor chat", kind: .nextMessage), in: report.folder)
             InboxQueue.signal(source.bundleID, paths: paths)
-            hub.log("Report \(source.reportID) goes to the Cursor chat \(id) when its hooks next run")
-            Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Cursor chat after its next reply or with your next message there.")
+            if Chats.live(paths).contains(where: { $0.id == "cursor-\(id)" }) {
+                hub.log("Report \(source.reportID) goes to the Cursor chat \(id) when its hooks next run")
+                Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Cursor chat after its next reply or with your next message there.")
+            } else {
+                hub.log("The Cursor chat \(id) for report \(source.reportID) is closed; it gets the report when it's reopened")
+                Self.notify(title: "Report from \(source.deviceName)",
+                            message: "The Cursor chat it was sent to is closed. It gets the report after you reopen it and send a message there.")
+            }
         case .newChat(let agent, let folder, let pick):
             // The chat this pick started for an earlier report, while its worktree exists.
             if let pick, let started = StartedChats.find(pick, paths: paths) {
@@ -149,7 +202,7 @@ final class Handoff: @unchecked Sendable {
                 let chat = ChatRecord(id: "claude-\(id)", agent: Agent.claude.rawValue, folder: worktree, bundleIDs: [source.bundleID],
                                       pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
                 guard InboxQueue.claim(report, for: chat) else { return }
-                openClaude(id, in: worktree, thenSend: ReportContent.text(for: report), for: report)
+                openClaude(id, in: worktree, thenSend: ReportContent.text(for: report), for: report, reopening: true)
             } else if worktree != nil {
                 waitForClaudeSignIn(report)
             } else {
@@ -243,8 +296,9 @@ final class Handoff: @unchecked Sendable {
         ].joined(separator: "\n") + "\n"
     }
 
-    /// Runs a command in a folder and waits for it.
-    static func run(_ executable: String, _ arguments: [String], in folder: String) {
+    /// Runs a command in a folder and waits for it. True when it ran and exited with status 0.
+    @discardableResult
+    static func run(_ executable: String, _ arguments: [String], in folder: String) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -252,8 +306,9 @@ final class Handoff: @unchecked Sendable {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        try? process.run()
+        guard (try? process.run()) != nil else { return false }
         process.waitUntilExit()
+        return process.terminationReason == .exit && process.terminationStatus == 0
     }
 
     private static func open(_ link: String) {
@@ -267,8 +322,10 @@ final class Handoff: @unchecked Sendable {
     /// Opens a Claude Code chat the claude command made: in the desktop app with
     /// `claude --desktop --resume`, or in a terminal without the app. Once the chat is open, sends
     /// it the report through its socket, so the user sees it start. If the chat doesn't open in
-    /// time, the report goes in with the claude command instead.
-    private func openClaude(_ id: String, in folder: String, thenSend text: String, for report: InboxReport, pick: String? = nil) {
+    /// time, the report goes in with the claude command instead. `reopening` is a chat that
+    /// closed, rather than one the hub just started.
+    private func openClaude(_ id: String, in folder: String, thenSend text: String, for report: InboxReport, pick: String? = nil,
+                            reopening: Bool = false) {
         let source = report.source
         guard let claude = AgentCommand.locate(.claude) else {
             pickSettled(pick)
@@ -284,6 +341,8 @@ final class Handoff: @unchecked Sendable {
             Self.openTerminal(in: folder, running: claude.path, arguments: ["--resume"], with: id)
         }
         let place = Self.folderName(folder)
+        let kind: ReportDelivery.Kind = reopening ? .sent : .newChat
+        let title = reopening ? place : "New chat in \(place)"
         hub.log("Opened the Claude Code chat \(id) in \(AgentCommand.hasClaudeApp ? "the Claude app" : "a terminal"), in \(folder)")
         queue.async { [self] in
             defer { pickSettled(pick) }
@@ -291,7 +350,7 @@ final class Handoff: @unchecked Sendable {
                 if let session = ClaudeSessions.open().first(where: { $0.id == id }), ClaudeSessions.send(text, to: session) {
                     InboxQueue.handedOver(report)
                     hub.log("Sent report \(source.reportID) to the Claude Code chat \(id), now open")
-                    ReportDelivery.save(.init(agent: .claude, chat: id, title: session.title ?? "New chat in \(place)", kind: .newChat), in: report.folder)
+                    ReportDelivery.save(.init(agent: .claude, chat: id, title: session.title ?? title, kind: kind), in: report.folder)
                     Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code is looking into it in \(AgentCommand.hasClaudeApp ? "the Claude app" : "Terminal"), in worktree \(place).")
                     return
                 }
@@ -299,8 +358,17 @@ final class Handoff: @unchecked Sendable {
             }
             // Not open after a minute: the report goes in anyway, and shows when the chat is opened.
             hub.log("The Claude Code chat \(id) didn't open in time; giving it report \(source.reportID) with the claude command")
-            Self.run(claude.path, ["-p", text, "--resume", id, "--permission-mode", "plan"], in: folder)
+            guard Self.run(claude.path, ["-p", text, "--resume", id, "--permission-mode", "plan"], in: folder) else {
+                // Such as when the claude command's sign-in expired: the chat doesn't have it.
+                Self.leaveWaiting(report, agent: .claude, chat: id, because: "Claude Code didn't take it")
+                InboxQueue.release(report)
+                hub.log("The claude command didn't give report \(source.reportID) to the Claude Code chat \(id); it waits in the inbox")
+                Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code didn't take it. It waits in the inbox.")
+                return
+            }
             InboxQueue.handedOver(report)
+            // The claim names the folder the chat was started from, not its worktree: this says where it ran.
+            ReportDelivery.save(.init(agent: .claude, chat: id, title: title, kind: kind), in: report.folder)
             Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code looked into it. Open the chat in worktree \(place) to see it.")
         }
     }
@@ -315,7 +383,8 @@ final class Handoff: @unchecked Sendable {
     }
 
     /// The report stays in the inbox for a chat to take later; the panel shows why. Saved before
-    /// a claim is released, so a chat that takes the report next is always newer than this.
+    /// a claim is released, so a chat that takes the report next is always newer than this, and
+    /// not saved when a chat already took it, such as one whose wait woke when it was filed.
     private static func leaveWaiting(_ report: InboxReport, agent: Agent?, chat: String?, because reason: String) {
         ReportDelivery.save(.init(agent: agent, chat: chat, title: reason, kind: .waiting), in: report.folder)
     }
