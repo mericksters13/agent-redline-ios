@@ -8,6 +8,14 @@ Redline lets you point at UI in a Debug build of your iOS app, on an iPhone or i
 
 It replaces the loop of taking a screenshot, moving it to the Mac, pasting it into a chat and describing which button you mean.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/redline-hero-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/redline-hero-light.svg">
+    <img src="docs/images/redline-hero-light.svg" width="880" alt="An iPhone running a notes app in Redline's annotate mode, with the Save button outlined in red and numbered 1 and the Title field numbered 2. An arrow runs through the Redline menu bar app on the Mac to a Claude Code or Codex chat, which shows the report it received: the screenshot with the same two red outlines (attached in Codex, read from its inbox path in Claude Code), then note 1, Save (Button, editor.save): The button sits under the keyboard on small phones, and note 2, Title (Text field, editor.title): Placeholder is hard to read in dark mode.">
+  </picture>
+</p>
+
 Status: early development (version 0.1). Supported agents: Claude Code and Codex.
 
 ## Contents
@@ -27,90 +35,48 @@ Status: early development (version 0.1). Supported agents: Claude Code and Codex
 
 ## How it works
 
+The dashed arrows are setup and happen before the first report. The solid ones carry each report. The numbers match the list below.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/redline-how-it-works-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/redline-how-it-works-light.svg">
+    <img src="docs/images/redline-how-it-works-light.svg" width="880" alt="Two dashed zones, iPhone or simulator on the left and Mac on the right. On the left, your app's Debug build with the Redline kit inside. On the Mac, the Redline hub, a menu bar app with an inbox folder, and a Claude Code or Codex chat in your project. Four numbered arrows: 1, the chat registers its app with the hub; 2, the hub gives the app the Mac's address and a token; 3, the app sends a report to the hub; 4, the hub hands the report and its pictures to the chat.">
+  </picture>
+</p>
+
+1. **Registers its app.** A Claude Code or Codex chat open in your app's project tells the hub which apps the project builds: Claude Code through `redline mcp`, when the chat starts, and Codex through the hook `redline setup` installs, the next time you send the chat a message.
+2. **Address and token.** The hub leaves `hub.json` in the app's data container: the Mac's addresses, port 47361 and a token for that phone and app.
+3. **Report.** You tap the floating button, tap elements, write notes and tap Send. The first time you send from a build, the app asks the hub which open chats work on this app, with the one in this build's worktree first, and you pick one in Send to. The kit saves the report on the device (`report.json`, `report.md` and the pictures). An iPhone offers it to the hub with the token and uploads the files the hub asks for; from a simulator, the hub copies the finished report out of the app's folder itself.
+4. **Report and pictures.** The hub files the report in its inbox, chooses the chat, and hands it over with the path of each picture. A Mac notification says where it went.
+
 ### The parts
 
-```mermaid
-flowchart LR
-    subgraph device["iPhone or simulator"]
-        app["Your app, Debug build"]
-        kit["Redline kit"]
-        app --- kit
-    end
-    subgraph mac["Mac"]
-        hub["Redline menu bar app, the hub"]
-        inbox["Inbox folder"]
-        mcp["redline mcp, one per Claude Code chat"]
-        hook["Codex hook"]
-        claude["Claude Code chats"]
-        codex["Codex chats"]
-    end
-    kit <-->|"reports go to the Mac; the Mac's address and a token come back"| hub
-    hub --> inbox
-    mcp -->|"registers the chat and the apps its project builds"| hub
-    hook -->|"registers the chat"| hub
-    hub -->|"report, through the chat's own socket"| claude
-    hub -->|"report and pictures, through the Codex app"| codex
-```
-
 - **Redline kit** (the `Redline` Swift package). You add one line, `.redline()`, to your app's root view. In Debug builds it shows a floating button, lets you pick elements and write notes, saves each report on the device, and sends it to the Mac.
-- **Redline menu bar app** (`Redline.app`). This is the hub. It gives each watched app on each paired iPhone the Mac's address, takes reports off phones and simulators, files them in an inbox, and hands each one to a chat. Its menu bar panel shows the active devices and the reports sent.
-- **The `redline` command.** The same program, run from Terminal. Claude Code runs `redline mcp` for each chat, which tells the hub which apps that chat's project builds. Codex runs it through a hook, which `redline setup` installs.
+- **Redline hub** (`Redline.app`, the menu bar app). It gives each watched app on each paired iPhone the Mac's address, takes reports off phones and simulators, files them in an inbox, and hands each one to a chat. Its menu bar panel shows the active devices and the reports sent.
+- **The `redline` command.** The same program, run from Terminal. Chats run it to register their app (step 1).
 
 The hub only takes reports for apps that an open chat builds. It finds them by reading the bundle IDs of the iOS app targets in the Xcode projects (or XcodeGen `project.yml`) in each chat's folder.
 
-### One report, from the phone to the chat
-
-```mermaid
-sequenceDiagram
-    actor You
-    participant Kit as Redline kit in the app
-    participant Hub as Redline hub on the Mac
-    participant Chat as Claude Code or Codex chat
-    Note over Hub,Chat: A chat opens in the app's project and registers the app
-    Hub->>Kit: hub.json with the Mac's addresses, port and a token
-    You->>Kit: Tap the button, tap elements, write notes
-    You->>Kit: Send
-    opt First send from this build
-        Kit->>Hub: Which chats can take a report from this app?
-        Hub-->>Kit: Open chats, the one in this build's worktree first
-        You->>Kit: Pick a chat in Send to
-    end
-    Kit->>Kit: Save the report: report.json, report.md and pictures
-    alt iPhone
-        Kit->>Hub: Offer the report with the token
-        Hub-->>Kit: The reports it wants
-        Kit->>Hub: The report files
-    else Simulator
-        Hub->>Hub: See the finished report in the app folder and copy it
-    end
-    Hub->>Hub: File the report in the inbox and choose the chat
-    Hub->>Chat: The report, with the path of each picture
-    Hub->>You: A Mac notification saying where it went
-```
-
 ### How the phone finds the Mac
 
-```mermaid
-flowchart TB
-    subgraph phone["Physical iPhone"]
-        p1["The hub lists the phones paired with this Mac, using Xcode's devicectl"]
-        p2["It writes hub.json into the app's data container: the Mac's addresses, port 47361 and a token"]
-        p3["On Send, the app connects to the Mac over the local network and uploads the report"]
-        p1 --> p2 --> p3
-    end
-    subgraph sim["Simulator"]
-        s1["The hub finds the app's data container in each simulator on the Mac"]
-        s2["It writes hub.json with 127.0.0.1, used only to ask which chats exist"]
-        s3["It watches the container and copies each finished report itself"]
-        s1 --> s2 --> s3
-    end
-```
+Steps 2 and 3 travel differently on a physical iPhone and in a simulator:
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/redline-phone-and-simulator-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/redline-phone-and-simulator-light.svg">
+    <img src="docs/images/redline-phone-and-simulator-light.svg" width="880" alt="Steps 2 and 3, drawn twice. Physical iPhone: the hub, on the Mac, puts hub.json in the app over Xcode's device link, and the app sends the report to the hub over the local network. Simulator: the app and the hub are both on the Mac; the hub writes hub.json with 127.0.0.1, used only to list chats, and copies the finished report from the app's folder itself.">
+  </picture>
+</p>
 
 - **iPhone.** An app cannot find the Mac on its own, so the hub leaves the address in the app's folder over Xcode's device link (`devicectl device copy to`). The address lists the Mac's IPv4 addresses on Wi-Fi and Ethernet (not VPN links) and its `.local` name, port 47361, the phone's ID and a token for that phone and app. The hub writes it once, and again only when the Mac's address changes. It looks again for newly paired phones and newly installed apps every 30 minutes, when a chat for a new app opens, and when the Mac's network changes.
 - **A phone that can't be reached** (asleep, out of range, on another network) is tried again after 30 seconds, then after waits that double up to 5 minutes. The hub also watches for the announcement a phone makes on the network when it wakes, and tries again right away.
 - **Simulator.** A simulator app's files are ordinary files on the Mac, so the hub watches them with file system events. No network or `devicectl` is involved in sending.
 
 ### Which chat gets the report
+
+This is step 4 in detail.
 
 ```mermaid
 flowchart TD
@@ -137,7 +103,7 @@ flowchart TD
 
 ## What the agent receives
 
-Each picture is named by its full path, followed by the notes on it. The numbers match the red outlines in the picture. Each note names the element by its accessibility label (or identifier), then its role and identifier:
+The picture at the top shows the first screen of this report. Each picture is named by its full path, followed by the notes on it. The numbers match the red outlines in the picture. Each note names the element by its accessibility label (or identifier), then its role and identifier:
 
 ```text
 UI report from Alex's iPhone · Sample Notes
