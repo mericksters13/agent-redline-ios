@@ -127,6 +127,8 @@ final class DebugSession {
     @ObservationIgnored private var isSavingNote = false
     /// Images still being written to the draft. Send waits for them.
     @ObservationIgnored private var writes: [Task<Void, Never>] = []
+    /// True while Send waits for images to be written, so another tap doesn't send twice.
+    @ObservationIgnored private var isSending = false
     /// True while a finger is down in pick mode.
     @ObservationIgnored private var touchIsDown = false
     @ObservationIgnored private let store = ReportStore.standard
@@ -605,11 +607,20 @@ final class DebugSession {
             store.recordDelivery(.noHub)
             return .noHub
         }
-        // In a simulator the hub takes reports from the app's folder as they're saved.
+        // In a simulator the hub takes reports from the app's folder as they're saved, and marks
+        // each one delivered once it's copied. No mark soon means no hub is watching.
         if address.uploads == false {
-            store.markDelivered(reports.map(\.id))
-            store.recordDelivery(.delivered)
-            return .delivered
+            let ids = Set(reports.map(\.id))
+            let deadline = Date.now.addingTimeInterval(min(patience, 5))
+            while Date.now < deadline {
+                try? await Task.sleep(for: .milliseconds(250))
+                if !store.undeliveredReports().contains(where: { ids.contains($0.id) }) {
+                    store.recordDelivery(.delivered)
+                    return .delivered
+                }
+            }
+            store.recordDelivery(.unreachable)
+            return .unreachable
         }
         let result = await HubLink.deliver(reports, bundleID: bundleID, address: address, files: { store.reportFiles($0) }, patience: patience)
         store.markDelivered(result.delivered)
@@ -763,11 +774,17 @@ final class DebugSession {
             openDestinations(thenSend: true)
             return
         }
-        // The report takes the draft's files with it, so every image must be on disk first.
-        let pending = writes
-        writes = []
+        guard !isSending else { return }
+        isSending = true
+        // The report takes the draft's files with it, so every image must be on disk first,
+        // including those of a note added while waiting.
         Task {
-            for write in pending { await write.value }
+            while !writes.isEmpty {
+                let pending = writes
+                writes = []
+                for write in pending { await write.value }
+            }
+            isSending = false
             saveReport()
         }
     }

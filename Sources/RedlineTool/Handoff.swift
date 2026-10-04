@@ -406,15 +406,20 @@ final class Handoff: @unchecked Sendable {
         URL(fileURLWithPath: path).lastPathComponent
     }
 
-    /// A Mac notification, through AppleScript so the tool needs no app bundle.
     /// Shows a notification. Inside Redline.app it comes from Redline; the bare command has no
     /// app of its own, so it goes through osascript.
     static func notify(title: String, message: String) {
         if Bundle.main.bundleURL.pathExtension == "app" {
-            let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = message
-            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+            // The app asks for permission when it starts, but a report can arrive before the
+            // user answers. Asking again waits for that answer (macOS shows the prompt only
+            // once), so the notification is added only once it's allowed and isn't lost.
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                guard granted else { return }
+                let content = UNMutableNotificationContent()
+                content.title = title
+                content.body = message
+                UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+            }
             return
         }
         func quoted(_ text: String) -> String {

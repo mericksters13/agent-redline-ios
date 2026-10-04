@@ -71,18 +71,40 @@ struct AgentHookTests {
         let support = root.appending(path: "running", directoryHint: .isDirectory)
         let old = HubPaths(root: support.appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
         try FileManager.default.createDirectory(at: old.hub, withIntermediateDirectories: true)
-        // Stands in for the old hub: a process whose pid is in the old folder's pid file.
+        // Stands in for the old hub: a process whose pid is in the old folder's pid file and
+        // that holds the file's lock, as a running hub does. It holds the lock through its input.
+        let descriptor = open(old.pid.path, O_RDWR | O_CREAT, 0o644)
+        #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
         let hub = Process()
         hub.executableURL = URL(fileURLWithPath: "/bin/sleep")
         hub.arguments = ["30"]
+        hub.standardInput = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
         try hub.run()
-        try "\(hub.processIdentifier)".write(to: old.pid, atomically: true, encoding: .utf8)
+        try "\(hub.processIdentifier)".write(to: old.pid, atomically: false, encoding: .utf8)
+        close(descriptor)
         let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
         HubPaths.moveFromOldName(to: paths)
         hub.waitUntilExit()
         #expect(hub.terminationReason == .uncaughtSignal)
         #expect(FileManager.default.fileExists(atPath: paths.hub.path))
         #expect(!FileManager.default.fileExists(atPath: old.root.path))
+    }
+
+    @Test func aPidLeftByAnEarlierHubThatCrashedIsNeverSignaled() throws {
+        let support = root.appending(path: "crashed", directoryHint: .isDirectory)
+        let old = HubPaths(root: support.appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
+        try FileManager.default.createDirectory(at: old.hub, withIntermediateDirectories: true)
+        // A process that has since been given the crashed hub's pid: it doesn't hold the lock.
+        let other = Process()
+        other.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        other.arguments = ["30"]
+        try other.run()
+        defer { other.terminate() }
+        try "\(other.processIdentifier)".write(to: old.pid, atomically: true, encoding: .utf8)
+        let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
+        HubPaths.moveFromOldName(to: paths)
+        #expect(other.isRunning)
+        #expect(FileManager.default.fileExists(atPath: paths.hub.path))
     }
 
     @Test func eachAgentGetsItsOwnShape() {
@@ -359,6 +381,7 @@ struct AgentHookTests {
                                   archived INTEGER, agent_role TEXT, thread_source TEXT, source TEXT);
             INSERT INTO threads VALUES ('t-user', 'Fix the paywall', 'Fix the paywall', 'fix it', '/p', \(now), 0, NULL, 'user', 'vscode');
             INSERT INTO threads VALUES ('t-older', '', '', 'Why is the outline wide', '/p', \(now - 1000), 0, NULL, NULL, 'vscode');
+            INSERT INTO threads VALUES ('t-no-source', 'Tidy the list', '', '', '/p', \(now - 2000), 0, NULL, NULL, NULL);
             INSERT INTO threads VALUES ('t-guardian', 'Guardian review', '', '', '/p', \(now), 0, NULL, 'guardian_review', '{"subagent":{"other":"guardian"}}');
             INSERT INTO threads VALUES ('t-auto', 'Nightly', '', '', '/p', \(now), 0, NULL, 'automation', 'vscode');
             INSERT INTO threads VALUES ('t-archived', 'Old', '', '', '/p', \(now), 1, NULL, 'user', 'vscode');
@@ -370,9 +393,9 @@ struct AgentHookTests {
         try sqlite.run()
         sqlite.waitUntilExit()
         let threads = CodexThreads.recent(in: database)
-        #expect(threads.map(\.id) == ["t-user", "t-older"])
+        #expect(threads.map(\.id) == ["t-user", "t-older", "t-no-source"])
         // A chat without a name goes by its first message.
-        #expect(threads.last?.title == "Why is the outline wide")
+        #expect(threads[1].title == "Why is the outline wide")
     }
 
     @Test func onlyTheAddressedChatTakesAReport() throws {

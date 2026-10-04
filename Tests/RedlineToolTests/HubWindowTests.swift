@@ -32,7 +32,7 @@ struct HubWindowTests {
         ReportDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: newer)
         ReportDelivery.save(.init(agent: nil, chat: nil, title: "2 chats work in wt; pick one on the phone", kind: .waiting), in: older)
 
-        let rows = HubWindowModel.readReports(paths: paths).map(\.row)
+        let rows = HubWindowModel.readReports(paths: paths).rows
         #expect(rows.map(\.folder) == [newer, older])
         #expect(rows[0].agent == "Claude Code")
         #expect(rows[0].chat == "Untitled session")
@@ -42,6 +42,38 @@ struct HubWindowTests {
         #expect(rows[0].notes == [.init(number: 1, text: "Log milestone: Too plain"), .init(number: 2, text: "History: No note")])
         #expect(rows[1].waiting)
         #expect(rows[1].chat == "2 chats work in wt; pick one on the phone")
+    }
+
+    @Test func devicesKeepTheirLastReportWhenAnotherFillsTheList() throws {
+        let quiet = Date(timeIntervalSince1970: 1_791_000_000)
+        _ = try report("20261004-080000", at: quiet, device: "Quiet iPhone")
+        for minute in 0..<3 {
+            _ = try report("20261004-09\(minute)000", at: quiet.addingTimeInterval(TimeInterval(60 * (minute + 1))))
+        }
+
+        let (rows, lastReport) = HubWindowModel.readReports(paths: paths, limit: 2)
+        #expect(rows.count == 2)
+        #expect(!rows.contains { $0.device == "Quiet iPhone" })
+        #expect(lastReport["D-Quiet iPhone"] == quiet)
+        #expect(lastReport["D-Mark iPhone"] == quiet.addingTimeInterval(180))
+    }
+
+    @Test func aChatThatTakesAWaitingReportShowsOverTheWait() throws {
+        let waiting = try report("20261004-110000", at: Date())
+        ReportDelivery.save(.init(agent: nil, chat: nil, title: "2 chats work in wt; pick one on the phone", kind: .waiting), in: waiting)
+        #expect(HubWindowModel.destination(of: waiting).waiting)
+        let claim = Claim(chat: "started-claude-1", agent: "claude", folder: "/repo/wt", claimedAt: Date().addingTimeInterval(5))
+        try Chats.coder.encode(claim).write(to: waiting.appending(path: InboxQueue.claimFile))
+        let taken = HubWindowModel.destination(of: waiting)
+        #expect(taken.agent == "Claude Code")
+        #expect(taken.chat == "New chat in wt")
+        #expect(!taken.waiting)
+
+        // A report sent to a chat keeps the hub's record, which names the chat best.
+        let sent = try report("20261004-113000", at: Date())
+        try Chats.coder.encode(Claim(chat: "claude-s-1", agent: "claude", folder: "/repo/wt", claimedAt: Date())).write(to: sent.appending(path: InboxQueue.claimFile))
+        ReportDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: sent)
+        #expect(HubWindowModel.destination(of: sent).chat == "Untitled session")
     }
 
     @Test func phonesSayWhyTheyCantTakeReports() {

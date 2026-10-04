@@ -65,14 +65,15 @@ final class ChatSession: @unchecked Sendable {
     }
 
     /// Takes the reports waiting for this chat's apps, oldest first. Always takes at least one
-    /// waiting report; takes more while their pictures fit in `budget` bytes.
+    /// waiting report; takes more while their text and pictures fit in `budget` bytes.
     func take(budget: Int) -> (items: [ReportContent.Item], taken: Int, remaining: Int) {
         let chat = self.chat
         var items: [ReportContent.Item] = []
         var used = 0
         var taken = 0
         for report in InboxQueue.waiting(for: chat.bundleIDs, paths: paths) {
-            if taken > 0, used >= budget { break }
+            // Another report's text, however long, must fit too.
+            if taken > 0, budget - used < ReportContent.longestText { break }
             // Another chat may have taken it a moment ago.
             guard InboxQueue.claim(report, for: chat) else { continue }
             let content = ReportContent.items(for: report, budget: max(budget - used, 0))
@@ -177,12 +178,30 @@ final class ChatSession: @unchecked Sendable {
 
 /// Starting the hub from a chat, so nothing has to be started by hand.
 enum HubProcess {
-    /// The pid of a hub that's running, if any.
+    /// The pid of a hub that's running, if any. A running hub holds a lock on its PID file, so
+    /// a file left by a hub that crashed doesn't count, even once another process has its pid.
     static func running(_ paths: HubPaths) -> Int32? {
-        guard let text = try? String(contentsOf: paths.pid, encoding: .utf8), let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)),
-              kill(pid, 0) == 0
-        else { return nil }
-        return pid
+        let descriptor = open(paths.pid.path, O_RDONLY)
+        guard descriptor >= 0 else { return nil }
+        defer { close(descriptor) }
+        guard flock(descriptor, LOCK_SH | LOCK_NB) != 0 else { return nil }
+        guard let text = try? String(contentsOf: paths.pid, encoding: .utf8) else { return nil }
+        return Int32(text.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// Locks the PID file and writes this process's pid in it, for the hub to hold open while it
+    /// runs. Nil when another hub holds it.
+    static func claim(_ paths: HubPaths) -> Int32? {
+        let descriptor = open(paths.pid.path, O_RDWR | O_CREAT, 0o644)
+        guard descriptor >= 0 else { return nil }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            close(descriptor)
+            return nil
+        }
+        let pid = Array("\(getpid())\n".utf8)
+        ftruncate(descriptor, 0)
+        _ = pid.withUnsafeBytes { pwrite(descriptor, $0.baseAddress, $0.count, 0) }
+        return descriptor
     }
 
     /// The menu bar app, which is the hub, when it's installed.

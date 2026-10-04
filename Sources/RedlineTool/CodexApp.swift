@@ -80,9 +80,17 @@ enum CodexApp {
             close(descriptor)
         }
 
+        /// Writes the whole frame: a write can take only part of it, or be interrupted.
         func send(_ message: [String: Any]) -> Bool {
             guard let data = CodexApp.frame(message) else { return false }
-            return data.withUnsafeBytes { write(descriptor, $0.baseAddress, data.count) } == data.count
+            var sent = 0
+            while sent < data.count {
+                let written = data.withUnsafeBytes { write(descriptor, $0.baseAddress! + sent, data.count - sent) }
+                if written < 0, errno == EINTR { continue }
+                guard written > 0 else { return false }
+                sent += written
+            }
+            return true
         }
 
         /// The response to a request, answering the app's questions to every client on the way.

@@ -25,15 +25,16 @@ struct HubPaths: Sendable {
     /// Moves the folder an earlier version kept under its old name, iOSAgenticDebuggingKit, to
     /// this one, so reports, chats and settings carry over. Only while nothing is here yet. A hub
     /// of the earlier version that is still running knows only the old folder, so it's stopped
-    /// first; if it won't stop, nothing moves.
+    /// first; if it won't stop, nothing moves. Only a process holding the old PID file's lock is
+    /// that hub, so a pid left behind by a hub that crashed, and since reused, is never signaled.
     static func moveFromOldName(to paths: HubPaths) {
         let old = HubPaths(root: paths.root.deletingLastPathComponent().appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
         let files = FileManager.default
         guard files.fileExists(atPath: old.root.path), !files.fileExists(atPath: paths.root.path) else { return }
         if let running = HubProcess.running(old), running != getpid() {
             kill(running, SIGTERM)
-            for _ in 0..<30 where kill(running, 0) == 0 { usleep(100_000) }
-            guard kill(running, 0) != 0 else {
+            for _ in 0..<30 where HubProcess.running(old) != nil { usleep(100_000) }
+            guard HubProcess.running(old) == nil else {
                 FileHandle.standardError.write(Data("The hub of an earlier version (pid \(running)) is still running. Quit Agentic Debugging, then run redline again.\n".utf8))
                 return
             }
@@ -72,6 +73,8 @@ struct HubStatus: Codable, Sendable {
     var pid: Int32
     var startedAt: Date
     var apps: [String]
+    /// The apps given on the command line, which a hub taking over keeps watching.
+    var fixedApps: [String]? = nil
     /// Where apps reach the hub.
     var hosts: [String]
     var port: UInt16
@@ -102,6 +105,8 @@ final class Hub: @unchecked Sendable {
     private let queue = DispatchQueue(label: "hub")
     private var discovery: DispatchSourceTimer?
     private let network = NWPathMonitor()
+    /// The PID file, held open and locked while the hub runs.
+    private var pidFile: Int32?
 
     /// A report finished up to this long before the hub first looked at its app still counts
     /// as new: the phone's clock and the Mac's can disagree by a little.
@@ -125,9 +130,11 @@ final class Hub: @unchecked Sendable {
         }
     }
 
-    func start() {
+    /// Starts the hub. False when another hub already holds the PID file.
+    func start() -> Bool {
         try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        try? Data("\(getpid())".utf8).write(to: paths.pid, options: .atomic)
+        guard let pidFile = HubProcess.claim(paths) else { return false }
+        self.pidFile = pidFile
         updateApps(starting: true)
         log(apps.isEmpty ? "Hub started; no chats open yet" : "Hub started for \(apps.joined(separator: ", "))")
         watchChats()
@@ -150,6 +157,7 @@ final class Hub: @unchecked Sendable {
             self.discover(rediscover: false)
         }
         network.start(queue: queue)
+        return true
     }
 
     func stop() {
@@ -159,7 +167,15 @@ final class Hub: @unchecked Sendable {
         listener?.stop()
         simulators?.stop()
         try? FileManager.default.removeItem(at: paths.pid)
+        if let pidFile { close(pidFile) }
         log("Hub stopped")
+    }
+
+    /// The hub can't take reports without its listener: it stops, so the next chat starts a new one.
+    func listenerFailed(_ reason: String) {
+        log(reason)
+        stop()
+        exit(1)
     }
 
     /// Gives every paired phone's watched apps the hub's current address. `rediscover` also
@@ -358,18 +374,20 @@ final class Hub: @unchecked Sendable {
 
     /// Files a report in the inbox. `copy` fills a folder that doesn't exist yet; the report
     /// appears in the inbox only once it's complete. False when it couldn't be filed.
+    ///
+    /// The same report can arrive twice at once, such as from two offers sent back to back.
+    /// Each copy fills its own folder, and the first to finish is the one filed.
     @discardableResult
     func receive(_ source: ReportSource, copy: (URL) -> Bool) -> Bool {
         let folder = paths.inbox.appending(path: source.bundleID, directoryHint: .isDirectory)
         let name = Inbox.folderName(reportID: source.reportID, device: source.device)
-        let incoming = folder.appending(path: ".incoming-\(name)", directoryHint: .isDirectory)
+        let incoming = folder.appending(path: ".incoming-\(name)-\(UUID().uuidString)", directoryHint: .isDirectory)
         let destination = folder.appending(path: name, directoryHint: .isDirectory)
         let files = FileManager.default
         try? files.createDirectory(at: folder, withIntermediateDirectories: true)
-        try? files.removeItem(at: incoming)
+        defer { try? files.removeItem(at: incoming) }
         let started = Date()
         guard copy(incoming) else {
-            try? files.removeItem(at: incoming)
             log("Couldn't copy report \(source.reportID) of \(source.bundleID) from \(source.deviceName)")
             return false
         }
@@ -377,17 +395,23 @@ final class Hub: @unchecked Sendable {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? encoder.encode(source).write(to: incoming.appending(path: "source.json"))
-        try? files.removeItem(at: destination)
-        do {
-            try files.moveItem(at: incoming, to: destination)
-        } catch {
-            log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
-            return false
-        }
-        lock.withLock {
-            state["\(source.device)|\(source.bundleID)", default: SourceState(since: startedAt)].delivered.append(source.reportID)
+        let key = "\(source.device)|\(source.bundleID)"
+        let filed: Bool? = lock.withLock {
+            if state[key]?.delivered.contains(source.reportID) == true { return nil }
+            // Left by an attempt whose filing wasn't recorded, such as one cut short by a crash.
+            try? files.removeItem(at: destination)
+            do {
+                try files.moveItem(at: incoming, to: destination)
+            } catch {
+                log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
+                return false
+            }
+            state[key, default: SourceState(since: startedAt)].delivered.append(source.reportID)
             saveState()
+            return true
         }
+        guard let filed else { return true }
+        guard filed else { return false }
         log(String(format: "Received %@ from %@ (%@) in %.2f s", source.reportID, source.deviceName, source.bundleID, Date().timeIntervalSince(started)))
         handoff?.reportFiled(destination, source: source)
         return true
@@ -405,7 +429,7 @@ final class Hub: @unchecked Sendable {
     func statusSnapshot() -> HubStatus {
         let containers = simulators?.containerCount ?? 0
         return lock.withLock {
-            HubStatus(pid: getpid(), startedAt: startedAt, apps: currentApps, hosts: hosts, port: HubListener.port,
+            HubStatus(pid: getpid(), startedAt: startedAt, apps: currentApps, fixedApps: fixedApps, hosts: hosts, port: HubListener.port,
                       phones: phoneStates.values.sorted { $0.name < $1.name }, simulatorContainers: containers)
         }
     }
