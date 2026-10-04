@@ -4,6 +4,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 destination="${1:-$HOME/Applications}"
+# Absolute, so the running copy's process, which Launch Services starts by its full path, matches
+# the checks below.
+mkdir -p "$destination"
+destination="$(cd "$destination" && pwd -P)"
 swift build -c release --product redline
 binary="$(swift build -c release --show-bin-path)/redline"
 app="$destination/Redline.app"
@@ -36,7 +40,6 @@ PLIST
 # signature is new with every build, so macOS would ask again each time.
 identity="$(security find-identity -v -p codesigning | awk '/"Apple Development/ { print $2; exit }')"
 codesign --force --sign "${identity:--}" "$staging"
-mkdir -p "$destination"
 # A running copy is stopped first and opened again after: macOS may not match a running app to a
 # bundle replaced under it, and ask for permissions again. A stop signal, not an AppleScript quit,
 # which would need its own permission. The bundle is replaced only once the old copy has exited,
