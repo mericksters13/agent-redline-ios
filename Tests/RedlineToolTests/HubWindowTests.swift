@@ -44,6 +44,12 @@ struct HubWindowTests {
         #expect(rows[1].chat == "2 chats work in wt; pick one on the phone")
     }
 
+    @Test func phonesSayWhyTheyCantTakeReports() {
+        #expect(HubWindowModel.phoneState("Ready for com.example.app") == "Ready")
+        #expect(HubWindowModel.phoneState("Not reachable, trying again in 30 s or when a phone wakes") == "Not reachable")
+        #expect(HubWindowModel.phoneState("None of the watched apps installed") == "No watched app installed")
+    }
+
     @Test func aReportTakenBeforeDeliveriesWereSavedNamesItsChat() throws {
         let folder = try report("20261004-100000", at: Date())
         let claim = Claim(chat: "started-claude-20261004-100000", agent: "claude", folder: "/repo/.claude/worktrees/report-1", claimedAt: Date())
