@@ -27,23 +27,28 @@ struct HubPaths: Sendable {
     /// of the earlier version that is still running knows only the old folder, so it's stopped
     /// first; if it won't stop, nothing moves. Only a process holding the old PID file's lock is
     /// that hub, so a pid left behind by a hub that crashed, and since reused, is never signaled.
-    static func moveFromOldName(to paths: HubPaths) {
+    /// True when it stopped that hub, so this version's has to take over.
+    @discardableResult
+    static func moveFromOldName(to paths: HubPaths) -> Bool {
         let old = HubPaths(root: paths.root.deletingLastPathComponent().appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
         let files = FileManager.default
-        guard files.fileExists(atPath: old.root.path), !files.fileExists(atPath: paths.root.path) else { return }
+        guard files.fileExists(atPath: old.root.path), !files.fileExists(atPath: paths.root.path) else { return false }
+        var stopped = false
         if let running = HubProcess.running(old), running != getpid() {
             kill(running, SIGTERM)
             for _ in 0..<30 where HubProcess.running(old) != nil { usleep(100_000) }
             guard HubProcess.running(old) == nil else {
                 FileHandle.standardError.write(Data("The hub of an earlier version (pid \(running)) is still running. Quit Agentic Debugging, then run redline again.\n".utf8))
-                return
+                return false
             }
+            stopped = true
         }
         do {
             try files.moveItem(at: old.root, to: paths.root)
         } catch {
             FileHandle.standardError.write(Data("Couldn't move \(old.root.path) to \(paths.root.path): \(error.localizedDescription)\n".utf8))
         }
+        return stopped
     }
 }
 
@@ -115,7 +120,8 @@ final class Hub: @unchecked Sendable {
     /// Mac's network are noticed as they happen.
     static let discoveryInterval: TimeInterval = 1800
 
-    /// The apps the hub takes reports from: those of the open chats, and any given on the command line.
+    /// The apps the hub takes reports from: those of the open chats and of chats before them,
+    /// and any given on the command line.
     var apps: [String] { lock.withLock { currentApps } }
 
     init(paths: HubPaths, devicectl: Devicectl, apps: [String]) {
@@ -208,7 +214,9 @@ final class Hub: @unchecked Sendable {
     }
 
     func updateApps(starting: Bool) {
-        let apps = Array(Set(fixedApps + Chats.live(paths).flatMap(\.bundleIDs))).sorted()
+        // Apps a chat worked on before stay watched after it closes, so their reports still
+        // arrive and can start a new chat.
+        let apps = Array(Set(fixedApps + Chats.live(paths).flatMap(\.bundleIDs) + ProjectHistory.all(paths).keys)).sorted()
         let changed = lock.withLock {
             defer { currentApps = apps }
             return currentApps != apps

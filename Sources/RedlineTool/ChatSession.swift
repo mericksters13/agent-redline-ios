@@ -1,5 +1,5 @@
 #if os(macOS)
-import Foundation
+import AppKit
 
 /// One chat's side of the hub: its registration, which tells the hub which apps to take
 /// reports from, and taking the reports that arrive for them.
@@ -33,6 +33,8 @@ final class ChatSession: @unchecked Sendable {
     func register(agent: String? = nil) {
         lock.withLock { if let agent { record.agent = agent } }
         guard !chat.bundleIDs.isEmpty else { return }
+        // Noted before the chat's file appears, so the hub sees both when it looks.
+        ProjectHistory.note(chat, paths: paths)
         save()
         if startsHub { HubProcess.startIfNeeded(paths) }
     }
@@ -52,9 +54,10 @@ final class ChatSession: @unchecked Sendable {
     /// that get reports through hooks. Nil when there's none.
     func takeAddressed() -> String? {
         let chat = self.chat
-        let texts = InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths)
+        let reports = InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths)
             .filter { InboxQueue.claim($0, for: chat) }
-            .map(ReportContent.text(for:))
+        let texts = reports.map(ReportContent.text(for:))
+        reports.forEach(InboxQueue.handedOver)
         return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
     }
 
@@ -77,6 +80,7 @@ final class ChatSession: @unchecked Sendable {
             // Another chat may have taken it a moment ago.
             guard InboxQueue.claim(report, for: chat) else { continue }
             let content = ReportContent.items(for: report, budget: max(budget - used, 0))
+            InboxQueue.handedOver(report)
             items += content.items
             used += content.bytes
             taken += 1
@@ -204,15 +208,22 @@ enum HubProcess {
         return descriptor
     }
 
-    /// The menu bar app, which is the hub, when it's installed.
+    /// The menu bar app's bundle identifier, as scripts/build-hub-app.sh sets it.
+    static let appBundleID = "com.agentredline.hub"
+
+    /// The menu bar app, which is the hub, when it's installed: in ~/Applications, where
+    /// scripts/build-hub-app.sh puts it by default, or wherever else Launch Services knows it by
+    /// its identifier, such as /Applications.
     static var app: URL? {
-        let app = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications/Redline.app")
-        return FileManager.default.fileExists(atPath: app.path) ? app : nil
+        let home = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications/Redline.app")
+        if FileManager.default.fileExists(atPath: home.path) { return home }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID)
+            .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
-    /// Starts the hub: the menu bar app when it's installed, else this command in its own
-    /// session, so it keeps running after the chat that started it closes, with nothing attached
-    /// to the chat's input and output.
+    /// Starts the hub in its own session, so it keeps running after the chat that started it
+    /// closes, with nothing attached to the chat's input and output. The menu bar app is the
+    /// hub when it's installed.
     static func startIfNeeded(_ paths: HubPaths) {
         guard running(paths) == nil else { return }
         if let app {

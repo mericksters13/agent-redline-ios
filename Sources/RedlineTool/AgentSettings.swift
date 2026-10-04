@@ -47,20 +47,22 @@ enum AgentSettings {
         }
     }
 
-    /// The names this tool's command has had. A hook that runs any of them, from any folder, is
-    /// an older copy of this tool's, such as one from before the rename or a move.
-    static let commandNames = ["redline", "agentic-debugging"]
-
-    static func isOurs(_ hook: Any) -> Bool {
-        guard let command = (hook as? [String: Any])?["command"] as? String, command.hasPrefix("'"),
-              let end = command.range(of: "' hook ") else { return false }
+    /// This tool's hook: one that runs this executable, or one the tool left under its name
+    /// before the rename, `agentic-debugging`, with exactly a hook's arguments. A command of
+    /// another tool, even one also named `redline`, is never taken for it.
+    static func isOurs(_ hook: Any, executable: String) -> Bool {
+        guard let command = (hook as? [String: Any])?["command"] as? String else { return false }
+        if command.hasPrefix("'\(executable.replacingOccurrences(of: "'", with: "'\\''"))' hook ") { return true }
+        guard command.hasPrefix("'"), let end = command.range(of: "' hook ") else { return false }
         let path = command[command.index(after: command.startIndex)..<end.lowerBound].replacingOccurrences(of: "'\\''", with: "'")
-        return commandNames.contains(URL(fileURLWithPath: path).lastPathComponent)
+        let arguments = command[end.upperBound...].split(separator: " ", omittingEmptySubsequences: false)
+        return URL(fileURLWithPath: path).lastPathComponent == "agentic-debugging" && arguments.count == 2
+            && Agent(rawValue: String(arguments[0])) != nil && HookEvent(rawValue: String(arguments[1])) != nil
     }
 
     /// The settings with this tool's hooks in place, replacing any older copy of them.
     static func adding(_ agent: Agent, to settings: [String: Any], executable: String) -> [String: Any] {
-        var settings = removing(agent, from: settings)
+        var settings = removing(agent, from: settings, executable: executable)
         var events = settings["hooks"] as? [String: Any] ?? [:]
         for (event, matcher, hooks) in self.hooks(agent, executable: executable) {
             var entries = events[event] as? [Any] ?? []
@@ -79,16 +81,17 @@ enum AgentSettings {
         return settings
     }
 
-    /// The settings without this tool's hooks, under any of its names; everything else stays.
-    static func removing(_ agent: Agent, from settings: [String: Any]) -> [String: Any] {
+    /// The settings without this tool's hooks, and those from before the rename; everything
+    /// else stays.
+    static func removing(_ agent: Agent, from settings: [String: Any], executable: String) -> [String: Any] {
         var settings = settings
         guard var events = settings["hooks"] as? [String: Any] else { return settings }
         for (event, value) in events {
             guard let entries = value as? [Any] else { continue }
             let kept: [Any] = entries.compactMap { entry in
-                if isOurs(entry) { return nil }
+                if isOurs(entry, executable: executable) { return nil }
                 guard var group = entry as? [String: Any], let hooks = group["hooks"] as? [Any] else { return entry }
-                let others = hooks.filter { !isOurs($0) }
+                let others = hooks.filter { !isOurs($0, executable: executable) }
                 if others.isEmpty { return nil }
                 group["hooks"] = others
                 return group
