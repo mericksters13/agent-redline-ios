@@ -104,9 +104,16 @@ struct InboxTests {
 
         // Another chat on the same app gets nothing, and an unaddressed report goes to no one.
         #expect(other.takeAddressed() == nil)
-        let text = try #require(builder.takeAddressed())
-        #expect(text.contains("1. Save (Button, editor.save): Too small."))
-        #expect(text.contains(report.appending(path: "screen-1.jpg").path))
+        let taken = try #require(builder.takeAddressed())
+        #expect(taken.text.contains("1. Save (Button, editor.save): Too small."))
+        #expect(taken.text.contains(report.appending(path: "screen-1.jpg").path))
+        #expect(taken.reports.map(\.folder) == [report])
+        #expect(builder.takeAddressed() == nil)
+        // Not written out, such as when the agent stopped reading: the chat takes it next time.
+        ChatSession.settle(taken.reports, isDelivered: false)
+        let again = try #require(builder.takeAddressed())
+        ChatSession.settle(again.reports, isDelivered: true)
+        #expect(Inbox.claim(of: report)?.handingOverIn == nil)
         #expect(builder.takeAddressed() == nil)
     }
 

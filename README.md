@@ -329,6 +329,8 @@ The hub's log is at `~/Library/Application Support/Redline/hub/hub.log`.
 
 `check`, `wait` and `mcp` take `--project <folder>`, and `--app <bundle ID>` for a bundle ID that can't be read from the project.
 
+`hub` and `app` take `--app <bundle ID>` for an app to watch whether or not a chat is open for it.
+
 ## Uninstall
 
 Quit Redline from its panel, then:

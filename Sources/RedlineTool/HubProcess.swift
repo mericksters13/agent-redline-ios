@@ -50,12 +50,27 @@ enum HubProcess {
     /// scripts/build-hub-app.sh puts it by default, or wherever else Launch Services knows it by its
     /// identifier, such as /Applications.
     ///
-    /// Checks the disk.
+    /// With more than one copy, the newest build. Checks the disk.
     static func installedApp() -> URL? {
         let home = URL.homeDirectory.appending(path: "Applications/Redline.app")
-        if FileManager.default.fileExists(atPath: home.path) { return home }
-        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID)
-            .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+        return newestApp(among: [home] + NSWorkspace.shared.urlsForApplications(withBundleIdentifier: appBundleID))
+    }
+
+    /// The copy whose program was built last.
+    ///
+    /// Every build has the same version, so a copy left in one folder by an earlier install would
+    /// otherwise be as likely to open as the one installed since in another. Copies in the Trash
+    /// and missing copies don't count.
+    static func newestApp(among copies: [URL]) -> URL? {
+        let dated = copies.compactMap { app -> (app: URL, builtAt: Date)? in
+            let program = app.appending(path: "Contents/MacOS/redline")
+            guard !app.standardizedFileURL.pathComponents.contains(".Trash"),
+                let builtAt = (try? FileManager.default.attributesOfItem(atPath: program.path))?[.modificationDate]
+                    as? Date
+            else { return nil }
+            return (app, builtAt)
+        }
+        return dated.max { $0.builtAt < $1.builtAt }?.app
     }
 
     /// Starts the hub, watching `apps` besides the open chats' apps: the menu bar app when it's

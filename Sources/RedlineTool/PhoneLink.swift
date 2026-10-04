@@ -76,6 +76,18 @@ final class PhoneLink: @unchecked Sendable {
         }
     }
 
+    /// The Mac is off every network, so the phone can't reach it.
+    ///
+    /// The phone keeps the address it has and the link stops trying until `update` brings the
+    /// Mac's address, which also says again whether the phone is ready.
+    func macDidGoOffline() {
+        queue.async {
+            guard !self.isUnpaired else { return }
+            self.retryAt = nil
+            self.hub.phoneDidChange(self.phone, state: .macOffline)
+        }
+    }
+
     /// The phone is no longer paired: the link stops trying, and `done` runs once a try in progress
     /// has finished, so nothing it reports comes after.
     func unpair(then done: @escaping @Sendable () -> Void) {
@@ -103,8 +115,12 @@ final class PhoneLink: @unchecked Sendable {
         for (bundleID, address) in addresses.sorted(by: { $0.key < $1.key })
         where (given[bundleID] != address || recheck.contains(bundleID)) && !missing.contains(bundleID) {
             let isRechecking = recheck.remove(bundleID) != nil && given[bundleID] == address
-            if hub.devicectl.write(HubMessage.encode(address), to: HubMessage.addressPath, of: bundleID, on: phone.udid)
-            {
+            let data = HubMessage.encode(address)
+            if hub.devicectl.write(data, to: HubMessage.addressPath, of: bundleID, on: phone.udid) {
+                // The phone can't tell the hub which name the installed build has, so a build from
+                // before the rename gets the address under its old name too. That copy is extra: the
+                // app counts as ready once the renamed one is written.
+                _ = hub.devicectl.write(data, to: HubMessage.earlierAddressPath, of: bundleID, on: phone.udid)
                 if !isRechecking { hub.log("Gave \(bundleID) on \(phone.name) the hub's address") }
                 given[bundleID] = address
                 continue

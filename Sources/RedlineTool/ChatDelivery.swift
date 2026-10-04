@@ -36,8 +36,19 @@ struct ChatDelivery: Codable, Equatable, Sendable {
     /// Not in a chat yet: a chat that takes the report later records a claim.
     var isPending: Bool { kind == .waiting || kind == .nextMessage }
 
+    /// Saves where the report went.
+    ///
+    /// One not in a chat yet is saved only while no chat holds the report, and no chat can take it
+    /// meanwhile: a chat that took it first, such as one whose wait woke when the report was filed,
+    /// keeps showing, and a chat that takes it later is always newer than this.
     static func save(_ delivery: ChatDelivery, in report: URL) throws {
-        try HubPaths.encoder.encode(delivery).write(to: report.appending(path: Inbox.deliveryFile), options: .atomic)
+        func write() throws {
+            try HubPaths.encoder.encode(delivery).write(
+                to: report.appending(path: Inbox.deliveryFile),
+                options: .atomic
+            )
+        }
+        if delivery.isPending { try Inbox.unlessTaken(report, write) } else { try write() }
     }
 
     static func load(from report: URL) -> ChatDelivery? {

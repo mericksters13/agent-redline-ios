@@ -45,6 +45,10 @@ struct ReportContentTests {
                 [
                     "number": 1, "title": "Log milestone", "note": "This is ugly", "attachments": [String](),
                     "element": ["identifier": "today.milestones", "label": "Log milestone", "role": "Button"],
+                    // Unnamed holders are left out.
+                    "ancestors": [
+                        ["role": "Group"], ["identifier": "today.card", "label": "Milestones", "role": "Group"],
+                    ],
                 ],
                 ["number": 2, "title": "History", "note": "The list breaks", "attachments": ["note-2.jpg"]],
                 [
@@ -68,7 +72,7 @@ struct ReportContentTests {
                 UI report from Test iPhone · Example
 
                 \(report.path)/screen-1.jpg
-                1. Log milestone (Button, today.milestones): This is ugly
+                1. Log milestone (Button, today.milestones), in Group "Milestones" (today.card): This is ugly
 
                 \(report.path)/screen-2.jpg
                 3. growth.card (Group): No note
@@ -77,6 +81,23 @@ struct ReportContentTests {
                 2. History: The list breaks
                 """
         )
+    }
+
+    @Test func onlyPicturesInTheReportsOwnFolderAreRead() throws {
+        let folder = try inboxReport("20261003-223449")
+        let secret = root.appending(path: "secret.txt")
+        try "private".write(to: secret, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: folder.appending(path: "link.jpg"), withDestinationURL: secret)
+        try FileManager.default.createDirectory(
+            at: folder.appending(path: "folder.jpg"),
+            withIntermediateDirectories: true
+        )
+        let escape = "../../../../secret.txt"
+        #expect(FileManager.default.fileExists(atPath: folder.appending(path: escape).path))
+        try
+            #"{"screens":[{"images":[{"file":"\#(escape)"},{"file":"screen-1.jpg"}]}],"items":[{"attachments":["link.jpg","folder.jpg","\#(secret.path)"]}]}"#
+            .write(to: folder.appending(path: "report.json"), atomically: true, encoding: .utf8)
+        #expect(ReportContent.pictures(in: folder).map(\.lastPathComponent) == ["screen-1.jpg"])
     }
 
     @Test func picturesFollowTheSummaryInItsOrderWithinTheBudget() throws {

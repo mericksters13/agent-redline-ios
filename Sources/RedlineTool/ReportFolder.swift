@@ -11,17 +11,23 @@ struct FinishedReport: Equatable {
 /// Where the kit keeps sent reports, inside an app's data container.
 enum ReportFolder {
     static let path = HubMessage.kitFolder + "/reports"
+    /// Where a build from before the rename keeps them.
+    ///
+    /// A simulator app still running such a build after the Mac tool is updated writes its reports
+    /// here, until a new build moves them.
+    static let earlierPath = HubMessage.earlierKitFolder + "/reports"
+    static let paths = [path, earlierPath]
     /// The empty file in a report's folder that says the Mac has it, as the kit's `ReportStore`
     /// names it.
     static let deliveredMark = "delivered"
 
-    /// The finished reports among paths relative to the reports folder.
+    /// The finished reports among paths relative to the reports folder that a Mac doesn't have yet.
     ///
     /// A report is finished once its `report.json` is written and the draft it was drawn from is
-    /// gone.
+    /// gone; one with the delivered mark is already on a Mac.
     static func finishedReports(in entries: [(path: String, modified: Date?)]) -> [FinishedReport] {
         var written: [String: FinishedReport] = [:]
-        var drawing = Set<String>()
+        var skipped = Set<String>()
         for entry in entries {
             let parts = entry.path.split(separator: "/")
             guard parts.count >= 2 else { continue }
@@ -29,9 +35,9 @@ enum ReportFolder {
             if parts.count == 2, parts[1] == "report.json" {
                 written[id] = FinishedReport(id: id, finishedAt: entry.modified)
             }
-            if parts[1] == "draft" { drawing.insert(id) }
+            if parts[1] == "draft" || (parts.count == 2 && parts[1] == deliveredMark) { skipped.insert(id) }
         }
-        return written.values.filter { !drawing.contains($0.id) }.sorted { $0.id < $1.id }
+        return written.values.filter { !skipped.contains($0.id) }.sorted { $0.id < $1.id }
     }
 }
 
@@ -42,15 +48,20 @@ struct SimulatorReportPath: Hashable {
     /// The simulator's UDID.
     var device: String
     var reportID: String
+    /// The reports folder in the container, one of `ReportFolder.paths`.
+    var folder = ReportFolder.path
 
     static func parse(_ path: String) -> SimulatorReportPath? {
-        guard let marker = path.range(of: "/" + ReportFolder.path + "/") else { return nil }
-        let container = String(path[..<marker.lowerBound])
-        guard let id = path[marker.upperBound...].split(separator: "/").first.map(String.init), !id.isEmpty else {
-            return nil
+        for folder in ReportFolder.paths {
+            guard let marker = path.range(of: "/" + folder + "/") else { continue }
+            let container = String(path[..<marker.lowerBound])
+            guard let id = path[marker.upperBound...].split(separator: "/").first.map(String.init), !id.isEmpty else {
+                return nil
+            }
+            guard let device = device(ofContainer: container) else { return nil }
+            return SimulatorReportPath(container: container, device: device, reportID: id, folder: folder)
         }
-        guard let device = device(ofContainer: container) else { return nil }
-        return SimulatorReportPath(container: container, device: device, reportID: id)
+        return nil
     }
 
     /// The simulator an app's data container belongs to, from the container's path.

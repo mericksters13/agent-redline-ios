@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import Synchronization
 
 /// The chats the hub started for "New chat", by the phone's pick, so later reports with the same
 /// pick go to that chat instead of starting another.
@@ -35,11 +36,16 @@ enum StartedChats {
         all(paths)[pick].flatMap { FileManager.default.fileExists(atPath: $0.folder) ? $0 : nil }
     }
 
+    /// Chats started for different picks can finish at the same time, each on its own thread.
+    private static let writing = Mutex(())
+
     static func remember(_ chat: StartedChat, for pick: String, paths: HubPaths) throws {
-        var chats = all(paths)
-        chats[pick] = chat
-        try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        try HubPaths.encoder.encode(chats).write(to: fileURL(paths), options: .atomic)
+        try writing.withLock { _ in
+            var chats = all(paths)
+            chats[pick] = chat
+            try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
+            try HubPaths.encoder.encode(chats).write(to: fileURL(paths), options: .atomic)
+        }
     }
 }
 #endif

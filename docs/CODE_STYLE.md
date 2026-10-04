@@ -2584,7 +2584,7 @@ static let standardHubPaths = HubPaths(root: ...)
 
 **Rule:** Name a function that writes state, files or the network, or starts a process, with an imperative verb, name a function that only answers a question with a noun phrase, and never hide a write inside a noun-named function.
 
-**Why:** From the call site, a reader cannot tell which functions change state unless the names say so. A name like `toCopy(...)` reads like a query. When such a function also starts tracking a source and saves state, split it, as the hub does with `startTrackingIfNeeded` and `reportIDsToCopy`. A function named `json(_:)` that starts a process hides the same kind of cost.
+**Why:** From the call site, a reader cannot tell which functions change state unless the names say so. A name like `toCopy(...)` reads like a query. When such a function also starts tracking a source and saves state, split it into a verb-named function that saves and a noun-named one that only answers, as in the example below. A function named `json(_:)` that starts a process hides the same kind of cost.
 
 ```swift
 // Do

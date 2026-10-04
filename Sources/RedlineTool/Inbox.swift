@@ -59,6 +59,35 @@ enum Inbox {
         unclaimedReports(for: bundleIDs, paths: paths).filter { recipient(of: $0.folder)?.chat == chat }
     }
 
+    /// The chat a report was sent to, as its chat record's ID: its recipient, or else the pick the
+    /// phone saved with it, which the hub may still be handing over.
+    ///
+    /// A "New chat" pick names the chat it started, or no chat ("") until it has. Nil when nothing
+    /// says where it goes.
+    static func intendedChat(of report: URL, paths: HubPaths) -> String? {
+        if let recipient = recipient(of: report) { return recipient.chat }
+        guard let pick = Routing.pick(of: report), let agent = Agent(rawValue: pick.agent) else { return nil }
+        if let chat = pick.chat { return ChatID.make(agent, chat) }
+        return pick.newChat.flatMap { StartedChats.find($0, paths: paths) }.map { ChatID.make(agent, $0.chat) } ?? ""
+    }
+
+    /// Reports a chat may take, oldest first: those sent to it, and those sent nowhere.
+    ///
+    /// A report sent to another chat, or to a new one, is never taken by a chat that only builds
+    /// its app.
+    static func takeableReports(by chat: ChatRecord, paths: HubPaths) -> [InboxReport] {
+        unclaimedReports(for: chat.bundleIDs, paths: paths).filter {
+            intendedChat(of: $0.folder, paths: paths).map { $0 == chat.id } ?? true
+        }
+    }
+
+    /// How many reports, of any app, the process `pid` has claimed and is still handing over.
+    static func reportsHandedOver(by pid: Int32, paths: HubPaths) -> Int {
+        reports(for: nil, paths: paths).count { report in
+            report.claim.map { $0.handingOverIn == pid && !$0.isInterrupted } ?? false
+        }
+    }
+
     /// Every report for these apps, or every app's when `bundleIDs` is nil, oldest first.
     ///
     /// A folder without its source.json isn't a filed report.
@@ -140,31 +169,61 @@ enum Inbox {
             handingOverIn: getpid()
         )
         let file = report.folder.appending(path: claimFile)
-        // One process at a time replaces an interrupted claim, so two can't both take its report.
-        // The lock is released when the descriptor closes.
-        let lock = open(report.folder.appending(path: claimLockFile).path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
-        guard lock >= 0 else { return .failed(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)) }
-        defer { close(lock) }
-        guard flock(lock, LOCK_EX) == 0 else { return .failed(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)) }
-        if let existing = Self.claim(of: report.folder) {
-            guard existing.isInterrupted else { return .takenByAnotherChat }
-            guard unlink(file.path) == 0 || errno == ENOENT else {
-                return .failed(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
-            }
-        }
-        // Written whole under a name of its own, then linked into place: linking fails if a claim
-        // is already there, so two chats can't both take it, and no chat ever sees half a claim.
-        let draft = report.folder.appending(path: ".\(claimFile).\(UUID().uuidString)")
-        defer { unlink(draft.path) }
         do {
-            try HubPaths.encoder.encode(claim).write(to: draft)
+            // One process at a time replaces an interrupted claim, so two can't both take its report.
+            return try withClaimLock(report.folder) {
+                if let existing = Self.claim(of: report.folder) {
+                    guard existing.isInterrupted else { return .takenByAnotherChat }
+                    guard unlink(file.path) == 0 || errno == ENOENT else { throw lastPOSIXError() }
+                }
+                // Written whole under a name of its own, then linked into place: linking fails if a
+                // claim is already there, so two chats can't both take it, and no chat ever sees half
+                // a claim.
+                let draft = report.folder.appending(path: ".\(claimFile).\(UUID().uuidString)")
+                defer { unlink(draft.path) }
+                try HubPaths.encoder.encode(claim).write(to: draft)
+                guard link(draft.path, file.path) == 0 else {
+                    if errno == EEXIST { return .takenByAnotherChat }
+                    throw lastPOSIXError()
+                }
+                return .claimed
+            }
         } catch {
             return .failed(error)
         }
-        guard link(draft.path, file.path) == 0 else {
-            return errno == EEXIST ? .takenByAnotherChat : .failed(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
+    }
+
+    /// Runs `body` unless a chat holds the report: a claim that wasn't interrupted, other than one
+    /// this process is still handing over.
+    ///
+    /// Holds the lock claims take meanwhile, so a chat can't take the report while `body` runs.
+    /// Throws when the lock can't be taken, or what `body` throws.
+    static func unlessTaken(_ report: URL, _ body: () throws -> Void) throws {
+        try withClaimLock(report) {
+            if let claim = activeClaim(of: report), claim.handingOverIn != getpid() { return }
+            try body()
         }
-        return .claimed
+    }
+
+    /// Lets a report go again, for a chat that takes it later.
+    static func release(_ report: InboxReport) throws {
+        try FileManager.default.removeItem(at: report.folder.appending(path: claimFile))
+    }
+
+    /// Runs `body` while this process alone decides who takes the report.
+    ///
+    /// The lock is released when the descriptor closes.
+    private static func withClaimLock<T>(_ report: URL, _ body: () throws -> T) throws -> T {
+        let lock = open(report.appending(path: claimLockFile).path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        guard lock >= 0 else { throw lastPOSIXError() }
+        defer { close(lock) }
+        guard flock(lock, LOCK_EX) == 0 else { throw lastPOSIXError() }
+        return try body()
+    }
+
+    /// The error `errno` names.
+    private static func lastPOSIXError() -> POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
 
     /// Notes that the chat has a report this process claimed, so the claim stands for good.
