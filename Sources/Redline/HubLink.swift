@@ -31,7 +31,9 @@ enum HubLink {
         var acceptsUploads: Bool { uploads ?? true }
     }
 
+    /// Step 1: the reports the phone offers the hub, oldest first.
     struct Offer: Codable, Equatable, Sendable {
+        /// A report the Mac hasn't confirmed, named by its folder.
         struct Report: Codable, Equatable, Sendable {
             var id: String
             var finishedAt: Date
@@ -43,6 +45,7 @@ enum HubLink {
         var reports: [Report]
     }
 
+    /// Step 2: which offered reports the hub wants, and which it already has.
     struct Answer: Codable, Equatable, Sendable {
         /// Reports to send now.
         var want: [String]
@@ -52,12 +55,14 @@ enum HubLink {
         var refused: String?
     }
 
+    /// Step 3: one wanted report's files.
     struct Upload: Codable, Equatable, Sendable {
         var id: String
         /// File name to contents. Encoded as base64 in the line.
         var files: [String: Data]
     }
 
+    /// Step 4: the reports the hub now has.
     struct Reply: Codable, Equatable, Sendable {
         var delivered: [String]
     }
@@ -85,6 +90,7 @@ enum HubLink {
         var lastActive: Date
     }
 
+    /// The hub's answer to a chats request.
     struct ChatList: Codable, Equatable, Sendable {
         /// The agents on the Mac reports can go to, in the order to show them.
         var agents: [String]

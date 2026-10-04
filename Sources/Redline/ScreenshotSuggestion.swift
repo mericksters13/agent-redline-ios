@@ -9,6 +9,7 @@ enum ScreenshotSuggestion {
     /// A screenshot taken this close to one the app captured itself is that same screenshot.
     static let sameMoment: TimeInterval = 5
 
+    /// A screenshot in Photos: its identifier and when it was taken.
     struct Candidate: Equatable, Sendable {
         var id: String
         var createdAt: Date

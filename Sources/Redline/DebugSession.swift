@@ -10,6 +10,7 @@ import UIKit
 final class DebugSession {
     static let shared = DebugSession()
 
+    /// What Redline is doing, which decides what the overlay shows and whether it takes touches.
     enum Mode {
         case idle, picking, noting, tray, viewer, attaching
         /// The reports already sent, opened with a long press on the floating button.
@@ -73,6 +74,7 @@ final class DebugSession {
         var screen: ScreenInfo?
     }
 
+    /// A note already made on the screen being picked on, where its element is now.
     struct Marker: Identifiable, Equatable {
         var id: UUID
         var number: Int
@@ -117,6 +119,23 @@ final class DebugSession {
     /// A short reminder under the island after such a tap.
     private(set) var hint: String?
 
+    /// Where reports from this build go, as the user picked. Kept per worktree the app was built
+    /// from, so a build from another worktree starts with that worktree's chat.
+    /// Loaded when the overlay is installed, once the source file that keys it is known.
+    private(set) var destination: Report.Destination?
+    private(set) var chatList: ChatListState = .loading
+    /// The agent whose chats the picker shows.
+    private(set) var pickerAgent: String?
+    /// What's selected in the picker: a chat, or a new chat when `chat` is nil.
+    private(set) var pickerChoice: Report.Destination?
+    /// The picker opened from Send: confirming it sends the report.
+    private(set) var sendsAfterChoosingDestination = false
+    private var modeBeforeDestinations: Mode = .picking
+
+    /// The hub's address, read from disk at set points (install, activation, opening the notes,
+    /// Send and the picker) rather than on every redraw. The Mac writes it once, at setup.
+    private(set) var hubAddress: HubLink.Address?
+
     var safeAreaTop: CGFloat { safeAreaInsets.top }
 
     var selected: ElementSnapshot? {
@@ -130,6 +149,9 @@ final class DebugSession {
 
     /// The number the note being written will get.
     var nextNumber: Int { annotations.count + 1 }
+
+    /// The hub has set this app up, so there are chats to pick from.
+    var canPickDestination: Bool { hubAddress != nil }
 
     @ObservationIgnored private var window: OverlayWindow?
     /// The project file that attached the kit. It names the worktree the app was built from,
@@ -491,6 +513,26 @@ final class DebugSession {
         setMode(annotations.isEmpty ? trayReturnMode : .tray)
     }
 
+    func updateNote(_ id: UUID, to text: String) {
+        let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return }
+        annotations[index].note = note
+        persistAnnotations()
+    }
+
+    /// One of the item's images at full size: its screen's picture with every note on it
+    /// outlined and this one standing out, or an attached image.
+    func fullImage(for annotation: Annotation, at index: Int) -> UIImage? {
+        if let captureID = annotation.captureID { return screenPicture(for: annotation, on: captureID) }
+        guard annotation.screenshots.indices.contains(index) else { return nil }
+        let key = "\(annotation.id.uuidString)-\(index)" as NSString
+        if let cached = fullImages.object(forKey: key) { return cached }
+        let url = store.draftDirectory.appending(path: annotation.screenshots[index])
+        guard let image = UIImage(contentsOfFile: url.path(percentEncoded: false)) else { return nil }
+        fullImages.setObject(image, forKey: key)
+        return image
+    }
+
     // MARK: - Sent reports
 
     func openSentReports() {
@@ -524,27 +566,7 @@ final class DebugSession {
         store.lastDelivery()
     }
 
-    func updateNote(_ id: UUID, to text: String) {
-        let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return }
-        annotations[index].note = note
-        persistAnnotations()
-    }
-
-    /// One of the item's images at full size: its screen's picture with every note on it
-    /// outlined and this one standing out, or an attached image.
-    func fullImage(for annotation: Annotation, at index: Int) -> UIImage? {
-        if let captureID = annotation.captureID { return screenPicture(for: annotation, on: captureID) }
-        guard annotation.screenshots.indices.contains(index) else { return nil }
-        let key = "\(annotation.id.uuidString)-\(index)" as NSString
-        if let cached = fullImages.object(forKey: key) { return cached }
-        let url = store.draftDirectory.appending(path: annotation.screenshots[index])
-        guard let image = UIImage(contentsOfFile: url.path(percentEncoded: false)) else { return nil }
-        fullImages.setObject(image, forKey: key)
-        return image
-    }
-
-    // MARK: - Tray and send
+    // MARK: - Tray
 
     func toggleTray() {
         switch mode {
@@ -736,26 +758,6 @@ final class DebugSession {
 
     // MARK: - Where reports go
 
-    /// Where reports from this build go, as the user picked. Kept per worktree the app was built
-    /// from, so a build from another worktree starts with that worktree's chat.
-    /// Loaded when the overlay is installed, once the source file that keys it is known.
-    private(set) var destination: Report.Destination?
-    private(set) var chatList: ChatListState = .loading
-    /// The agent whose chats the picker shows.
-    var pickerAgent: String?
-    /// What's selected in the picker: a chat, or a new chat when `chat` is nil.
-    var pickerChoice: Report.Destination?
-    /// The picker opened from Send: confirming it sends the report.
-    private(set) var sendsAfterChoosingDestination = false
-    private var modeBeforeDestinations: Mode = .picking
-
-    /// The hub's address, read from disk at set points (install, activation, opening the notes,
-    /// Send and the picker) rather than on every redraw. The Mac writes it once, at setup.
-    private(set) var hubAddress: HubLink.Address?
-
-    /// The hub has set this app up, so there are chats to pick from.
-    var canPickDestination: Bool { hubAddress != nil }
-
     private func refreshHubAddress() {
         let address = store.hubAddress()
         if address != hubAddress { hubAddress = address }
@@ -859,6 +861,8 @@ final class DebugSession {
         sendsAfterChoosingDestination = false
         setMode(modeBeforeDestinations)
     }
+
+    // MARK: - Send
 
     /// Sends the draft. The first time, the user picks where reports go; after that they go
     /// there at once.
@@ -1086,6 +1090,8 @@ final class DebugSession {
         return Self.crop(image, around: frame, screenWidth: screenSize.width)
     }
 
+    // MARK: - Thumbnails and previews
+
     /// The suggestion card's width in pixels: 96 points at 3x.
     private static let cardPreviewWidth: CGFloat = 288
     /// The note box's image slot's height in pixels: 56 points at 3x.
@@ -1139,7 +1145,7 @@ final class DebugSession {
     }
 
     /// The top of an attached image, square, where a screen's title usually is.
-    static func topSquare(of image: UIImage) -> UIImage? {
+    private static func topSquare(of image: UIImage) -> UIImage? {
         guard let cgImage = image.cgImage else { return nil }
         let side = min(cgImage.width, cgImage.height)
         let crop = CGRect(x: (cgImage.width - side) / 2, y: 0, width: side, height: side)
@@ -1165,6 +1171,8 @@ final class DebugSession {
         thumbnails[annotation.id] = thumbnail
         return thumbnail
     }
+
+    // MARK: - Note card placement
 
     /// The keyboard's top edge for placing the note card. Until the keyboard reports its
     /// frame, the last keyboard height stands in for it, so the card opens where it will
@@ -1252,7 +1260,7 @@ final class DebugSession {
         }
     }
 
-    // MARK: - Private
+    // MARK: - Feedback
 
     /// A tap in pick mode that found nothing: the app didn't respond because Redline has
     /// the screen. Says so, rather than leaving the tester to think the app is broken.
@@ -1269,6 +1277,18 @@ final class DebugSession {
         }
     }
 
+    private func show(toast message: String) {
+        toast = message
+        toastTimer?.cancel()
+        toastTimer = Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            toast = nil
+        }
+    }
+
+    // MARK: - Display
+
     /// The display's corner radius, read through a private key; square corners when it
     /// can't be read. Debug builds only, like the rest of the kit.
     private static func displayCornerRadius(of screen: UIScreen) -> CGFloat {
@@ -1276,6 +1296,8 @@ final class DebugSession {
         guard screen.responds(to: NSSelectorFromString(key)) else { return 0 }
         return (screen.value(forKey: key) as? CGFloat) ?? 0
     }
+
+    // MARK: - Mode
 
     /// Keyboard focus moves to Redline when it leaves idle and back to the app when
     /// it returns to idle, never in between: the first tap after each handoff gets lost,
@@ -1293,6 +1315,8 @@ final class DebugSession {
             appKeyWindow = nil
         }
     }
+
+    // MARK: - Noting
 
     private func beginNoting() {
         awaitingKeyboard = keyboardTop == .infinity
@@ -1313,6 +1337,16 @@ final class DebugSession {
         awaitingKeyboard = false
         setMode(next)
     }
+
+    private func beginAttachmentNote(_ attachment: PendingAttachment, returningTo next: Mode = .picking) {
+        pending = attachment
+        levels = []
+        noteText = ""
+        notingReturnMode = next
+        beginNoting()
+    }
+
+    // MARK: - Saving the draft
 
     /// Encodes and writes images off the main thread, so closing the note box never waits
     /// on a large PNG or JPEG. The list and viewer read them back only after this finishes.
@@ -1341,13 +1375,30 @@ final class DebugSession {
         }
     }
 
-    private func beginAttachmentNote(_ attachment: PendingAttachment, returningTo next: Mode = .picking) {
-        pending = attachment
-        levels = []
-        noteText = ""
-        notingReturnMode = next
-        beginNoting()
+    /// Saves the draft's notes and its screens. Saving a note or deleting one can change both.
+    private func persist() {
+        persistAnnotations()
+        persistScreens()
     }
+
+    private func persistAnnotations() {
+        do {
+            try store.saveDraft(annotations)
+        } catch {
+            logger.error("Couldn't save the draft's notes: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// The screens hold every capture's elements, so they're written only when they change.
+    private func persistScreens() {
+        do {
+            try store.saveScreens(screens)
+        } catch {
+            logger.error("Couldn't save the draft's screens: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    // MARK: - Reading the screen
 
     /// The app's screen as it is now, without Redline, and the screen's name.
     private func captureScreen() -> (image: UIImage, screen: ScreenInfo) {
@@ -1372,29 +1423,6 @@ final class DebugSession {
         refreshMarkers()
     }
 
-    /// Saves the draft's notes and its screens. Saving a note or deleting one can change both.
-    private func persist() {
-        persistAnnotations()
-        persistScreens()
-    }
-
-    private func persistAnnotations() {
-        do {
-            try store.saveDraft(annotations)
-        } catch {
-            logger.error("Couldn't save the draft's notes: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// The screens hold every capture's elements, so they're written only when they change.
-    private func persistScreens() {
-        do {
-            try store.saveScreens(screens)
-        } catch {
-            logger.error("Couldn't save the draft's screens: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
     private func refreshMarkers() {
         let found = annotations.enumerated().compactMap { index, annotation -> Marker? in
             guard let element = annotation.element, annotation.screen == screen,
@@ -1405,20 +1433,12 @@ final class DebugSession {
         if found != markers { markers = found }
     }
 
-    private func show(toast message: String) {
-        toast = message
-        toastTimer?.cancel()
-        toastTimer = Task {
-            try? await Task.sleep(for: .seconds(2.5))
-            guard !Task.isCancelled else { return }
-            toast = nil
-        }
-    }
-
     /// The app's own visible windows, bottom to top, without Redline's.
     private func appWindows() -> [UIWindow] {
         AppWindows.all(in: window?.windowScene)
     }
+
+    // MARK: - Keyboard
 
     private func observeKeyboard() {
         let center = NotificationCenter.default
@@ -1449,31 +1469,6 @@ final class DebugSession {
                 keyboardTop = .infinity
             }
         }
-    }
-}
-
-extension Report.App {
-    /// This app, built from the project that holds `sourceFile`.
-    static func current(sourceFile: String?) -> Report.App {
-        let info = Bundle.main.infoDictionary ?? [:]
-        return Report.App(
-            bundleIdentifier: Bundle.main.bundleIdentifier,
-            name: (info["CFBundleDisplayName"] ?? info["CFBundleName"]) as? String,
-            version: info["CFBundleShortVersionString"] as? String,
-            build: info["CFBundleVersion"] as? String,
-            sourceFile: sourceFile
-        )
-    }
-}
-
-extension Report.Device {
-    @MainActor static var current: Report.Device {
-        var system = utsname()
-        uname(&system)
-        let model = withUnsafeBytes(of: &system.machine) { bytes in
-            String(decoding: bytes.prefix(while: { $0 != 0 }), as: UTF8.self)
-        }
-        return Report.Device(model: model, systemName: UIDevice.current.systemName, systemVersion: UIDevice.current.systemVersion)
     }
 }
 #endif

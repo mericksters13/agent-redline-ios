@@ -5,7 +5,7 @@ import UIKit
 /// The saved notes, full screen: each note's screenshot with its note underneath.
 /// Every image is a page, so a note with several attached images pages through them.
 /// Swipe or use the strip to move between notes. A tap on the screenshot hides or
-/// shows the details, and zooming in hides them. Modeled on Tiny Tally's photo viewer.
+/// shows the details, and zooming in hides them, as in the Photos viewer.
 struct NoteViewer: View {
     let session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -336,8 +336,8 @@ struct NoteViewer: View {
 
 /// A screenshot that can be pinched, double-tapped and dragged, built on the system
 /// scroll view so zooming, bouncing and handing a sideways swipe to the pager behave
-/// the way Photos does. Modeled on Tiny Tally's zoomable photo.
-struct ZoomableScreenshot: UIViewRepresentable {
+/// the way Photos does.
+private struct ZoomableScreenshot: UIViewRepresentable {
     let image: UIImage
     /// Reports whether the screenshot is zoomed in, so the details can step out of the way.
     let zoomChanged: (Bool) -> Void

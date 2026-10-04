@@ -33,6 +33,7 @@ struct ElementSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+/// Finds the elements under a finger, and a saved note's element on a fresh read of the screen.
 enum ElementSelection {
     /// How far from an element a touch can land and still pick it, in points.
     static let nearbyDistance: CGFloat = 44

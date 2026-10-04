@@ -2,11 +2,12 @@
 import Photos
 import PhotosUI
 import SwiftUI
+import UIKit
 
-/// The photo panel. It grows out of the attachment button into a grid of recent photos.
-/// Modeled on the photo picker in Trail's Ask chat, in Redline's black and white.
+/// The photo panel. It grows out of the attachment button into a grid of recent photos,
+/// in Redline's black and white.
 ///
-/// Like Trail's picker, Photos always opens this grid. Before the app has Photos access
+/// Photos always opens this grid. Before the app has Photos access
 /// the grid offers to show recent photos, which asks for access, or to open the system
 /// photo picker, which runs outside the app and needs no permission.
 struct AttachmentPicker: View {
@@ -20,13 +21,13 @@ struct AttachmentPicker: View {
     @State private var showsSystemPicker = false
     @State private var pickerItems: [PhotosPickerItem] = []
 
-    static let selectionLimit = 10
-    private let cornerRadius: CGFloat = 48
-    private let columns = 3
-    private let gridSpacing: CGFloat = 6
-    private let gridInset: CGFloat = 12
-    private let headerHeight: CGFloat = 60
-    private let footerHeight: CGFloat = 78
+    private static let selectionLimit = 10
+    private static let cornerRadius: CGFloat = 48
+    private static let columns = 3
+    private static let gridSpacing: CGFloat = 6
+    private static let gridInset: CGFloat = 12
+    private static let headerHeight: CGFloat = 60
+    private static let footerHeight: CGFloat = 78
 
     private var motion: Animation {
         reduceMotion ? .linear(duration: 0.12) : .interpolatingSpring(mass: 1, stiffness: 440, damping: 42, initialVelocity: 0)
@@ -69,8 +70,8 @@ struct AttachmentPicker: View {
             photosPage
                 .frame(width: frame.width, height: frame.height)
             .background(Mono.surface)
-            .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+            .clipShape(.rect(cornerRadius: Self.cornerRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
             .shadow(color: .black.opacity(0.35), radius: 24, y: 10)
             // Starts the size of the button and grows from the button's corner.
             .scaleEffect(
@@ -106,11 +107,11 @@ struct AttachmentPicker: View {
 
     /// The height the photos page needs: the header, the rows of tiles and the footer.
     private func photosHeight(width: CGFloat) -> CGFloat {
-        guard let items = library?.items, !items.isEmpty else { return headerHeight + 170 + footerHeight }
-        let tileWidth = (width - 2 * gridInset - CGFloat(columns - 1) * gridSpacing) / CGFloat(columns)
-        let rows = CGFloat((items.count + columns - 1) / columns)
-        let grid = rows * tileWidth / tileAspect + (rows - 1) * gridSpacing
-        return headerHeight + grid + footerHeight
+        guard let items = library?.items, !items.isEmpty else { return Self.headerHeight + 170 + Self.footerHeight }
+        let tileWidth = (width - 2 * Self.gridInset - CGFloat(Self.columns - 1) * Self.gridSpacing) / CGFloat(Self.columns)
+        let rows = CGFloat((items.count + Self.columns - 1) / Self.columns)
+        let grid = rows * tileWidth / tileAspect + (rows - 1) * Self.gridSpacing
+        return Self.headerHeight + grid + Self.footerHeight
     }
 
     // MARK: - Photos
@@ -122,20 +123,20 @@ struct AttachmentPicker: View {
                 .foregroundStyle(Mono.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 28)
-                .frame(height: headerHeight)
+                .frame(height: Self.headerHeight)
                 .accessibilityAddTraits(.isHeader)
 
             if let library, !library.items.isEmpty {
                 ScrollView {
                     LazyVGrid(
-                        columns: Array(repeating: GridItem(.flexible(), spacing: gridSpacing), count: columns),
-                        spacing: gridSpacing
+                        columns: Array(repeating: GridItem(.flexible(), spacing: Self.gridSpacing), count: Self.columns),
+                        spacing: Self.gridSpacing
                     ) {
                         ForEach(library.items) { item in
                             tile(item)
                         }
                     }
-                    .padding(.horizontal, gridInset)
+                    .padding(.horizontal, Self.gridInset)
                 }
                 .scrollIndicators(.hidden)
             } else {
@@ -167,7 +168,7 @@ struct AttachmentPicker: View {
                 }
             }
             .padding(.horizontal, 24)
-            .frame(height: footerHeight)
+            .frame(height: Self.footerHeight)
         }
     }
 
@@ -315,7 +316,7 @@ struct AttachmentPicker: View {
 /// The newest photos and screenshots in Photos, for the grid. Empty without Photos access.
 @MainActor
 @Observable
-final class RecentPhotos {
+private final class RecentPhotos {
     struct Item: Identifiable, Sendable {
         let id: String
         let createdAt: Date
@@ -377,7 +378,7 @@ final class RecentPhotos {
     func images(for ids: [String]) async -> [UIImage] {
         if usesSamples { return ids.compactMap { UIImage(contentsOfFile: $0) } }
         let chosen = ids.compactMap { assets[$0] }
-        // At most `AttachmentPicker.selectionLimit` photos, so no limit on how many load at once.
+        // At most the picker's selection limit of 10, so no limit on how many load at once.
         return await withTaskGroup(of: (index: Int, image: UIImage?).self) { group in
             for (index, asset) in chosen.enumerated() {
                 group.addTask { (index, await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels)) }

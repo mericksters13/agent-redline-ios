@@ -1,20 +1,10 @@
 #if REDLINE && canImport(UIKit)
 import SwiftUI
-
-/// Redline's colors: black surfaces and white type, like the Dynamic Island
-/// and other system overlays. The same on top of any app, light or dark.
-enum Mono {
-    static let surface = Color.black
-    static let text = Color.white
-    static let secondary = Color.white.opacity(0.6)
-    /// Fields and secondary buttons on a black surface.
-    static let fill = Color.white.opacity(0.12)
-    static let hairline = Color.white.opacity(0.16)
-}
+import UIKit
 
 /// The colors of marking the app itself, the only color Redline draws over the app.
 /// Red is the usual color for markup and matches the outlines in sent screenshots.
-enum Markup {
+private enum Markup {
     /// What is marked: the element under the finger and notes already made.
     static let red = Color(uiColor: .systemRed)
     /// The steady frame around the screen in annotate mode: lighter, since it's ambient.
@@ -36,6 +26,9 @@ struct OverlayView: View {
     @State private var listContentHeight: CGFloat = 0
     /// The finger on the floating button, from touch down to lift.
     @State private var press: ButtonPress?
+
+    /// The note card's usual height, used until it has been measured.
+    private static let estimatedCardHeight: CGFloat = 190
 
     private var width: CGFloat { session.screenSize.width }
     private var panelWidth: CGFloat { min(width - 24, 420) }
@@ -348,7 +341,7 @@ struct OverlayView: View {
     private var noteCard: some View {
         let pending = session.pending
         // Worked out once per pass: where the card goes, and so whether it hides the element.
-        let height = cardHeight == 0 ? 190 : cardHeight
+        let height = cardHeight == 0 ? Self.estimatedCardHeight : cardHeight
         let top = session.noteCardTop(height: height, reservedHeight: reservedCardHeight)
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
@@ -488,7 +481,7 @@ struct OverlayView: View {
     /// The height the card can reach while typing: three more lines than it opened with,
     /// the text field's limit.
     private var reservedCardHeight: CGFloat {
-        let opening = openingCardHeight == 0 ? 190 : openingCardHeight
+        let opening = openingCardHeight == 0 ? Self.estimatedCardHeight : openingCardHeight
         return opening + 3 * UIFont.preferredFont(forTextStyle: .body).lineHeight
     }
 
@@ -797,7 +790,7 @@ struct OverlayView: View {
 
 /// A capture shown the way iOS shows a screenshot: a white flash, then the picture of the
 /// screen shrinks from full size and lands in the note box's first image slot.
-struct CaptureFlight: View {
+private struct CaptureFlight: View {
     let image: UIImage
     let screenSize: CGSize
     /// Read here rather than by the overlay, so only this view follows the landing slot.
@@ -812,13 +805,13 @@ struct CaptureFlight: View {
     @State private var isLanding = false
 
     /// Close to the curve of an iPhone's screen corners.
-    private let screenCornerRadius: CGFloat = 55
+    private static let screenCornerRadius: CGFloat = 55
 
     var body: some View {
         let full = CGRect(origin: .zero, size: screenSize)
         let target = slot.isEmpty ? CGRect(x: 28, y: screenSize.height * 0.5, width: 34, height: 56) : slot
         let frame = isLanding ? target : full
-        let radius = isLanding ? 8 : screenCornerRadius
+        let radius = isLanding ? 8 : Self.screenCornerRadius
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         ZStack(alignment: .topLeading) {
             Image(uiImage: image)
@@ -854,7 +847,7 @@ struct CaptureFlight: View {
 
 /// A touch on the floating button: a tap opens pick mode, a press held still opens the
 /// sent reports, and moving it drags the button.
-struct ButtonPress {
+private struct ButtonPress {
     static let holdDuration = 0.45
     static let dragDistance: CGFloat = 6
 
@@ -867,7 +860,7 @@ struct ButtonPress {
 }
 
 /// A quick side-to-side shake, played each time `phase` steps up by one.
-struct Shake: GeometryEffect {
+private struct Shake: GeometryEffect {
     var phase: CGFloat
     var animatableData: CGFloat {
         get { phase }
@@ -876,21 +869,6 @@ struct Shake: GeometryEffect {
 
     func effectValue(size: CGSize) -> ProjectionTransform {
         ProjectionTransform(CGAffineTransform(translationX: 7 * sin(phase * .pi * 6), y: 0))
-    }
-}
-
-/// A white number in a circle: a note's place in the list.
-struct NumberBadge: View {
-    let number: Int
-    let size: CGFloat
-
-    var body: some View {
-        Text("\(number)")
-            .font(.caption.weight(.bold).monospacedDigit())
-            .foregroundStyle(Color.black)
-            .frame(minWidth: size, minHeight: size)
-            .background(Color.white, in: Circle())
-            .overlay(Circle().strokeBorder(Color.black, lineWidth: 1.5))
     }
 }
 #endif

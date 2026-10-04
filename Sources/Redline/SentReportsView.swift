@@ -175,7 +175,6 @@ private struct ReportDetail: View {
         }
     }
 
-    /// What was reported from where: "3 notes, 1 screen · Tiny Tally 1.0.9 (41)".
     /// Whether the Mac has it, and if not, why, from the last attempt to send.
     private var delivery: String {
         guard !sent.delivered else { return "On the Mac" }
@@ -190,6 +189,7 @@ private struct ReportDetail: View {
         }
     }
 
+    /// What was reported from where, such as "3 notes, 1 screen · Example 1.0 (1)".
     private var about: String {
         let app = [report.app.name ?? report.app.bundleIdentifier, report.app.version, report.app.build.map { "(\($0))" }]
             .compactMap { $0 }.joined(separator: " ")
@@ -435,9 +435,9 @@ private struct ReportPicture: View {
     }
 }
 
-private extension SentReport {
+extension SentReport {
     /// The picture shown in the list: the first screen as it was last, or the first attachment.
-    var cover: URL? {
+    fileprivate var cover: URL? {
         let picture = report.screens.first.flatMap { screen in screen.images.first { !$0.earlierState } ?? screen.images.first }
         let file = picture?.file ?? report.items.lazy.flatMap(\.attachments).first
         return file.map { folder.appending(path: $0) }
