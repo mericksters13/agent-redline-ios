@@ -211,9 +211,13 @@ struct HubTests {
         let home = try install("home/Applications", builtAt: Date.now.addingTimeInterval(-86_400))
         let system = try install("Applications", builtAt: .now)
         let trashed = try install(".Trash", builtAt: Date.now.addingTimeInterval(60))
+        let trashedOnAnotherVolume = try install(
+            "Volumes/External/.Trashes/501",
+            builtAt: Date.now.addingTimeInterval(120)
+        )
         let missing = paths.root.appending(path: "Elsewhere/Redline.app", directoryHint: .isDirectory)
         // Installed in ~/Applications first, then in /Applications: the later install opens.
-        #expect(HubProcess.newestApp(among: [home, system, trashed, missing]) == system)
+        #expect(HubProcess.newestApp(among: [home, system, trashed, trashedOnAnotherVolume, missing]) == system)
         #expect(HubProcess.newestApp(among: [home, missing]) == home)
         #expect(HubProcess.newestApp(among: [missing]) == nil)
     }
