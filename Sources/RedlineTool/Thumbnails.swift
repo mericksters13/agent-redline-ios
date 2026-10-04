@@ -16,12 +16,12 @@ enum Thumbnails {
     /// The picture at `url`, no more than `maxPixels` on its longer side. Runs off the main
     /// actor. Add @concurrent when the tools version reaches 6.2.
     static func load(_ url: URL, maxPixels: Int) async -> NSImage? {
-        let key = "\(maxPixels):\(url.path)" as NSString
-        if let image = cache.object(forKey: key) { return image }
+        let key = "\(maxPixels):\(url.path)"
+        if let image = cache.object(forKey: key as NSString) { return image }
         return await withCheckedContinuation { continuation in
             queue.async {
                 let image = thumbnail(url, maxPixels: maxPixels).map { NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)) }
-                if let image { cache.setObject(image, forKey: key) }
+                if let image { cache.setObject(image, forKey: key as NSString) }
                 continuation.resume(returning: image)
             }
         }

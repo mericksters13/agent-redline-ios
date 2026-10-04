@@ -22,7 +22,7 @@ struct ReportViewer: View {
         chat = contents.chat
     }
 
-    private static let loader = DispatchQueue(label: "Redline.viewer.loader", qos: .userInitiated)
+    private nonisolated static let loader = DispatchQueue(label: "Redline.viewer.loader", qos: .userInitiated)
 
     /// Reads the report's pictures and chat. Runs off the main actor. Add @concurrent when the
     /// tools version reaches 6.2.
