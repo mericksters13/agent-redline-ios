@@ -465,104 +465,108 @@ final class Handoff: @unchecked Sendable {
             pickSettled(pick)
             return
         }
-
-        // A new chat works in a worktree of its own; a continued one is already in its own.
-        // Without its own worktree, a new chat would work in the user's checkout: it doesn't start.
-        let workFolder: String
-        let madeWorktree = resuming == nil
-        if resuming == nil {
-            guard let made = NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: agent) else {
-                pickSettled(pick)
-                Self.leaveWaiting(report, agent: agent, chat: nil, because: "Couldn't make a worktree")
-                InboxQueue.release(report)
-                hub.log("Couldn't make a worktree from the main branch of \(folder) for report \(source.reportID); it waits in the inbox")
-                Self.notify(title: "Report from \(source.deviceName)",
-                            message: "Couldn't make a worktree for a new \(agent.name) chat from the main branch of \(Self.folderName(folder)). The report waits in the inbox.")
-                return
+        // Off the handoff queue: making the worktree fetches the main branch first, which can
+        // wait on a slow or unreachable remote, and other reports go on meanwhile.
+        // `pickSettled` goes back to the queue.
+        DispatchQueue.global(qos: .utility).async { [self] in
+            // A new chat works in a worktree of its own; a continued one is already in its own.
+            // Without its own worktree, a new chat would work in the user's checkout: it doesn't start.
+            let workFolder: String
+            let madeWorktree = resuming == nil
+            if resuming == nil {
+                guard let made = NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: agent) else {
+                    pickSettled(pick)
+                    Self.leaveWaiting(report, agent: agent, chat: nil, because: "Couldn't make a worktree")
+                    InboxQueue.release(report)
+                    hub.log("Couldn't make a worktree from the main branch of \(folder) for report \(source.reportID); it waits in the inbox")
+                    Self.notify(title: "Report from \(source.deviceName)",
+                                message: "Couldn't make a worktree for a new \(agent.name) chat from the main branch of \(Self.folderName(folder)). The report waits in the inbox.")
+                    return
+                }
+                workFolder = made
+                hub.log("Made worktree \(made) for report \(source.reportID)")
+            } else {
+                workFolder = folder
             }
-            workFolder = made
-            hub.log("Made worktree \(made) for report \(source.reportID)")
-        } else {
-            workFolder = folder
-        }
-        let pictures = ReportContent.pictures(in: report.folder)
-        var reportPrompt = ReportContent.text(for: report)
-        // A Claude Code chat reads the pictures from a copy in its worktree, without asking.
-        if agent == .claude, madeWorktree, let copy = NewWorktree.copyReport(report.folder, into: workFolder) {
-            reportPrompt = reportPrompt.replacingOccurrences(of: report.folder.path, with: copy)
-        }
-        // A Claude Code chat is only opened by the claude command, with a line that takes
-        // seconds; it moves into the desktop app at once and gets the report there, where the
-        // user watches it work. The app doesn't move a chat that's still running.
-        let reportText = reportPrompt
-        let prompt = agent == .claude ? "A UI report from the user's device comes in the next message. Reply with just: Ready." : reportPrompt
-        let output = report.folder.appending(path: "new-chat-output.jsonl")
-        FileManager.default.createFile(atPath: output.path, contents: nil)
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = AgentCommand.arguments(agent, folder: workFolder, prompt: prompt, pictures: pictures, resuming: resuming)
-        process.currentDirectoryURL = URL(fileURLWithPath: workFolder)
-        process.environment = ProcessInfo.processInfo.environment.merging([AgentHooks.startedByHub: "1"]) { $1 }
-        process.standardInput = FileHandle.nullDevice
-        if let handle = try? FileHandle(forWritingTo: output) {
-            process.standardOutput = handle
-            process.standardError = handle
-        }
-        let paths = hub.paths
-        let place = Self.folderName(workFolder)
-        process.terminationHandler = { [hub, self] finished in
-            let text = (try? String(contentsOf: output, encoding: .utf8)) ?? ""
-            let started = AgentCommand.startedChat(agent, in: text)
-            guard finished.terminationStatus == 0, let started, !started.failed else {
-                // Free the report for a chat that opens later, and take back the unused worktree.
-                let reason = AgentCommand.failure(in: text)
-                Handoff.leaveWaiting(report, agent: agent, chat: resuming, because: "Couldn't start the chat: \(reason)")
+            let pictures = ReportContent.pictures(in: report.folder)
+            var reportPrompt = ReportContent.text(for: report)
+            // A Claude Code chat reads the pictures from a copy in its worktree, without asking.
+            if agent == .claude, madeWorktree, let copy = NewWorktree.copyReport(report.folder, into: workFolder) {
+                reportPrompt = reportPrompt.replacingOccurrences(of: report.folder.path, with: copy)
+            }
+            // A Claude Code chat is only opened by the claude command, with a line that takes
+            // seconds; it moves into the desktop app at once and gets the report there, where the
+            // user watches it work. The app doesn't move a chat that's still running.
+            let reportText = reportPrompt
+            let prompt = agent == .claude ? "A UI report from the user's device comes in the next message. Reply with just: Ready." : reportPrompt
+            let output = report.folder.appending(path: "new-chat-output.jsonl")
+            FileManager.default.createFile(atPath: output.path, contents: nil)
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = AgentCommand.arguments(agent, folder: workFolder, prompt: prompt, pictures: pictures, resuming: resuming)
+            process.currentDirectoryURL = URL(fileURLWithPath: workFolder)
+            process.environment = ProcessInfo.processInfo.environment.merging([AgentHooks.startedByHub: "1"]) { $1 }
+            process.standardInput = FileHandle.nullDevice
+            if let handle = try? FileHandle(forWritingTo: output) {
+                process.standardOutput = handle
+                process.standardError = handle
+            }
+            let paths = hub.paths
+            let place = Self.folderName(workFolder)
+            process.terminationHandler = { [hub, self] finished in
+                let text = (try? String(contentsOf: output, encoding: .utf8)) ?? ""
+                let started = AgentCommand.startedChat(agent, in: text)
+                guard finished.terminationStatus == 0, let started, !started.failed else {
+                    // Free the report for a chat that opens later, and take back the unused worktree.
+                    let reason = AgentCommand.failure(in: text)
+                    Handoff.leaveWaiting(report, agent: agent, chat: resuming, because: "Couldn't start the chat: \(reason)")
+                    InboxQueue.release(report)
+                    if madeWorktree { NewWorktree.remove(workFolder) }
+                    self.pickSettled(pick)
+                    hub.log("The \(agent.name) chat for report \(source.reportID) failed (\(finished.terminationStatus)): \(reason)")
+                    Handoff.notify(title: "Couldn't start a \(agent.name) chat", message: "\(reason). The report waits in the inbox.")
+                    return
+                }
+                // Later reports with the same pick go to this chat.
+                if let pick { StartedChats.remember(StartedChat(chat: started.chat, folder: workFolder, at: Date()), for: pick, paths: paths) }
+                if let answer = started.answer {
+                    try? answer.write(to: report.folder.appending(path: "answer.md"), atomically: true, encoding: .utf8)
+                }
+                // A Claude Code chat has the report once it's sent into the open chat.
+                if agent != .claude {
+                    InboxQueue.handedOver(report)
+                    self.pickSettled(pick)
+                }
+                if agent == .codex {
+                    // Shown in the Codex app, or in a terminal without it.
+                    if AgentCommand.hasCodexApp {
+                        Handoff.open("codex://threads/\(started.chat)")
+                    } else {
+                        Handoff.openTerminal(in: workFolder, running: executable.path, arguments: ["resume"], with: started.chat)
+                    }
+                    hub.log("The Codex chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
+                    ReportDelivery.save(.init(agent: .codex, chat: started.chat, title: "New chat in \(place)", kind: .newChat), in: report.folder)
+                    Handoff.notify(title: "Codex looked into a report", message: "Opened in Codex, in worktree \(place).")
+                } else if agent == .claude {
+                    // Reports waiting for this pick follow once this one is in the open chat.
+                    self.openClaude(started.chat, in: workFolder, thenSend: reportText, for: report, pick: pick)
+                } else {
+                    hub.log("The \(agent.name) chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
+                    ReportDelivery.save(.init(agent: agent, chat: started.chat, title: "New chat in \(place)", kind: .newChat), in: report.folder)
+                    Handoff.notify(title: "\(agent.name) looked into a report", message: "Its answer is in the report's folder, answer.md. Worktree \(place).")
+                }
+            }
+            do {
+                try process.run()
+                hub.log("\(resuming == nil ? "Started" : "Continued") a \(agent.name) chat in \(workFolder) for report \(source.reportID)")
+                Self.notify(title: "\(agent.name) is looking into a report", message: "From \(source.deviceName), in worktree \(place).")
+            } catch {
+                Self.leaveWaiting(report, agent: agent, chat: resuming, because: "Couldn't start the chat")
                 InboxQueue.release(report)
                 if madeWorktree { NewWorktree.remove(workFolder) }
-                self.pickSettled(pick)
-                hub.log("The \(agent.name) chat for report \(source.reportID) failed (\(finished.terminationStatus)): \(reason)")
-                Handoff.notify(title: "Couldn't start a \(agent.name) chat", message: "\(reason). The report waits in the inbox.")
-                return
+                pickSettled(pick)
+                hub.log("Couldn't start a \(agent.name) chat for report \(source.reportID): \(error.localizedDescription)")
             }
-            // Later reports with the same pick go to this chat.
-            if let pick { StartedChats.remember(StartedChat(chat: started.chat, folder: workFolder, at: Date()), for: pick, paths: paths) }
-            if let answer = started.answer {
-                try? answer.write(to: report.folder.appending(path: "answer.md"), atomically: true, encoding: .utf8)
-            }
-            // A Claude Code chat has the report once it's sent into the open chat.
-            if agent != .claude {
-                InboxQueue.handedOver(report)
-                self.pickSettled(pick)
-            }
-            if agent == .codex {
-                // Shown in the Codex app, or in a terminal without it.
-                if AgentCommand.hasCodexApp {
-                    Handoff.open("codex://threads/\(started.chat)")
-                } else {
-                    Handoff.openTerminal(in: workFolder, running: executable.path, arguments: ["resume"], with: started.chat)
-                }
-                hub.log("The Codex chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
-                ReportDelivery.save(.init(agent: .codex, chat: started.chat, title: "New chat in \(place)", kind: .newChat), in: report.folder)
-                Handoff.notify(title: "Codex looked into a report", message: "Opened in Codex, in worktree \(place).")
-            } else if agent == .claude {
-                // Reports waiting for this pick follow once this one is in the open chat.
-                self.openClaude(started.chat, in: workFolder, thenSend: reportText, for: report, pick: pick)
-            } else {
-                hub.log("The \(agent.name) chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
-                ReportDelivery.save(.init(agent: agent, chat: started.chat, title: "New chat in \(place)", kind: .newChat), in: report.folder)
-                Handoff.notify(title: "\(agent.name) looked into a report", message: "Its answer is in the report's folder, answer.md. Worktree \(place).")
-            }
-        }
-        do {
-            try process.run()
-            hub.log("\(resuming == nil ? "Started" : "Continued") a \(agent.name) chat in \(workFolder) for report \(source.reportID)")
-            Self.notify(title: "\(agent.name) is looking into a report", message: "From \(source.deviceName), in worktree \(place).")
-        } catch {
-            Self.leaveWaiting(report, agent: agent, chat: resuming, because: "Couldn't start the chat")
-            InboxQueue.release(report)
-            if madeWorktree { NewWorktree.remove(workFolder) }
-            pickSettled(pick)
-            hub.log("Couldn't start a \(agent.name) chat for report \(source.reportID): \(error.localizedDescription)")
         }
     }
 
