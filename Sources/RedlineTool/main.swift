@@ -17,9 +17,13 @@ Usage:
       Waits for the next report for the project's apps, then prints it and takes it. Run in an
       agent's background, it wakes the chat when a report arrives. With several chats waiting,
       the one used most recently gets the report.
-  redline setup | remove
-      Adds to (or removes from) Codex's and Cursor's hook settings the hooks that hand reports to
-      a chat when nothing else can. Claude Code needs none. Other hooks stay as they are.
+  redline setup [--no-input]
+      Checks that the claude command is installed, new enough and signed in, running claude update
+      and claude auth login in this terminal when needed, and adds the Codex hook that hands
+      reports to a chat when nothing else can. Claude Code needs no hooks. Other hooks stay as
+      they are. With --no-input, or with no terminal, it only prints what you need to run.
+  redline remove
+      Removes Redline's hooks from Codex, Claude Code and Cursor settings. Other hooks stay.
   redline hook <claude | codex | cursor> <start | prompt | stop | end>
       Run by the agents' hooks, with the event's JSON on standard input.
   redline hub [--app <bundle ID> ...]
@@ -153,13 +157,19 @@ case "hook":
 case "setup", "remove":
     let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
     let adding = arguments.first == "setup"
-    // Before anything else: new Claude Code chats need the claude command signed in.
-    if adding, AgentSettings.isPresent(.claude) || AgentCommand.hasClaudeApp {
-        guard ClaudeCLI.prepare() else { exit(1) }
+    let options = arguments.dropFirst()
+    guard options.isEmpty || (adding && options == ["--no-input"]) else {
+        FileHandle.standardError.write(Data(usage.utf8))
+        exit(64)
+    }
+    // First: new Claude Code chats need the claude command signed in. What's still missing is
+    // left for the user, and setup goes on.
+    if adding, AgentSettings.isPresent(.claude) || AgentCommand.hasClaudeApp,
+       ClaudeCLI.prepare(asking: options.isEmpty && isatty(STDIN_FILENO) != 0) {
         print("Claude Code: the claude command is signed in and ready to start new chats.")
     }
     var failed = false
-    for agent in Agent.allCases {
+    for agent in adding ? AgentSettings.setUp : Agent.allCases {
         guard AgentSettings.isPresent(agent) else {
             if adding { print("\(agent.name): not used on this Mac, skipped.") }
             continue

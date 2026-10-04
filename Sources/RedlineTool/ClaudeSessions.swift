@@ -95,29 +95,56 @@ enum ClaudeCLI {
         return ready
     }
 
-    /// For setup, before anything else: the claude command installed, new enough for the desktop
-    /// app, and signed in, running `claude update` and `claude auth login` in this terminal when
-    /// needed. False when it still isn't ready, with what to do printed.
-    static func prepare() -> Bool {
-        guard let claude = AgentCommand.locate(.claude) else {
-            print("The claude command isn't installed. It starts new Claude Code chats for reports. Install it, then run setup again:")
-            print("  curl -fsSL https://claude.ai/install.sh | bash")
-            return false
+    /// What the claude command still needs before it can start new chats, in the order to do it.
+    enum Need: Equatable {
+        case install, update, signIn
+    }
+
+    static func needs(installed: Bool, version: [Int], signedIn: Bool, hasClaudeApp: Bool) -> [Need] {
+        guard installed else { return [.install] }
+        var needs: [Need] = []
+        if hasClaudeApp, version.lexicographicallyPrecedes(desktopVersion) { needs.append(.update) }
+        if !signedIn { needs.append(.signIn) }
+        return needs
+    }
+
+    /// For setup: the claude command installed, new enough for the desktop app, and signed in.
+    /// When `asking`, runs `claude update` and `claude auth login` in this terminal as needed.
+    /// Prints what the user must still do. True when it is ready.
+    static func prepare(asking: Bool) -> Bool {
+        let claude = AgentCommand.locate(.claude)
+        func missing() -> [Need] {
+            guard let claude else { return needs(installed: false, version: [], signedIn: false, hasClaudeApp: AgentCommand.hasClaudeApp) }
+            return needs(installed: true, version: output(claude, ["--version"]).flatMap { version(in: $0) } ?? [],
+                         signedIn: output(claude, ["auth", "status"]) != nil, hasClaudeApp: AgentCommand.hasClaudeApp)
         }
-        let version = output(claude, ["--version"]).flatMap { version(in: $0) } ?? []
-        if AgentCommand.hasClaudeApp, version.lexicographicallyPrecedes(desktopVersion) {
-            print("Updating the claude command: opening new chats in the Claude app needs \(desktopVersion.map(String.init).joined(separator: ".")) or later.")
-            _ = interactive(claude, ["update"])
-        }
-        if output(claude, ["auth", "status"]) == nil {
-            print("Sign in the claude command first: it starts new Claude Code chats for reports, and keeps its own sign-in, separate from the Claude app's.")
-            guard interactive(claude, ["auth", "login"]), output(claude, ["auth", "status"]) != nil else {
-                print("The claude command still isn't signed in. Setup stopped; run it again after claude auth login.")
-                return false
+        var left = missing()
+        if asking, let claude, !left.isEmpty {
+            if left.contains(.update) {
+                print("Updating the claude command: opening new chats in the Claude app needs \(desktopVersion.map(String.init).joined(separator: ".")) or later.")
+                _ = interactive(claude, ["update"])
             }
+            if left.contains(.signIn) {
+                print("Sign in the claude command: it starts new Claude Code chats for reports, and keeps its own sign-in, separate from the Claude app's.")
+                _ = interactive(claude, ["auth", "login"])
+            }
+            left = missing()
         }
+        for need in left { print(instruction(need)) }
         lock.withLock { checked = nil }
-        return ready()
+        return left.isEmpty
+    }
+
+    /// What the user runs for each need.
+    static func instruction(_ need: Need) -> String {
+        switch need {
+        case .install:
+            "Claude Code: the claude command isn't installed. It starts new Claude Code chats for reports. Install it, then run setup again:\n  curl -fsSL https://claude.ai/install.sh | bash"
+        case .update:
+            "Claude Code: the claude command is too old to open new chats in the Claude app (\(desktopVersion.map(String.init).joined(separator: ".")) or later). Update it:\n  claude update"
+        case .signIn:
+            "Claude Code: the claude command isn't signed in. It starts new Claude Code chats for reports, and keeps its own sign-in, separate from the Claude app's. Sign it in:\n  claude auth login"
+        }
     }
 
     /// Runs the command in this terminal, so the user can answer it. True when it succeeds.

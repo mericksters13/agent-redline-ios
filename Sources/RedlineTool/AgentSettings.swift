@@ -4,8 +4,18 @@ import Foundation
 /// Adds this tool's hooks to each agent's user hook settings, keeping every other hook there,
 /// and takes them out again. Running it twice changes nothing.
 enum AgentSettings {
+    /// The agents setup adds hooks for. Cursor is left out until it is tested; remove still takes
+    /// out the hooks an earlier setup added for it.
+    static let setUp: [Agent] = [.claude, .codex]
+
+    /// The home folder from `HOME`, as the agents themselves find their settings, so a setup run
+    /// with another `HOME` changes the settings there.
+    static func home(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+        environment["HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) } ?? FileManager.default.homeDirectoryForCurrentUser
+    }
+
     static func file(_ agent: Agent) -> URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        let home = home()
         switch agent {
         case .claude: return home.appending(path: ".claude/settings.json")
         case .codex: return home.appending(path: ".codex/hooks.json")

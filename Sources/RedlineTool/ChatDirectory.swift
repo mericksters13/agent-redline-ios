@@ -12,7 +12,8 @@ enum ChatDirectory {
             switch agent {
             case .claude: FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.claude/sessions")
             case .codex: AgentCommand.locate(.codex) != nil
-            case .cursor: FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.cursor")
+            // Not offered until it is tested.
+            case .cursor: false
             }
         }
     }
@@ -46,11 +47,6 @@ enum ChatDirectory {
         if agents.contains(.codex) {
             chats += CodexThreads.recent().filter { buildsApp($0.folder) }.prefix(15)
                 .map { chat(.codex, id: $0.id, title: $0.title, folder: $0.folder, lastActive: $0.updated) }
-        }
-        if agents.contains(.cursor) {
-            chats += Chats.live(paths).filter { $0.agent == Agent.cursor.rawValue && $0.bundleIDs.contains(bundleID) }
-                .map { chat(.cursor, id: $0.id.replacingOccurrences(of: "cursor-", with: "", options: .anchored), title: "Cursor chat",
-                            folder: $0.folder, lastActive: $0.lastActiveAt) }
         }
         chats.sort { ($0.sameWorktree ? 1 : 0, $0.lastActive) > ($1.sameWorktree ? 1 : 0, $1.lastActive) }
         return HubMessage.ChatList(agents: agents.map(\.rawValue), chats: chats, worktree: worktree.map { URL(fileURLWithPath: $0).lastPathComponent },

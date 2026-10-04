@@ -98,6 +98,34 @@ struct AgentHookTests {
         #expect(json(AgentSettings.removing(.cursor, from: cursor)) == json(["version": 1]))
     }
 
+    @Test func setupAndThePhoneLeaveCursorOut() {
+        #expect(AgentSettings.setUp == [.claude, .codex])
+        #expect(!ChatDirectory.agents().contains(.cursor))
+        // Remove still knows Cursor's hooks, so an earlier setup's come out.
+        let old = AgentSettings.adding(.cursor, to: ["version": 1], executable: executable)
+        #expect(json(AgentSettings.removing(.cursor, from: old)) == json(["version": 1]))
+    }
+
+    @Test func settingsFollowTheHomeFolderInHOME() {
+        #expect(AgentSettings.home(["HOME": "/tmp/sandbox"]).path == "/tmp/sandbox")
+        #expect(AgentSettings.home([:]) == FileManager.default.homeDirectoryForCurrentUser)
+    }
+
+    @Test func setupListsWhatTheClaudeCommandStillNeeds() {
+        let current = [2, 1, 289]
+        let old = [2, 1, 200]
+        #expect(ClaudeCLI.needs(installed: false, version: [], signedIn: false, hasClaudeApp: true) == [.install])
+        #expect(ClaudeCLI.needs(installed: true, version: current, signedIn: true, hasClaudeApp: true).isEmpty)
+        #expect(ClaudeCLI.needs(installed: true, version: current, signedIn: false, hasClaudeApp: true) == [.signIn])
+        #expect(ClaudeCLI.needs(installed: true, version: old, signedIn: false, hasClaudeApp: true) == [.update, .signIn])
+        // An old claude command is fine without the Claude app: it only opens chats in a terminal.
+        #expect(ClaudeCLI.needs(installed: true, version: old, signedIn: true, hasClaudeApp: false).isEmpty)
+        // Each need comes with the command to run.
+        #expect(ClaudeCLI.instruction(.install).hasSuffix("curl -fsSL https://claude.ai/install.sh | bash"))
+        #expect(ClaudeCLI.instruction(.update).hasSuffix("claude update"))
+        #expect(ClaudeCLI.instruction(.signIn).hasSuffix("claude auth login"))
+    }
+
     @Test func hooksFindTheChatInEachAgentsInput() {
         let claude = HookInput(.claude, json: Data(#"{"session_id":"s1","cwd":"/p","hook_event_name":"Stop"}"#.utf8))
         #expect(claude == HookInput(.codex, json: Data(#"{"session_id":"s1","cwd":"/p"}"#.utf8)))
