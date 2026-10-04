@@ -365,7 +365,7 @@ struct ReportStore: Sendable {
 
     func saveDraft(_ annotations: [Annotation]) throws {
         try FileManager.default.createDirectory(at: draftDirectory, withIntermediateDirectories: true)
-        try Self.encoder.encode(annotations).write(to: draftFile, options: .atomic)
+        try Self.draftEncoder.encode(annotations).write(to: draftFile, options: .atomic)
     }
 
     /// The draft's screens and captures; empty when there is no draft. Throws like `loadDraft()`.
@@ -395,7 +395,7 @@ struct ReportStore: Sendable {
 
     func saveScreens(_ screens: [ScreenRecord]) throws {
         try FileManager.default.createDirectory(at: draftDirectory, withIntermediateDirectories: true)
-        try Self.encoder.encode(screens).write(to: screensFile, options: .atomic)
+        try Self.draftEncoder.encode(screens).write(to: screensFile, options: .atomic)
     }
 
     func saveScreenshot(_ data: Data, named name: String) throws {
@@ -452,13 +452,31 @@ struct ReportStore: Sendable {
         }
     }
 
-    /// Sent reports the Mac hasn't confirmed yet, oldest first.
+    /// Sent reports the Mac hasn't confirmed yet, oldest first. Delivered reports are skipped
+    /// before anything is read, and only each report's id and date are decoded.
     func undeliveredReports() -> [HubLink.Offer.Report] {
-        sentReports()
-            .filter { !$0.delivered }
+        /// The little of a report needed to offer it.
+        struct Stamp: Decodable {
+            var id: String
+            var createdAt: Date
+        }
+        // No reports folder yet: nothing has been sent.
+        let folders = (try? FileManager.default.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: nil)) ?? []
+        let waiting = folders.compactMap { folder -> (folder: String, stamp: Stamp)? in
+            guard !FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path) else { return nil }
+            do {
+                // No report.json yet: still being drawn.
+                guard let data = try Self.contents(of: folder.appending(path: "report.json")) else { return nil }
+                return (folder.lastPathComponent, try Self.decoder.decode(Stamp.self, from: data))
+            } catch {
+                Log.store.notice("Skipped report \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                return nil
+            }
+        }
+        return waiting
+            .sorted { ($0.stamp.createdAt, $0.stamp.id) < ($1.stamp.createdAt, $1.stamp.id) }
             // Named by folder: the hub copies the report's folder.
-            .map { HubLink.Offer.Report(id: $0.folder.lastPathComponent, finishedAt: $0.report.createdAt) }
-            .reversed()
+            .map { HubLink.Offer.Report(id: $0.folder, finishedAt: $0.stamp.createdAt) }
     }
 
     /// A sent report's files, as the hub keeps them: everything in its folder but the draft
@@ -530,10 +548,18 @@ struct ReportStore: Sendable {
         .sorted { ($0.report.createdAt, $0.id) > ($1.report.createdAt, $1.id) }
     }
 
+    /// For report.json and delivery.json, which people and agents read.
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return encoder
+    }()
+
+    /// For the draft's files, which only the phone reads and which are rewritten on every change.
+    private static let draftEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
         return encoder
     }()
 

@@ -29,12 +29,14 @@ enum AccessibilityTree {
         unsafeBitCast(symbol, to: Setter.self)(1)
     }
 
-    /// Every element and named group visible in `windows`, in screen points.
-    static func elements(in windows: [UIWindow], screenBounds: CGRect) -> [ElementSnapshot] {
-        elements(under: windows.flatMap(visibleRoots(of:)), screenBounds: screenBounds)
+    /// The views to read in `windows`: each window, or only what a presented sheet shows.
+    static func visibleRoots(in windows: [UIWindow]) -> [UIView] {
+        windows.flatMap(visibleRoots(of:))
     }
 
-    private static func elements(under roots: [UIView], screenBounds: CGRect) -> [ElementSnapshot] {
+    /// Every element and named group under `roots`, in screen points. With `stopAtFirst`, the
+    /// walk ends at the first element found, to tell whether there are any.
+    static func elements(under roots: [UIView], screenBounds: CGRect, stopAtFirst: Bool = false) -> [ElementSnapshot] {
         var result: [ElementSnapshot] = []
         var visited = Set<ObjectIdentifier>()
 
@@ -57,6 +59,7 @@ enum AccessibilityTree {
         }
 
         func visit(_ object: NSObject, depth: Int) {
+            if stopAtFirst, !result.isEmpty { return }
             guard depth < 80, visited.insert(ObjectIdentifier(object)).inserted else { return }
             if let view = object as? UIView, view.isHidden || view.alpha < 0.01 { return }
 
@@ -89,24 +92,6 @@ enum AccessibilityTree {
         return result
     }
 
-    /// Stops any scroll view that is still moving, at a valid resting offset.
-    static func stopScrolling(in windows: [UIWindow]) {
-        func visit(_ view: UIView) {
-            if let scrollView = view as? UIScrollView, scrollView.isDecelerating || scrollView.isDragging {
-                let inset = scrollView.adjustedContentInset
-                let offset = scrollView.contentOffset
-                let maxX = max(-inset.left, scrollView.contentSize.width - scrollView.bounds.width + inset.right)
-                let maxY = max(-inset.top, scrollView.contentSize.height - scrollView.bounds.height + inset.bottom)
-                scrollView.setContentOffset(CGPoint(
-                    x: min(max(offset.x, -inset.left), maxX),
-                    y: min(max(offset.y, -inset.top), maxY)
-                ), animated: false)
-            }
-            for subview in view.subviews { visit(subview) }
-        }
-        for window in windows { visit(window) }
-    }
-
     /// The screen the user is looking at: the navigation bar title, else the
     /// topmost header on screen (custom headers such as a large "Today"), else the
     /// selected tab, plus the view controller type.
@@ -122,44 +107,7 @@ enum AccessibilityTree {
         return ScreenInfo(title: title, viewController: typeName?.nonEmpty)
     }
 
-    /// A picture of the app's windows, without Redline's own window.
-    static func screenshot(of windows: [UIWindow], bounds: CGRect) -> UIImage {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 2
-        format.opaque = true
-        return UIGraphicsImageRenderer(bounds: bounds, format: format).image { _ in
-            for window in windows {
-                window.drawHierarchy(in: window.frame, afterScreenUpdates: false)
-            }
-        }
-    }
-
-    /// The screen's main vertical scroll view, and how far it's scrolled: the largest one
-    /// that scrolls vertically and covers a good part of the screen.
-    static func mainScrollState(in windows: [UIWindow], screenBounds: CGRect) -> ScrollState? {
-        var best: (view: UIScrollView, frame: CGRect, area: CGFloat)?
-        func visit(_ view: UIView) {
-            guard !view.isHidden, view.alpha > 0.01 else { return }
-            if let scrollView = view as? UIScrollView, !(view is UITextView) {
-                let frame = scrollView.convert(scrollView.bounds, to: nil)
-                let visible = frame.intersection(screenBounds)
-                let inset = scrollView.adjustedContentInset
-                let scrollsVertically = scrollView.contentSize.height > scrollView.bounds.height - inset.top - inset.bottom + 1
-                let area = visible.isNull ? 0 : visible.width * visible.height
-                if scrollsVertically, area > (best?.area ?? 0) { best = (scrollView, frame, area) }
-            }
-            for subview in view.subviews { visit(subview) }
-        }
-        for root in windows.flatMap(visibleRoots(of:)) { visit(root) }
-        guard let best, best.area > screenBounds.width * screenBounds.height * 0.3 else { return nil }
-        let inset = best.view.adjustedContentInset
-        return ScrollState(
-            frame: best.frame, offsetY: best.view.contentOffset.y,
-            insetTop: inset.top, insetBottom: inset.bottom, contentHeight: best.view.contentSize.height
-        )
-    }
-
-    // MARK: - Helpers
+    // MARK: - Presented screens
 
     /// A presented sheet or full-screen cover hides what's under it, so only its view is
     /// read when one is up, along with anything drawn above it, such as a menu opened from it.
@@ -186,8 +134,10 @@ enum AccessibilityTree {
     /// the screen it opened from. Such a presentation hides nothing and isn't a new screen.
     private static func showsContent(_ controller: UIViewController) -> Bool {
         guard let view = controller.viewIfLoaded, let window = view.window else { return false }
-        return !elements(under: [view], screenBounds: window.bounds).isEmpty
+        return !elements(under: [view], screenBounds: window.bounds, stopAtFirst: true).isEmpty
     }
+
+    // MARK: - Element details
 
     private static func role(of object: NSObject, isContainer: Bool) -> String {
         if object is UISearchBar { return "Search field" }

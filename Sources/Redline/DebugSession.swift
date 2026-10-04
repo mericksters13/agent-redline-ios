@@ -284,7 +284,7 @@ final class DebugSession {
         guard mode == .idle, window != nil else { return }
         // A list still gliding from a scroll would keep moving after the screen is
         // read, leaving every outline behind. Stop it, let it settle, then read.
-        AccessibilityTree.stopScrolling(in: appWindows())
+        AppWindows.stopScrolling(in: appWindows())
         levels = []
         setMode(.picking)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -418,7 +418,8 @@ final class DebugSession {
             screen: attachment.screen,
             screenshots: files
         ))
-        persist()
+        // An attachment has no capture, so the screens are unchanged.
+        persistAnnotations()
         pending = nil
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         if attachment.sendsReport {
@@ -510,7 +511,7 @@ final class DebugSession {
         let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return }
         annotations[index].note = note
-        persist()
+        persistAnnotations()
     }
 
     /// One of the item's images at full size: its screen's picture with every note on it
@@ -1331,28 +1332,45 @@ final class DebugSession {
     private func captureScreen() -> (image: UIImage, screen: ScreenInfo) {
         let windows = appWindows()
         let bounds = window?.bounds ?? .zero
-        let elements = AccessibilityTree.elements(in: windows, screenBounds: bounds)
+        let roots = AccessibilityTree.visibleRoots(in: windows)
+        let elements = AccessibilityTree.elements(under: roots, screenBounds: bounds)
         let screen = AccessibilityTree.screen(of: windows.first(where: \.isKeyWindow) ?? windows.last, elements: elements)
-        return (AccessibilityTree.screenshot(of: windows, bounds: bounds), screen)
+        return (AppWindows.screenshot(of: windows, bounds: bounds), screen)
     }
 
     /// Reads every element's position, the screen's name and a screenshot, all at the same moment.
     private func readScreen() {
         guard let window else { return }
         let appWindows = self.appWindows()
-        elements = AccessibilityTree.elements(in: appWindows, screenBounds: window.bounds)
+        // Found once and shared: finding them walks a presented sheet's tree.
+        let roots = AccessibilityTree.visibleRoots(in: appWindows)
+        elements = AccessibilityTree.elements(under: roots, screenBounds: window.bounds)
         screen = AccessibilityTree.screen(of: appWindows.first(where: \.isKeyWindow) ?? appWindows.last, elements: elements)
-        screenshot = AccessibilityTree.screenshot(of: appWindows, bounds: window.bounds)
-        scrollState = AccessibilityTree.mainScrollState(in: appWindows, screenBounds: window.bounds)
+        screenshot = AppWindows.screenshot(of: appWindows, bounds: window.bounds)
+        scrollState = AppWindows.mainScrollState(under: roots, screenBounds: window.bounds)
         refreshMarkers()
     }
 
+    /// Saves the draft's notes and its screens. Saving a note or deleting one can change both.
     private func persist() {
+        persistAnnotations()
+        persistScreens()
+    }
+
+    private func persistAnnotations() {
         do {
             try store.saveDraft(annotations)
+        } catch {
+            logger.error("Couldn't save the draft's notes: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// The screens hold every capture's elements, so they're written only when they change.
+    private func persistScreens() {
+        do {
             try store.saveScreens(screens)
         } catch {
-            logger.error("Couldn't save the draft: \(error.localizedDescription, privacy: .public)")
+            logger.error("Couldn't save the draft's screens: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -1378,10 +1396,7 @@ final class DebugSession {
 
     /// The app's own visible windows, bottom to top, without Redline's.
     private func appWindows() -> [UIWindow] {
-        guard let scene = window?.windowScene else { return [] }
-        return scene.windows
-            .filter { !($0 is OverlayWindow) && !$0.isHidden && !String(describing: type(of: $0)).contains("TextEffects") }
-            .sorted { $0.windowLevel < $1.windowLevel }
+        AppWindows.all(in: window?.windowScene)
     }
 
     private func observeKeyboard() {
