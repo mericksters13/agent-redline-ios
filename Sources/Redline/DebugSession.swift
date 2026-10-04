@@ -243,10 +243,19 @@ final class DebugSession {
 
     /// Installs the overlay in `scene`.
     ///
-    /// Only the first call does anything: the overlay lives in one scene, and the first
-    /// attachment's source file is the one reports carry.
+    /// The first call builds the overlay, and its attachment's source file is the one reports
+    /// carry. UIKit can disconnect a scene and later connect a new one while the app keeps
+    /// running: a later call then moves the overlay to the new scene with its draft and state.
+    /// While its own scene is still connected, it stays there.
     func install(in scene: UIWindowScene, sourceFile: String) {
-        guard window == nil else { return }
+        if let window {
+            if window.windowScene.map({ $0.activationState == .unattached }) ?? true {
+                appKeyWindow = nil
+                window.windowScene = scene
+                window.isHidden = false
+            }
+            return
+        }
         if let bundleID = Bundle.main.bundleIdentifier {
             ReportStore.moveSettingsFromOldName(in: .standard, domain: bundleID)
         }

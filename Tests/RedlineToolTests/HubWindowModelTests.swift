@@ -185,7 +185,7 @@ struct HubWindowModelTests {
         #expect(HubWindowModel.notes(in: folder) == [.init(number: 1, text: "Save: No note")])
         // Without screens, pictures come from the folder; without an app, routing has no worktree.
         #expect(ReportContent.pictures(in: folder).isEmpty)
-        #expect(Routing.worktree(of: folder) == nil)
+        #expect(Routing.worktree(of: folder, bundleID: "com.example.app") == nil)
     }
 
     @Test func aWaitSavedAfterAChatTookTheReportDoesntHideIt() throws {
@@ -258,7 +258,12 @@ struct HubWindowModelTests {
         // Another process's hand-over isn't this one's to wait for.
         #expect(Inbox.reportsHandedOver(by: getpid() + 1, paths: paths) == 0)
         // Stopping waits until the chat has the report.
-        let hub = Hub(paths: paths, devicectl: Devicectl(executable: URL(filePath: "/usr/bin/false")), apps: [])
+        let hub = Hub(
+            paths: paths,
+            devicectl: Devicectl(executable: URL(filePath: "/usr/bin/false")),
+            apps: [],
+            claudeChats: { [] }
+        )
         let handoff = Handoff(hub: hub)
         let started = Date.now
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.6) { try? Inbox.handedOver(inbox) }

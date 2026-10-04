@@ -41,7 +41,7 @@ struct PhoneLinkTests {
         esac
         """.write(to: devicectl, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: devicectl.path)
-        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app])
+        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app], claudeChats: { [] })
         hub.updateApps(isStarting: true)
         let link = PhoneLink(phone: .init(udid: phone, name: "Test iPhone", model: "iPhone 17 Pro"), hub: hub)
 
@@ -81,7 +81,7 @@ struct PhoneLinkTests {
         esac
         """.write(to: devicectl, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: devicectl.path)
-        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app])
+        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app], claudeChats: { [] })
         hub.updateApps(isStarting: true)
         let link = PhoneLink(phone: .init(udid: phone, name: "Test iPhone", model: "iPhone 17 Pro"), hub: hub)
         func called() -> [String] {
@@ -127,7 +127,7 @@ struct PhoneLinkTests {
         [ "$1 $2" = "device copy" ]
         """.write(to: devicectl, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: devicectl.path)
-        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app])
+        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app], claudeChats: { [] })
         hub.updateApps(isStarting: true)
         let link = PhoneLink(phone: .init(udid: phone, name: "Test iPhone", model: "iPhone 17 Pro"), hub: hub)
         func called() -> Int {

@@ -117,7 +117,7 @@ final class Handoff: Sendable {
         ) { bundleID, sourceFile in
             ChatDirectory.list(bundleID: bundleID, sourceFile: sourceFile, paths: paths)
         }
-        let worktree = Routing.worktree(of: report.folder)
+        let worktree = Routing.worktree(of: report.folder, bundleID: source.bundleID)
         switch destination {
         case .chat(.claude, let id):
             sendToClaude(report, session: id, worktree: worktree)
@@ -395,7 +395,9 @@ final class Handoff: Sendable {
         let place = Self.folderName(folder)
         let kind: ChatDelivery.Kind = isReopening ? .sent : .newChat
         let title = isReopening ? place : "New chat in \(place)"
-        queue.async { [self] in
+        // Off the handoff queue: waiting for the chat, and the claude command after it, can take
+        // minutes, and other reports go on meanwhile. `pickSettled` goes back to the queue.
+        DispatchQueue.global(qos: .utility).async { [self] in
             defer { pickSettled(pick) }
             for _ in 0..<60 {
                 if let session = ClaudeSessions.openSessions().first(where: { $0.id == id }),
