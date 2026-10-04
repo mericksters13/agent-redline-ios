@@ -96,8 +96,7 @@ enum Chats {
         }
     }
 
-    /// Dates keep their milliseconds: the menu bar panel orders a claim and a delivery saved
-    /// in the same second by them.
+    /// Dates keep their milliseconds, so reports received in the same second stay in order.
     static let coder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .custom { date, encoder in
@@ -243,6 +242,12 @@ enum InboxQueue {
     /// hand-over was interrupted.
     static func waiting(for bundleIDs: [String], paths: HubPaths) -> [InboxReport] {
         reports(for: bundleIDs, paths: paths).filter { $0.claim.map(\.isInterrupted) ?? true }
+    }
+
+    /// How many reports, of any app, the process `pid` has claimed and is still handing over.
+    static func handingOver(by pid: Int32, paths: HubPaths) -> Int {
+        let apps = ((try? FileManager.default.contentsOfDirectory(atPath: paths.inbox.path)) ?? []).filter { !$0.hasPrefix(".") }
+        return reports(for: apps, paths: paths).count { $0.claim.map { $0.handingOverIn == pid && !$0.isInterrupted } ?? false }
     }
 
     /// Takes a report for a chat, to be handed over by this process. False when another chat

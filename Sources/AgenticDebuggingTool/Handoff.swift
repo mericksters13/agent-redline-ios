@@ -76,9 +76,29 @@ final class Handoff: @unchecked Sendable {
     /// "New chat" picks whose first report is still starting the chat, with the reports that
     /// arrived for them meanwhile. They go to that chat once it's started. Used on `queue`.
     private var startingPicks: [String: [InboxReport]] = [:]
+    /// Set once the hub is stopping: no new hand-over starts. Used on `queue`.
+    private var finishing = false
 
     init(hub: Hub) {
         self.hub = hub
+    }
+
+    /// Starts no new hand-overs, and waits for those under way to reach their chats or give
+    /// their reports back. A hand-over cut off by the hub exiting looks interrupted, and the
+    /// next hub would hand the report over again while the chat or command this one started
+    /// still has it. The reports not handed over wait in the inbox for the next hub.
+    func finish() {
+        queue.sync { finishing = true }
+        var logged = false
+        while true {
+            let count = InboxQueue.handingOver(by: getpid(), paths: hub.paths)
+            guard count > 0 else { return }
+            if !logged {
+                hub.log("Stopping once \(count == 1 ? "the report being handed over reaches its chat" : "the \(count) reports being handed over reach their chats")")
+                logged = true
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
     }
 
     func reportFiled(_ folder: URL, source: ReportSource) {
@@ -111,6 +131,10 @@ final class Handoff: @unchecked Sendable {
 
     private func deliver(_ report: InboxReport) {
         let source = report.source
+        guard !finishing else {
+            hub.log("Report \(source.reportID) waits in the inbox for the next hub: this one is stopping")
+            return
+        }
         let paths = hub.paths
         let destination = Routing.destination(of: report.folder, bundleID: source.bundleID, paths: paths) { bundleID, sourceFile in
             ChatDirectory.list(bundleID: bundleID, sourceFile: sourceFile, paths: paths)

@@ -184,14 +184,16 @@ final class HubWindowModel {
 
     /// The agent and chat a report went to: what the hub saved when it delivered it, or the
     /// chat that took it through MCP or a hook. A report the hub left waiting, or set to go with
-    /// a chat's next message, shows as waiting until a chat takes it, and then shows that chat. A claim whose hand-over
-    /// was interrupted doesn't count: the report is free again, as `InboxQueue.waiting` has it.
+    /// a chat's next message, shows as waiting until a chat takes it, and then shows that chat.
+    /// No dates are compared: a wait is saved only while no other chat holds the report, so a
+    /// claim next to one always came after it. A claim whose hand-over was interrupted doesn't
+    /// count: the report is free again, as `InboxQueue.waiting` has it.
     nonisolated static func destination(of folder: URL) -> (agent: String, chat: String, waiting: Bool) {
         let delivery = ReportDelivery.load(from: folder)
         let claim = (try? Data(contentsOf: folder.appending(path: InboxQueue.claimFile)))
             .flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
             .flatMap { $0.isInterrupted ? nil : $0 }
-        if let delivery, !(delivery.pending && claim.map { $0.claimedAt > delivery.at } == true) {
+        if let delivery, !(delivery.pending && claim != nil) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             // A report set to go with a chat's next message isn't in that chat yet.
             let chat = delivery.kind == .nextMessage ? "\(delivery.title) (next message)" : delivery.title
@@ -263,14 +265,39 @@ final class HubWindowModel {
 /// The panel: the devices, then the reports sent.
 struct HubPanel: View {
     let model: HubWindowModel
-    /// The report list's own height. A scroll view in the menu bar panel has no height of its
-    /// own, so the list sets it, up to a limit.
-    @State private var listHeight: CGFloat = 0
+    /// The height of the devices and reports. A scroll view in the menu bar panel has no height
+    /// of its own, so they set it, up to what fits on the screen.
+    @State private var contentHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().overlay(Color.white.opacity(0.12))
+            // Devices and reports scroll together, so with many of both the header and the
+            // footer's Open inbox and Quit stay on the screen.
+            ScrollView {
+                content.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+            }
+            .frame(height: min(max(contentHeight, 1), Self.largestContentHeight(screen: NSScreen.main?.visibleFrame.height)))
+            Divider().overlay(Color.white.opacity(0.12))
+            footer
+        }
+        .frame(width: 400)
+        .background(Color.black)
+        .environment(\.colorScheme, .dark)
+        .onAppear { model.panelOpened() }
+        .onDisappear { model.panelClosed() }
+    }
+
+    /// The tallest the devices and reports get: 720 points, less on a screen too short for that
+    /// with the header, the footer and some room below.
+    nonisolated static func largestContentHeight(screen: CGFloat?) -> CGFloat {
+        guard let screen else { return 520 }
+        return max(min(720, screen - 160), 120)
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 0) {
             section("Devices")
             if model.devices.isEmpty {
                 Text("No paired iPhone or running simulator.")
@@ -290,26 +317,10 @@ struct HubPanel: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
             } else {
-                ScrollView {
-                    reportList.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
+                ForEach(model.reports) { report in
+                    ReportRowView(report: report)
+                    Divider().overlay(Color.white.opacity(0.08)).padding(.leading, 84)
                 }
-                .frame(height: min(max(listHeight, 1), 520))
-            }
-            Divider().overlay(Color.white.opacity(0.12))
-            footer
-        }
-        .frame(width: 400)
-        .background(Color.black)
-        .environment(\.colorScheme, .dark)
-        .onAppear { model.panelOpened() }
-        .onDisappear { model.panelClosed() }
-    }
-
-    private var reportList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(model.reports) { report in
-                ReportRowView(report: report)
-                Divider().overlay(Color.white.opacity(0.08)).padding(.leading, 84)
             }
         }
     }
@@ -347,7 +358,14 @@ struct HubPanel: View {
                 NSWorkspace.shared.open(inbox)
             }
             Spacer()
-            Button("Quit") { NSApplication.shared.terminate(nil) }
+            Button("Quit") {
+                // The hub stops first, off the main thread: it waits for the reports being
+                // handed over to reach their chats, and the panel shouldn't freeze meanwhile.
+                Task.detached {
+                    HubAppContext.hub?.stop()
+                    await MainActor.run { NSApplication.shared.terminate(nil) }
+                }
+            }
         }
         .buttonStyle(.plain)
         .font(.callout)

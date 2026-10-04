@@ -83,6 +83,9 @@ final class Hub: @unchecked Sendable {
     private let network = NWPathMonitor()
     /// The PID file, held open and locked while the hub runs.
     private var pidFile: Int32?
+    /// Held while the hub stops; `stopped` once it has.
+    private let stopping = NSLock()
+    private var stopped = false
 
     /// How often the hub looks for newly paired phones and newly installed apps. Changes to the
     /// Mac's network are noticed as they happen.
@@ -137,12 +140,21 @@ final class Hub: @unchecked Sendable {
         return true
     }
 
+    /// Stops taking reports, lets the reports being handed over reach their chats, then lets go
+    /// of the PID file. A hub that starts next, such as the menu bar app taking over, hands over
+    /// again only what this one gave back, so no report starts two chats. Called again, it
+    /// waits for the first call to finish.
     func stop() {
+        stopping.lock()
+        defer { stopping.unlock() }
+        guard !stopped else { return }
+        stopped = true
         discovery?.cancel()
         chatsWatcher?.cancel()
         network.cancel()
         listener?.stop()
         simulators?.stop()
+        handoff?.finish()
         try? FileManager.default.removeItem(at: paths.pid)
         if let pidFile { close(pidFile) }
         log("Hub stopped")

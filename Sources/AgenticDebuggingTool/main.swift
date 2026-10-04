@@ -67,6 +67,10 @@ case "app":
     // The menu bar app is the hub: one process. A hub already running steps aside, and the
     // apps it was told to watch on the command line stay watched. Only a process holding the
     // PID file's lock counts as running, so a pid left behind and reused is never signaled.
+    // What the app needs is checked first, so a hub that works is never stopped for one that can't start.
+    guard let devicectl = Devicectl.locate() else {
+        failToStart("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
+    }
     var keptApps: [String] = []
     if let running = HubProcess.running(paths), running != getpid() {
         // A hub saves its status, with those apps, as it starts; give one starting now a moment.
@@ -83,27 +87,36 @@ case "app":
             }
             // A hub from before fixedApps was saved lists them only among all its apps.
             keptApps = status.fixedApps ?? status.apps
-            // Stopping can wait for a simulator scan to finish, and the PID file stays locked until
-            // it has. A hub that hasn't stopped in 30 seconds is ended, which frees the lock at once.
-            kill(running, SIGTERM)
+            // A hub stopping in the middle of handing a report over would leave it to be handed
+            // over again, so the app first waits for the hub to finish the hand-overs under way.
+            // A hub also finishes any it starts meanwhile before it stops, and the PID file stays
+            // locked until it has; one that hasn't stopped in 30 seconds and isn't handing a
+            // report over is ended, which frees the lock at once.
+            print("Waiting for the hub (pid \(running)) to stop")
+            while HubProcess.running(paths) == running, InboxQueue.handingOver(by: running, paths: paths) > 0 {
+                usleep(500_000)
+            }
+            if HubProcess.running(paths) == running { kill(running, SIGTERM) }
             tries = 0
+            var killedAt: Int?
             while HubProcess.running(paths) == running {
-                if tries == 300 { kill(running, SIGKILL) }
-                if tries == 350 { break }
+                if killedAt == nil, tries >= 300, InboxQueue.handingOver(by: running, paths: paths) == 0 {
+                    kill(running, SIGKILL)
+                    killedAt = tries
+                }
+                if let killedAt, tries >= killedAt + 50 { break }
                 usleep(100_000)
                 tries += 1
             }
         }
-    }
-    guard let devicectl = Devicectl.locate() else {
-        failToStart("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
     }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: keptApps)
     guard hub.start() else {
         failToStart("A hub is already running (pid \(HubProcess.running(paths).map(String.init) ?? "unknown")) and didn't stop.")
     }
     stopOnSignals { hub.stop() }
-    // Quit in the panel ends the app without a signal: let go of the PID file then too.
+    // Quit in the panel ends the app without a signal: let go of the PID file then too. The
+    // panel's Quit has already stopped the hub, so this returns at once then.
     _ = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { _ in
         hub.stop()
     }
