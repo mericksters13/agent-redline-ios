@@ -281,6 +281,7 @@ struct AttachmentPicker: View {
 
     /// Off the main thread and in parallel: reading and shrinking a large photo takes long
     /// enough to stall the UI. Keeps the order they were chosen in.
+    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
     nonisolated private static func images(from items: [PhotosPickerItem]) async -> [UIImage] {
         await withTaskGroup(of: (Int, UIImage?).self) { group in
             for (index, item) in items.enumerated() {
@@ -300,7 +301,7 @@ struct AttachmentPicker: View {
 @MainActor
 @Observable
 final class RecentPhotos {
-    struct Item: Identifiable {
+    struct Item: Identifiable, Sendable {
         let id: String
         let createdAt: Date
         let thumbnail: UIImage
@@ -330,11 +331,9 @@ final class RecentPhotos {
 
     func load() async {
         if usesSamples {
-            items = Self.sampleFiles().compactMap { file in
-                guard let image = UIImage(contentsOfFile: file.url.path) else { return nil }
-                let thumbnail = image.preparingThumbnail(of: CGSize(width: 240, height: 240 * image.size.height / max(image.size.width, 1))) ?? image
-                return Item(id: file.url.path, createdAt: file.date, thumbnail: thumbnail)
-            }
+            let samples = await Self.sampleItems()
+            guard !Task.isCancelled else { return }
+            items = samples
             isLoaded = true
             return
         }
@@ -347,10 +346,13 @@ final class RecentPhotos {
         assets = Dictionary(found.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
         var loaded: [Item] = []
         for asset in found {
+            // The panel closed: stop loading thumbnails nobody will see.
+            guard !Task.isCancelled else { return }
             if let thumbnail = await PhotoLibrary.image(for: asset, pixels: 480) {
                 loaded.append(Item(id: asset.localIdentifier, createdAt: asset.creationDate ?? .distantPast, thumbnail: thumbnail))
             }
         }
+        guard !Task.isCancelled else { return }
         items = loaded
         isLoaded = true
     }
@@ -373,8 +375,18 @@ final class RecentPhotos {
 }
 
 extension RecentPhotos {
+    /// The sample images, decoded at grid size.
+    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    nonisolated private static func sampleItems() async -> [Item] {
+        sampleFiles().compactMap { file in
+            guard let image = UIImage(contentsOfFile: file.url.path) else { return nil }
+            let thumbnail = image.preparingThumbnail(of: CGSize(width: 240, height: 240 * image.size.height / max(image.size.width, 1))) ?? image
+            return Item(id: file.url.path, createdAt: file.date, thumbnail: thumbnail)
+        }
+    }
+
     /// Images from sent reports, newest first.
-    private static func sampleFiles() -> [(url: URL, date: Date)] {
+    nonisolated private static func sampleFiles() -> [(url: URL, date: Date)] {
         let files = FileManager.default
         let reports = (try? files.contentsOfDirectory(at: ReportStore.standard.reportsDirectory, includingPropertiesForKeys: nil)) ?? []
         var found: [(url: URL, date: Date)] = []

@@ -151,6 +151,7 @@ enum HubLink {
     /// Delivers the reports the Mac hasn't confirmed. `patience` is how long to wait for the
     /// connection, which includes iOS asking about local network access the first time.
     /// Returns how it went and the reports the Mac now has.
+    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
     static func deliver(_ reports: [Offer.Report], bundleID: String, address: Address,
                         files: @Sendable (String) -> [String: Data], patience: TimeInterval) async -> (outcome: Outcome, delivered: [String]) {
         guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return (.refused, []) }

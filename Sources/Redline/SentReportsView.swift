@@ -29,7 +29,11 @@ struct SentReportsView: View {
         }
         .frame(width: size.width, height: size.height)
         .ignoresSafeArea()
-        .task { reports = await session.sentReports() }
+        .task {
+            let loaded = await session.sentReports()
+            guard !Task.isCancelled else { return }
+            reports = loaded
+        }
     }
 
     private func show(_ report: SentReport?) {
@@ -380,28 +384,30 @@ private struct ReportPicture: View {
         }
         .task(id: url) {
             guard let url else { return }
-            image = await Self.load(url, pixelWidth: pointWidth * displayScale)
+            let loaded = await Self.load(url, pixelWidth: pointWidth * displayScale)
+            // A row scrolled away, or a newer picture asked for: an older load mustn't replace it.
+            guard !Task.isCancelled else { return }
+            image = loaded
         }
     }
 
-    private static func load(_ url: URL, pixelWidth: CGFloat) async -> UIImage? {
-        await Task.detached(priority: .userInitiated) {
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-                  let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
-                  let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
-                  width > 0
-            else { return nil }
-            // The longest side, at no more than the width it's shown at.
-            let longest = max(width, height) * min(pixelWidth / width, 1)
-            let options = [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceShouldCacheImmediately: true,
-                kCGImageSourceThumbnailMaxPixelSize: longest.rounded(.up),
-            ] as CFDictionary
-            return CGImageSourceCreateThumbnailAtIndex(source, 0, options).map { UIImage(cgImage: $0) }
-        }.value
+    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    nonisolated private static func load(_ url: URL, pixelWidth: CGFloat) async -> UIImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
+              width > 0
+        else { return nil }
+        // The longest side, at no more than the width it's shown at.
+        let longest = max(width, height) * min(pixelWidth / width, 1)
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: longest.rounded(.up),
+        ] as CFDictionary
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options).map { UIImage(cgImage: $0) }
     }
 }
 

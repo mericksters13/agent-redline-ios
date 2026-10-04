@@ -38,6 +38,10 @@ final class DebugSession {
         var count = 1
         /// The full-size images, while they load. The note box opens without waiting for them.
         var loading: Task<[UIImage], Never>?
+        /// Tells this attachment from one started later, after this one was cancelled.
+        let id = UUID()
+        /// True while Add note waits for photos that are still loading.
+        var isSaving = false
     }
 
     /// A screenshot offered at the side of the screen.
@@ -126,10 +130,17 @@ final class DebugSession {
     @ObservationIgnored private var thumbnails: [UUID: UIImage] = [:]
     /// Full-size images for the viewer, kept for the few around the one showing.
     @ObservationIgnored private var fullImages: [String: UIImage] = [:]
-    /// True while Add note waits for photos that are still loading.
-    @ObservationIgnored private var isSavingNote = false
     /// Images still being written to the draft. Send waits for them.
     @ObservationIgnored private var writes: [Task<Void, Never>] = []
+    /// The send in progress, waiting for the draft's images before it saves the report.
+    @ObservationIgnored private var sending: Task<Void, Never>?
+    /// The question to the Mac about which chats a report can go to, while it's open.
+    @ObservationIgnored private var chatsRequest: Task<Void, Never>?
+    /// Each timer is replaced when it starts again, so an older one never cuts a newer one short.
+    @ObservationIgnored private var toastTimer: Task<Void, Never>?
+    @ObservationIgnored private var hintTimer: Task<Void, Never>?
+    @ObservationIgnored private var keyboardWait: Task<Void, Never>?
+    @ObservationIgnored private var suggestionTimer: Task<Void, Never>?
     /// True while a finger is down in pick mode.
     @ObservationIgnored private var touchIsDown = false
     @ObservationIgnored private let store = ReportStore.standard
@@ -173,6 +184,7 @@ final class DebugSession {
         // On a cold launch the app became active before Redline was installed.
         Task {
             try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
             offerRecentScreenshot()
             offerUndeliveredReports()
         }
@@ -190,8 +202,10 @@ final class DebugSession {
         if defaults.bool(forKey: "RedlineOpenViewer") {
             Task {
                 try? await Task.sleep(for: .seconds(launchDelay))
+                guard !Task.isCancelled else { return }
                 enterPicking()
                 try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
                 toggleTray()
                 if let first = annotations.first { openViewer(first) }
             }
@@ -199,22 +213,27 @@ final class DebugSession {
         if defaults.bool(forKey: "RedlineOpenAttachments") {
             Task {
                 try? await Task.sleep(for: .seconds(launchDelay))
+                guard !Task.isCancelled else { return }
                 enterPicking()
                 try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
                 openAttachments()
             }
         }
         if defaults.bool(forKey: "RedlineSimulateScreenshot") {
             Task {
                 try? await Task.sleep(for: .seconds(launchDelay))
+                guard !Task.isCancelled else { return }
                 NotificationCenter.default.post(name: UIApplication.userDidTakeScreenshotNotification, object: UIApplication.shared)
             }
         }
         if defaults.bool(forKey: "RedlinePickOnLaunch") {
             Task {
                 try? await Task.sleep(for: .seconds(launchDelay))
+                guard !Task.isCancelled else { return }
                 enterPicking()
                 try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
                 let point: (String) -> CGPoint? = { key in
                     let parts = defaults.string(forKey: key)?.split(separator: ",").compactMap { Double($0) }
                     guard let parts, parts.count == 2 else { return nil }
@@ -244,7 +263,8 @@ final class DebugSession {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         Task {
             try? await Task.sleep(for: .milliseconds(60))
-            if mode == .picking { readScreen() }
+            guard !Task.isCancelled, mode == .picking else { return }
+            readScreen()
         }
     }
 
@@ -299,19 +319,22 @@ final class DebugSession {
     func saveNote() {
         let note = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         if let pending {
-            guard !isSavingNote else { return }
+            guard !pending.isSaving else { return }
             guard let loading = pending.loading else {
                 saveAttachment(pending, note: note)
                 return
             }
             // Photos still loading: save once they're in. The note box stays until then.
-            isSavingNote = true
+            self.pending?.isSaving = true
+            let id = pending.id
             Task {
-                var ready = pending
-                ready.images = await loading.value
+                let images = await loading.value
+                // Cancelled, or another attachment started while the photos loaded.
+                guard var ready = self.pending, ready.id == id else { return }
+                // None loaded: attachPhotos's own task cancels the note.
+                guard !images.isEmpty else { return }
+                ready.images = images
                 ready.loading = nil
-                isSavingNote = false
-                guard self.pending != nil, !ready.images.isEmpty else { return }
                 saveAttachment(ready, note: note)
             }
             return
@@ -372,6 +395,7 @@ final class DebugSession {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         if attachment.sendsReport {
             noteText = ""
+            keyboardWait?.cancel()
             awaitingKeyboard = false
             send()
         } else {
@@ -436,8 +460,12 @@ final class DebugSession {
 
     /// The reports already sent, newest first, read off the main thread.
     func sentReports() async -> [SentReport] {
-        let store = store
-        return await Task.detached(priority: .userInitiated) { store.sentReports() }.value
+        await Self.sentReports(from: store)
+    }
+
+    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    nonisolated private static func sentReports(from store: ReportStore) async -> [SentReport] {
+        store.sentReports()
     }
 
     /// The last attempt to hand reports to the Mac.
@@ -535,12 +563,14 @@ final class DebugSession {
     /// Send under a suggested screenshot: write a note, then send it with the rest of the draft.
     func sendSuggestion() {
         guard let suggestion, mode == .idle || mode == .picking else { return }
+        suggestionTimer?.cancel()
         self.suggestion = nil
         let attachment = PendingAttachment(kind: suggestion.kind, images: [suggestion.image], screen: suggestion.screen, sendsReport: true)
         beginAttachmentNote(attachment, returningTo: mode)
     }
 
     func dismissSuggestion() {
+        suggestionTimer?.cancel()
         withAnimation(.smooth(duration: 0.3)) { suggestion = nil }
     }
 
@@ -579,8 +609,9 @@ final class DebugSession {
         else { return }
         markOffered(pick.id)
         Task {
+            // Another screenshot may have been offered while this one loaded; it stays.
             guard let image = await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels),
-                  mode == .idle || mode == .picking
+                  mode == .idle || mode == .picking, suggestion == nil
             else { return }
             offer(Suggestion(image: image, kind: .photo, screen: nil))
         }
@@ -591,9 +622,11 @@ final class DebugSession {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let id = suggestion.id
         // A screenshot nobody acts on steps aside on its own.
-        Task {
+        suggestionTimer?.cancel()
+        suggestionTimer = Task {
             try? await Task.sleep(for: .seconds(20))
-            if self.suggestion?.id == id { dismissSuggestion() }
+            guard !Task.isCancelled, self.suggestion?.id == id else { return }
+            dismissSuggestion()
         }
     }
 
@@ -604,6 +637,7 @@ final class DebugSession {
 
     /// Sends every report the Mac hasn't confirmed to its hub, notes the ones it now has, and
     /// records how it went. Nil when there's nothing to send.
+    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
     nonisolated static func deliverReports(from store: ReportStore, patience: TimeInterval) async -> HubLink.Outcome? {
         guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
         let reports = store.undeliveredReports()
@@ -642,9 +676,8 @@ final class DebugSession {
     /// question is never asked at launch.
     private func offerUndeliveredReports() {
         guard UserDefaults.standard.bool(forKey: Self.hubReachedKey) else { return }
-        let store = store
-        Task.detached(priority: .utility) {
-            _ = await DebugSession.deliverReports(from: store, patience: 8)
+        Task(priority: .utility) { [store] in
+            _ = await Self.deliverReports(from: store, patience: 8)
         }
     }
 
@@ -699,6 +732,9 @@ final class DebugSession {
 
     /// Opens the picker and asks the Mac for its chats. `thenSend` when opened from Send.
     func openDestinations(thenSend: Bool = false) {
+        // An answer to an earlier opening of the picker must not replace this one's.
+        chatsRequest?.cancel()
+        chatsRequest = nil
         sendsAfterPicking = thenSend
         modeBeforePicking = mode == .noting || mode == .destination ? .picking : mode
         pickerChoice = destination
@@ -712,14 +748,15 @@ final class DebugSession {
         // The first time, iOS asks about local network access before the hub can answer.
         let patience: TimeInterval = UserDefaults.standard.bool(forKey: Self.hubReachedKey) ? 8 : 60
         let sourceFile = sourceFile
-        Task {
+        chatsRequest = Task {
             let list = await HubLink.chats(bundleID: bundleID, address: address, sourceFile: sourceFile, patience: patience)
-            guard mode == .destination else { return }
+            // The hub answered, so iOS has allowed local network access, even if this picker is gone.
+            if list != nil { UserDefaults.standard.set(true, forKey: Self.hubReachedKey) }
+            guard !Task.isCancelled, mode == .destination else { return }
             guard let list else {
                 chatList = .unavailable
                 return
             }
-            UserDefaults.standard.set(true, forKey: Self.hubReachedKey)
             chatList = .loaded(list)
             // A saved chat that closed isn't offered; the chat in the build's worktree is.
             if let choice = pickerChoice, let chat = choice.chat, !list.chats.contains(where: { $0.id == chat && $0.agent == choice.agent }) {
@@ -748,6 +785,8 @@ final class DebugSession {
 
     /// Keeps the pick and, when the picker opened from Send, sends.
     func confirmDestination() {
+        chatsRequest?.cancel()
+        chatsRequest = nil
         if let choice = pickerChoice {
             destination = choice
             if let data = try? JSONEncoder().encode(choice) { UserDefaults.standard.set(data, forKey: destinationKey) }
@@ -759,6 +798,8 @@ final class DebugSession {
     }
 
     func cancelDestinations() {
+        chatsRequest?.cancel()
+        chatsRequest = nil
         sendsAfterPicking = false
         setMode(modeBeforePicking)
     }
@@ -766,16 +807,22 @@ final class DebugSession {
     /// Sends the draft. The first time, the user picks where reports go; after that they go
     /// there at once.
     func send(pickingFirst: Bool = true) {
-        guard !annotations.isEmpty else { return }
+        // One send at a time: a second tap while the first waits is ignored.
+        guard !annotations.isEmpty, sending == nil else { return }
         if pickingFirst, destination == nil, canPickDestination {
             openDestinations(thenSend: true)
             return
         }
         // The report takes the draft's files with it, so every image must be on disk first.
-        let pending = writes
-        writes = []
-        Task {
-            for write in pending { await write.value }
+        // Notes added while waiting add writes of their own; wait for those too.
+        sending = Task {
+            while !writes.isEmpty {
+                let pending = writes
+                writes = []
+                for write in pending { await write.value }
+            }
+            sending = nil
+            // Synchronous: nothing changes between the last check and the report's snapshot.
             saveReport()
         }
     }
@@ -813,21 +860,30 @@ final class DebugSession {
 
         let store = store
         let logger = logger
-        Task.detached(priority: .userInitiated) { [weak self] in
+        let notes = count == 1 ? "1 note" : "\(count) notes"
+        Task(priority: .userInitiated) {
             do {
-                let report = try ReportBuilder.build(input)
-                try store.finishReport(report, in: started.folder)
-                logger.notice("Report saved at \(started.folder.path, privacy: .public)")
-                // The first time, iOS asks about local network access before the hub can answer.
-                let patience: TimeInterval = UserDefaults.standard.bool(forKey: DebugSession.hubReachedKey) ? 8 : 60
-                let outcome = await DebugSession.deliverReports(from: store, patience: patience)
-                let notes = count == 1 ? "1 note" : "\(count) notes"
-                await self?.show(toast: DebugSession.toast(for: outcome, notes: notes, to: destination?.title))
+                let outcome = try await Self.finishAndDeliver(input, folder: started.folder, store: store, logger: logger)
+                show(toast: Self.toast(for: outcome, notes: notes, to: destination?.title))
             } catch {
                 logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
-                await self?.show(toast: "Couldn't save the report")
+                show(toast: "Couldn't save the report")
             }
         }
+    }
+
+    /// Draws the report's pictures, writes it, then hands every report the Mac hasn't
+    /// confirmed to its hub. Returns how that went.
+    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    nonisolated private static func finishAndDeliver(
+        _ input: ReportBuilder.Input, folder: URL, store: ReportStore, logger: Logger
+    ) async throws -> HubLink.Outcome? {
+        let report = try ReportBuilder.build(input)
+        try store.finishReport(report, in: folder)
+        logger.notice("Report saved at \(folder.path, privacy: .public)")
+        // The first time, iOS asks about local network access before the hub can answer.
+        let patience: TimeInterval = UserDefaults.standard.bool(forKey: hubReachedKey) ? 8 : 60
+        return await deliverReports(from: store, patience: patience)
     }
 
     // MARK: - One picture per screen
@@ -1111,10 +1167,11 @@ final class DebugSession {
         withAnimation(.linear(duration: 0.4)) { nudges += 1 }
         withAnimation(.smooth(duration: 0.25)) { hint = "Annotate mode" }
         UIAccessibility.post(notification: .announcement, argument: "Annotate mode. Close it to use the app.")
-        let count = nudges
-        Task {
+        hintTimer?.cancel()
+        hintTimer = Task {
             try? await Task.sleep(for: .seconds(2.5))
-            if nudges == count { withAnimation(.smooth(duration: 0.3)) { hint = nil } }
+            guard !Task.isCancelled else { return }
+            withAnimation(.smooth(duration: 0.3)) { hint = nil }
         }
     }
 
@@ -1147,16 +1204,18 @@ final class DebugSession {
         awaitingKeyboard = keyboardTop == .infinity
         setMode(.noting)
         // A hardware keyboard never shows the on-screen one; stop waiting for it.
-        Task {
+        keyboardWait?.cancel()
+        keyboardWait = Task {
             try? await Task.sleep(for: .seconds(0.8))
-            if awaitingKeyboard {
-                withAnimation(.smooth(duration: 0.25)) { awaitingKeyboard = false }
-            }
+            guard !Task.isCancelled, awaitingKeyboard else { return }
+            withAnimation(.smooth(duration: 0.25)) { awaitingKeyboard = false }
         }
     }
 
     private func endNoting(returningTo next: Mode) {
         noteText = ""
+        keyboardWait?.cancel()
+        keyboardWait = nil
         awaitingKeyboard = false
         setMode(next)
     }
@@ -1166,16 +1225,23 @@ final class DebugSession {
     private func writeImages(_ images: [UIImage], named names: [String], asPNG: Bool) {
         let store = store
         let logger = logger
-        writes.append(Task.detached(priority: .userInitiated) {
-            for (image, name) in zip(images, names) {
-                do {
-                    let data = asPNG ? image.pngData() : image.jpegData(compressionQuality: 0.85)
-                    try store.saveScreenshot(data ?? Data(), named: name)
-                } catch {
-                    logger.error("Couldn't save an image: \(error.localizedDescription, privacy: .public)")
-                }
-            }
+        writes.append(Task(priority: .userInitiated) {
+            await Self.write(images, named: names, asPNG: asPNG, store: store, logger: logger)
         })
+    }
+
+    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    nonisolated private static func write(
+        _ images: [UIImage], named names: [String], asPNG: Bool, store: ReportStore, logger: Logger
+    ) async {
+        for (image, name) in zip(images, names) {
+            do {
+                let data = asPNG ? image.pngData() : image.jpegData(compressionQuality: 0.85)
+                try store.saveScreenshot(data ?? Data(), named: name)
+            } catch {
+                logger.error("Couldn't save an image: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     private func beginAttachmentNote(_ attachment: PendingAttachment, returningTo next: Mode = .picking) {
@@ -1226,9 +1292,11 @@ final class DebugSession {
 
     private func show(toast message: String) {
         toast = message
-        Task {
+        toastTimer?.cancel()
+        toastTimer = Task {
             try? await Task.sleep(for: .seconds(2.5))
-            if toast == message { toast = nil }
+            guard !Task.isCancelled else { return }
+            toast = nil
         }
     }
 
