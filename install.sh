@@ -79,8 +79,8 @@ Usage:
   install.sh --help         show this
 
 Through npm: npx agent-redline-ios [uninstall]
-Through curl: curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh \
-  -o "${TMPDIR:-/tmp}/redline-install.sh" && bash "${TMPDIR:-/tmp}/redline-install.sh"
+Through curl: (f="$(mktemp)" && trap 'rm -f "$f"' EXIT && curl -fsSL \
+  https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "$f" && bash "$f")
 
 Run on its own, outside a checkout or the npm package, it downloads the source from REDLINE_REPO (default
 https://github.com/mericksters13/agent-redline-ios) at REDLINE_REF (a branch, tag or commit;
@@ -206,6 +206,8 @@ failed_settings_file() {
 find_claude() {
     local candidate
     CLAUDE="$(command -v claude 2>/dev/null || true)"
+    # Only an absolute path: one found through a relative PATH folder means nothing to launchd.
+    case $CLAUDE in /*) ;; *) CLAUDE="" ;; esac
     if [ -z "$CLAUDE" ]; then
         for candidate in "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude; do
             if [ -x "$candidate" ]; then
@@ -676,9 +678,10 @@ register_mcp() {
 # Writes the login item's property list to $1. It starts Redline's own executable at login, which
 # opens in the background as a menu bar app, so System Settings > General > Login Items names it
 # after Redline, not after open. The executable is signed with the app, which
-# AssociatedBundleIdentifiers needs to show the item as the app. launchd gives it only the system's
-# folders on PATH, so the folder of the claude command found here goes first: installed under a
-# Node version manager, claude (and the node it runs) is only there.
+# AssociatedBundleIdentifiers needs to show the item as the app. launchd gives it the account's home
+# folder, so HOME is passed on: Redline keeps its data under the HOME the installer used. launchd
+# gives it only the system's folders on PATH, so the folder of the claude command found here goes
+# first: installed under a Node version manager, claude (and the node it runs) is only there.
 write_launch_agent_plist() {
     rm -f "$1"
     plutil -create xml1 "$1" &&
@@ -686,10 +689,11 @@ write_launch_agent_plist() {
         plutil -insert AssociatedBundleIdentifiers -string "$LABEL" "$1" &&
         plutil -insert ProgramArguments -array "$1" &&
         plutil -insert ProgramArguments -string "$APP/Contents/MacOS/redline" -append "$1" &&
-        plutil -insert RunAtLoad -bool true "$1" || return 1
+        plutil -insert RunAtLoad -bool true "$1" &&
+        plutil -insert EnvironmentVariables -dictionary "$1" &&
+        plutil -insert EnvironmentVariables.HOME -string "$HOME" "$1" || return 1
     [ -n "$CLAUDE" ] || return 0
-    plutil -insert EnvironmentVariables -dictionary "$1" &&
-        plutil -insert EnvironmentVariables.PATH -string "$(dirname "$CLAUDE"):/usr/bin:/bin:/usr/sbin:/sbin" "$1"
+    plutil -insert EnvironmentVariables.PATH -string "$(dirname "$CLAUDE"):/usr/bin:/bin:/usr/sbin:/sbin" "$1"
 }
 
 start_redline() {
@@ -851,7 +855,7 @@ remove_hooks() {
 }
 
 uninstall() {
-    local domain name have tmp rc artifact left=""
+    local domain name have tmp rc artifact try left="" service=""
     start_log
     step "Removing Redline"
 
@@ -882,14 +886,26 @@ uninstall() {
         fi
     done
 
-    if [ -f "$LAUNCH_AGENT" ] || [ -L "$LAUNCH_AGENT" ]; then
-        if ! $NO_START; then
-            domain="gui/$(id -u)"
-            # Only the service this home folder's app runs, never one with the same label for another.
-            if launchctl print "$domain/$LABEL" 2>/dev/null | grep -qF "$APP"; then
-                launchctl bootout "$domain/$LABEL" >>"$LOG" 2>&1 || true
+    # Only the service this home folder's app runs, never one with the same label for another.
+    # Checked even when the property list is gone, since launchd keeps a loaded service without it.
+    if ! $NO_START; then
+        domain="gui/$(id -u)"
+        if launchctl print "$domain/$LABEL" 2>/dev/null | grep -qF "$APP"; then
+            service=removed
+            launchctl bootout "$domain/$LABEL" >>"$LOG" 2>&1
+            # A service just booted out can take a moment to go.
+            for try in 1 2 3; do
+                launchctl print "$domain/$LABEL" 2>/dev/null | grep -qF "$APP" || break
+                if [ "$try" -eq 3 ]; then service=left; else sleep 1; fi
+            done
+            if [ "$service" = left ]; then
+                left="${left:+$left and }the $LABEL launchd service"
+                item "Needs you" "Login item: launchd still has the $LABEL service loaded (see $LOG)." \
+                    "Run: launchctl bootout $domain/$LABEL"
             fi
         fi
+    fi
+    if [ -f "$LAUNCH_AGENT" ] || [ -L "$LAUNCH_AGENT" ]; then
         rm -f "$LAUNCH_AGENT" >>"$LOG" 2>&1
         if [ -e "$LAUNCH_AGENT" ] || [ -L "$LAUNCH_AGENT" ]; then
             left="${left:+$left and }$LAUNCH_AGENT"
@@ -897,9 +913,13 @@ uninstall() {
                 "Check its owner, permissions and flags with ls -ldO $LAUNCH_AGENT, then delete it."
         elif $NO_START; then
             item "Done" "Login item: deleted $LAUNCH_AGENT; launchd left alone (--no-start)"
+        elif [ "$service" = left ]; then
+            item "Done" "Login item: deleted $LAUNCH_AGENT"
         else
             item "Done" "Login item: removed"
         fi
+    elif [ "$service" = removed ]; then
+        item "Done" "Login item: removed the $LABEL launchd service"
     fi
 
     stop_app "$APP"

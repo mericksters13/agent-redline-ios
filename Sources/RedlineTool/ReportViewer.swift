@@ -143,7 +143,7 @@ struct ReportViewer: View {
                             let codexFolder =
                                 chat.agent == .codex
                                 ? CodexThreads.folder(of: chat.id, in: CodexThreads.newestDatabase()) : nil
-                            let folder = chat.folder ?? codexFolder ?? URL.homeDirectory.path
+                            let folder = chat.folder ?? codexFolder ?? AgentSettings.homeDirectory().path
                             do {
                                 try Handoff.openChat(chat.agent, id: chat.id, in: folder)
                             } catch {

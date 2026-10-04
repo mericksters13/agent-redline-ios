@@ -40,7 +40,7 @@ enum ClaudeSessions {
         Set(
             [
                 ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"],
-                URL.homeDirectory.appending(path: ".claude").path,
+                AgentSettings.homeDirectory().appending(path: ".claude").path,
             ]
             .compactMap { $0 }
         )

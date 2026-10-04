@@ -147,7 +147,9 @@ enum NewWorktree {
     static func folder(for agent: Agent, repository: String, name: String) -> String {
         switch agent {
         case .claude: "\(repository)/.claude/worktrees/\(name)"
-        case .codex: "\(URL.homeDirectory.path)/.codex/worktrees/\(name)/\(URL(filePath: repository).lastPathComponent)"
+        case .codex:
+            AgentSettings.homeDirectory()
+                .appending(path: ".codex/worktrees/\(name)/\(URL(filePath: repository).lastPathComponent)").path
         }
     }
 

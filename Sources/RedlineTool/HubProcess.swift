@@ -52,7 +52,7 @@ enum HubProcess {
     ///
     /// Checks the disk.
     static func installedApp() -> URL? {
-        let home = URL.homeDirectory.appending(path: "Applications/Redline.app")
+        let home = AgentSettings.homeDirectory().appending(path: "Applications/Redline.app")
         if FileManager.default.fileExists(atPath: home.path) { return home }
         return NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID)
             .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
