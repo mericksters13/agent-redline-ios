@@ -25,15 +25,16 @@ struct HubPaths: Sendable {
     /// Moves the folder an earlier version kept under its old name, iOSAgenticDebuggingKit, to
     /// this one, so reports, chats and settings carry over. Only while nothing is here yet. A hub
     /// of the earlier version that is still running knows only the old folder, so it's stopped
-    /// first; if it won't stop, nothing moves.
+    /// first; if it won't stop, nothing moves. Only a process holding the old PID file's lock is
+    /// that hub, so a pid left behind by a hub that crashed, and since reused, is never signaled.
     static func moveFromOldName(to paths: HubPaths) {
         let old = HubPaths(root: paths.root.deletingLastPathComponent().appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
         let files = FileManager.default
         guard files.fileExists(atPath: old.root.path), !files.fileExists(atPath: paths.root.path) else { return }
         if let running = HubProcess.running(old), running != getpid() {
             kill(running, SIGTERM)
-            for _ in 0..<30 where kill(running, 0) == 0 { usleep(100_000) }
-            guard kill(running, 0) != 0 else {
+            for _ in 0..<30 where HubProcess.running(old) != nil { usleep(100_000) }
+            guard HubProcess.running(old) == nil else {
                 FileHandle.standardError.write(Data("The hub of an earlier version (pid \(running)) is still running. Quit Agentic Debugging, then run redline again.\n".utf8))
                 return
             }
