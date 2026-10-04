@@ -228,6 +228,37 @@ struct ReportStore: Sendable {
         }
     }
 
+    /// Takes back the pictures of a report that couldn't be finished, so its notes can go back into
+    /// the draft and be sent again.
+    ///
+    /// Copies every picture of the report's old draft into the current one, next to any made since;
+    /// their names are unique, so none collide. The report folder stays until `discardReport`, once
+    /// the notes are saved in the draft again.
+    func reclaimPictures(from folder: URL) throws {
+        let files = FileManager.default
+        let old = folder.appending(path: "draft", directoryHint: .isDirectory)
+        let lists = [draftFile.lastPathComponent, screensFile.lastPathComponent]
+        try files.createDirectory(at: draftDirectory, withIntermediateDirectories: true)
+        for name in try files.contentsOfDirectory(atPath: old.path) where !lists.contains(name) {
+            let target = draftDirectory.appending(path: name)
+            guard !files.fileExists(atPath: target.path) else { continue }
+            try files.copyItem(at: old.appending(path: name), to: target)
+        }
+    }
+
+    /// Removes a report that was never finished.
+    ///
+    /// Best effort: a folder left behind still has its draft, so it never counts as finished.
+    func discardReport(_ folder: URL) {
+        do {
+            try FileManager.default.removeItem(at: folder)
+        } catch {
+            Log.store.error(
+                "Couldn't remove the unfinished report \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
     /// Where the Mac's hub leaves its address, over Xcode's device link.
     var hubAddressFile: URL { root.appending(path: "hub.json") }
 

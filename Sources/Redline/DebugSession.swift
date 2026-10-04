@@ -602,21 +602,26 @@ final class DebugSession {
         setMode(annotations.isEmpty ? trayReturnMode : .tray)
     }
 
-    func updateNote(_ id: UUID, to text: String) {
+    /// Saves an edited note.
+    ///
+    /// Returns false only when the change couldn't be saved, so the viewer keeps the edit on screen
+    /// and ending the edit, closing or moving on retries.
+    @discardableResult
+    func updateNote(_ id: UUID, to text: String) -> Bool {
         let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else {
-            return
+            return true
         }
         var updated = annotations
         updated[index].note = note
-        // On failure the viewer's field keeps the new text, so ending the edit again retries.
         do {
             try persistAnnotations(updated)
         } catch {
             showFailure("Couldn't save the change to the note")
-            return
+            return false
         }
         annotations = updated
+        return true
     }
 
     /// One of the item's images at full size: its screen's picture with every note on it outlined
@@ -1109,9 +1114,38 @@ final class DebugSession {
                 show(Toast(message: ReportDelivery.toast(for: outcome, notes: notes, to: destination?.title)))
             } catch {
                 logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
-                showFailure("Couldn't save the report")
+                restoreDraft(from: input)
             }
         }
+    }
+
+    /// Puts the notes of a report that couldn't be finished back into the draft, ahead of any made
+    /// since, so they can be sent again.
+    private func restoreDraft(from input: ReportBuilder.Input) {
+        let before = screens
+        do {
+            try store.reclaimPictures(from: input.folder)
+        } catch {
+            logger.error("Couldn't take back the report's pictures: \(error.localizedDescription, privacy: .public)")
+            showFailure("Couldn't save the report or bring its notes back")
+            return
+        }
+        screens = input.screens + screens
+        let restored = input.annotations + annotations
+        do {
+            // Screens first: a screens file listing a capture no note uses is harmless, while a
+            // note whose capture isn't listed would show blank.
+            try persistScreens()
+            try persistAnnotations(restored)
+        } catch {
+            screens = before
+            showFailure("Couldn't save the report or bring its notes back")
+            return
+        }
+        annotations = restored
+        store.discardReport(input.folder)
+        refreshMarkers()
+        showFailure("Couldn't save the report. Its notes are back in the draft.")
     }
 
     /// Draws the report's pictures, writes it, then hands every report the Mac hasn't confirmed to

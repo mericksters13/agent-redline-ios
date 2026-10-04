@@ -62,13 +62,23 @@ fi
 mkdir -p "$destination"
 # A running copy is stopped first and opened again after, unless --no-start was given: macOS may
 # not match a running app to a bundle replaced under it, and ask for permissions again. A stop
-# signal, not an AppleScript quit, which would need its own permission.
+# signal, not an AppleScript quit, which would need its own permission. The bundle is replaced
+# only once the old copy has exited, so the open below starts the new one: after about 15 seconds
+# the old copy is killed.
 # pgrep and pkill take a regular expression, so the path's special characters are escaped.
 processes="$(printf '%s' "$app/Contents/MacOS/" | sed 's/[][\.*^$+?(){}|]/\\&/g')"
 running=false
 if pkill -TERM -f "$processes" 2>/dev/null; then
     running=true
-    for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "$processes" >/dev/null || break; sleep 0.3; done
+    for _ in {1..50}; do pgrep -f "$processes" >/dev/null || break; sleep 0.3; done
+    if pgrep -f "$processes" >/dev/null; then
+        pkill -KILL -f "$processes" 2>/dev/null || true
+        for _ in {1..20}; do pgrep -f "$processes" >/dev/null || break; sleep 0.1; done
+    fi
+    if pgrep -f "$processes" >/dev/null; then
+        echo "The running copy of $app did not exit; quit it and run this again." >&2
+        exit 1
+    fi
 fi
 rm -rf "$app"
 mv "$staging" "$app"

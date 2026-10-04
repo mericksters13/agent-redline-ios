@@ -199,6 +199,7 @@ final class Hub: @unchecked Sendable {
             log("Couldn't list paired phones: \(error.localizedDescription)")
             return
         }
+        forgetPhones(except: Set(paired.map(\.udid)))
         for phone in paired {
             link(for: phone).update(hosts: hosts, port: HubListener.port, includingNewApps: includingNewApps)
         }
@@ -463,12 +464,13 @@ final class Hub: @unchecked Sendable {
     /// Starts tracking one app on one device the first time the hub looks at it, and saves that.
     ///
     /// The first look only takes reports finished from about then on, so old ones aren't delivered
-    /// as new.
-    func startTrackingIfNeeded(device: String, bundleID: String) {
+    /// as new. That's the time of the first look itself: an app first seen hours after the hub
+    /// started has no reason to send the reports made before then.
+    func startTrackingIfNeeded(device: String, bundleID: String, now: Date = .now) {
         state.withLock { state in
             let key = Self.key(device: device, bundleID: bundleID)
             guard state.sources[key] == nil else { return }
-            state.sources[key] = SourceState(since: startedAt.addingTimeInterval(-Self.firstLookMargin))
+            state.sources[key] = SourceState(since: now.addingTimeInterval(-Self.firstLookMargin))
             queueWrite(.state, in: &state)
         }
     }
@@ -550,7 +552,7 @@ final class Hub: @unchecked Sendable {
         }
         state.withLock { state in
             state.filing.remove(filingKey)
-            state.sources[key, default: SourceState(since: startedAt)].delivered.append(source.reportID)
+            state.sources[key, default: SourceState(since: .now)].delivered.append(source.reportID)
             queueWrite(.state, in: &state)
         }
         log(
@@ -605,6 +607,33 @@ final class Hub: @unchecked Sendable {
     /// The simulators with a watched app installed.
     func watchedSimulators() -> Set<String> {
         simulators?.simulatorIDs ?? []
+    }
+
+    /// Phones no longer paired leave the status, and their links stop giving them the address.
+    ///
+    /// A link's state goes once the try it has in progress is over, so that try can't bring it
+    /// back.
+    func forgetPhones(except paired: Set<String>) {
+        let unpaired = state.withLock { state in
+            let gone = state.links.filter { !paired.contains($0.key) }
+            for udid in gone.keys { state.links[udid] = nil }
+            for udid in state.phoneStates.keys where !paired.contains(udid) && gone[udid] == nil {
+                state.phoneStates[udid] = nil
+            }
+            return Array(gone.values)
+        }
+        for link in unpaired {
+            link.unpair { [weak self] in
+                guard let self else { return }
+                let udid = link.phone.udid
+                // Paired again meanwhile: the new link's state stays.
+                state.withLock { state in
+                    if state.links[udid] == nil { state.phoneStates[udid] = nil }
+                }
+                writeStatus()
+            }
+        }
+        writeStatus()
     }
 
     /// Saves the status for `redline status` and a panel in another process.
