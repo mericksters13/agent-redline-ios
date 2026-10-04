@@ -643,13 +643,18 @@ final class DebugSession {
             asset.creationDate.map { ScreenshotSuggestion.Candidate(id: asset.localIdentifier, createdAt: $0) }
         }
         guard let pick = ScreenshotSuggestion.pick(newest: candidates, now: .now, offered: offeredPhotoIDs, inAppCaptures: inAppCaptureDates),
+              pick.id != loadingPhotoID,
               let asset = assets.first(where: { $0.localIdentifier == pick.id })
         else { return }
-        markOffered(pick.id)
+        // Noted as offered only once it's shown: one still in iCloud, that doesn't load, or that
+        // loads while the debugger is busy is offered again on a later activation.
+        loadingPhotoID = pick.id
         Task {
+            defer { if loadingPhotoID == pick.id { loadingPhotoID = nil } }
             guard let image = await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels),
                   mode == .idle || mode == .picking
             else { return }
+            markOffered(pick.id)
             offer(Suggestion(image: image, kind: .photo, screen: nil))
         }
     }
@@ -728,6 +733,8 @@ final class DebugSession {
     }
 
     private static let offeredPhotosKey = "AgenticDebuggingOfferedScreenshots"
+    /// The screenshot being loaded to offer, so a second activation meanwhile doesn't load it too.
+    @ObservationIgnored private var loadingPhotoID: String?
     private static let inAppCapturesKey = "AgenticDebuggingInAppScreenshots"
 
     private var offeredPhotoIDs: Set<String> {

@@ -76,6 +76,12 @@ final class Handoff: @unchecked Sendable {
     /// "New chat" picks whose first report is still starting the chat, with the reports that
     /// arrived for them meanwhile. They go to that chat once it's started. Used on `queue`.
     private var startingPicks: [String: [InboxReport]] = [:]
+    /// Reports for a new Claude Code chat that wait until the claude command is signed in and
+    /// new enough. Used on `queue`.
+    private var waitingForClaude: [InboxReport] = []
+
+    /// How often the hub checks whether the claude command is ready, while reports wait for it.
+    static let claudeRecheckInterval: TimeInterval = 60
 
     init(hub: Hub) {
         self.hub = hub
@@ -322,8 +328,6 @@ final class Handoff: @unchecked Sendable {
         }
     }
 
-    /// The claude command, which starts new Claude Code chats, isn't signed in: the report waits
-    /// in the inbox, and the Mac says what to run once.
     /// The chat a "New chat" pick was starting has started or failed: the reports that waited
     /// for it go on, to that chat once it's remembered, or else to start one again.
     private func pickSettled(_ pick: String?) {
@@ -333,10 +337,40 @@ final class Handoff: @unchecked Sendable {
         }
     }
 
+    /// The claude command, which starts new Claude Code chats, isn't signed in or is too old: the
+    /// report waits in the inbox, the Mac says what to run once, and the hub hands the report
+    /// over when the command is ready.
     private func waitForClaudeSignIn(_ report: InboxReport) {
         let source = report.source
         hub.log("Report \(source.reportID) waits: the claude command that starts new chats isn't signed in or is older than \(ClaudeCLI.desktopVersion.map(String.init).joined(separator: "."))")
         Self.notify(title: "Report from \(source.deviceName)", message: "To start new Claude Code chats, run claude auth login once in Terminal. The report waits until then.")
+        guard !waitingForClaude.contains(where: { $0.folder == report.folder }) else { return }
+        waitingForClaude.append(report)
+        if waitingForClaude.count == 1 { recheckClaude() }
+    }
+
+    /// Checks again later whether the claude command is ready, and once it is, hands over the
+    /// reports that waited for it and that no chat has taken meanwhile.
+    private func recheckClaude() {
+        queue.asyncAfter(deadline: .now() + Self.claudeRecheckInterval) { [weak self] in
+            guard let self, !waitingForClaude.isEmpty else { return }
+            guard ClaudeCLI.ready() else {
+                recheckClaude()
+                return
+            }
+            let reports = Self.stillWaiting(waitingForClaude, paths: hub.paths)
+            waitingForClaude = []
+            hub.log("The claude command is ready; handing over \(reports.count) waiting reports")
+            reports.forEach(deliver)
+        }
+    }
+
+    /// Those of `reports` still waiting in the inbox, as they are now: a chat may have taken one,
+    /// or the report may have been removed, while it waited.
+    static func stillWaiting(_ reports: [InboxReport], paths: HubPaths) -> [InboxReport] {
+        let folders = Set(reports.map(\.folder))
+        let apps = Array(Set(reports.map(\.source.bundleID)))
+        return InboxQueue.waiting(for: apps, paths: paths).filter { folders.contains($0.folder) }
     }
 
     /// Starts a chat with the report. A new chat gets a worktree of its own made from `folder`,
