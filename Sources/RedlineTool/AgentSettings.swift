@@ -70,9 +70,10 @@ enum AgentSettings {
     /// Setup replaces its hooks, so the installer can remove that command.
     private static let earlierCommandName = "agentic-debugging"
 
-    /// Every agent and event a hook of an earlier version ran with, Cursor's included.
+    /// Every agent and event a hook of an earlier version ran with, Cursor's included: `wait` and
+    /// `built` from the first versions too.
     private static let earlierHookArguments: (agents: Set<String>, events: Set<String>) = (
-        ["claude", "codex", "cursor"], ["start", "prompt", "stop", "end"]
+        ["claude", "codex", "cursor"], ["start", "prompt", "wait", "built", "stop", "end"]
     )
 
     /// This tool's hook: one that runs this executable, or one the earlier version left under its

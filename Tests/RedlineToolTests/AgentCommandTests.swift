@@ -32,5 +32,17 @@ struct AgentCommandTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claude.path)
         #expect(AgentCommand.locate(.claude, environment: ["HOME": home.url.path])?.path == claude.path)
     }
+
+    @Test func theClaudeCommandOnPATHComesFirst() throws {
+        let folder = TemporaryFolder("agent-command-path")
+        let bin = folder.url.appending(path: "nvm/bin", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let claude = bin.appending(path: "claude")
+        try Data("#!/bin/sh\n".utf8).write(to: claude)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claude.path)
+        // A relative folder on PATH is skipped.
+        let environment = ["HOME": folder.url.path, "PATH": "relative/bin:\(bin.path):/usr/bin"]
+        #expect(AgentCommand.locate(.claude, environment: environment)?.path == claude.path)
+    }
 }
 #endif

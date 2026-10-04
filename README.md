@@ -154,10 +154,10 @@ There are three ways in, and all three run the same installer, [`install.sh`](in
 3. **curl:**
 
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "${TMPDIR:-/tmp}/redline-install.sh" && bash "${TMPDIR:-/tmp}/redline-install.sh"
    ```
 
-   This downloads the `main` branch. To install a particular branch, tag or commit, set `REDLINE_REF`: `curl ... | REDLINE_REF=<commit> bash`.
+   It saves the script first and runs it only when the download worked, so a failed download ends with an error instead of an empty run that exits 0. The script then downloads the `main` branch. To install a particular branch, tag or commit, set `REDLINE_REF`: `REDLINE_REF=<commit> bash "${TMPDIR:-/tmp}/redline-install.sh"`.
 
 The installer asks for nothing it can do without: with `--no-input` (for example `npx agent-redline-ios --no-input`), or when a coding agent or CI runs it, it never waits for an answer and lists what is left for you.
 
@@ -166,7 +166,7 @@ The installer asks for nothing it can do without: with `--no-input` (for example
 Each step is safe to run again: nothing is added twice, and a run that stopped partway can be run again.
 
 1. **Checks the Mac:** macOS 15 or later, not run as root, Xcode installed and selected with its license accepted and its first launch done, `devicectl`, Swift 6 or later, git, and 3 GB of free disk space. When something is missing it stops with the one command to fix it, such as `sudo xcodebuild -license accept`; run that, then run the same install command again. The installer never runs `sudo` itself.
-2. **Gets the source:** the checkout it runs from, or a copy of the npm package in `~/Library/Caches/Redline/source`, so the build lands in a folder you own and later versions reuse it. Piped from curl, it downloads the `main` branch into that same folder and updates that copy on later runs. git is never allowed to ask for a sign-in: a repository or branch it can't reach stops the installer with the fix.
+2. **Gets the source:** the checkout it runs from, or a copy of the npm package in `~/Library/Caches/Redline/source`, so the build lands in a folder you own and later versions reuse it. Run with curl, it downloads the `main` branch into that same folder and updates that copy on later runs. git is never allowed to ask for a sign-in: a repository or branch it can't reach stops the installer with the fix.
 3. **Builds the `redline` command** with `swift build -c release --product redline`. The build log is `~/Library/Application Support/Redline/install.log`; if the build fails, the installer shows the last errors and stops.
 4. **Installs the command** as `~/.local/bin/redline`, copied from the build output. If `~/.local/bin` is not on your `PATH` and your shell is zsh, it adds one line to `~/.zprofile`; for another shell, it gives you the line to add.
 5. **Builds and installs `Redline.app`** in `~/Applications` with `scripts/build-hub-app.sh`. Keep it there: chats look for the app there to start it. The app is signed with your Mac's Apple Development certificate when you have one and it can be used (it can't over SSH or with the keychain locked), and ad hoc otherwise. A running copy is stopped and opened again (with `--no-start`, it is stopped and not opened again).
@@ -199,7 +199,7 @@ Run the install command again. It rebuilds the command and the app, replaces the
 npx agent-redline-ios@latest
 ```
 
-Piped from curl, the installer downloads the latest `main`. From a checkout, it builds the checkout as it is, so `git pull` first.
+Run with curl, the installer downloads the latest `main`. From a checkout, it builds the checkout as it is, so `git pull` first.
 
 ### Uninstall
 
@@ -210,10 +210,10 @@ npx agent-redline-ios uninstall
 or
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh | bash -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "${TMPDIR:-/tmp}/redline-install.sh" && bash "${TMPDIR:-/tmp}/redline-install.sh" uninstall
 ```
 
-It removes Redline's hooks (with `redline remove`, or by itself when the command is already gone; other hooks stay), the MCP entry in Claude Code, the login item, `Redline.app`, `~/.local/bin/redline`, the line it added to `~/.zprofile`, and its download cache. Reports stay in `~/Library/Application Support/Redline` until you delete that folder, and so do the `.before-redline` backups of your settings. If the app or the command can't be deleted, the checklist says so under Needs you and the uninstaller exits with status 1. In your app, remove the `.redline()` line and the package.
+It removes Redline's hooks (with `redline remove`, or by itself when the command is already gone; other hooks stay), the MCP entry in Claude Code, the login item, `Redline.app`, `~/.local/bin/redline`, the line it added to `~/.zprofile`, and its download cache. Reports stay in `~/Library/Application Support/Redline` until you delete that folder, and so do the `.before-redline` backups of your settings. If the app, the command or the login item can't be deleted, or Redline doesn't stop when asked, the checklist says so under Needs you and the uninstaller exits with status 1. In your app, remove the `.redline()` line and the package.
 
 ### From source
 

@@ -24,7 +24,8 @@ enum AgentCommand {
     /// The agent's command, from the places its installers put it; nil when it isn't installed.
     ///
     /// The home folder is the one in `HOME`, as for the agents' settings, so setup run with another
-    /// `HOME` finds the command installed there.
+    /// `HOME` finds the command installed there. For Claude Code, the folders on `PATH` come first,
+    /// as for the installer: installed with npm under a Node version manager, `claude` is only there.
     static func locate(
         _ agent: Agent,
         environment: [String: String] = ProcessInfo.processInfo.environment
@@ -33,7 +34,11 @@ enum AgentCommand {
         let candidates: [String]
         switch agent {
         case .claude:
-            candidates = ["\(home)/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
+            // Only absolute folders: a relative one would depend on the current folder.
+            let onPath = (environment["PATH"] ?? "").split(separator: ":").filter { $0.hasPrefix("/") }.map {
+                "\($0)/claude"
+            }
+            candidates = onPath + ["\(home)/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
         case .codex:
             // The copy inside the ChatGPT app comes first: it updates with the app.
             candidates = [

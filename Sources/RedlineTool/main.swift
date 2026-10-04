@@ -215,20 +215,26 @@ case "setup", "remove":
             if adding { print("\(agent.name): not used on this Mac, skipped.") }
             continue
         }
-        // An agent that needs no hooks is left alone: its settings file isn't touched.
-        if adding, AgentSettings.hooks(agent, executable: executable).isEmpty {
-            print("\(agent.name): no hooks needed")
-            continue
-        }
+        let needsNoHooks = adding && AgentSettings.hooks(agent, executable: executable).isEmpty
         do {
+            // An agent that needs no hooks is left alone, its settings file untouched, unless an
+            // earlier setup left hooks there: they go, so none runs a command the installer removes.
+            if needsNoHooks,
+                try !AgentSettings.containsHooks(inFile: AgentSettings.fileURL(for: agent), executable: executable)
+            {
+                print("\(agent.name): no hooks needed")
+                continue
+            }
             try AgentSettings.update(agent) {
                 adding
                     ? AgentSettings.adding(agent, to: $0, executable: executable)
                     : AgentSettings.removing(from: $0, executable: executable)
             }
-            print(
-                "\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.fileURL(for: agent).path)"
-            )
+            let change =
+                needsNoHooks
+                ? "no hooks needed; hooks from an earlier setup removed from"
+                : adding ? "hooks added to" : "hooks removed from"
+            print("\(agent.name): \(change) \(AgentSettings.fileURL(for: agent).path)")
             if adding, agent == .codex {
                 print(
                     "  Codex runs a new hook only once you trust it: open /hooks in Codex and trust \"Report delivery\"."

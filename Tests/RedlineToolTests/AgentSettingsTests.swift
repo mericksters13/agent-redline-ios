@@ -78,6 +78,21 @@ struct AgentSettingsTests {
                 "'\(executable)' hook codex prompt"
             ]
         )
+        // So are the first versions' wait and built hooks, even for Claude Code, which needs none now.
+        let first: [String: Any] = [
+            "model": "opus",
+            "hooks": [
+                "Stop": [["hooks": [["type": "command", "command": "'/opt/old/agentic-debugging' hook claude wait"]]]],
+                "PostToolUse": [
+                    ["hooks": [["type": "command", "command": "'/opt/old/agentic-debugging' hook claude built"]]]
+                ],
+            ],
+        ]
+        #expect(AgentSettings.containsHooks(in: first, executable: executable))
+        #expect(
+            try sortedJSON(AgentSettings.adding(.claude, to: first, executable: executable))
+                == sortedJSON(["model": "opus"])
+        )
     }
 
     @Test func settingsThatDontChangeAreNotWritten() throws {

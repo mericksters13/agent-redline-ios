@@ -79,9 +79,10 @@ Usage:
   install.sh --help         show this
 
 Through npm: npx agent-redline-ios [uninstall]
-Through curl: curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh | bash
+Through curl: curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh \
+  -o "${TMPDIR:-/tmp}/redline-install.sh" && bash "${TMPDIR:-/tmp}/redline-install.sh"
 
-Piped from curl, it downloads the source from REDLINE_REPO (default
+Run on its own, outside a checkout or the npm package, it downloads the source from REDLINE_REPO (default
 https://github.com/mericksters13/agent-redline-ios) at REDLINE_REF (a branch, tag or commit;
 default main).
 USAGE
@@ -183,15 +184,17 @@ app_processes() {
     printf '%s' "$1/Contents/MacOS/" | sed 's/[][\.*^$+?(){}|]/\\&/g'
 }
 
-# Stops the app at $1 if it is running and waits for it to go. True when it was running.
+# Stops the app at $1 if it is running and waits three seconds for it to go. Returns 0 when it
+# stopped, 1 when it wasn't running and 2 when it is still running.
 stop_app() {
     local pattern try
     pattern="$(app_processes "$1")"
     pkill -TERM -f "$pattern" 2>/dev/null || return 1
     for try in 1 2 3 4 5 6 7 8 9 10; do
-        pgrep -f "$pattern" >/dev/null || break
+        pgrep -f "$pattern" >/dev/null || return 0
         sleep 0.3
     done
+    pgrep -f "$pattern" >/dev/null && return 2
     return 0
 }
 
@@ -234,29 +237,34 @@ JS
 }
 
 # Removes Redline's hooks from the agent settings file $1 without the redline command, for
-# uninstall: hooks that run a command named redline or agentic-debugging go, groups left empty go,
-# everything else stays. Prints removed, unchanged, unreadable or unwritable.
+# uninstall, as redline remove would: hooks that run the command at $2, or the earlier version's
+# agentic-debugging with a hook's arguments, go; groups left empty go; everything else stays, even
+# another tool's command named redline. Prints removed, unchanged, unreadable or unwritable.
 remove_hooks_from() {
-    /usr/bin/osascript -l JavaScript - "$1" 2>/dev/null <<'JS'
+    /usr/bin/osascript -l JavaScript - "$1" "$2" 2>/dev/null <<'JS'
 function run(argv) {
     ObjC.import("Foundation");
     var text = $.NSString.stringWithContentsOfFileEncodingError(argv[0], $.NSUTF8StringEncoding, null);
     if (text.isNil()) return "unchanged";
     var settings;
     try { settings = JSON.parse(text.js); } catch (error) { return "unreadable"; }
+    // The same agents and events as earlierHookArguments in Sources/RedlineTool/AgentSettings.swift.
+    var agents = ["claude", "codex", "cursor"], events = ["start", "prompt", "wait", "built", "stop", "end"];
     function ours(hook) {
         if (!hook || typeof hook.command !== "string") return false;
-        var match = /^'((?:[^']|'\\'')*)' hook /.exec(hook.command);
+        var match = /^'((?:[^']|'\\'')*)' hook ([\s\S]*)$/.exec(hook.command);
         if (!match) return false;
-        var name = match[1].replace(/'\\''/g, "'").split("/").pop();
-        return name === "redline" || name === "agentic-debugging";
+        var path = match[1].replace(/'\\''/g, "'"), args = match[2].split(" ");
+        if (path === argv[1]) return true;
+        return path.split("/").pop() === "agentic-debugging" && args.length === 2 &&
+            agents.indexOf(args[0]) >= 0 && events.indexOf(args[1]) >= 0;
     }
-    var events = settings && settings.hooks, changed = false;
-    if (!events || typeof events !== "object") return "unchanged";
-    Object.keys(events).forEach(function (event) {
-        if (!Array.isArray(events[event])) return;
+    var hooks = settings && settings.hooks, changed = false;
+    if (!hooks || typeof hooks !== "object") return "unchanged";
+    Object.keys(hooks).forEach(function (event) {
+        if (!Array.isArray(hooks[event])) return;
         var kept = [];
-        events[event].forEach(function (entry) {
+        hooks[event].forEach(function (entry) {
             if (ours(entry)) { changed = true; return; }
             if (entry && Array.isArray(entry.hooks)) {
                 var others = entry.hooks.filter(function (hook) { return !ours(hook); });
@@ -266,10 +274,10 @@ function run(argv) {
             }
             kept.push(entry);
         });
-        if (kept.length) events[event] = kept; else delete events[event];
+        if (kept.length) hooks[event] = kept; else delete hooks[event];
     });
     if (!changed) return "unchanged";
-    if (Object.keys(events).length === 0) delete settings.hooks;
+    if (Object.keys(hooks).length === 0) delete settings.hooks;
     var out = $.NSString.alloc.initWithUTF8String(JSON.stringify(settings, null, 2) + "\n");
     return out.writeToFileAtomicallyEncodingError(argv[0], true, $.NSUTF8StringEncoding, null) ? "removed" : "unwritable";
 }
@@ -287,7 +295,10 @@ move_old_data() {
     local pid pid_file try pending_log="$LOG" pending_report="$REPORT"
     $MOVE_OLD_DATA || return 0
     step "Moving the earlier version's reports"
-    stop_app "$OLD_APP" || true
+    stop_app "$OLD_APP"
+    if [ $? -eq 2 ]; then
+        stop "The earlier version (Agentic Debugging) is still running." "Quit it from its menu bar icon."
+    fi
     pid_file="$OLD_DATA/hub/hub.pid"
     pid="$(tr -d '[:space:]' 2>/dev/null <"$pid_file")"
     case "$pid" in
@@ -546,9 +557,16 @@ run_setup() {
 # The earlier version, Agentic Debugging, would run a second hub next to Redline. Its app goes;
 # its command goes once setup has moved every hook over to redline.
 remove_old_install() {
-    local removed=""
-    if stop_app "$OLD_APP"; then removed="stopped it"; fi
-    if [ -e "$OLD_APP" ] && rm -rf "$OLD_APP"; then removed="${removed:+$removed, }removed $OLD_APP"; fi
+    local removed="" status
+    stop_app "$OLD_APP"
+    status=$?
+    if [ "$status" -eq 2 ]; then
+        item "Needs you" "Earlier version (Agentic Debugging): it is still running, so $OLD_APP stays." \
+            "Quit it from its menu bar icon, then run the installer again."
+    else
+        if [ "$status" -eq 0 ]; then removed="stopped it"; fi
+        if [ -e "$OLD_APP" ] && rm -rf "$OLD_APP"; then removed="${removed:+$removed, }removed $OLD_APP"; fi
+    fi
     if [ -e "$OLD_COMMAND" ]; then
         if ! $SETUP_OK; then
             item "Skipped" "Earlier version: kept $OLD_COMMAND until redline setup succeeds, because hooks may still run it"
@@ -610,20 +628,22 @@ register_mcp() {
     fi
 }
 
-# Writes the login item's property list to $1. It opens Redline in the background at login, and
-# names Redline, not open, in System Settings > General > Login Items.
+# Writes the login item's property list to $1. It starts Redline's own executable at login, which
+# opens in the background as a menu bar app, so System Settings > General > Login Items names it
+# after Redline, not after open. The executable is signed with the app, which
+# AssociatedBundleIdentifiers needs to show the item as the app.
 write_launch_agent_plist() {
     rm -f "$1"
     plutil -create xml1 "$1" &&
         plutil -insert Label -string "$LABEL" "$1" &&
         plutil -insert AssociatedBundleIdentifiers -string "$LABEL" "$1" &&
-        plutil -insert ProgramArguments -json '["/usr/bin/open","-g"]' "$1" &&
-        plutil -insert ProgramArguments -string "$APP" -append "$1" &&
+        plutil -insert ProgramArguments -array "$1" &&
+        plutil -insert ProgramArguments -string "$APP/Contents/MacOS/redline" -append "$1" &&
         plutil -insert RunAtLoad -bool true "$1"
 }
 
 start_redline() {
-    local domain loaded=false try pattern
+    local domain loaded=false opened=false try pattern
     if $NO_START; then
         item "Skipped" "Login item and start (--no-start). To start Redline, run: open $APP"
         return
@@ -656,12 +676,17 @@ start_redline() {
     rm -f "$TMP_PLIST"
     TMP_PLIST=""
 
-    open -g "$APP" >>"$LOG" 2>&1
+    # A login item just loaded starts Redline by itself. Otherwise, or when it hasn't after three
+    # seconds, open starts it.
     pattern="$(app_processes "$APP")"
     for try in 1 2 3 4 5 6 7 8 9 10; do
         if pgrep -f "$pattern" >/dev/null 2>&1; then
             item "Done" "Redline is running: its icon is in the menu bar"
             return
+        fi
+        if ! $opened && { ! $loaded || [ "$try" -ge 4 ]; }; then
+            open -g "$APP" >>"$LOG" 2>&1
+            opened=true
         fi
         sleep 1
     done
@@ -738,8 +763,10 @@ remove_hooks() {
     for file in "$HOME/.codex/hooks.json" "$HOME/.claude/settings.json" "$HOME/.cursor/hooks.json"; do
         [ "$file" != "$failed" ] || continue
         grep -qE "/(redline|agentic-debugging)' hook " "$file" 2>/dev/null || continue
+        result="$(remove_hooks_from "$file" "$COMMAND")"
+        # Unchanged: the hooks there are another tool's, such as another command named redline.
+        [ "$result" != "unchanged" ] || continue
         found=true
-        result="$(remove_hooks_from "$file")"
         if [ "$result" = "removed" ]; then
             item "Done" "Hooks: removed Redline's hooks from $file; other hooks stay"
         else
@@ -770,22 +797,34 @@ uninstall() {
         fi
     done
 
-    if [ -f "$LAUNCH_AGENT" ]; then
-        if $NO_START; then
-            rm -f "$LAUNCH_AGENT"
-            item "Done" "Login item: deleted $LAUNCH_AGENT; launchd left alone (--no-start)"
-        else
+    if [ -f "$LAUNCH_AGENT" ] || [ -L "$LAUNCH_AGENT" ]; then
+        if ! $NO_START; then
             domain="gui/$(id -u)"
             # Only the service this home folder's app runs, never one with the same label for another.
             if launchctl print "$domain/$LABEL" 2>/dev/null | grep -qF "$APP"; then
                 launchctl bootout "$domain/$LABEL" >>"$LOG" 2>&1 || true
             fi
-            rm -f "$LAUNCH_AGENT"
+        fi
+        rm -f "$LAUNCH_AGENT" >>"$LOG" 2>&1
+        if [ -e "$LAUNCH_AGENT" ] || [ -L "$LAUNCH_AGENT" ]; then
+            left="${left:+$left and }$LAUNCH_AGENT"
+            item "Needs you" "Login item: couldn't delete $LAUNCH_AGENT (see $LOG)." \
+                "Check its owner, permissions and flags with ls -ldO $LAUNCH_AGENT, then delete it."
+        elif $NO_START; then
+            item "Done" "Login item: deleted $LAUNCH_AGENT; launchd left alone (--no-start)"
+        else
             item "Done" "Login item: removed"
         fi
     fi
 
-    if stop_app "$APP"; then item "Done" "Stopped Redline"; fi
+    stop_app "$APP"
+    case $? in
+        0) item "Done" "Stopped Redline" ;;
+        2)
+            left="${left:+$left and }a running Redline"
+            item "Needs you" "Redline is still running and didn't stop when asked." "Quit it from its menu bar icon."
+            ;;
+    esac
 
     for artifact in "$APP" "$COMMAND"; do
         if [ ! -e "$artifact" ] && [ ! -L "$artifact" ]; then
