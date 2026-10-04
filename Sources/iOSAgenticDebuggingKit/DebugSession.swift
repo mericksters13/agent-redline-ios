@@ -182,6 +182,9 @@ final class DebugSession {
         self.window = window
         displayCornerRadius = Self.displayCornerRadius(of: scene.screen)
 
+        // A report cut short last time, such as by the app being killed while it was drawn,
+        // puts its notes back in the draft.
+        store.recoverInterruptedReports()
         annotations = store.loadDraft()
         screens = store.loadScreens()
         observeKeyboard()
@@ -329,7 +332,9 @@ final class DebugSession {
                 ready.loading = nil
                 isSavingNote = false
                 // Canceled while loading, maybe with another attachment begun since: not this one.
-                guard self.pending?.id == ready.id, !ready.images.isEmpty else { return }
+                // Fewer images than were chosen: the note box stays open and says so, so Add
+                // saves the rest only once the user has seen which are missing.
+                guard self.pending?.id == ready.id, !ready.images.isEmpty, ready.images.count == pending.count else { return }
                 saveAttachment(ready, note: note)
             }
             return
@@ -579,11 +584,17 @@ final class DebugSession {
             guard !images.isEmpty else {
                 logger.error("None of the chosen photos could be loaded")
                 cancelNote()
+                showFailure(count == 1 ? "Couldn't load the photo. Try choosing it again." : "Couldn't load the photos. Try choosing them again.")
                 return
             }
             pending?.images = images
             pending?.count = images.count
             pending?.loading = nil
+            let missing = count - images.count
+            if missing > 0 {
+                logger.error("\(missing) of the chosen photos couldn't be loaded")
+                noteError = "\(missing) of the \(count) photos couldn't be loaded. Add attaches the other \(images.count)."
+            }
         }
     }
 

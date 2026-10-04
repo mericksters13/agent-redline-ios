@@ -331,5 +331,46 @@ struct ReportStoreTests {
         store.discardReport(started.folder)
         #expect(try files.contentsOfDirectory(atPath: store.reportsDirectory.path).isEmpty)
     }
+
+    @Test func aReportCutShortPutsItsNotesBackAtTheNextLaunch() throws {
+        let files = FileManager.default
+        let capture = Capture(id: UUID(), file: "capture.png", size: CGSize(width: 402, height: 874), scroll: nil, elements: [], group: 0)
+        let screen = ScreenRecord(id: UUID(), info: ScreenInfo(title: "Today", viewController: "Home"), captures: [capture])
+        // Two reports the app was killed while drawing, the older one first.
+        let first = annotation("Cut off")
+        try store.saveScreens([screen])
+        try store.saveDraft([first])
+        try store.saveScreenshot(Data([1]), named: first.screenshots[0])
+        try store.saveScreenshot(Data([3]), named: capture.file)
+        _ = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        let second = annotation("Wrong color")
+        try store.saveDraft([second])
+        try store.saveScreenshot(Data([2]), named: second.screenshots[0])
+        _ = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_060))
+        // One that finished but was killed before its draft was removed.
+        try store.saveDraft([annotation("Sent")])
+        let finished = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_120))
+        try store.finishReport(sampleReport(id: finished.id), in: finished.folder)
+        try files.createDirectory(at: finished.draft, withIntermediateDirectories: true)
+        // A note made after them, and an empty folder left by a start cut short.
+        let latest = annotation("Too small")
+        try store.saveDraft([latest])
+        try files.createDirectory(at: store.reportsDirectory.appending(path: "20260923-000000"), withIntermediateDirectories: true)
+
+        store.recoverInterruptedReports()
+        #expect(store.loadDraft() == [first, second, latest])
+        #expect(store.loadScreens() == [screen])
+        #expect(try Data(contentsOf: store.draftDirectory.appending(path: first.screenshots[0])) == Data([1]))
+        #expect(try Data(contentsOf: store.draftDirectory.appending(path: second.screenshots[0])) == Data([2]))
+        #expect(try Data(contentsOf: store.draftDirectory.appending(path: capture.file)) == Data([3]))
+        #expect(try files.contentsOfDirectory(atPath: store.reportsDirectory.path) == [finished.id])
+        #expect(!files.fileExists(atPath: finished.draft.path))
+        #expect(store.sentReports().map(\.folder.lastPathComponent) == [finished.id])
+
+        // Running again changes nothing.
+        store.recoverInterruptedReports()
+        #expect(store.loadDraft() == [first, second, latest])
+        #expect(store.loadScreens() == [screen])
+    }
 }
 #endif

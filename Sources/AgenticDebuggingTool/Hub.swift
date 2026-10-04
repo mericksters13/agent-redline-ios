@@ -80,9 +80,6 @@ final class Hub: @unchecked Sendable {
     /// The PID file, held open and locked while the hub runs.
     private var pidFile: Int32?
 
-    /// A report finished up to this long before the hub first looked at its app still counts
-    /// as new: the phone's clock and the Mac's can disagree by a little.
-    static let firstLookMargin: TimeInterval = 120
     /// How often the hub looks for newly paired phones and newly installed apps. Changes to the
     /// Mac's network are noticed as they happen.
     static let discoveryInterval: TimeInterval = 1800
@@ -329,19 +326,11 @@ final class Hub: @unchecked Sendable {
 
     // MARK: - Delivery
 
-    /// The reports from one app on one device still to copy. The first look at a source only
-    /// takes reports finished from about then on, so old ones aren't delivered as new. That's
-    /// the time of the first look itself: an app first seen hours after the hub started has
-    /// no reason to send the reports made before then.
-    func toCopy(device: String, bundleID: String, finished: [FinishedReport], now: Date = Date()) -> [String] {
-        lock.withLock {
-            let key = "\(device)|\(bundleID)"
-            if state[key] == nil {
-                state[key] = SourceState(since: now.addingTimeInterval(-Self.firstLookMargin))
-                saveState()
-            }
-            return state[key]!.toCopy(from: finished)
-        }
+    /// The reports from one app on one device still to copy. A phone offers only reports the
+    /// Mac hasn't confirmed, and a simulator's reports without the delivered mark are the same,
+    /// so every one is taken, including those sent before this hub first saw the app.
+    func toCopy(device: String, bundleID: String, finished: [FinishedReport]) -> [String] {
+        lock.withLock { (state["\(device)|\(bundleID)"] ?? SourceState()).toCopy(from: finished) }
     }
 
     /// The offered reports the app can stop offering.
@@ -389,7 +378,7 @@ final class Hub: @unchecked Sendable {
                 log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
                 return false
             }
-            state[key, default: SourceState(since: Date())].delivered.append(source.reportID)
+            state[key, default: SourceState()].delivered.append(source.reportID)
             saveState()
             return true
         }

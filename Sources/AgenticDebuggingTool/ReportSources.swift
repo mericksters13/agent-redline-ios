@@ -120,44 +120,39 @@ enum ReportFolder {
     /// The empty file in a report's folder that says the Mac has it, as the kit's `ReportStore` names it.
     static let deliveredMark = "delivered"
 
-    /// The finished reports among paths relative to the reports folder. A report is finished
-    /// once its `report.json` is written and the draft it was drawn from is gone.
+    /// The finished reports among paths relative to the reports folder that a Mac doesn't have
+    /// yet. A report is finished once its `report.json` is written and the draft it was drawn
+    /// from is gone; one with the delivered mark is already on a Mac.
     static func finished(in entries: [(path: String, modified: Date?)]) -> [FinishedReport] {
         var written: [String: FinishedReport] = [:]
-        var drawing = Set<String>()
+        var skipped = Set<String>()
         for entry in entries {
             let parts = entry.path.split(separator: "/")
             guard parts.count >= 2 else { continue }
             let id = String(parts[0])
             if parts.count == 2, parts[1] == "report.json" { written[id] = FinishedReport(id: id, finishedAt: entry.modified) }
-            if parts[1] == "draft" { drawing.insert(id) }
+            if parts[1] == "draft" || (parts.count == 2 && parts[1] == deliveredMark) { skipped.insert(id) }
         }
-        return written.values.filter { !drawing.contains($0.id) }.sorted { $0.id < $1.id }
+        return written.values.filter { !skipped.contains($0.id) }.sorted { $0.id < $1.id }
     }
 }
 
-/// What the hub has taken from one app on one phone or simulator.
+/// What the hub has taken from one app on one phone or simulator. Every report an app offers
+/// is one the user sent and the Mac hasn't confirmed, however long ago: one sent before any
+/// Mac set the app up is still waiting for one.
 struct SourceState: Codable, Equatable {
-    /// Reports finished before this were there before the hub first looked, and stay where they are.
-    var since: Date
     var delivered: [String] = []
 
     /// The finished reports still to copy.
     func toCopy(from finished: [FinishedReport]) -> [String] {
         let done = Set(delivered)
-        return finished.filter { report in
-            !done.contains(report.id) && !isOld(report)
-        }.map(\.id)
+        return finished.filter { !done.contains($0.id) }.map(\.id)
     }
 
-    /// The offered reports the app can stop offering: copied, or there before the hub first looked.
+    /// The offered reports the app can stop offering: the ones copied.
     func settled(_ finished: [FinishedReport]) -> [String] {
         let done = Set(delivered)
-        return finished.filter { done.contains($0.id) || isOld($0) }.map(\.id)
-    }
-
-    private func isOld(_ report: FinishedReport) -> Bool {
-        report.finishedAt.map { $0 < since } ?? false
+        return finished.filter { done.contains($0.id) }.map(\.id)
     }
 }
 

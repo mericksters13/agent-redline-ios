@@ -15,6 +15,10 @@ struct HubTests {
         return Hub(paths: paths, devicectl: Devicectl(executable: URL(fileURLWithPath: "/usr/bin/true")), apps: [app])
     }
 
+    private func store(_ id: String, in hub: Hub, offeredIn offer: HubMessage.Offer) -> Bool {
+        hub.store(HubMessage.Upload(id: id, files: ["report.json": Data("{}".utf8)]), offeredIn: offer)
+    }
+
     private func offer(token: String, reports: [(String, Date)]) -> HubMessage.Offer {
         HubMessage.Offer(device: phone, bundleID: app, token: token, reports: reports.map { .init(id: $0.0, finishedAt: $0.1) })
     }
@@ -181,10 +185,11 @@ struct HubTests {
         let old = ("20261002-135144", Date().addingTimeInterval(-86_400))
         let new = ("20261004-031600", Date())
         let offered = offer(token: token, reports: [old, new])
+        // The old one was sent before this hub set the app up, and is still waiting for a Mac.
+        #expect(store(old.0, in: hub, offeredIn: offered))
         let answer = hub.answer(offered)
         #expect(answer.refused == nil)
         #expect(answer.want == ["20261004-031600"])
-        // From before the hub first looked: the app can stop offering it.
         #expect(answer.delivered == ["20261002-135144"])
 
         // Unsafe file names and reports without their report.json are turned down.
@@ -201,13 +206,17 @@ struct HubTests {
         #expect(Set(again.delivered) == ["20261002-135144", "20261004-031600"])
     }
 
-    @Test func aSourceFirstSeenLaterTakesOnlyReportsFromThen() throws {
+    @Test func reportsSentBeforeTheHubSetTheAppUpAreTakenNotJustSettled() throws {
         let hub = try hub()
-        let firstLook = Date().addingTimeInterval(3 * 3600)
-        let before = FinishedReport(id: "20261004-120000", finishedAt: firstLook.addingTimeInterval(-3600))
-        let fresh = FinishedReport(id: "20261004-145930", finishedAt: firstLook.addingTimeInterval(-30))
-        #expect(hub.toCopy(device: phone, bundleID: app, finished: [before, fresh], now: firstLook) == ["20261004-145930"])
-        #expect(hub.settled(device: phone, bundleID: app, finished: [before, fresh]) == ["20261004-120000"])
+        let token = hub.token(device: phone, bundleID: app)
+        // Sent a day before any Mac gave the app its address, offered now that one has.
+        let early = offer(token: token, reports: [("20261003-120000", Date().addingTimeInterval(-86_400))])
+        let first = hub.answer(early)
+        #expect(first.want == ["20261003-120000"])
+        // Not confirmed until the hub has it.
+        #expect(first.delivered.isEmpty)
+        #expect(store("20261003-120000", in: hub, offeredIn: early))
+        #expect(hub.answer(early).delivered == ["20261003-120000"])
     }
 
     @Test func aReportWhoseSourceCannotBeWrittenIsNotFiled() throws {

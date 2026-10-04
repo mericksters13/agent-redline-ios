@@ -455,6 +455,51 @@ struct ReportStore: Sendable {
         try? FileManager.default.removeItem(at: folder)
     }
 
+    /// Brings back reports cut short, such as by the app being killed while their pictures were
+    /// drawn. A finished one only loses the draft it was drawn from. An unfinished one's notes,
+    /// screens and pictures go back into the draft, ahead of any made since, so they can be sent
+    /// again. Call at launch only, before any report starts. Safe to run again after being cut
+    /// short itself: notes and screens already back in the draft aren't added twice.
+    func recoverInterruptedReports() {
+        let files = FileManager.default
+        let folders = (try? files.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        // Newest first, so each older report's notes go ahead of it.
+        for folder in folders.sorted(by: { $0.lastPathComponent > $1.lastPathComponent })
+        where (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            let old = folder.appending(path: "draft", directoryHint: .isDirectory)
+            let finished = files.fileExists(atPath: folder.appending(path: "report.json").path)
+            guard files.fileExists(atPath: old.path) else {
+                // Cut short before the draft moved in: there's nothing to bring back.
+                if !finished { discardReport(folder) }
+                continue
+            }
+            if finished {
+                try? files.removeItem(at: old)
+                continue
+            }
+            do {
+                let annotations = Self.load([Annotation].self, from: old.appending(path: draftFile.lastPathComponent)) ?? []
+                let screens = Self.load([ScreenRecord].self, from: old.appending(path: screensFile.lastPathComponent)) ?? []
+                try reclaimPictures(from: folder)
+                // Screens first, as when a note is added: a listed screen no note uses is harmless.
+                let currentScreens = loadScreens()
+                let screenIDs = Set(currentScreens.map(\.id))
+                try saveScreens(screens.filter { !screenIDs.contains($0.id) } + currentScreens)
+                let draft = loadDraft()
+                let noteIDs = Set(draft.map(\.id))
+                try saveDraft(annotations.filter { !noteIDs.contains($0.id) } + draft)
+                discardReport(folder)
+            } catch {
+                // Left as it is, to be tried again at the next launch.
+                continue
+            }
+        }
+    }
+
+    private static func load<T: Decodable>(_ type: T.Type, from file: URL) -> T? {
+        (try? Data(contentsOf: file)).flatMap { try? decoder.decode(type, from: $0) }
+    }
+
     /// Where the Mac's hub leaves its address, over Xcode's device link.
     var hubAddressFile: URL { root.appending(path: "hub.json") }
 
