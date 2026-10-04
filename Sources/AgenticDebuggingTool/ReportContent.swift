@@ -26,15 +26,60 @@ enum ReportContent {
         return names.map { folder.appending(path: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    /// The report as text, its pictures named by path for the agent to open: for agents that
-    /// get reports through hooks.
+    /// The report as an agent reads it in a chat: each picture's path, then the notes on it,
+    /// numbered like the outlines drawn in the picture, with the element each note is about.
+    /// Nothing else.
     static func text(for report: InboxReport) -> String {
-        let pictures = pictures(in: report.folder)
-        var text = header(for: report) + "\n" + summary(of: report).trimmingCharacters(in: .whitespacesAndNewlines)
-        if !pictures.isEmpty {
-            text += "\n\nPictures, in the order above:\n" + pictures.map(\.path).joined(separator: "\n")
+        guard let data = try? Data(contentsOf: report.folder.appending(path: "report.json")),
+              let listing = try? JSONDecoder().decode(Listing.self, from: data)
+        else { return header(for: report) + "\n" + summary(of: report).trimmingCharacters(in: .whitespacesAndNewlines) }
+        let items = Dictionary(listing.items.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+        var blocks: [String] = []
+        for image in listing.screens.flatMap(\.images) {
+            let notes = image.notes.compactMap { items[$0] }.map(line)
+            blocks.append(([report.folder.appending(path: image.file).path] + notes).joined(separator: "\n"))
         }
-        return text
+        for item in listing.items where !item.attachments.isEmpty {
+            blocks.append((item.attachments.map { report.folder.appending(path: $0).path } + [line(item)]).joined(separator: "\n"))
+        }
+        let app = listing.app.name ?? report.source.bundleID
+        return (["UI report from \(report.source.deviceName) · \(app)"] + blocks).joined(separator: "\n\n")
+    }
+
+    /// "1. Log milestone (Button, today.milestones): This is ugly".
+    private static func line(_ item: Listing.Item) -> String {
+        let element = item.element
+        let name = element?.label ?? element?.identifier ?? item.title
+        let details = [element?.role, element?.identifier == name ? nil : element?.identifier].compactMap { $0 }.joined(separator: ", ")
+        let note = item.note.isEmpty ? "No note" : item.note
+        return "\(item.number). \(name)\(details.isEmpty ? "" : " (\(details))"): \(note)"
+    }
+
+    /// What `text(for:)` reads from report.json.
+    private struct Listing: Decodable {
+        struct App: Decodable { var name: String? }
+        struct Screen: Decodable {
+            struct Image: Decodable {
+                var file: String
+                var notes: [Int]
+            }
+            var images: [Image]
+        }
+        struct Item: Decodable {
+            struct Element: Decodable {
+                var identifier: String?
+                var label: String?
+                var role: String?
+            }
+            var number: Int
+            var title: String
+            var note: String
+            var element: Element?
+            var attachments: [String]
+        }
+        var app: App
+        var screens: [Screen]
+        var items: [Item]
     }
 
     /// The report's items, with pictures attached while `budget` bytes allow; the rest are

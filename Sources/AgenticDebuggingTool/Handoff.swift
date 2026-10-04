@@ -132,7 +132,7 @@ final class Handoff: @unchecked Sendable {
                 let chat = ChatRecord(id: "claude-\(id)", agent: Agent.claude.rawValue, folder: worktree, bundleIDs: [source.bundleID],
                                       pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
                 guard InboxQueue.claim(report, for: chat) else { return }
-                openClaude(id, in: worktree, thenSend: AgentHooks.reportPrompt(ReportContent.text(for: report)), for: report)
+                openClaude(id, in: worktree, thenSend: ReportContent.text(for: report), for: report)
             } else if worktree != nil {
                 waitForClaudeSignIn(report)
             }
@@ -142,7 +142,7 @@ final class Handoff: @unchecked Sendable {
                               pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
         guard InboxQueue.claim(report, for: chat) else { return }
         let name = session.title ?? Self.folderName(session.folder)
-        if ClaudeSessions.send(AgentHooks.reportPrompt(ReportContent.text(for: report)), to: session) {
+        if ClaudeSessions.send(ReportContent.text(for: report), to: session) {
             hub.log("Sent report \(source.reportID) to the Claude Code chat \(name), in \(session.folder)")
             Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Claude Code chat \(name).")
         } else {
@@ -161,7 +161,7 @@ final class Handoff: @unchecked Sendable {
                               registeredAt: Date(), lastActiveAt: Date())
         guard InboxQueue.claim(report, for: chat) else { return }
         let pictures = ReportContent.pictures(in: report.folder)
-        let text = AgentHooks.reportPrompt(ReportContent.text(for: report), picturesAttached: true)
+        let text = ReportContent.text(for: report)
         var outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
         if outcome == .notOpen {
             hub.log("The Codex chat for report \(source.reportID) isn't open; opening it")
@@ -301,7 +301,7 @@ final class Handoff: @unchecked Sendable {
             workFolder = folder
         }
         let pictures = ReportContent.pictures(in: report.folder)
-        var reportPrompt = AgentHooks.reportPrompt(ReportContent.text(for: report), picturesAttached: agent == .codex)
+        var reportPrompt = ReportContent.text(for: report)
         // A Claude Code chat reads the pictures from a copy in its worktree, without asking.
         if agent == .claude, resuming == nil, madeWorktree, let copy = NewWorktree.copyReport(report.folder, into: workFolder) {
             reportPrompt = reportPrompt.replacingOccurrences(of: report.folder.path, with: copy)

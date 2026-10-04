@@ -105,7 +105,10 @@ struct AgentHookTests {
         try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
         try "1. **Save**: Too small.\n".write(to: incoming.appending(path: "report.md"), atomically: true, encoding: .utf8)
         let app: [String: Any] = ["buildIDs": buildIDs as Any, "sourceFile": sourceFile as Any].compactMapValues { $0 is NSNull ? nil : $0 }
-        let listing: [String: Any] = ["app": app, "screens": [["images": [["file": "screen-1.jpg"]]]], "items": []]
+        let item: [String: Any] = ["number": 1, "title": "Save", "note": "Too small.", "attachments": [String](),
+                                   "element": ["identifier": "editor.save", "label": "Save", "role": "Button"]]
+        let listing: [String: Any] = ["app": app.merging(["name": "Example"]) { $1 }, "screens": [["images": [["file": "screen-1.jpg", "notes": [1]]]]],
+                                      "items": [item]]
         try JSONSerialization.data(withJSONObject: listing).write(to: incoming.appending(path: "report.json"))
         try Data([0xFF]).write(to: incoming.appending(path: "screen-1.jpg"))
         let source = ReportSource(kind: .phone, device: "D", deviceName: "Mark iPhone", bundleID: bundleID, reportID: id, receivedAt: Date())
@@ -272,6 +275,36 @@ struct AgentHookTests {
         #expect([2, 1, 114].lexicographicallyPrecedes(ClaudeCLI.desktopVersion))
     }
 
+    @Test func aReportReadsAsPicturesAndTheirNotes() throws {
+        let report = paths.inbox.appending(path: "com.example.app/20261004-120950-0CF3C01C", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: report, withIntermediateDirectories: true)
+        let listing: [String: Any] = [
+            "app": ["name": "Tiny Tally", "version": "1.0.9", "build": "41"],
+            "screens": [["images": [["file": "screen-1.jpg", "notes": [1]]]], ["images": [["file": "screen-2.jpg", "notes": [3]]]]],
+            "items": [
+                ["number": 1, "title": "Log milestone", "note": "This is ugly", "attachments": [String](),
+                 "element": ["identifier": "today.milestones", "label": "Log milestone", "role": "Button"]],
+                ["number": 2, "title": "History", "note": "The list breaks", "attachments": ["note-2.jpg"]],
+                ["number": 3, "title": "growth.card", "note": "", "attachments": [String](), "element": ["identifier": "growth.card", "role": "Group"]],
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: listing).write(to: report.appending(path: "report.json"))
+        let source = ReportSource(kind: .phone, device: "D", deviceName: "Mark iPhone", bundleID: "com.example.app", reportID: "20261004-120950", receivedAt: Date())
+        let text = ReportContent.text(for: InboxReport(folder: report, source: source, claim: nil))
+        #expect(text == """
+            UI report from Mark iPhone · Tiny Tally
+
+            \(report.path)/screen-1.jpg
+            1. Log milestone (Button, today.milestones): This is ugly
+
+            \(report.path)/screen-2.jpg
+            3. growth.card (Group): No note
+
+            \(report.path)/note-2.jpg
+            2. History: The list breaks
+            """)
+    }
+
     @Test func codexChatsLeaveOutWhatCodexRunsOnItsOwn() throws {
         let database = root.appending(path: "state_5.sqlite")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -309,7 +342,7 @@ struct AgentHookTests {
         // Another chat on the same app gets nothing, and an unaddressed report goes to no one.
         #expect(other.takeAddressed() == nil)
         let text = try #require(builder.takeAddressed())
-        #expect(text.contains("**Save**: Too small."))
+        #expect(text.contains("1. Save (Button, editor.save): Too small."))
         #expect(text.contains(report.appending(path: "screen-1.jpg").path))
         #expect(builder.takeAddressed() == nil)
     }

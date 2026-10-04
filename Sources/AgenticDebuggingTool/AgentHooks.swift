@@ -78,10 +78,10 @@ enum AgentHooks {
 
         case .prompt:
             session.touch()
-            return answer(agent, event, session.takeAddressed().map { reportPrompt($0) })
+            return answer(agent, event, session.takeAddressed())
 
         case .stop:
-            if let text = session.takeAddressed() { return answer(agent, event, reportPrompt(text)) }
+            if let text = session.takeAddressed() { return answer(agent, event, text) }
             // Only a chat a report was sent to waits for more; any other stops as usual.
             guard !InboxQueue.reports(for: session.chat.bundleIDs, paths: paths).filter({ InboxQueue.address(of: $0.folder)?.chat == id }).isEmpty,
                   let lock = WaitLock(chat: id, paths: paths) else { return answer(agent, event, nil) }
@@ -91,7 +91,7 @@ enum AgentHooks {
             while session.waitForAddressed(timeout: deadline.timeIntervalSinceNow, waiter: waiter) {
                 guard let text = session.takeAddressed() else { continue }
                 withExtendedLifetime(lock) {}
-                return answer(agent, event, reportPrompt(text))
+                return answer(agent, event, text)
             }
             return answer(agent, event, nil)
 
@@ -127,20 +127,6 @@ enum AgentHooks {
         }
     }
 
-    /// What the agent reads when a report arrives. `picturesAttached` when the pictures come
-    /// with it, as in Codex; otherwise the agent opens them from their paths.
-    static func reportPrompt(_ report: String, picturesAttached: Bool = false) -> String {
-        let pictures = picturesAttached
-            ? "Its pictures are attached, in the order listed."
-            : "Open its pictures and show them to the user in this chat, with your tool for sending files to the user if you have one."
-        return """
-        A UI report arrived from the user's device through iOSAgenticDebuggingKit. \
-        \(pictures) Find the code for each noted element by its identifier or label, tell the user what you found and \
-        propose a fix before changing code.
-
-        \(report)
-        """
-    }
 }
 
 /// Finds the process a chat lives in, from a hook that runs as its child.
