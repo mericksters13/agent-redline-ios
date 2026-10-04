@@ -132,6 +132,28 @@ struct KitContractTests {
         #expect(store.reportsDirectory.path == "/container/" + ReportFolder.path)
     }
 
+    @Test func theKitTakesTheMacsMarkAsDelivered() throws {
+        let store = ReportStore(
+            root: FileManager.default.temporaryDirectory.appending(path: "KitContractTests-\(UUID().uuidString)")
+        )
+        defer { try? FileManager.default.removeItem(at: store.root) }
+        try store.saveDraft([])
+        let started = try store.beginReport(date: date)
+        let report = Report(
+            id: started.id,
+            createdAt: date,
+            app: Report.App(),
+            device: Report.Device(model: "iPhone18,1", systemName: "iOS", systemVersion: "27.0"),
+            screens: [],
+            items: []
+        )
+        try store.finishReport(report, in: started.folder)
+        #expect(store.undeliveredReports().map(\.id) == [started.id])
+        // A simulator's hub marks a report it has copied.
+        try Data().write(to: started.folder.appending(path: ReportFolder.deliveredMark))
+        #expect(store.undeliveredReports().isEmpty)
+    }
+
     @Test func theMacReadsEveryFieldItUsesFromTheKitsReport() throws {
         let root = FileManager.default.temporaryDirectory.appending(
             path: "KitContractTests-\(UUID().uuidString)",

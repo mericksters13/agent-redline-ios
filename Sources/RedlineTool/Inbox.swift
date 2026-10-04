@@ -103,6 +103,15 @@ enum Inbox {
         return claim
     }
 
+    /// Records where the chat that took a report works, once that is known: a chat the hub starts
+    /// takes the report before its worktree exists, and is resumed from the worktree.
+    static func moveClaim(of report: URL, to folder: String) throws {
+        let file = report.appending(path: claimFile)
+        var claim = try HubPaths.decoder.decode(Claim.self, from: Data(contentsOf: file))
+        claim.folder = folder
+        try HubPaths.encoder.encode(claim).write(to: file, options: .atomic)
+    }
+
     enum ClaimResult {
         case claimed
         case takenByAnotherChat

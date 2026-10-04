@@ -84,8 +84,8 @@ final class ChatSession: Sendable {
 
     /// Takes the reports waiting for this chat's apps, oldest first.
     ///
-    /// Always takes at least one waiting report; takes more while their pictures fit in `budget`
-    /// bytes.
+    /// Always takes at least one waiting report; takes more while their text and pictures fit in
+    /// `budget` bytes.
     func take(budget: Int) -> (items: [ReportContent.Item], taken: Int, remaining: Int) {
         let chat = self.chat
         var items: [ReportContent.Item] = []
@@ -94,7 +94,8 @@ final class ChatSession: Sendable {
         var lookedAt = 0
         let waiting = Inbox.unclaimedReports(for: chat.bundleIDs, paths: paths)
         for report in waiting {
-            if taken > 0, used >= budget { break }
+            // Another report's text, however long, must fit too.
+            if taken > 0, budget - used < ReportContent.longestText { break }
             lookedAt += 1
             // Another chat may have taken it a moment ago.
             guard case .claimed = Inbox.claim(report, for: chat) else { continue }

@@ -52,6 +52,10 @@ struct HubStatus: Codable, Sendable {
     var pid: Int32
     var startedAt: Date
     var apps: [String]
+    /// The apps given on the command line, which a hub taking over keeps watching.
+    ///
+    /// Nil in a status.json an earlier hub wrote.
+    var fixedApps: [String]? = nil
     /// Where apps reach the hub.
     var hosts: [String]
     var port: UInt16

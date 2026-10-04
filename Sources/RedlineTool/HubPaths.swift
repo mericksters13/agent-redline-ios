@@ -7,7 +7,7 @@ import Foundation
 ///   report's own files (`report.json`, `report.md`, pictures) and the hub's: `source.json`
 ///   (where it came from), `claim.json` (the chat that took it), `to.json` (the chat it's
 ///   addressed to), `delivery.json` (where the hub sent it), and for a chat the hub started,
-///   `new-chat-output.jsonl` and `answer.md`. A report is filled under `.incoming-<name>` and
+///   `new-chat-output.jsonl` and `answer.md`. A report is filled under `.incoming-<name>-<UUID>` and
 ///   renamed into place whole.
 /// - `hub/chats/<chat>.json`: the open chats, written by their MCP copies, hooks and waits
 /// - `hub/state.json`: which reports each phone and simulator app has already given

@@ -355,6 +355,13 @@ final class Handoff: Sendable {
             workFolder = try NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: agent)
             madeWorktree = true
             hub.log("Made worktree \(workFolder) for report \(source.reportID)")
+            do {
+                try Inbox.moveClaim(of: report.folder, to: workFolder)
+            } catch {
+                hub.log(
+                    "Couldn't record worktree \(workFolder) in report \(source.reportID)'s claim: \(error.localizedDescription)"
+                )
+            }
         } catch {
             workFolder = folder
             hub.log(
@@ -487,12 +494,18 @@ final class Handoff: Sendable {
     /// through osascript.
     static func notify(title: String, message: String) {
         if Bundle.main.bundleURL.pathExtension == "app" {
-            let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = message
-            UNUserNotificationCenter.current().add(
-                UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-            )
+            // The app asks for permission when it starts, but a report can arrive before the
+            // user answers. Asking again waits for that answer (macOS shows the prompt only
+            // once), so the notification is added only once it's allowed and isn't lost.
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { isGranted, _ in
+                guard isGranted else { return }
+                let content = UNMutableNotificationContent()
+                content.title = title
+                content.body = message
+                UNUserNotificationCenter.current().add(
+                    UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+                )
+            }
             return
         }
         func quoted(_ text: String) -> String {

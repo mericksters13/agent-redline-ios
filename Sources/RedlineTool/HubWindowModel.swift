@@ -42,7 +42,9 @@ final class HubWindowModel {
     /// Everything one refresh reads, off the main actor.
     struct Snapshot: Sendable {
         var status: HubStatus
-        var reports: [(deviceID: String, row: ReportRow)]
+        var reports: [ReportRow]
+        /// When each device last sent a report, from every report in the inbox.
+        var lastReport: [String: Date]
         var simulators: [(udid: String, name: String)]
     }
 
@@ -98,7 +100,7 @@ final class HubWindowModel {
     }
 
     private func apply(_ snapshot: Snapshot) {
-        let last = Dictionary(snapshot.reports.map { ($0.deviceID, $0.row.receivedAt) }, uniquingKeysWith: max)
+        let last = snapshot.lastReport
         let phones = snapshot.status.phones.map {
             DeviceRow(
                 id: $0.udid,
@@ -116,7 +118,7 @@ final class HubWindowModel {
         // Only what changed is set, so the panel redraws only when something did.
         let newDevices = phones.filter(\.isActive) + simulators + phones.filter { !$0.isActive }
         if newDevices != devices { devices = newDevices }
-        let newReports = snapshot.reports.map(\.row)
+        let newReports = snapshot.reports
         if newReports != reports { reports = newReports }
         let newReach =
             snapshot.status.hosts.first.map { "Apps reach it at \($0) · port \(snapshot.status.port)" }
@@ -135,9 +137,16 @@ final class HubWindowModel {
             loader.async {
                 let status = hub.statusSnapshot()
                 let watched = hub.watchedSimulators()
-                let reports = readReports(paths: hub.paths)
+                let (reports, lastReport) = readReports(paths: hub.paths)
                 let simulators = fetchBootedSimulators().filter { watched.contains($0.udid) }
-                continuation.resume(returning: Snapshot(status: status, reports: reports, simulators: simulators))
+                continuation.resume(
+                    returning: Snapshot(
+                        status: status,
+                        reports: reports,
+                        lastReport: lastReport,
+                        simulators: simulators
+                    )
+                )
             }
         }
     }
@@ -153,44 +162,51 @@ final class HubWindowModel {
         return state
     }
 
-    /// The newest reports in the inbox, with where each went.
+    /// The newest reports in the inbox, with where each went, and when each device last sent one,
+    /// from every report in the inbox rather than only those shown.
     ///
     /// Only the newest `limit` are read beyond their source.json.
-    nonisolated static func readReports(paths: HubPaths, limit: Int = 30) -> [(deviceID: String, row: ReportRow)] {
-        let newest = Inbox.reports(for: nil, paths: paths).sorted { $0.source.receivedAt > $1.source.receivedAt }
-            .prefix(limit)
+    nonisolated static func readReports(paths: HubPaths, limit: Int = 30) -> (
+        rows: [ReportRow], lastReport: [String: Date]
+    ) {
+        let all = Inbox.reports(for: nil, paths: paths)
+        let lastReport = Dictionary(all.map { ($0.source.device, $0.source.receivedAt) }, uniquingKeysWith: max)
+        let newest = all.sorted { $0.source.receivedAt > $1.source.receivedAt }.prefix(limit)
         let database = CodexThreads.newestDatabase()
-        return newest.map { report in
+        let rows = newest.map { report in
             let folder = report.folder
             let listing = ReportListing.load(from: folder)
             let (agent, chat, isWaiting) = destination(of: folder, codexDatabase: database)
-            return (
-                report.source.device,
-                ReportRow(
-                    id: folder.path,
-                    folder: folder,
-                    device: report.source.deviceName,
-                    receivedAt: report.source.receivedAt,
-                    agent: agent,
-                    chat: chat,
-                    isWaiting: isWaiting,
-                    thumbnail: ReportContent.pictures(in: folder, listing: listing).first,
-                    notes: notes(of: listing)
-                )
+            return ReportRow(
+                id: folder.path,
+                folder: folder,
+                device: report.source.deviceName,
+                receivedAt: report.source.receivedAt,
+                agent: agent,
+                chat: chat,
+                isWaiting: isWaiting,
+                thumbnail: ReportContent.pictures(in: folder, listing: listing).first,
+                notes: notes(of: listing)
             )
         }
+        return (Array(rows), lastReport)
     }
 
     /// The agent and chat a report went to: what the hub saved when it delivered it, or the
     /// chat that took it through MCP or a hook.
+    ///
+    /// A report the hub left waiting, or set to go with a chat's next message, shows the chat
+    /// that took it once one has.
     nonisolated static func destination(of folder: URL, codexDatabase: URL?) -> (
         agent: String, chat: String, isWaiting: Bool
     ) {
-        if let delivery = ChatDelivery.load(from: folder) {
+        let delivery = ChatDelivery.load(from: folder)
+        let claim = Inbox.claim(of: folder)
+        if let delivery, !(delivery.isPending && claim.map { $0.claimedAt > delivery.deliveredAt } == true) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             return (agent, delivery.title, delivery.kind == .waiting)
         }
-        if let claim = Inbox.claim(of: folder) {
+        if let claim {
             let agent = Agent(rawValue: claim.agent)?.name ?? claim.agent
             return (agent, chatTitle(claim, codexDatabase: codexDatabase), false)
         }

@@ -52,12 +52,27 @@ struct ReportDeliveryTests {
 
     @Test func aSimulatorHubTakesReportsFromTheFolder() async throws {
         defer { try? FileManager.default.removeItem(at: store.root) }
-        _ = try fileReport(at: 1_790_000_000)
-        _ = try fileReport(at: 1_790_000_600)
+        let first = try fileReport(at: 1_790_000_000)
+        let second = try fileReport(at: 1_790_000_600)
         try writeHubAddress(#"{"device":"S","hosts":["127.0.0.1"],"port":47361,"token":"t","uploads":false}"#)
-        #expect(await ReportDelivery.deliver(from: store, bundleID: "com.example.app", patience: 1) == .delivered)
+        // Stands in for the hub, which marks each report delivered once it has copied it.
+        let hub = Task {
+            try await Task.sleep(for: .milliseconds(300))
+            store.markDelivered([first, second])
+        }
+        #expect(await ReportDelivery.deliver(from: store, bundleID: "com.example.app", patience: 2) == .delivered)
+        try await hub.value
         #expect(store.undeliveredReports().isEmpty)
         #expect(store.lastDelivery()?.outcome == .delivered)
+    }
+
+    @Test func aSimulatorWithNoHubWatchingCantReachTheMac() async throws {
+        defer { try? FileManager.default.removeItem(at: store.root) }
+        let id = try fileReport()
+        try writeHubAddress(#"{"device":"S","hosts":["127.0.0.1"],"port":47361,"token":"t","uploads":false}"#)
+        #expect(await ReportDelivery.deliver(from: store, bundleID: "com.example.app", patience: 0.5) == .unreachable)
+        #expect(store.undeliveredReports().map(\.id) == [id])
+        #expect(store.lastDelivery()?.outcome == .unreachable)
     }
 
     @Test func theToastSaysWhereTheReportWent() {

@@ -40,7 +40,7 @@ final class InboxPerformanceTests: XCTestCase {
 
     func testReadingTheNewestReportsForThePanel() {
         measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
-            XCTAssertEqual(HubWindowModel.readReports(paths: paths).count, 30)
+            XCTAssertEqual(HubWindowModel.readReports(paths: paths).rows.count, 30)
         }
     }
 

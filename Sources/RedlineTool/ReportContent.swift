@@ -91,18 +91,28 @@ enum ReportContent {
         return "\(item.number). \(name)\(details.isEmpty ? "" : " (\(details))"): \(note)"
     }
 
+    /// The most of a report's text a reply carries; the rest stays in its report.md.
+    ///
+    /// Notes are typed on a phone, so this is far more than one has unless a long text was pasted in.
+    static let longestText = 50_000
+
     /// The report's items, with pictures attached while `budget` bytes allow; the rest are named by
     /// path.
     ///
-    /// Returns the items and the bytes of pictures attached.
+    /// Returns the items and the bytes of text and pictures they hold.
     static func items(for report: InboxReport, budget: Int) -> (items: [Item], bytes: Int) {
         let pictures = pictures(in: report.folder)
         var header = header(for: report)
         if !pictures.isEmpty {
             header += "Pictures: " + pictures.map(\.lastPathComponent).joined(separator: ", ") + ", attached below.\n"
         }
-        var items: [Item] = [.text(header + "\n" + summary(of: report))]
-        var used = 0
+        let text = shortened(
+            header + "\n" + summary(of: report),
+            to: longestText,
+            rest: "\n\nThe rest is in \(report.folder.appending(path: "report.md").path)."
+        )
+        var items: [Item] = [.text(text)]
+        var used = text.utf8.count
         for picture in pictures {
             guard let data = try? Data(contentsOf: picture) else { continue }
             if used + data.count > budget {
@@ -118,6 +128,15 @@ enum ReportContent {
             used += data.count
         }
         return (items, used)
+    }
+
+    /// `text` cut to at most `limit` bytes of UTF-8, ending with `rest` when cut.
+    static func shortened(_ text: String, to limit: Int, rest: String) -> String {
+        guard text.utf8.count > limit else { return text }
+        var length = max(limit - rest.utf8.count, 0)
+        // Cut where a character starts.
+        while length > 0, String(text.utf8.prefix(length)) == nil { length -= 1 }
+        return (String(text.utf8.prefix(length)) ?? "") + rest
     }
 
     private static func header(for report: InboxReport) -> String {

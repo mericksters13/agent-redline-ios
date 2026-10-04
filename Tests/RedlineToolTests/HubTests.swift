@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import Synchronization
 import Testing
 @testable import RedlineTool
 
@@ -90,6 +91,46 @@ struct HubTests {
         )
         // Queued writes land before the test's folder is removed.
         hub.flushWrites()
+    }
+
+    @Test func aReportArrivingTwiceAtOnceIsFiledOnce() throws {
+        let hub = try hub()
+        let source = ReportSource(
+            kind: .phone,
+            device: phone,
+            deviceName: "Test iPhone",
+            bundleID: app,
+            reportID: "20261004-031600",
+            receivedAt: .now
+        )
+        let failures = Mutex(0)
+        DispatchQueue.concurrentPerform(iterations: 8) { attempt in
+            do {
+                try hub.receive(source) { destination in
+                    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+                    try Data("{\"attempt\":\(attempt)}".utf8).write(to: destination.appending(path: "report.json"))
+                }
+            } catch {
+                failures.withLock { $0 += 1 }
+            }
+        }
+        #expect(failures.withLock { $0 } == 0)
+        let folder = paths.inbox.appending(path: app, directoryHint: .isDirectory)
+        let name = Inbox.folderName(reportID: source.reportID, device: phone)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path) == [name])
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: folder.appending(path: name).path).sorted() == [
+                "report.json", "source.json",
+            ]
+        )
+        hub.flushWrites()
+        let state = try HubPaths.decoder.decode([String: SourceState].self, from: Data(contentsOf: paths.state))
+        #expect(state["\(phone)|\(app)"]?.delivered == [source.reportID])
+    }
+
+    @Test func theStatusNamesTheAppsGivenOnTheCommandLine() throws {
+        // The menu bar app taking over from this hub reads these and keeps watching them.
+        #expect(try hub().statusSnapshot().fixedApps == [app])
     }
 
     @Test func anOfferWithoutTheRightTokenIsTurnedDown() throws {

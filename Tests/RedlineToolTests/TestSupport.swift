@@ -68,6 +68,7 @@ func fileInboxReport(
     pictures: [String: Data] = ["screen-1.jpg": Data([0xFF, 0xD8])],
     summary: String? = nil,
     deviceName: String = "Test iPhone",
+    device: String = "00000000-0000000000000001",
     receivedAt: Date = .now,
     recipient: ReportRecipient? = nil
 ) throws -> URL {
@@ -82,7 +83,7 @@ func fileInboxReport(
     let reportID = String(name.prefix(15))
     let source = ReportSource(
         kind: .phone,
-        device: "00000000-0000000000000001",
+        device: device,
         deviceName: deviceName,
         bundleID: bundleID,
         reportID: reportID,

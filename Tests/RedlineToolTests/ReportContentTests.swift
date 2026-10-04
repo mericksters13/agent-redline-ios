@@ -83,13 +83,13 @@ struct ReportContentTests {
         let folder = try inboxReport("20261003-223449", pictureBytes: 600)
         #expect(ReportContent.pictures(in: folder).map(\.lastPathComponent) == ["screen-1.jpg", "note-2.jpg"])
         let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
-        let content = ReportContent.items(for: report, budget: 1_000)
+        let content = ReportContent.items(for: report, budget: 1_200)
         // The summary, then the first picture; the second doesn't fit and is named by path.
-        #expect(content.bytes == 600)
         guard case .text(let summary) = content.items[0] else {
             Issue.record("No summary first")
             return
         }
+        #expect(content.bytes == summary.utf8.count + 600)
         #expect(summary.contains("from Test iPhone (iPhone)"))
         #expect(summary.contains("1. **Milk stash**: Test."))
         #expect(
@@ -102,6 +102,25 @@ struct ReportContentTests {
                 if case .text(let text) = $0 { text.contains("note-2.jpg isn't attached") } else { false }
             }
         )
+    }
+
+    @Test func aLongPastedNoteIsCutToTheLongestText() throws {
+        let folder = try inboxReport("20261003-223449")
+        try ("# UI report\n\n1. **Log**: " + String(repeating: "é", count: 200_000)).write(
+            to: folder.appending(path: "report.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
+        let content = ReportContent.items(for: report, budget: 700_000)
+        guard case .text(let summary) = content.items[0] else {
+            Issue.record("No summary first")
+            return
+        }
+        #expect(summary.utf8.count <= ReportContent.longestText)
+        #expect(summary.hasSuffix("The rest is in \(folder.path)/report.md."))
+        // The text counts toward the budget, with both pictures.
+        #expect(content.bytes == summary.utf8.count + 20)
     }
 }
 #endif
