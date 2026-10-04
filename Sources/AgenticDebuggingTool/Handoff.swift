@@ -110,7 +110,8 @@ final class Handoff: @unchecked Sendable {
                 case .claude: sendToClaude(report, session: started.chat, worktree: started.folder)
                 case .cursor: startChat(agent, in: started.folder, for: report, resuming: started.chat)
                 }
-            } else if agent == .claude {
+            } else if agent == .claude, !ClaudeCLI.ready() {
+                // Without a signed-in claude command, only the desktop app's draft is possible.
                 openClaudeChat(in: folder, for: report, pick: pick)
             } else {
                 startChat(agent, in: folder, for: report, pick: pick)
@@ -127,7 +128,12 @@ final class Handoff: @unchecked Sendable {
         let source = report.source
         guard let session = ClaudeSessions.open().first(where: { $0.id == id }) else {
             hub.log("The Claude Code chat for report \(source.reportID) is closed")
-            if let worktree { startChat(.claude, in: worktree, for: report, pick: nil) }
+            // Continued where it left off, then reopened where the user uses Claude Code.
+            if let worktree, ClaudeCLI.ready() {
+                startChat(.claude, in: worktree, for: report, resuming: id)
+            } else if let worktree {
+                openClaudeChat(in: worktree, for: report, pick: nil)
+            }
             return
         }
         let chat = ChatRecord(id: "claude-\(id)", agent: Agent.claude.rawValue, folder: session.folder, bundleIDs: [source.bundleID],
@@ -208,6 +214,18 @@ final class Handoff: @unchecked Sendable {
         ].joined(separator: "\n") + "\n"
     }
 
+    /// Runs a command in a folder and waits for it.
+    static func run(_ executable: String, _ arguments: [String], in folder: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.currentDirectoryURL = URL(fileURLWithPath: folder)
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+    }
+
     private static func open(_ link: String) {
         let open = Process()
         open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
@@ -258,7 +276,7 @@ final class Handoff: @unchecked Sendable {
             guard let url = link.url?.absoluteString else { return }
             Self.open(url)
             hub.log("Opened the Claude app's new chat screen on \(workFolder) with report \(source.reportID); it starts when the user presses Return")
-            Self.notify(title: "Report from \(source.deviceName)", message: "The Claude app has a new chat ready with the report. Press Return there to start it.")
+            Self.notify(title: "Report from \(source.deviceName)", message: "The Claude app has a new chat ready: press Return to start it. To start new chats by themselves, run claude auth login once.")
         } else {
             guard let claude = AgentCommand.locate(.claude), Self.openTerminal(in: workFolder, running: claude.path, with: prompt) else {
                 try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
@@ -313,7 +331,11 @@ final class Handoff: @unchecked Sendable {
             workFolder = folder
         }
         let pictures = ReportContent.pictures(in: report.folder)
-        let prompt = AgentHooks.reportPrompt(ReportContent.text(for: report), picturesAttached: agent == .codex)
+        var prompt = AgentHooks.reportPrompt(ReportContent.text(for: report), picturesAttached: agent == .codex)
+        // A Claude Code chat reads the pictures from a copy in its worktree, without asking.
+        if agent == .claude, resuming == nil, madeWorktree, let copy = NewWorktree.copyReport(report.folder, into: workFolder) {
+            prompt = prompt.replacingOccurrences(of: report.folder.path, with: copy)
+        }
         let output = report.folder.appending(path: "new-chat-output.jsonl")
         FileManager.default.createFile(atPath: output.path, contents: nil)
         let process = Process()
@@ -355,6 +377,15 @@ final class Handoff: @unchecked Sendable {
                 }
                 hub.log("The Codex chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
                 Handoff.notify(title: "Codex looked into a report", message: "Opened in Codex, in worktree \(place).")
+            } else if agent == .claude {
+                // Moved where the user uses Claude Code, with what it found so far.
+                if ClaudeSessions.usesDesktopApp() {
+                    Handoff.run(executable.path, ["--desktop", "--resume", started.chat], in: workFolder)
+                } else {
+                    Handoff.openTerminal(in: workFolder, running: executable.path, arguments: ["--resume"], with: started.chat)
+                }
+                hub.log("The Claude Code chat \(started.chat) in \(workFolder) looked into report \(source.reportID) and was opened")
+                Handoff.notify(title: "Claude Code looked into a report", message: "Opened in \(ClaudeSessions.usesDesktopApp() ? "the Claude app" : "Terminal"), in worktree \(place).")
             } else {
                 hub.log("The \(agent.name) chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
                 Handoff.notify(title: "\(agent.name) looked into a report", message: "Its answer is in the report's folder, answer.md. Worktree \(place).")

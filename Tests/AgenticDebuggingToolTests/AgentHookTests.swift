@@ -283,6 +283,13 @@ struct AgentHookTests {
         #expect(CodexThreads.usesDesktopApp(in: try database([("codex_cli_rs", "cli", 1), ("Codex Desktop", "vscode", 2)])))
     }
 
+    @Test func theClaudeCommandIsNewEnoughForTheDesktopApp() {
+        #expect(ClaudeCLI.version(in: "2.1.289 (Claude Code)") == [2, 1, 289])
+        #expect(ClaudeCLI.version(in: "not a version") == nil)
+        #expect(![2, 1, 289].lexicographicallyPrecedes(ClaudeCLI.desktopVersion))
+        #expect([2, 1, 114].lexicographicallyPrecedes(ClaudeCLI.desktopVersion))
+    }
+
     @Test func codexChatsLeaveOutWhatCodexRunsOnItsOwn() throws {
         let database = root.appending(path: "state_5.sqlite")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
