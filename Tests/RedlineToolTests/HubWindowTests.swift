@@ -218,6 +218,22 @@ struct HubWindowTests {
         #expect(HubWindowModel.picture(showing: 3, in: pictures) == nil)
     }
 
+    @Test func theViewerShowsOnlyPicturesInTheReportsOwnFolder() throws {
+        let folder = try report("20261004-130100", at: Date())
+        let secret = paths.inbox.appending(path: "secret.jpg")
+        try Data([0xFF, 0xD8]).write(to: secret)
+        try FileManager.default.createSymbolicLink(at: folder.appending(path: "link.jpg"), withDestinationURL: secret)
+        try FileManager.default.createDirectory(at: folder.appending(path: "folder.jpg"), withIntermediateDirectories: true)
+        let escape = "../../secret.jpg"
+        #expect(FileManager.default.fileExists(atPath: folder.appending(path: escape).path))
+        let listing: [String: Any] = [
+            "screens": [["images": [["file": escape, "notes": [1]], ["file": "screen-1.jpg", "notes": [1]]]]],
+            "items": [["number": 1, "title": "History", "attachments": ["link.jpg", "folder.jpg", secret.path]]],
+        ]
+        try JSONSerialization.data(withJSONObject: listing).write(to: folder.appending(path: "report.json"))
+        #expect(HubWindowModel.pictures(in: folder).map(\.file) == [folder.appending(path: "screen-1.jpg")])
+    }
+
     @Test func theViewerOpensTheChatAReportWentTo() throws {
         func claim(_ chat: String, agent: String, folder: String = "", in report: URL) throws {
             try Chats.coder.encode(Claim(chat: chat, agent: agent, folder: folder, claimedAt: Date())).write(to: report.appending(path: InboxQueue.claimFile))

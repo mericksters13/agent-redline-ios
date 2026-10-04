@@ -13,7 +13,8 @@ extension HubWindowModel {
     }
 
     /// The report's pictures in the order the agent gets them: each screen's pictures, then the
-    /// pictures attached to notes.
+    /// pictures attached to notes. Only the files `ReportContent.pictures(in:)` reads, so a name
+    /// that leads out of the report's folder, or a link to another file on the Mac, is left out.
     nonisolated static func pictures(in folder: URL) -> [Picture] {
         struct Listing: Decodable {
             struct Screen: Decodable {
@@ -44,7 +45,8 @@ extension HubWindowModel {
         let attached = listing.items.flatMap { item in
             item.attachments.map { Picture(file: folder.appending(path: $0), title: item.screenTitle ?? item.title, notes: [item.number]) }
         }
-        return (screens + attached).filter { FileManager.default.fileExists(atPath: $0.file.path) }
+        let safe = Set(ReportContent.pictures(in: folder))
+        return (screens + attached).filter { safe.contains($0.file) }
     }
 
     /// The first picture that shows a note.
