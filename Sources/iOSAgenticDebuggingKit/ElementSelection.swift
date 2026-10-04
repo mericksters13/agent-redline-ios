@@ -75,16 +75,24 @@ enum ElementSelection {
     }
 
     /// Finds the element a saved annotation points at on a fresh read of the
-    /// screen: by identifier first, then by role and label when that is unique.
+    /// screen: by identifier first, then by role and label. Look-alikes, such as
+    /// repeated list rows, only match when exactly one is still where the saved one was.
     static func match(_ target: ElementSnapshot, in elements: [ElementSnapshot]) -> ElementSnapshot? {
         if let identifier = target.identifier?.nonEmpty {
             let hits = elements.filter { $0.identifier == identifier }
             if hits.count == 1 { return hits[0] }
-            if let exact = hits.first(where: { $0.role == target.role && $0.label == target.label }) { return exact }
+            let exact = hits.filter { $0.role == target.role && $0.label == target.label }
+            if !exact.isEmpty { return unique(exact, for: target) }
         }
         guard let label = target.label?.nonEmpty else { return nil }
-        let hits = elements.filter { $0.role == target.role && $0.label == label }
-        return hits.count == 1 ? hits[0] : nil
+        return unique(elements.filter { $0.role == target.role && $0.label == label }, for: target)
+    }
+
+    /// The only hit, or the only one in the saved element's place. Nil when that is still ambiguous.
+    private static func unique(_ hits: [ElementSnapshot], for target: ElementSnapshot) -> ElementSnapshot? {
+        if hits.count == 1 { return hits[0] }
+        let inPlace = hits.filter { isSameBox($0.frame, target.frame) }
+        return inPlace.count == 1 ? inPlace[0] : nil
     }
 
     /// The label of the topmost header on screen, which is usually the screen's title.
