@@ -108,6 +108,31 @@ struct ReportStoreTests {
         #expect(store.loadScreens() == screens)
     }
 
+    @Test func aMissingPictureStopsTheReportAndKeepsTheDraft() throws {
+        let kept = annotation("Cut off")
+        let lost = photos("Same bug", count: 2)
+        try store.saveScreenshot(Data([1]), named: kept.screenshots[0])
+        try store.saveScreenshot(Data([1]), named: lost.screenshots[0])
+        let capture = Capture(id: UUID(), file: "capture.png", size: CGSize(width: 402, height: 874), scroll: nil, elements: [], group: 0)
+        try store.saveScreenshot(Data([1]), named: capture.file)
+        let screens = [ScreenRecord(id: UUID(), info: ScreenInfo(title: "Today", viewController: "Home"), captures: [capture])]
+        var onCapture = annotation("Too faint")
+        onCapture.screenshots = []
+        onCapture.captureID = capture.id
+        try store.saveDraft([kept, onCapture, lost])
+
+        try store.checkScreenshots(of: [kept, onCapture], screens: screens)
+        #expect(throws: ReportStore.MissingScreenshot(annotationID: lost.id)) {
+            try store.checkScreenshots(of: [kept, onCapture, lost], screens: screens)
+        }
+        // A note whose capture is no longer listed is missing its picture too.
+        #expect(throws: ReportStore.MissingScreenshot(annotationID: onCapture.id)) {
+            try store.checkScreenshots(of: [kept, onCapture], screens: [])
+        }
+        #expect(store.loadDraft() == [kept, onCapture, lost])
+        #expect(!FileManager.default.fileExists(atPath: store.reportsDirectory.path))
+    }
+
     @Test func sentReportsAreListedNewestFirst() throws {
         for (id, seconds) in [("older", 1_790_000_000.0), ("newer", 1_790_000_600.0)] {
             try store.saveDraft([annotation(id)])
