@@ -63,16 +63,24 @@ enum CaptureMerge {
         case replace
     }
 
+    /// How the stretch a scrolled capture shares with the previous one compares.
+    enum OverlapCheck: Equatable, Sendable {
+        case matches
+        case differs
+        /// They share too little to tell.
+        case tooSmallToTell
+    }
+
+    /// Whether a new capture reuses, extends or replaces the screen's picture.
     /// - Parameters:
     ///   - picturesMatch: the two pictures look the same.
-    ///   - overlapMatches: where a scrolled capture overlaps the previous one, the content
-    ///     looks the same; nil when they don't overlap enough to tell.
-    static func decide(previous: Capture, new: Capture, picturesMatch: Bool, overlapMatches: Bool?) -> Decision {
+    ///   - overlap: how the content compares where a scrolled capture overlaps the previous one.
+    static func decision(previous: Capture, new: Capture, picturesMatch: Bool, overlap: OverlapCheck) -> Decision {
         guard previous.size == new.size else { return .replace }
         if let before = previous.scroll, let after = new.scroll, before.isSameView(as: after),
            abs(before.offsetY - after.offsetY) > 2 {
             // Joined only when it's proven the same content, scrolled.
-            guard overlapMatches != false, isScroll(from: previous, to: new) else { return .replace }
+            guard overlap != .differs, isScroll(from: previous, to: new) else { return .replace }
             return .stitch
         }
         return picturesMatch && sameLayout(previous, new) ? .reuse(previous.id) : .replace
@@ -108,7 +116,11 @@ enum CaptureMerge {
         for element in new.elements where !element.isContainer && inBand(element.frame) {
             guard let match = ElementSelection.match(element, in: previous.elements), inBand(match.frame),
                   abs(match.frame.height - element.frame.height) < 1 else { continue }
-            if abs(match.frame.minY - distance - element.frame.minY) <= 2 { agreeing += 1 } else { disagreeing += 1 }
+            if abs(match.frame.minY - distance - element.frame.minY) <= 2 {
+                agreeing += 1
+            } else {
+                disagreeing += 1
+            }
         }
         if agreeing + disagreeing > 0 { return agreeing > 0 && agreeing >= disagreeing * 2 }
         let longer = max(before.contentHeight, after.contentHeight)
@@ -133,12 +145,17 @@ struct ImagePlan: Equatable, Sendable {
         var destinationY: CGFloat
     }
 
+    /// A stretch of the screen scrolled past without a capture, marked "Scrolled past".
+    struct Gap: Equatable, Sendable {
+        /// Where the mark goes in the picture.
+        var rect: CGRect
+        /// How much content it stands for, in points.
+        var skippedHeight: CGFloat
+    }
+
     var size: CGSize
     var segments: [Segment]
-    /// Stretches of the screen scrolled past without a capture.
-    var gaps: [CGRect]
-    /// How much content each gap stands for, in points.
-    var skipped: [CGFloat] = []
+    var gaps: [Gap]
     var stitchedFrom: Int
     /// Where content scrolls, in screen points. Nil for a picture of one capture.
     var band: ClosedRange<CGFloat>?
@@ -175,16 +192,20 @@ enum ScreenComposition {
         var top = max(scroll.frame.minY + scroll.insetTop, 0)
         var bottom = min(scroll.frame.maxY - scroll.insetBottom, first.size.height)
         guard bottom > top else { return nil }
-        let scrolled = captures.filter { $0.scroll != nil }.sorted { $0.scroll!.offsetY < $1.scroll!.offsetY }
-        if let low = scrolled.first, let high = scrolled.last, high.scroll!.offsetY - low.scroll!.offsetY > 10 {
+        let scrolled = scrolls(of: captures).sorted { $0.scroll.offsetY < $1.scroll.offsetY }
+        if let low = scrolled.first, let high = scrolled.last, high.scroll.offsetY - low.scroll.offsetY > 10 {
             let middle = (top + bottom) / 2
-            for element in high.elements where !element.isContainer {
+            for element in high.capture.elements where !element.isContainer {
                 let frame = element.frame
                 guard frame.height < (bottom - top) * 0.25, frame.maxY > top, frame.minY < bottom,
-                      let match = ElementSelection.match(element, in: low.elements),
+                      let match = ElementSelection.match(element, in: low.capture.elements),
                       abs(match.frame.minY - frame.minY) < 1.5, abs(match.frame.minX - frame.minX) < 1.5
                 else { continue }
-                if frame.midY > middle { bottom = min(bottom, frame.minY) } else { top = max(top, frame.maxY) }
+                if frame.midY > middle {
+                    bottom = min(bottom, frame.minY)
+                } else {
+                    top = max(top, frame.maxY)
+                }
             }
         }
         // A bar draws its border just outside its frame. Left in the band, a capture's border
@@ -200,7 +221,8 @@ enum ScreenComposition {
     static func plan(for captures: [Capture]) -> ImagePlan? {
         guard let reference = captures.last else { return nil }
         let byID = Dictionary(captures.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        guard captures.count > 1, captures.allSatisfy({ $0.scroll != nil }), let band = band(for: captures) else {
+        let scrolls = scrolls(of: captures)
+        guard captures.count > 1, scrolls.count == captures.count, let band = band(for: captures) else {
             return ImagePlan(
                 size: reference.size,
                 segments: [.init(capture: reference.id, sourceMinY: 0, height: reference.size.height, destinationY: 0)],
@@ -209,18 +231,16 @@ enum ScreenComposition {
             )
         }
 
-        let topmost = captures.min { $0.scroll!.offsetY < $1.scroll!.offsetY } ?? reference
-        let bottommost = captures.max { $0.scroll!.offsetY < $1.scroll!.offsetY } ?? reference
+        let topmost = scrolls.min { $0.scroll.offsetY < $1.scroll.offsetY }?.capture ?? reference
+        let bottommost = scrolls.max { $0.scroll.offsetY < $1.scroll.offsetY }?.capture ?? reference
         var segments = [ImagePlan.Segment(capture: topmost.id, sourceMinY: 0, height: band.lowerBound, destinationY: 0)]
-        let ranges = captures.map { capture -> (capture: Capture, range: ClosedRange<CGFloat>) in
-            let scroll = capture.scroll!
-            return (capture, scroll.contentY(ofScreenY: band.lowerBound)...scroll.contentY(ofScreenY: band.upperBound))
+        let ranges = scrolls.map { entry -> (capture: Capture, scroll: ScrollState, range: ClosedRange<CGFloat>) in
+            (entry.capture, entry.scroll, entry.scroll.contentY(ofScreenY: band.lowerBound)...entry.scroll.contentY(ofScreenY: band.upperBound))
         }
         let points = Set(ranges.flatMap { [$0.range.lowerBound, $0.range.upperBound] }).sorted()
         var y = band.lowerBound
         var runs: [ImagePlan.Run] = []
-        var gaps: [CGRect] = []
-        var skipped: [CGFloat] = []
+        var gaps: [ImagePlan.Gap] = []
         var lastEnd: CGFloat?
         var pendingGap = false
         for (start, end) in zip(points, points.dropFirst()) where end - start > 0.5 {
@@ -230,12 +250,14 @@ enum ScreenComposition {
                 continue
             }
             if pendingGap {
-                gaps.append(CGRect(x: 0, y: y, width: reference.size.width, height: gapHeight))
-                skipped.append(start - (lastEnd ?? start))
+                gaps.append(ImagePlan.Gap(
+                    rect: CGRect(x: 0, y: y, width: reference.size.width, height: gapHeight),
+                    skippedHeight: start - (lastEnd ?? start)
+                ))
                 y += gapHeight
                 pendingGap = false
             }
-            let source = owner.capture.scroll!.screenY(ofContentY: start)
+            let source = owner.scroll.screenY(ofContentY: start)
             if let last = segments.last, segments.count > 1, last.capture == owner.capture.id,
                abs(last.sourceMinY + last.height - source) < 0.5, abs(last.destinationY + last.height - y) < 0.5 {
                 segments[segments.count - 1].height += end - start
@@ -255,9 +277,14 @@ enum ScreenComposition {
         y += reference.size.height - band.upperBound
         return ImagePlan(
             size: CGSize(width: reference.size.width, height: y),
-            segments: segments, gaps: gaps, skipped: skipped, stitchedFrom: captures.count, band: band, runs: runs,
+            segments: segments, gaps: gaps, stitchedFrom: captures.count, band: band, runs: runs,
             footerY: footerY, captures: byID
         )
+    }
+
+    /// The captures that know their scroll position, with that position.
+    private static func scrolls(of captures: [Capture]) -> [(capture: Capture, scroll: ScrollState)] {
+        captures.compactMap { capture in capture.scroll.map { (capture: capture, scroll: $0) } }
     }
 
     /// Where a note made on one capture shows on another capture of the same group, or nil

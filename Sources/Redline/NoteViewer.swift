@@ -154,7 +154,13 @@ struct NoteViewer: View {
             ZoomableScreenshot(
                 image: image,
                 zoomChanged: { isZoomed = $0 },
-                tapped: { if isEditingNote { isEditingNote = false } else { showsDetails.toggle() } }
+                tapped: {
+                    if isEditingNote {
+                        isEditingNote = false
+                    } else {
+                        showsDetails.toggle()
+                    }
+                }
             )
             .accessibilityElement()
             .accessibilityLabel(page.annotation.imageCount > 1
@@ -210,7 +216,7 @@ struct NoteViewer: View {
                 HStack(spacing: 12) {
                     NumberBadge(number: index + 1, size: 26)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(current.element.map { $0.label ?? $0.identifier ?? $0.role } ?? current.title)
+                        Text(current.element.map { $0.fullName ?? $0.role } ?? current.title)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Mono.text)
                         Text(subtitle(for: current, shown: shown))
@@ -248,11 +254,13 @@ struct NoteViewer: View {
                     .onChange(of: draft) { _, text in
                         // Return ends the note; a vertical field would otherwise add a line.
                         if text.contains("\n") {
-                            draft = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+                            draft = text.replacing("\n", with: " ").trimmingCharacters(in: .whitespaces)
                             isEditingNote = false
                         }
                     }
-                    .onChange(of: isEditingNote) { _, isEditing in if !isEditing { saveDraft() } }
+                    .onChange(of: isEditingNote) { _, isEditing in
+                        if !isEditing { saveDraft() }
+                    }
                     .padding(12)
                     .background(Mono.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
@@ -294,7 +302,8 @@ struct NoteViewer: View {
                 }
             }
             .onChange(of: session.viewerID) { _, id in
-                if let id { withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) { proxy.scrollTo(id, anchor: .center) } }
+                guard let id else { return }
+                withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) { proxy.scrollTo(id, anchor: .center) }
             }
         }
     }

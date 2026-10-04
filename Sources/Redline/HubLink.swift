@@ -25,6 +25,10 @@ enum HubLink {
         /// False in a simulator, where the hub takes reports from the app's folder: the app only
         /// asks which chats a report can go to.
         var uploads: Bool? = nil
+
+        /// Whether the app sends the hub its reports' files. Older hubs leave `uploads` out;
+        /// they always took uploads.
+        var acceptsUploads: Bool { uploads ?? true }
     }
 
     struct Offer: Codable, Equatable, Sendable {

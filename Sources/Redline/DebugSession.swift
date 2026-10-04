@@ -14,8 +14,25 @@ final class DebugSession {
         case idle, picking, noting, tray, viewer, attaching
         /// The reports already sent, opened with a long press on the floating button.
         case reports
-        /// Picking where reports go: an agent on the Mac, then one of its chats.
+        /// Choosing where reports go: an agent on the Mac, then one of its chats.
         case destination
+
+        /// Annotate mode in any of its states: Redline has the screen, which shows the
+        /// annotate frame and the markers of notes already made.
+        var isAnnotating: Bool {
+            switch self {
+            case .picking, .noting, .tray, .attaching: true
+            case .idle, .viewer, .reports, .destination: false
+            }
+        }
+
+        /// The island of pick-mode controls shows.
+        var showsIsland: Bool {
+            switch self {
+            case .picking, .tray, .attaching: true
+            case .idle, .noting, .viewer, .reports, .destination: false
+            }
+        }
     }
 
     /// The Mac's answer to which chats a report can go to.
@@ -522,7 +539,7 @@ final class DebugSession {
         let key = "\(annotation.id.uuidString)-\(index)" as NSString
         if let cached = fullImages.object(forKey: key) { return cached }
         let url = store.draftDirectory.appending(path: annotation.screenshots[index])
-        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
+        guard let image = UIImage(contentsOfFile: url.path(percentEncoded: false)) else { return nil }
         fullImages.setObject(image, forKey: key)
         return image
     }
@@ -729,8 +746,8 @@ final class DebugSession {
     /// What's selected in the picker: a chat, or a new chat when `chat` is nil.
     var pickerChoice: Report.Destination?
     /// The picker opened from Send: confirming it sends the report.
-    private(set) var sendsAfterPicking = false
-    private var modeBeforePicking: Mode = .picking
+    private(set) var sendsAfterChoosingDestination = false
+    private var modeBeforeDestinations: Mode = .picking
 
     /// The hub's address, read from disk at set points (install, activation, opening the notes,
     /// Send and the picker) rather than on every redraw. The Mac writes it once, at setup.
@@ -768,8 +785,10 @@ final class DebugSession {
         // An answer to an earlier opening of the picker must not replace this one's.
         chatsRequest?.cancel()
         chatsRequest = nil
-        sendsAfterPicking = thenSend
-        modeBeforePicking = mode == .noting || mode == .destination ? .picking : mode
+        sendsAfterChoosingDestination = thenSend
+        // From the note box only a suggested screenshot's Send opens the picker, and its note is
+        // already in the draft: Cancel goes to pick mode, which shows that draft and its Send.
+        modeBeforeDestinations = mode == .noting || mode == .destination ? .picking : mode
         pickerChoice = destination
         pickerAgent = destination?.agent
         chatList = .loading
@@ -828,17 +847,17 @@ final class DebugSession {
                 logger.error("Couldn't save the destination: \(error.localizedDescription, privacy: .public)")
             }
         }
-        let thenSend = sendsAfterPicking
-        sendsAfterPicking = false
-        setMode(modeBeforePicking)
+        let thenSend = sendsAfterChoosingDestination
+        sendsAfterChoosingDestination = false
+        setMode(modeBeforeDestinations)
         if thenSend { send(pickingFirst: false) }
     }
 
     func cancelDestinations() {
         chatsRequest?.cancel()
         chatsRequest = nil
-        sendsAfterPicking = false
-        setMode(modeBeforePicking)
+        sendsAfterChoosingDestination = false
+        setMode(modeBeforeDestinations)
     }
 
     /// Sends the draft. The first time, the user picks where reports go; after that they go
@@ -898,7 +917,7 @@ final class DebugSession {
 
         let store = store
         let logger = logger
-        let notes = count == 1 ? "1 note" : "\(count) notes"
+        let notes = countPhrase(count, singular: "note", plural: "notes")
         Task(priority: .userInitiated) {
             do {
                 let outcome = try await Self.finishAndDeliver(input, folder: started.folder, store: store, logger: logger)
@@ -918,7 +937,7 @@ final class DebugSession {
     ) async throws -> HubLink.Outcome? {
         let report = try ReportBuilder.build(input)
         try store.finishReport(report, in: folder)
-        logger.notice("Report saved at \(folder.path, privacy: .public)")
+        logger.notice("Report saved at \(folder.path(percentEncoded: false), privacy: .public)")
         return await ReportDelivery.deliver(from: store, bundleID: Bundle.main.bundleIdentifier, patience: ReportDelivery.patience)
     }
 
@@ -936,27 +955,27 @@ final class DebugSession {
         )
         guard let index = screens.firstIndex(where: { $0.info == screen }), let previous = screens[index].captures.last else {
             screens.append(ScreenRecord(id: UUID(), info: screen, captures: [capture]))
-            keep(capture, image)
+            keep(image, for: capture)
             return capture.id
         }
         let before = captureImage(previous)
         let picturesMatch = before?.cgImage.flatMap { old in
             image.cgImage.map { PictureComparison.difference(old, $0) < PictureComparison.samePicture }
         } ?? false
-        let overlap = overlapMatches(previous: previous, before: before, new: capture, after: image)
+        let overlap = overlapCheck(previous: previous, before: before, new: capture, after: image)
 
-        switch CaptureMerge.decide(previous: previous, new: capture, picturesMatch: picturesMatch, overlapMatches: overlap) {
+        switch CaptureMerge.decision(previous: previous, new: capture, picturesMatch: picturesMatch, overlap: overlap) {
         case .reuse(let existing):
             return existing
         case .stitch:
             capture.group = previous.group
             screens[index].captures.append(capture)
-            keep(capture, image)
+            keep(image, for: capture)
             return capture.id
         case .replace:
             capture.group = previous.group + 1
             screens[index].captures.append(capture)
-            keep(capture, image)
+            keep(image, for: capture)
             let screenCaptures = screens[index].captures
             let onScreen = CGRect(origin: .zero, size: screenSize)
             for i in annotations.indices {
@@ -978,21 +997,20 @@ final class DebugSession {
         }
     }
 
-    /// Whether the content two captures of a scrolled screen share looks the same; nil when
-    /// they share too little to tell.
-    private func overlapMatches(previous: Capture, before: UIImage?, new: Capture, after: UIImage) -> Bool? {
+    /// Whether the content two captures of a scrolled screen share looks the same.
+    private func overlapCheck(previous: Capture, before: UIImage?, new: Capture, after: UIImage) -> CaptureMerge.OverlapCheck {
         guard let from = previous.scroll, let to = new.scroll, from.isSameView(as: to),
               let band = ScreenComposition.band(for: [previous, new]),
-              let old = before?.cgImage, let current = after.cgImage else { return nil }
+              let old = before?.cgImage, let current = after.cgImage else { return .tooSmallToTell }
         let low = max(from.contentY(ofScreenY: band.lowerBound), to.contentY(ofScreenY: band.lowerBound))
         let high = min(from.contentY(ofScreenY: band.upperBound), to.contentY(ofScreenY: band.upperBound))
-        guard high - low >= 40 else { return nil }
+        guard high - low >= 40 else { return .tooSmallToTell }
         func pixelRows(_ scroll: ScrollState, in image: CGImage) -> Range<Int> {
             let ratio = CGFloat(image.width) / screenSize.width
             return Int((scroll.screenY(ofContentY: low) * ratio).rounded())..<Int((scroll.screenY(ofContentY: high) * ratio).rounded())
         }
-        return PictureComparison.difference(old, rows: pixelRows(from, in: old), current, rows: pixelRows(to, in: current))
-            < PictureComparison.sameOverlap
+        let difference = PictureComparison.difference(old, rows: pixelRows(from, in: old), current, rows: pixelRows(to, in: current))
+        return difference < PictureComparison.sameOverlap ? .matches : .differs
     }
 
     /// Whether an element looks the same in an earlier capture and in the new screen.
@@ -1008,14 +1026,14 @@ final class DebugSession {
         ) < PictureComparison.sameElement
     }
 
-    private func keep(_ capture: Capture, _ image: UIImage) {
+    private func keep(_ image: UIImage, for capture: Capture) {
         captureImages[capture.id] = image
         writeImages([image], named: [capture.file], asPNG: true)
     }
 
     private func captureImage(_ capture: Capture) -> UIImage? {
         if let cached = captureImages[capture.id] { return cached }
-        guard let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: capture.file).path) else { return nil }
+        guard let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: capture.file).path(percentEncoded: false)) else { return nil }
         captureImages[capture.id] = image
         return image
     }
@@ -1140,7 +1158,7 @@ final class DebugSession {
             return thumbnail
         }
         guard let first = annotation.screenshots.first,
-              let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: first).path)
+              let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: first).path(percentEncoded: false))
         else { return nil }
         let thumbnail = annotation.element.map { Self.crop(image, around: $0.frame, screenWidth: screenSize.width) } ?? Self.topSquare(of: image)
         guard let thumbnail else { return nil }
@@ -1198,8 +1216,11 @@ final class DebugSession {
 
     /// While Redline is idle only the floating button and a suggested screenshot
     /// take touches; the rest go to the app.
-    func setTouchableFrame(_ frame: CGRect?, for name: String) {
-        window?.touchableRects[name] = frame
+    ///
+    /// Frames come from SwiftUI's global space, which equals this window's coordinates only
+    /// because the overlay window fills the screen and the hosting controller ignores safe areas.
+    func setTouchableFrame(_ frame: CGRect?, for area: TouchableArea) {
+        window?.touchableRects[area] = frame
     }
 
     private static let buttonPositionKey = "RedlineButtonPosition"

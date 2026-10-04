@@ -14,17 +14,22 @@ struct ElementSnapshot: Codable, Equatable, Sendable {
     /// Position on screen, in points.
     var frame: CGRect
 
-    /// The element's own name, shortened for chips and lists, or nil when it has none.
-    var shortName: String? {
-        guard let name = label?.nonEmpty ?? identifier?.nonEmpty ?? value?.nonEmpty else { return nil }
-        return name.count > 34 ? String(name.prefix(33)) + "…" : name
+    /// The role headers have, which marks a screen's title.
+    static let headerRole = "Header"
+
+    /// The longest a name runs in chips and lists, in characters, before it's cut short.
+    static let shortNameLength = 34
+
+    /// The element's whole name: its label, else its identifier, else its value. Nil when it
+    /// has none.
+    var fullName: String? {
+        label?.nonEmpty ?? identifier?.nonEmpty ?? value?.nonEmpty
     }
 
-    /// Short name for chips and lists, such as "Button · Save".
-    var displayName: String {
-        guard let name = label?.nonEmpty ?? identifier?.nonEmpty ?? value?.nonEmpty else { return role }
-        let short = name.count > 40 ? name.prefix(39) + "…" : Substring(name)
-        return "\(role) · \(short)"
+    /// The element's own name, shortened for chips and lists, or nil when it has none.
+    var shortName: String? {
+        guard let name = fullName else { return nil }
+        return name.count > Self.shortNameLength ? String(name.prefix(Self.shortNameLength - 1)) + "…" : name
     }
 }
 
@@ -72,7 +77,7 @@ enum ElementSelection {
     /// The label of the topmost header on screen, which is usually the screen's title.
     static func headerTitle(in elements: [ElementSnapshot]) -> String? {
         elements
-            .filter { $0.role == "Header" && $0.label?.nonEmpty != nil }
+            .filter { $0.role == ElementSnapshot.headerRole && $0.label?.nonEmpty != nil }
             .min { $0.frame.minY < $1.frame.minY }?
             .label
     }
@@ -91,9 +96,5 @@ enum ElementSelection {
         let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
         return (dx * dx + dy * dy).squareRoot()
     }
-}
-
-extension String {
-    var nonEmpty: String? { isEmpty ? nil : self }
 }
 #endif

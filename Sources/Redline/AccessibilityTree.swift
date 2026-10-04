@@ -151,7 +151,7 @@ enum AccessibilityTree {
         if traits.contains(.link) { return "Link" }
         if traits.contains(.adjustable) { return "Adjustable" }
         if traits.contains(.tabBar) { return "Tab bar" }
-        if traits.contains(.header) { return "Header" }
+        if traits.contains(.header) { return ElementSnapshot.headerRole }
         if traits.contains(.image) { return "Image" }
         if traits.contains(.staticText) { return "Text" }
         return isContainer ? "Group" : "Element"

@@ -50,7 +50,7 @@ enum ReportRenderer {
             }
             context.cgContext.translateBy(x: 0, y: -top)
             context.cgContext.scaleBy(x: scale, y: scale)
-            for gap in plan.gaps where gap.intersects(visible) {
+            for gap in plan.gaps.map(\.rect) where gap.intersects(visible) {
                 drawGap(CGRect(x: 0, y: pixel(gap.minY) / scale, width: size.width / scale, height: (pixel(gap.maxY) - pixel(gap.minY)) / scale))
             }
             for outline in outlines where outline.rect.insetBy(dx: -12, dy: -12).intersects(visible) {
@@ -157,7 +157,7 @@ enum ReportBuilder {
             (index + 1, Report.Item(
                 number: index + 1, kind: annotation.kind, note: annotation.note, createdAt: annotation.createdAt,
                 // The element's whole name: the agent searches the code for it, so nothing is cut short.
-                title: annotation.element.flatMap { $0.label ?? $0.identifier ?? $0.value } ?? annotation.title,
+                title: annotation.element?.fullName ?? annotation.title,
                 element: annotation.element, ancestors: annotation.ancestors,
                 screen: nil, screenTitle: annotation.screen?.title, picture: nil, outline: nil, attachments: []
             ))
@@ -183,7 +183,7 @@ enum ReportBuilder {
                 let notes = input.annotations.filter { $0.captureID.map(ids.contains) ?? false }
                 guard !notes.isEmpty, let plan = ScreenComposition.plan(for: group) else { continue }
                 let images = Dictionary(uniqueKeysWithValues: group.compactMap { capture -> (UUID, UIImage)? in
-                    guard let image = UIImage(contentsOfFile: input.draft.appending(path: capture.file).path) else {
+                    guard let image = UIImage(contentsOfFile: input.draft.appending(path: capture.file).path(percentEncoded: false)) else {
                         // Its rows come out white in the picture.
                         Log.report.error("Couldn't load capture \(capture.file, privacy: .public)")
                         return nil
@@ -209,7 +209,7 @@ enum ReportBuilder {
                     maxHeight: group[0].size.height * ScreenComposition.screensPerPicture,
                     keepingWhole: outlines.map(\.rect),
                     avoiding: onScreen,
-                    preferring: plan.gaps.map(\.midY)
+                    preferring: plan.gaps.map(\.rect.midY)
                 )
                 // One entry per part, nil for a part that couldn't be encoded, so indices stay matched to `parts`.
                 var files: [String?] = []
@@ -224,7 +224,7 @@ enum ReportBuilder {
                     try data.write(to: input.folder.appending(path: file), options: .atomic)
                     files.append(file)
                     let shown = CGRect(x: 0, y: rows.lowerBound, width: plan.size.width, height: rows.upperBound - rows.lowerBound)
-                    let skipped = zip(plan.gaps, plan.skipped).filter { shown.intersects($0.0) }.map(\.1).reduce(0, +)
+                    let skipped = plan.gaps.filter { shown.intersects($0.rect) }.map(\.skippedHeight).reduce(0, +)
                     pictures.append(Report.Picture(
                         file: file, part: partIndex + 1, parts: parts.count, stitchedFrom: plan.stitchedFrom, earlierState: earlier,
                         notes: outlines.filter { $0.rect.intersects(shown) }.map(\.number).sorted(),
@@ -256,7 +256,7 @@ enum ReportBuilder {
             guard let number = numbers[annotation.id] else { continue }
             var files: [String] = []
             for (index, name) in annotation.screenshots.enumerated() {
-                guard let image = UIImage(contentsOfFile: input.draft.appending(path: name).path) else {
+                guard let image = UIImage(contentsOfFile: input.draft.appending(path: name).path(percentEncoded: false)) else {
                     Log.report.error("Couldn't load attachment \(name, privacy: .public); it's left out of the report")
                     continue
                 }

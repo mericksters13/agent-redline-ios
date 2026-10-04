@@ -59,10 +59,19 @@ struct ElementSelectionTests {
         #expect(ElementSelection.match(saved, in: [first, second]) == nil)
     }
 
-    @Test func displayNameUsesRoleAndLabel() {
-        #expect(element("Button", "Save", .zero).displayName == "Button · Save")
-        #expect(element("Image", nil, .zero, identifier: "logo").displayName == "Image · logo")
-        #expect(element("Group", nil, .zero).displayName == "Group")
+    @Test func theNameIsTheLabelThenTheIdentifierThenTheValue() {
+        #expect(element("Button", "Save", .zero, identifier: "save").fullName == "Save")
+        #expect(element("Image", nil, .zero, identifier: "logo").fullName == "logo")
+        // An empty label is no name.
+        #expect(element("Image", "", .zero, identifier: "logo").fullName == "logo")
+        #expect(element("Group", nil, .zero).fullName == nil)
+    }
+
+    @Test func aLongNameIsCutShortForLists() {
+        let long = String(repeating: "a", count: 40)
+        #expect(element("Text", long, .zero).shortName == String(repeating: "a", count: 33) + "…")
+        #expect(element("Text", long, .zero).fullName == long)
+        #expect(element("Text", "Short", .zero).shortName == "Short")
     }
 
     @Test func headerTitleIsTheTopmostHeader() {

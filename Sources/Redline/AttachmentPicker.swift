@@ -394,9 +394,9 @@ extension RecentPhotos {
     /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
     nonisolated private static func sampleItems() async -> [Item] {
         sampleFiles().compactMap { file in
-            guard let image = UIImage(contentsOfFile: file.url.path) else { return nil }
+            guard let image = UIImage(contentsOfFile: file.url.path(percentEncoded: false)) else { return nil }
             let thumbnail = image.preparingThumbnail(of: CGSize(width: 240, height: 240 * image.size.height / max(image.size.width, 1))) ?? image
-            return Item(id: file.url.path, createdAt: file.date, thumbnail: thumbnail)
+            return Item(id: file.url.path(percentEncoded: false), createdAt: file.date, thumbnail: thumbnail)
         }
     }
 

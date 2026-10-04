@@ -157,11 +157,21 @@ struct DestinationPicker: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
+    /// The picker opened from Send sends; opened from the notes, it only keeps the pick.
+    private func primaryTitle(unavailable: Bool) -> String {
+        if !session.sendsAfterChoosingDestination {
+            "Done"
+        } else if unavailable {
+            "Send anyway"
+        } else {
+            "Send"
+        }
+    }
+
     private var buttons: some View {
         let unavailable = session.chatList == .unavailable
         let loading = session.chatList == .loading
         let ready = unavailable || session.pickerChoice?.agent == session.pickerAgent
-        let primary = session.sendsAfterPicking ? (unavailable ? "Send anyway" : "Send") : "Done"
         return HStack {
             Button("Cancel") { session.cancelDestinations() }
                 .font(.subheadline.weight(.medium))
@@ -170,7 +180,7 @@ struct DestinationPicker: View {
                 .contentShape(Rectangle())
             Spacer()
             Button { session.confirmDestination() } label: {
-                Text(primary)
+                Text(primaryTitle(unavailable: unavailable))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.black)
                     .padding(.horizontal, 18)

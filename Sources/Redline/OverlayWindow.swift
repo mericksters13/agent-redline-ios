@@ -2,14 +2,20 @@
 import SwiftUI
 import UIKit
 
+/// What takes touches while Redline is idle; everywhere else, touches go to the app.
+enum TouchableArea: Hashable {
+    case floatingButton
+    /// A suggested screenshot and its buttons.
+    case suggestion
+}
+
 /// Redline's own window, above the app. Touches pass through to the app
 /// except while Redline is active or on the floating button. Screenshots are
 /// drawn from the app's windows only, so nothing in this window ever appears in them.
 final class OverlayWindow: UIWindow {
     var claimsAllTouches = false
-    /// What takes touches while Redline is idle, such as the floating button and a
-    /// suggested screenshot, by name.
-    var touchableRects: [String: CGRect] = [:]
+    /// Where each area that takes touches while Redline is idle sits.
+    var touchableRects: [TouchableArea: CGRect] = [:]
     var onLayout: ((OverlayWindow) -> Void)?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {

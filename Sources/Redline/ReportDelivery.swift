@@ -25,7 +25,7 @@ enum ReportDelivery {
             return .noHub
         }
         // In a simulator the hub takes reports from the app's folder as they're saved.
-        if address.uploads == false {
+        if !address.acceptsUploads {
             store.markDelivered(reports.map(\.id))
             store.recordDelivery(.delivered)
             return .delivered

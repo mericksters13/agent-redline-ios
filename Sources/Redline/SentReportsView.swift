@@ -232,16 +232,18 @@ private struct ReportDetail: View {
     /// A picture at full width, with an invisible mark over each outline so a note can scroll to it.
     private func pictureView(_ picture: Report.Picture) -> some View {
         let scale = width / CGFloat(max(picture.width, 1))
-        let outlined = report.items.filter { $0.picture == picture.file && $0.outline != nil }
+        let outlined = report.items.compactMap { item in
+            item.picture == picture.file ? item.outline.map { (number: item.number, box: $0) } : nil
+        }
         return ReportPicture(url: sent.folder.appending(path: picture.file), pointWidth: width, alignment: .top)
             .frame(width: width, height: CGFloat(picture.height) * scale)
             .overlay(alignment: .topLeading) {
                 ZStack(alignment: .topLeading) {
-                    ForEach(outlined, id: \.number) { item in
-                        let box = item.outline!
+                    ForEach(outlined, id: \.number) { entry in
+                        let box = entry.box
                         Color.clear
                             .frame(width: CGFloat(box.width) * scale, height: CGFloat(box.height) * scale)
-                            .id(item.number)
+                            .id(entry.number)
                             .padding(.leading, CGFloat(box.x) * scale)
                             .padding(.top, CGFloat(box.y) * scale)
                     }

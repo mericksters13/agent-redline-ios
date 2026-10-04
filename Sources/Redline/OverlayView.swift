@@ -46,14 +46,14 @@ struct OverlayView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if session.mode != .idle && session.mode != .viewer && session.mode != .reports && session.mode != .destination {
+            if session.mode.isAnnotating {
                 touchSurface
                 ForEach(session.markers) { marker in
                     savedNoteMarker(number: marker.number, frame: marker.frame)
                 }
             }
 
-            if session.mode == .picking || session.mode == .tray || session.mode == .attaching || session.mode == .noting {
+            if session.mode.isAnnotating {
                 annotateFrame
                     .transition(.opacity)
             }
@@ -73,7 +73,7 @@ struct OverlayView: View {
                 notesList
             }
 
-            if session.mode == .picking || session.mode == .tray || session.mode == .attaching {
+            if session.mode.showsIsland {
                 island
                     .modifier(Shake(phase: reduceMotion ? 0 : CGFloat(session.nudges)))
                     // Placed by layout, not offset: views moved with offset can keep taking
@@ -269,7 +269,7 @@ struct OverlayView: View {
                         Text(session.screenTitle)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Mono.text)
-                        Text(count == 0 ? "Tap an element" : count == 1 ? "1 note" : "\(count) notes")
+                        Text(count == 0 ? "Tap an element" : countPhrase(count, singular: "note", plural: "notes"))
                             .font(.caption)
                             .foregroundStyle(Mono.secondary)
                     }
@@ -286,7 +286,7 @@ struct OverlayView: View {
             }
             // Not disabled: a disabled button fades its text, and this one also shows the screen name.
             .allowsHitTesting(count > 0)
-            .accessibilityLabel(count == 0 ? "\(session.screenTitle). Tap an element to add a note." : session.mode == .tray ? "Hide notes" : "Show \(count) notes")
+            .accessibilityLabel(notesButtonLabel(count: count))
 
             Button { session.captureThisScreen() } label: {
                 Image(systemName: "camera.viewfinder")
@@ -322,7 +322,7 @@ struct OverlayView: View {
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
                 }
-                .accessibilityLabel(count == 1 ? "Send 1 note" : "Send \(count) notes")
+                .accessibilityLabel("Send " + countPhrase(count, singular: "note", plural: "notes"))
             }
         }
         .buttonStyle(.plain)
@@ -334,6 +334,13 @@ struct OverlayView: View {
         .overlay(Capsule(style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.3), radius: 14, y: 6)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { islandHeight = $0 }
+    }
+
+    /// What VoiceOver says for the screen name and note count in the island.
+    private func notesButtonLabel(count: Int) -> String {
+        if count == 0 { return "\(session.screenTitle). Tap an element to add a note." }
+        if session.mode == .tray { return "Hide notes" }
+        return "Show " + countPhrase(count, singular: "note", plural: "notes")
     }
 
     // MARK: - Note card
@@ -375,10 +382,10 @@ struct OverlayView: View {
                 Spacer(minLength: 0)
                 if pending == nil {
                     if session.canStepDown {
-                        sizeButton("Smaller") { session.stepDown() }
+                        sizeButton("Smaller", accessibilityLabel: "Select a smaller part") { session.stepDown() }
                     }
                     if session.canStepUp {
-                        sizeButton("Larger") { session.stepUp() }
+                        sizeButton("Larger", accessibilityLabel: "Select the larger area around it") { session.stepUp() }
                     }
                 }
             }
@@ -486,7 +493,7 @@ struct OverlayView: View {
     }
 
     /// Moves the selection to a larger or smaller element around the same spot.
-    private func sizeButton(_ title: String, action: @escaping () -> Void) -> some View {
+    private func sizeButton(_ title: String, accessibilityLabel: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.footnote.weight(.semibold))
@@ -497,7 +504,7 @@ struct OverlayView: View {
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
         }
-        .accessibilityLabel(title == "Larger" ? "Select the larger area around it" : "Select a smaller part")
+        .accessibilityLabel(accessibilityLabel)
     }
 
     // MARK: - Notes list
@@ -710,16 +717,16 @@ struct OverlayView: View {
                     }
             )
             .accessibilityElement()
-            .accessibilityLabel(count == 0 ? "Report a UI issue" : "Report a UI issue, \(count) notes waiting")
+            .accessibilityLabel(count == 0 ? "Report a UI issue" : "Report a UI issue, \(countPhrase(count, singular: "note", plural: "notes")) waiting")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { session.enterPicking() }
             .accessibilityAction(named: "Sent reports") { session.openSentReports() }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setTouchableFrame($0, for: "button") }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setTouchableFrame($0, for: .floatingButton) }
             .onDisappear {
                 // A press that opened the sent reports never sees the finger lift here.
                 press?.hold.cancel()
                 press = nil
-                session.setTouchableFrame(nil, for: "button")
+                session.setTouchableFrame(nil, for: .floatingButton)
             }
             .position(center)
     }
@@ -780,8 +787,8 @@ struct OverlayView: View {
         .buttonStyle(.plain)
         .shadow(color: .black.opacity(0.3), radius: 12, y: 5)
         // The close button reaches past the card's corner, so take touches a little around it.
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setTouchableFrame($0.insetBy(dx: -24, dy: -24), for: "suggestion") }
-        .onDisappear { session.setTouchableFrame(nil, for: "suggestion") }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.setTouchableFrame($0.insetBy(dx: -24, dy: -24), for: .suggestion) }
+        .onDisappear { session.setTouchableFrame(nil, for: .suggestion) }
         .padding(.leading, onRight ? width - 12 - cardWidth : 12)
         .padding(.top, top)
         .transition(.move(edge: onRight ? .trailing : .leading).combined(with: .opacity))

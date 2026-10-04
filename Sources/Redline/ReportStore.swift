@@ -220,9 +220,9 @@ extension Report {
 
     /// How much it holds, such as "3 notes, 1 screen".
     var contents: String {
-        let notes = items.count == 1 ? "1 note" : "\(items.count) notes"
+        let notes = countPhrase(items.count, singular: "note", plural: "notes")
         guard !screens.isEmpty else { return notes }
-        return notes + ", " + (screens.count == 1 ? "1 screen" : "\(screens.count) screens")
+        return notes + ", " + countPhrase(screens.count, singular: "screen", plural: "screens")
     }
 }
 
@@ -251,12 +251,10 @@ enum ReportSummary {
             .compactMap { $0 }.joined(separator: " ")
         lines.append("# UI report: \(app)")
         lines.append("")
-        let count = report.items.count
-        let screens = report.screens.count
+        let notes = countPhrase(report.items.count, singular: "note", plural: "notes")
+        let screens = report.screens.isEmpty ? "" : " on " + countPhrase(report.screens.count, singular: "screen", plural: "screens")
         lines.append("\(report.device.model), \(report.device.systemName) \(report.device.systemVersion). "
-            + "\(count == 1 ? "1 note" : "\(count) notes")"
-            + (screens > 0 ? " on \(screens == 1 ? "1 screen" : "\(screens) screens")" : "") + ". "
-            + "Numbers match the red numbered outlines in the pictures.")
+            + "\(notes)\(screens). Numbers match the red numbered outlines in the pictures.")
         let items = Dictionary(uniqueKeysWithValues: report.items.map { ($0.number, $0) })
 
         for screen in report.screens {
@@ -305,7 +303,9 @@ enum ReportSummary {
         if let element = item.element {
             var details = [element.role]
             if let identifier = element.identifier { details.append("identifier `\(identifier)`") }
-            if element.label != nil, element.label != item.title { details.append("label \"\(element.label!)\"") }
+            if let label = element.label, label != item.title {
+                details.append("label \"\(label)\"")
+            }
             text += " (\(details.joined(separator: ", ")))"
         }
         if item.note.isEmpty {
@@ -321,8 +321,8 @@ enum ReportSummary {
 
     private static func list(_ numbers: [Int]) -> String {
         let words = numbers.map(String.init)
-        guard words.count > 1 else { return words.first ?? "" }
-        return words.dropLast().joined(separator: ", ") + " and " + words.last!
+        guard words.count > 1, let last = words.last else { return words.first ?? "" }
+        return words.dropLast().joined(separator: ", ") + " and " + last
     }
 }
 
@@ -415,7 +415,7 @@ struct ReportStore: Sendable {
         let stamp = Self.timestampFormatter.string(from: date)
         var id = stamp
         var suffix = 2
-        while files.fileExists(atPath: reportsDirectory.appending(path: id).path) {
+        while files.fileExists(atPath: reportsDirectory.appending(path: id).path(percentEncoded: false)) {
             id = stamp + "-\(suffix)"
             suffix += 1
         }
@@ -463,7 +463,7 @@ struct ReportStore: Sendable {
         // No reports folder yet: nothing has been sent.
         let folders = (try? FileManager.default.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: nil)) ?? []
         let waiting = folders.compactMap { folder -> (folder: String, stamp: Stamp)? in
-            guard !FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path) else { return nil }
+            guard !FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path(percentEncoded: false)) else { return nil }
             do {
                 // No report.json yet: still being drawn.
                 guard let data = try Self.contents(of: folder.appending(path: "report.json")) else { return nil }
@@ -484,10 +484,12 @@ struct ReportStore: Sendable {
     func reportFiles(_ id: String) -> [String: Data] {
         let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
         var files: [String: Data] = [:]
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name != "delivered" && !name.hasPrefix(".") {
-            let file = folder.appending(path: name)
-            guard (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true, let data = try? Data(contentsOf: file) else { continue }
-            files[name] = data
+        let contents = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        for file in contents where file.lastPathComponent != "delivered" && !file.lastPathComponent.hasPrefix(".") {
+            guard (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true,
+                  let data = try? Data(contentsOf: file)
+            else { continue }
+            files[file.lastPathComponent] = data
         }
         return files
     }
@@ -518,7 +520,7 @@ struct ReportStore: Sendable {
     func markDelivered(_ ids: [String]) {
         for id in ids {
             let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
-            guard FileManager.default.fileExists(atPath: folder.path) else { continue }
+            guard FileManager.default.fileExists(atPath: folder.path(percentEncoded: false)) else { continue }
             do {
                 try Data().write(to: folder.appending(path: "delivered"))
             } catch {
@@ -542,7 +544,7 @@ struct ReportStore: Sendable {
                 Log.store.notice("Skipped report \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 return nil
             }
-            let delivered = FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path)
+            let delivered = FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path(percentEncoded: false))
             return SentReport(report: report, folder: folder, delivered: delivered)
         }
         .sorted { ($0.report.createdAt, $0.id) > ($1.report.createdAt, $1.id) }
