@@ -6,6 +6,11 @@ import Testing
 struct ReportStoreTests {
     private let store = ReportStore(root: FileManager.default.temporaryDirectory.appending(path: "ReportStoreTests-\(UUID().uuidString)"))
 
+    /// Each test gets its own folder; this removes it.
+    private func removeStore() {
+        try? FileManager.default.removeItem(at: store.root)
+    }
+
     private func annotation(_ note: String) -> Annotation {
         let id = UUID()
         return Annotation(
@@ -34,12 +39,14 @@ struct ReportStoreTests {
     }
 
     @Test func draftSurvivesAReload() throws {
+        defer { removeStore() }
         let annotations = [annotation("Cut off"), annotation("Wrong color")]
         try store.saveDraft(annotations)
         #expect(try store.loadDraft() == annotations)
     }
 
     @Test func notesAndAttachmentsMixInOneDraft() throws {
+        defer { removeStore() }
         let items = [annotation("Cut off"), photos("Flickers between these", count: 3), annotation("Wrong color")]
         try store.saveDraft(items)
         let loaded = try store.loadDraft()
@@ -50,6 +57,7 @@ struct ReportStoreTests {
     }
 
     @Test func aDraftSavedBeforeAttachmentsStillLoads() throws {
+        defer { removeStore() }
         let legacy = """
         [{"id":"8FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC","createdAt":"2026-10-02T23:59:39Z","note":"Date wraps badly",
           "element":{"role":"Button","label":"Use next","identifier":"milk.home.urgency","isContainer":false,"frame":[[20,468],[362,74]]},
@@ -67,11 +75,13 @@ struct ReportStoreTests {
     }
 
     @Test func missingDraftIsEmpty() throws {
+        defer { removeStore() }
         #expect(try store.loadDraft().isEmpty)
         #expect(try store.loadScreens().isEmpty)
     }
 
     @Test func anUnreadableDraftIsSetAsideInsteadOfOverwritten() throws {
+        defer { removeStore() }
         let garbage = Data("not json".utf8)
         try FileManager.default.createDirectory(at: store.draftDirectory, withIntermediateDirectories: true)
         try garbage.write(to: store.draftFile)
@@ -86,6 +96,7 @@ struct ReportStoreTests {
     }
 
     @Test func aKindFromANewerKitStillLoads() throws {
+        defer { removeStore() }
         let draft = """
         [{"id":"8FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC","createdAt":"2026-10-02T23:59:39Z","note":"Shaky",
           "kind":"recording","ancestors":[],"screenshots":["a.mov"]},
@@ -99,6 +110,7 @@ struct ReportStoreTests {
     }
 
     @Test func aReportTakesTheWholeDraftAndLeavesAFreshOne() throws {
+        defer { removeStore() }
         let items = [annotation("Cut off"), photos("Same bug on another screen", count: 2)]
         for name in items.flatMap(\.screenshots) {
             try store.saveScreenshot(Data([1, 2, 3]), named: name)
@@ -117,7 +129,7 @@ struct ReportStoreTests {
         let second = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
         #expect(second.id != started.id)
 
-        try store.finishReport(sampleReport(id: started.id), in: started.folder)
+        try store.finishReport(Fixtures.report(id: started.id), in: started.folder)
         #expect(FileManager.default.fileExists(atPath: started.folder.appending(path: "report.json").path))
         #expect(FileManager.default.fileExists(atPath: started.folder.appending(path: "report.md").path))
         #expect(!FileManager.default.fileExists(atPath: started.draft.path))
@@ -129,7 +141,21 @@ struct ReportStoreTests {
         #expect(report.items.first?.picture == "screen-1.jpg")
     }
 
+    @Test func aReportIsNamedByWhenItWasSent() throws {
+        defer { removeStore() }
+        try store.saveDraft([])
+        // 2026-09-21 14:13:20 UTC, named in the phone's own time zone.
+        let date = Date(timeIntervalSince1970: 1_790_000_000)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+        let expected = String(format: "%04d%02d%02d-%02d%02d%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0,
+                              parts.hour ?? 0, parts.minute ?? 0, parts.second ?? 0)
+        #expect(try store.beginReport(date: date).id == expected)
+    }
+
     @Test func screensSurviveAReload() throws {
+        defer { removeStore() }
         let capture = Capture(id: UUID(), file: "capture.png", size: CGSize(width: 402, height: 874), scroll: nil, elements: [], group: 0)
         let screens = [ScreenRecord(id: UUID(), info: ScreenInfo(title: "Today", viewController: "Home"), captures: [capture])]
         try store.saveScreens(screens)
@@ -137,10 +163,11 @@ struct ReportStoreTests {
     }
 
     @Test func sentReportsAreListedNewestFirst() throws {
+        defer { removeStore() }
         for (id, seconds) in [("older", 1_790_000_000.0), ("newer", 1_790_000_600.0)] {
             try store.saveDraft([annotation(id)])
             let started = try store.beginReport(date: Date(timeIntervalSince1970: seconds))
-            var report = sampleReport(id: id)
+            var report = Fixtures.report(id: id)
             report.createdAt = Date(timeIntervalSince1970: seconds)
             try store.finishReport(report, in: started.folder)
         }
@@ -158,11 +185,12 @@ struct ReportStoreTests {
     }
 
     @Test func reportsAreOfferedUntilTheMacHasThem() throws {
+        defer { removeStore() }
         var ids: [String] = []
         for seconds in [1_790_000_000.0, 1_790_000_600.0] {
             try store.saveDraft([annotation("Cut off")])
             let started = try store.beginReport(date: Date(timeIntervalSince1970: seconds))
-            var report = sampleReport(id: started.id)
+            var report = Fixtures.report(id: started.id)
             report.createdAt = Date(timeIntervalSince1970: seconds)
             try store.finishReport(report, in: started.folder)
             ids.append(started.id)
@@ -175,12 +203,14 @@ struct ReportStoreTests {
     }
 
     @Test func anUnreadableHubAddressIsNoHub() throws {
+        defer { removeStore() }
         try FileManager.default.createDirectory(at: store.root, withIntermediateDirectories: true)
         try Data(#"{"hosts":"not a list"}"#.utf8).write(to: store.hubAddressFile)
         #expect(store.hubAddress() == nil)
     }
 
     @Test func theHubsAddressIsReadFromTheAppsFolder() throws {
+        defer { removeStore() }
         #expect(store.hubAddress() == nil)
         let address = HubLink.Address(device: "00008150-00123C360CF3C01C", hosts: ["192.168.1.2", "mac.local"], port: 47361, token: "secret")
         try FileManager.default.createDirectory(at: store.root, withIntermediateDirectories: true)
@@ -195,6 +225,7 @@ struct ReportStoreTests {
     }
 
     @Test func theFolderIsWhereTheMacLooks() {
+        defer { removeStore() }
         // Must match the Mac tool's ReportFolder.path and HubAddress.addressPath.
         let reports = ReportStore.standard.reportsDirectory.path(percentEncoded: false)
         #expect(reports.trimmingCharacters(in: CharacterSet(charactersIn: "/")).hasSuffix("Library/Application Support/Redline/reports"))
@@ -202,9 +233,10 @@ struct ReportStoreTests {
     }
 
     @Test func reportFieldsKeepTheirNamesOnDisk() throws {
+        defer { removeStore() }
         try store.saveDraft([])
         let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
-        try store.finishReport(sampleReport(id: started.id), in: started.folder)
+        try store.finishReport(Fixtures.report(id: started.id), in: started.folder)
         let json = try String(decoding: Data(contentsOf: started.folder.appending(path: "report.json")), as: UTF8.self)
         #expect(json.contains(#""bundleIdentifier" : "com.example.app""#))
         #expect(json.contains(#""earlierState" : false"#))
@@ -215,9 +247,10 @@ struct ReportStoreTests {
     }
 
     @Test func aReportSaysWhichVersionOfTheFormatItIs() throws {
+        defer { removeStore() }
         try store.saveDraft([])
         let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
-        try store.finishReport(sampleReport(id: started.id), in: started.folder)
+        try store.finishReport(Fixtures.report(id: started.id), in: started.folder)
         let json = try String(decoding: Data(contentsOf: started.folder.appending(path: "report.json")), as: UTF8.self)
         #expect(json.contains(#""version" : 1"#))
         // Reports written before the format had a version still list.
@@ -232,76 +265,35 @@ struct ReportStoreTests {
     }
 
     @Test func thePickedChatIsSavedWithTheReport() throws {
-        let report = Report(id: "r", createdAt: Date(timeIntervalSince1970: 1_791_000_000),
-                            app: Report.App(bundleID: "com.example.app", sourceFile: "/w/App.swift"),
-                            device: Report.Device(model: "iPhone18,1", systemName: "iOS", systemVersion: "27.0"), screens: [], items: [],
-                            destination: Report.Destination(agent: "codex", chat: "t-1", title: "Fix the paywall"))
-        let decoded = try JSONDecoder().decode(Report.self, from: JSONEncoder().encode(report))
-        #expect(decoded.destination == report.destination)
-        #expect(decoded.app.sourceFile == "/w/App.swift")
+        defer { removeStore() }
+        try store.saveDraft([])
+        let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_791_000_000))
+        var report = Fixtures.report(id: started.id)
+        report.app.sourceFile = "/w/App.swift"
+        report.destination = Report.Destination(agent: "codex", chat: "t-1", title: "Fix the paywall")
+        try store.finishReport(report, in: started.folder)
+        let saved = try #require(store.sentReports().first?.report)
+        #expect(saved.destination == report.destination)
+        #expect(saved.app.sourceFile == "/w/App.swift")
     }
 
     @Test func aReportsFilesAreSentWithoutItsDraftOrMark() throws {
+        defer { removeStore() }
         try store.saveDraft([annotation("Cut off")])
         let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
         try Data([1, 2, 3]).write(to: started.folder.appending(path: "screen-1.jpg"))
-        try store.finishReport(sampleReport(id: started.id), in: started.folder)
+        try store.finishReport(Fixtures.report(id: started.id), in: started.folder)
         store.markDelivered([started.id])
         #expect(store.reportFiles(started.id).keys.sorted() == ["report.json", "report.md", "screen-1.jpg"])
         #expect(store.sentReports().first?.isDelivered == true)
     }
 
     @Test func theLastDeliveryIsRemembered() {
+        defer { removeStore() }
         #expect(store.lastDelivery() == nil)
         store.recordDelivery(.unreachable, at: Date(timeIntervalSince1970: 1_791_000_000))
         #expect(store.lastDelivery() == Delivery(attemptedAt: Date(timeIntervalSince1970: 1_791_000_000), outcome: .unreachable))
     }
 
-    @Test func aSentReportIsSummedUpForTheList() {
-        let report = sampleReport(id: "r")
-        #expect(report.screenNames == "Today")
-        #expect(report.contents == "3 notes, 1 screen")
-        var attachmentsOnly = report
-        attachmentsOnly.screens = []
-        attachmentsOnly.items = [report.items[2]]
-        #expect(attachmentsOnly.screenNames == "Attachment")
-        #expect(attachmentsOnly.contents == "1 note")
-    }
-
-    @Test func theSummaryTellsTheAgentWhichPictureShowsEachNote() {
-        let text = ReportSummary.markdown(sampleReport(id: "r"))
-        #expect(text.contains("## Screen: Today"))
-        #expect(text.contains("One screenshot of this screen, stitched from 2 scroll positions, in 2 parts: screen-1.jpg, screen-1-part-2.jpg."))
-        #expect(text.contains("Notes 1 and 2 are outlined and numbered on it."))
-        #expect(text.contains("1. **Save** (Button, identifier `save`): Cut off. See screen-1.jpg."))
-        #expect(text.contains("## Attachments"))
-        #expect(text.contains("3. **2 images from Photos**: Same bug. Images: note-3-1.jpg, note-3-2.jpg."))
-    }
-
-    private func sampleReport(id: String) -> Report {
-        let element = ElementSnapshot(role: "Button", label: "Save", value: nil, identifier: "save", className: nil, isContainer: false, frame: CGRect(x: 1, y: 2, width: 3, height: 4))
-        func item(_ number: Int, _ note: String, picture: String) -> Report.Item {
-            Report.Item(number: number, kind: .element, note: note, createdAt: Date(timeIntervalSince1970: 1_790_000_000), title: "Save",
-                        element: element, ancestors: [], screen: "screen-1", screenTitle: "Today", picture: picture,
-                        outline: Report.Box(x: 10, y: 20, width: 30, height: 40), attachments: [])
-        }
-        return Report(
-            id: id,
-            createdAt: Date(timeIntervalSince1970: 1_790_000_000),
-            app: Report.App(bundleID: "com.example.app", name: "Example", version: "1.0", build: "1"),
-            device: Report.Device(model: "iPhone18,1", systemName: "iOS", systemVersion: "27.0"),
-            screens: [Report.Screen(id: "screen-1", title: "Today", viewController: "Home", notes: [1, 2], images: [
-                Report.Picture(file: "screen-1.jpg", part: 1, parts: 2, stitchedFrom: 2, isEarlierState: false, notes: [1, 2], width: 563, height: 1224),
-                Report.Picture(file: "screen-1-part-2.jpg", part: 2, parts: 2, stitchedFrom: 2, isEarlierState: false, notes: [2], width: 563, height: 700),
-            ])],
-            items: [
-                item(1, "Cut off", picture: "screen-1.jpg"),
-                item(2, "Too faint", picture: "screen-1-part-2.jpg"),
-                Report.Item(number: 3, kind: .photo, note: "Same bug", createdAt: Date(timeIntervalSince1970: 1_790_000_000), title: "2 images from Photos",
-                            element: nil, ancestors: [], screen: nil, screenTitle: nil, picture: nil, outline: nil,
-                            attachments: ["note-3-1.jpg", "note-3-2.jpg"]),
-            ]
-        )
-    }
 }
 #endif
