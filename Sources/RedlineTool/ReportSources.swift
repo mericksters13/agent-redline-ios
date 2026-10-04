@@ -88,14 +88,30 @@ enum HubMessage {
         var refused: String?
     }
 
-    /// Where the kit looks for the hub's address, inside an app's data container.
-    static let addressPath = "Library/Application Support/Redline/hub.json"
+    /// The kit's folder inside an app's data container: the app's Application Support, which is
+    /// where the kit's ReportStore keeps its files.
+    static let kitFolder = "Library/Application Support/Redline"
 
-    /// One line: the value's JSON and a newline.
-    static func encode<T: Encodable>(_ value: T) -> Data {
+    /// Where the kit looks for the hub's address, inside an app's data container.
+    static let addressPath = kitFolder + "/hub.json"
+
+    /// How every line is written: sorted keys, slashes as they are, ISO 8601 dates, as the kit's
+    /// HubLink writes them.
+    private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return encoder
+    }()
+
+    private static let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
+
+    /// One line: the value's JSON and a newline.
+    static func encode<T: Encodable>(_ value: T) -> Data {
         do {
             return try encoder.encode(value) + Data("\n".utf8)
         } catch {
@@ -107,9 +123,7 @@ enum HubMessage {
 
     /// Decodes one line. Throws a DecodingError that says which field was wrong.
     static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(type, from: data)
+        try decoder.decode(type, from: data)
     }
 
     /// Why a line didn't decode, short enough for the log.
@@ -133,7 +147,7 @@ struct FinishedReport: Equatable {
 
 /// Where the kit keeps sent reports, inside an app's data container.
 enum ReportFolder {
-    static let path = "Library/Application Support/Redline/reports"
+    static let path = HubMessage.kitFolder + "/reports"
 
     /// The finished reports among paths relative to the reports folder. A report is finished
     /// once its `report.json` is written and the draft it was drawn from is gone.
@@ -191,14 +205,6 @@ struct SimulatorReportPath: Equatable {
         let parts = container.split(separator: "/")
         guard let devices = parts.lastIndex(of: "Devices"), devices + 1 < parts.count else { return nil }
         return SimulatorReportPath(container: container, device: String(parts[devices + 1]), reportID: id)
-    }
-}
-
-enum Inbox {
-    /// One report's folder in the inbox: sorts by time, and two phones sending in the same
-    /// second don't collide.
-    static func folderName(reportID: String, device: String) -> String {
-        "\(reportID)-\(device.replacingOccurrences(of: "-", with: "").suffix(8))"
     }
 }
 #endif

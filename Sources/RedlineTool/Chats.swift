@@ -64,7 +64,7 @@ enum Chats {
 
     static func register(_ chat: ChatRecord, paths: HubPaths) throws {
         try FileManager.default.createDirectory(at: folder(paths), withIntermediateDirectories: true)
-        try coder.encode(chat).write(to: folder(paths).appending(path: "\(chat.id).json"), options: .atomic)
+        try HubPaths.encoder.encode(chat).write(to: folder(paths).appending(path: "\(chat.id).json"), options: .atomic)
     }
 
     static func unregister(_ id: String, paths: HubPaths) {
@@ -73,7 +73,7 @@ enum Chats {
     }
 
     static func record(_ id: String, paths: HubPaths) -> ChatRecord? {
-        (try? Data(contentsOf: folder(paths).appending(path: "\(id).json"))).flatMap { try? decoder.decode(ChatRecord.self, from: $0) }
+        (try? Data(contentsOf: folder(paths).appending(path: "\(id).json"))).flatMap { try? HubPaths.decoder.decode(ChatRecord.self, from: $0) }
     }
 
     static func isRunning(_ pid: Int32) -> Bool {
@@ -84,7 +84,7 @@ enum Chats {
     static func live(_ paths: HubPaths) -> [ChatRecord] {
         let files = (try? FileManager.default.contentsOfDirectory(at: folder(paths), includingPropertiesForKeys: nil)) ?? []
         return files.filter { $0.pathExtension == "json" }.compactMap { file in
-            guard let data = try? Data(contentsOf: file), let chat = try? decoder.decode(ChatRecord.self, from: data) else { return nil }
+            guard let data = try? Data(contentsOf: file), let chat = try? HubPaths.decoder.decode(ChatRecord.self, from: data) else { return nil }
             guard isRunning(chat.pid) else {
                 unregister(chat.id, paths: paths)
                 return nil
@@ -93,18 +93,6 @@ enum Chats {
         }
     }
 
-    static let coder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
-    }()
-
-    static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
 }
 
 /// The chat a report is for: the one that built the app it came from.
@@ -114,17 +102,36 @@ struct Address: Codable, Equatable, Sendable {
     var folder: String
 }
 
-/// The inbox as chats see it: reports waiting for an app, and claiming one so no other chat gets it.
-enum InboxQueue {
+/// The inbox's layout and the chats' view of it: reports waiting for an app, and claiming one so
+/// no other chat gets it. See HubPaths for every file in a report's folder.
+enum Inbox {
+    /// Where a report came from, written by the hub.
+    static let sourceFile = "source.json"
+    /// The chat that took a report.
     static let claimFile = "claim.json"
+    /// The chat a report is addressed to.
     static let addressFile = "to.json"
+    /// Where the hub sent a report.
+    static let deliveryFile = "delivery.json"
+    /// What the command of a chat the hub started printed.
+    static let newChatOutputFile = "new-chat-output.jsonl"
+    /// The answer a chat the hub started gave.
+    static let answerFile = "answer.md"
+    /// A report is filled under this prefix and renamed into place whole.
+    static let incomingPrefix = ".incoming-"
+
+    /// One report's folder in the inbox: sorts by time, and two phones sending in the same
+    /// second don't collide.
+    static func folderName(reportID: String, device: String) -> String {
+        "\(reportID)-\(device.replacingOccurrences(of: "-", with: "").suffix(8))"
+    }
 
     static func address(of report: URL) -> Address? {
-        (try? Data(contentsOf: report.appending(path: addressFile))).flatMap { try? Chats.decoder.decode(Address.self, from: $0) }
+        (try? Data(contentsOf: report.appending(path: addressFile))).flatMap { try? HubPaths.decoder.decode(Address.self, from: $0) }
     }
 
     static func setAddress(_ address: Address, of report: URL) throws {
-        try Chats.coder.encode(address).write(to: report.appending(path: addressFile), options: .atomic)
+        try HubPaths.encoder.encode(address).write(to: report.appending(path: addressFile), options: .atomic)
     }
 
     /// Reports for this chat that it hasn't taken yet, oldest first.
@@ -132,16 +139,18 @@ enum InboxQueue {
         waiting(for: bundleIDs, paths: paths).filter { address(of: $0.folder)?.chat == chat }
     }
 
-    /// Every report for these apps, oldest first.
-    static func reports(for bundleIDs: [String], paths: HubPaths) -> [InboxReport] {
+    /// Every report for these apps, or every app's when `bundleIDs` is nil, oldest first. A
+    /// folder without its source.json isn't a filed report.
+    static func reports(for bundleIDs: [String]?, paths: HubPaths) -> [InboxReport] {
         let files = FileManager.default
+        let apps = bundleIDs ?? ((try? files.contentsOfDirectory(atPath: paths.inbox.path)) ?? []).filter { !$0.hasPrefix(".") }
         var reports: [InboxReport] = []
-        for bundleID in bundleIDs {
+        for bundleID in apps {
             let app = paths.inbox.appending(path: bundleID, directoryHint: .isDirectory)
             for name in (try? files.contentsOfDirectory(atPath: app.path)) ?? [] where !name.hasPrefix(".") {
                 let folder = app.appending(path: name, directoryHint: .isDirectory)
-                guard let data = try? Data(contentsOf: folder.appending(path: "source.json")),
-                      let source = try? Chats.decoder.decode(ReportSource.self, from: data)
+                guard let data = try? Data(contentsOf: folder.appending(path: sourceFile)),
+                      let source = try? HubPaths.decoder.decode(ReportSource.self, from: data)
                 else { continue }
                 reports.append(InboxReport(folder: folder, source: source, claim: claim(of: folder)))
             }
@@ -159,7 +168,7 @@ enum InboxQueue {
     static func claim(of report: URL) -> Claim? {
         let file = report.appending(path: claimFile)
         guard FileManager.default.fileExists(atPath: file.path) else { return nil }
-        guard let data = try? Data(contentsOf: file), let claim = try? Chats.decoder.decode(Claim.self, from: data) else {
+        guard let data = try? Data(contentsOf: file), let claim = try? HubPaths.decoder.decode(Claim.self, from: data) else {
             return Claim(chat: "unknown", agent: "unknown", folder: "", claimedAt: .distantPast)
         }
         return claim
@@ -181,7 +190,7 @@ enum InboxQueue {
         let draft = report.folder.appending(path: ".\(claimFile).\(UUID().uuidString)")
         defer { unlink(draft.path) }
         do {
-            try Chats.coder.encode(claim).write(to: draft)
+            try HubPaths.encoder.encode(claim).write(to: draft)
         } catch {
             return .failed(error)
         }
@@ -219,14 +228,12 @@ struct ReportDelivery: Codable, Equatable, Sendable {
         self.kind = kind
     }
 
-    static let file = "delivery.json"
-
     static func save(_ delivery: ReportDelivery, in report: URL) throws {
-        try Chats.coder.encode(delivery).write(to: report.appending(path: file), options: .atomic)
+        try HubPaths.encoder.encode(delivery).write(to: report.appending(path: Inbox.deliveryFile), options: .atomic)
     }
 
     static func load(from report: URL) -> ReportDelivery? {
-        (try? Data(contentsOf: report.appending(path: file))).flatMap { try? Chats.decoder.decode(ReportDelivery.self, from: $0) }
+        (try? Data(contentsOf: report.appending(path: Inbox.deliveryFile))).flatMap { try? HubPaths.decoder.decode(ReportDelivery.self, from: $0) }
     }
 }
 #endif

@@ -191,73 +191,59 @@ final class HubWindowModel {
         return state
     }
 
-    /// The newest reports in the inbox, with where each went.
+    /// The newest reports in the inbox, with where each went. Only the newest `limit` are read
+    /// beyond their source.json.
     nonisolated static func readReports(paths: HubPaths, limit: Int = 30) -> [(deviceID: String, row: ReportRow)] {
-        let files = FileManager.default
-        var found: [(String, ReportRow)] = []
-        for app in (try? files.contentsOfDirectory(atPath: paths.inbox.path)) ?? [] where !app.hasPrefix(".") {
-            let appFolder = paths.inbox.appending(path: app, directoryHint: .isDirectory)
-            for name in (try? files.contentsOfDirectory(atPath: appFolder.path)) ?? [] where !name.hasPrefix(".") {
-                let folder = appFolder.appending(path: name, directoryHint: .isDirectory)
-                guard let data = try? Data(contentsOf: folder.appending(path: "source.json")),
-                      let source = try? Chats.decoder.decode(ReportSource.self, from: data)
-                else { continue }
-                let (agent, chat, waiting) = destination(of: folder)
-                found.append((source.device, ReportRow(id: folder.path, folder: folder, device: source.deviceName, receivedAt: source.receivedAt,
-                                                       agent: agent, chat: chat, waiting: waiting,
-                                                       thumbnail: ReportContent.pictures(in: folder).first, notes: notes(in: folder))))
-            }
+        let newest = Inbox.reports(for: nil, paths: paths).sorted { $0.source.receivedAt > $1.source.receivedAt }.prefix(limit)
+        let database = CodexThreads.newestDatabase()
+        return newest.map { report in
+            let folder = report.folder
+            let listing = ReportListing.load(from: folder)
+            let (agent, chat, waiting) = destination(of: folder, codexDatabase: database)
+            return (report.source.device, ReportRow(id: folder.path, folder: folder, device: report.source.deviceName, receivedAt: report.source.receivedAt,
+                                                    agent: agent, chat: chat, waiting: waiting,
+                                                    thumbnail: ReportContent.pictures(in: folder, listing: listing).first, notes: notes(of: listing)))
         }
-        return Array(found.sorted { $0.1.receivedAt > $1.1.receivedAt }.prefix(limit))
     }
 
     /// The agent and chat a report went to: what the hub saved when it delivered it, or the
     /// chat that took it through MCP or a hook.
-    nonisolated static func destination(of folder: URL) -> (agent: String, chat: String, waiting: Bool) {
+    nonisolated static func destination(of folder: URL, codexDatabase: URL?) -> (agent: String, chat: String, waiting: Bool) {
         if let delivery = ReportDelivery.load(from: folder) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             return (agent, delivery.title, delivery.kind == .waiting)
         }
-        if let data = try? Data(contentsOf: folder.appending(path: InboxQueue.claimFile)),
-           let claim = try? Chats.decoder.decode(Claim.self, from: data) {
+        if let claim = Inbox.claim(of: folder) {
             let agent = Agent(rawValue: claim.agent)?.name ?? claim.agent
-            return (agent, chatTitle(claim), false)
+            return (agent, chatTitle(claim, codexDatabase: codexDatabase), false)
         }
         return ("Not sent", "Waiting in the inbox", true)
     }
 
     /// A chat's title for a report taken before the hub saved where reports went: the Codex
     /// chat's title, "New chat in …" for one the hub started, else the chat's folder.
-    nonisolated static func chatTitle(_ claim: Claim) -> String {
+    nonisolated static func chatTitle(_ claim: Claim, codexDatabase: URL?) -> String {
         let folder = claim.folder.isEmpty ? nil : URL(fileURLWithPath: claim.folder).lastPathComponent
         if let thread = ChatID.agentID(of: claim.chat, agent: .codex) {
-            return CodexThreads.title(of: thread, in: CodexThreads.newestDatabase()) ?? folder ?? "Codex chat"
+            return CodexThreads.title(of: thread, in: codexDatabase) ?? folder ?? "Codex chat"
         }
         if ChatID.isStarted(claim.chat) { return "New chat" + (folder.map { " in \($0)" } ?? "") }
         return folder ?? "Chat"
     }
 
-    /// The report's notes in their numbers' order, each as "Log milestone: This is ugly".
+    /// The report's notes in their numbers' order, each as "Log milestone: This is ugly". None
+    /// when an item lacks its number, title or note.
     nonisolated static func notes(in folder: URL) -> [Note] {
-        struct Listing: Decodable {
-            struct Item: Decodable {
-                struct Element: Decodable {
-                    var identifier: String?
-                    var label: String?
-                }
-                var number: Int
-                var title: String
-                var note: String
-                var element: Element?
-            }
-            var items: [Item]
-        }
-        guard let data = try? Data(contentsOf: folder.appending(path: "report.json")),
-              let listing = try? JSONDecoder().decode(Listing.self, from: data)
-        else { return [] }
-        return listing.items.sorted { $0.number < $1.number }.map { item in
-            let name = item.element?.label ?? item.element?.identifier ?? item.title
-            return Note(number: item.number, text: "\(name): \(item.note.isEmpty ? "No note" : item.note)")
+        notes(of: ReportListing.load(from: folder))
+    }
+
+    nonisolated static func notes(of listing: ReportListing?) -> [Note] {
+        guard let items = listing?.items?.map({ item in
+            item.number.flatMap { number in item.title.flatMap { title in item.note.map { (number, title, $0, item.element) } } }
+        }).allPresent() else { return [] }
+        return items.sorted { $0.0 < $1.0 }.map { number, title, note, element in
+            let name = element?.label ?? element?.identifier ?? title
+            return Note(number: number, text: "\(name): \(note.isEmpty ? "No note" : note)")
         }
     }
 

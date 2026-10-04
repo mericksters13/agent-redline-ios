@@ -139,7 +139,7 @@ enum StartedChats {
     /// Every remembered chat. A file that can't be read is moved aside, so remembering the next
     /// one doesn't write over it.
     static func all(_ paths: HubPaths) -> [String: StartedChat] {
-        StoredFile.load([String: StartedChat].self, from: file(paths), decoder: Chats.decoder) { printError($0) } ?? [:]
+        StoredFile.load([String: StartedChat].self, from: file(paths), decoder: HubPaths.decoder) { printError($0) } ?? [:]
     }
 
     /// The chat started for this pick, while its worktree still exists.
@@ -151,7 +151,7 @@ enum StartedChats {
         var chats = all(paths)
         chats[pick] = chat
         try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        try Chats.coder.encode(chats).write(to: file(paths), options: .atomic)
+        try HubPaths.encoder.encode(chats).write(to: file(paths), options: .atomic)
     }
 }
 #endif

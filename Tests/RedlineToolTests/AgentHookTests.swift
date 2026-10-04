@@ -110,8 +110,8 @@ struct AgentHookTests {
         try JSONSerialization.data(withJSONObject: listing).write(to: incoming.appending(path: "report.json"))
         try Data([0xFF]).write(to: incoming.appending(path: "screen-1.jpg"))
         let source = ReportSource(kind: .phone, device: "D", deviceName: "Mark iPhone", bundleID: bundleID, reportID: id, receivedAt: Date())
-        try Chats.coder.encode(source).write(to: incoming.appending(path: "source.json"))
-        if let address { try InboxQueue.setAddress(address, of: incoming) }
+        try HubPaths.encoder.encode(source).write(to: incoming.appending(path: "source.json"))
+        if let address { try Inbox.setAddress(address, of: incoming) }
         let final = paths.inbox.appending(path: "\(bundleID)/\(id)", directoryHint: .isDirectory)
         try FileManager.default.moveItem(at: incoming, to: final)
         return final
@@ -328,11 +328,11 @@ struct AgentHookTests {
 
     @Test func aClaimThatCantBeReadStillCountsAsTaken() throws {
         let folder = try inboxReport("20261004-120200")
-        try Data("{\"chat\":\"cod".utf8).write(to: folder.appending(path: InboxQueue.claimFile))
-        #expect(InboxQueue.waiting(for: ["com.example.app"], paths: paths).isEmpty)
+        try Data("{\"chat\":\"cod".utf8).write(to: folder.appending(path: Inbox.claimFile))
+        #expect(Inbox.waiting(for: ["com.example.app"], paths: paths).isEmpty)
         let chat = ChatRecord(id: "codex-A", agent: "codex", folder: "/w", bundleIDs: ["com.example.app"], pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
-        let report = try #require(InboxQueue.reports(for: ["com.example.app"], paths: paths).first)
-        guard case .takenByAnotherChat = InboxQueue.claim(report, for: chat) else {
+        let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
+        guard case .takenByAnotherChat = Inbox.claim(report, for: chat) else {
             Issue.record("A second claim should find the first")
             return
         }

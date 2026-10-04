@@ -5,9 +5,18 @@ import Synchronization
 
 /// Where the tool keeps things on the Mac.
 ///
-/// - `inbox/<bundle ID>/<report>/`: reports taken off phones and simulators, each with a `source.json`
+/// - `inbox/<bundle ID>/<report>/`: reports taken off phones and simulators. Each holds the
+///   report's own files (`report.json`, `report.md`, pictures) and the hub's: `source.json`
+///   (where it came from), `claim.json` (the chat that took it), `to.json` (the chat it's
+///   addressed to), `delivery.json` (where the hub sent it), and for a chat the hub started,
+///   `new-chat-output.jsonl` and `answer.md`. A report is filled under `.incoming-<name>` and
+///   renamed into place whole.
+/// - `hub/chats/<chat>.json`: the open chats, written by their MCP copies, hooks and waits
 /// - `hub/state.json`: which reports each phone and simulator app has already given
-/// - `hub/status.json`, `hub/hub.pid`, `hub/hub.log`: for `redline status`
+/// - `hub/tokens.json`: the token each app on each phone was given; secret
+/// - `hub/started-chats.json`: the chats the hub started for the phone's "New chat" picks
+/// - `hub/status.json`, `hub/hub.pid`, `hub/hub.log` (and `hub/hub.log.1`): for `redline status`
+///   and the panel; the hub holds a lock on `hub.pid` while it runs
 struct HubPaths: Sendable {
     let root: URL
 
@@ -21,6 +30,21 @@ struct HubPaths: Sendable {
     var log: URL { hub.appending(path: "hub.log") }
     /// The token each app on each phone was given; secret, readable only by the user.
     var tokens: URL { hub.appending(path: "tokens.json") }
+
+    /// How the hub and the chats write their JSON files: ISO 8601 dates, pretty-printed with
+    /// sorted keys, so people can read them.
+    static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return encoder
+    }()
+
+    static let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
 }
 
 /// Reading the hub's own files, where a missing file is normal and any other failure isn't.
@@ -206,8 +230,8 @@ final class Hub: @unchecked Sendable {
         self.devicectl = devicectl
         fixedApps = apps
         state = Mutex(State())
-        let sources = StoredFile.load([String: SourceState].self, from: paths.state, decoder: Self.decoder) { log($0) }
-        let tokens = StoredFile.load([String: String].self, from: paths.tokens, decoder: Self.decoder) { log($0) }
+        let sources = StoredFile.load([String: SourceState].self, from: paths.state, decoder: HubPaths.decoder) { log($0) }
+        let tokens = StoredFile.load([String: String].self, from: paths.tokens, decoder: HubPaths.decoder) { log($0) }
         state.withLock { state in
             state.sources = sources ?? [:]
             state.tokens = tokens ?? [:]
@@ -515,7 +539,7 @@ final class Hub: @unchecked Sendable {
     func receive(_ source: ReportSource, copy: (_ destination: URL) throws -> Void) throws {
         let folder = paths.inbox.appending(path: source.bundleID, directoryHint: .isDirectory)
         let name = Inbox.folderName(reportID: source.reportID, device: source.device)
-        let incoming = folder.appending(path: ".incoming-\(name)", directoryHint: .isDirectory)
+        let incoming = folder.appending(path: Inbox.incomingPrefix + name, directoryHint: .isDirectory)
         let destination = folder.appending(path: name, directoryHint: .isDirectory)
         let files = FileManager.default
         let started = Date()
@@ -524,10 +548,7 @@ final class Hub: @unchecked Sendable {
             // Left by an earlier try that didn't finish.
             try? files.removeItem(at: incoming)
             try copy(incoming)
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(source).write(to: incoming.appending(path: "source.json"))
+            try HubPaths.encoder.encode(source).write(to: incoming.appending(path: Inbox.sourceFile))
             // The same report sent again replaces the earlier copy.
             try? files.removeItem(at: destination)
             try files.moveItem(at: incoming, to: destination)
@@ -587,9 +608,7 @@ final class Hub: @unchecked Sendable {
     /// Runs on `writer`: takes the newest state under the lock, then encodes and writes it outside.
     private func save(_ file: SavedFile) {
         dispatchPrecondition(condition: .onQueue(writer))
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let encoder = HubPaths.encoder
         let url: URL
         do {
             switch file {
@@ -643,11 +662,5 @@ final class Hub: @unchecked Sendable {
             try? FileManager.default.moveItem(at: paths.log, to: old)
         }
     }
-
-    private static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
 }
 #endif

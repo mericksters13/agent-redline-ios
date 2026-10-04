@@ -46,7 +46,7 @@ struct ChatTests {
         try Data(repeating: 0xD8, count: pictureBytes).write(to: folder.appending(path: "note-2.jpg"))
         let source = ReportSource(kind: .phone, device: "00008150-00123C360CF3C01C", deviceName: "Mark iPhone",
                                   bundleID: bundleID, reportID: id, receivedAt: Date(timeIntervalSince1970: 1_791_000_000))
-        try Chats.coder.encode(source).write(to: folder.appending(path: "source.json"))
+        try HubPaths.encoder.encode(source).write(to: folder.appending(path: "source.json"))
         try FileManager.default.moveItem(at: folder, to: final)
         return final
     }
@@ -106,7 +106,7 @@ struct ChatTests {
         let first = session(folder), second = session(folder)
         #expect(first.take(budget: 1_000_000).taken == 1)
         #expect(second.take(budget: 1_000_000).taken == 0)
-        let report = try #require(InboxQueue.reports(for: ["com.markbuot.AthenaTracker"], paths: paths).first)
+        let report = try #require(Inbox.reports(for: ["com.markbuot.AthenaTracker"], paths: paths).first)
         #expect(report.claim?.chat == first.chat.id)
     }
 
@@ -121,7 +121,7 @@ struct ChatTests {
     @Test func picturesFollowTheSummaryInItsOrderWithinTheBudget() throws {
         let folder = try inboxReport("20261003-223449", pictureBytes: 600)
         #expect(ReportContent.pictures(in: folder).map(\.lastPathComponent) == ["screen-1.jpg", "note-2.jpg"])
-        let report = try #require(InboxQueue.reports(for: ["com.markbuot.AthenaTracker"], paths: paths).first)
+        let report = try #require(Inbox.reports(for: ["com.markbuot.AthenaTracker"], paths: paths).first)
         let content = ReportContent.items(for: report, budget: 1_000)
         // The summary, then the first picture; the second doesn't fit and is named by path.
         #expect(content.bytes == 600)

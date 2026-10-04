@@ -52,8 +52,8 @@ final class ChatSession: Sendable {
     /// that get reports through hooks. Nil when there's none.
     func takeAddressed() -> String? {
         let chat = self.chat
-        let texts = InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths)
-            .filter { if case .claimed = InboxQueue.claim($0, for: chat) { true } else { false } }
+        let texts = Inbox.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths)
+            .filter { if case .claimed = Inbox.claim($0, for: chat) { true } else { false } }
             .map(ReportContent.text(for:))
         return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
     }
@@ -65,16 +65,16 @@ final class ChatSession: Sendable {
         var items: [ReportContent.Item] = []
         var used = 0
         var taken = 0
-        for report in InboxQueue.waiting(for: chat.bundleIDs, paths: paths) {
+        for report in Inbox.waiting(for: chat.bundleIDs, paths: paths) {
             if taken > 0, used >= budget { break }
             // Another chat may have taken it a moment ago.
-            guard case .claimed = InboxQueue.claim(report, for: chat) else { continue }
+            guard case .claimed = Inbox.claim(report, for: chat) else { continue }
             let content = ReportContent.items(for: report, budget: max(budget - used, 0))
             items += content.items
             used += content.bytes
             taken += 1
         }
-        return (items, taken, InboxQueue.waiting(for: chat.bundleIDs, paths: paths).count)
+        return (items, taken, Inbox.waiting(for: chat.bundleIDs, paths: paths).count)
     }
 
     /// How long a chat that wasn't used most recently waits for the one that was to take a
@@ -106,7 +106,7 @@ final class ChatSession: Sendable {
             _ = waiter.signal.wait(timeout: .now() + Self.deferToRecentChat)
             if waiter.isCancelled { return false }
             // Still there: the more recent chat didn't take it.
-            if !InboxQueue.waiting(for: chat.bundleIDs, paths: paths).isEmpty { return true }
+            if !Inbox.waiting(for: chat.bundleIDs, paths: paths).isEmpty { return true }
         }
     }
 
@@ -135,7 +135,7 @@ final class ChatSession: Sendable {
     /// cancelled. Woken by the inbox changing, not by checking on a timer. True when one is waiting.
     func waitForReport(timeout: TimeInterval?, waiter: Waiter) -> Bool {
         let chat = self.chat
-        return wait(timeout: timeout, waiter: waiter) { !InboxQueue.waiting(for: chat.bundleIDs, paths: self.paths).isEmpty }
+        return wait(timeout: timeout, waiter: waiter) { !Inbox.waiting(for: chat.bundleIDs, paths: self.paths).isEmpty }
     }
 
     private func wait(timeout: TimeInterval?, waiter: Waiter, until ready: () -> Bool) -> Bool {

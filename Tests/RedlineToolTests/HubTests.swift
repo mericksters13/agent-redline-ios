@@ -21,7 +21,7 @@ struct HubTests {
     /// The hub's state for the phone once `done` accepts it, waiting up to five seconds.
     private func state(of hub: Hub, until done: (String) -> Bool) async throws -> String? {
         func saved() -> String? {
-            (try? Data(contentsOf: paths.status)).flatMap { try? Chats.decoder.decode(HubStatus.self, from: $0) }?.phones.first?.state
+            (try? Data(contentsOf: paths.status)).flatMap { try? HubPaths.decoder.decode(HubStatus.self, from: $0) }?.phones.first?.state
         }
         for _ in 0..<50 {
             if let state = saved(), done(state) { return state }

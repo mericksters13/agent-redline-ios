@@ -15,36 +15,20 @@ extension HubWindowModel {
     /// The report's pictures in the order the agent gets them: each screen's pictures, then the
     /// pictures attached to notes.
     nonisolated static func pictures(in folder: URL) -> [Picture] {
-        struct Listing: Decodable {
-            struct Screen: Decodable {
-                struct Image: Decodable {
-                    var file: String
-                    var notes: [Int]
-                }
-                var title: String?
-                var images: [Image]
-            }
-            struct Item: Decodable {
-                var number: Int
-                var title: String
-                var screenTitle: String?
-                var attachments: [String]
-            }
-            var screens: [Screen]
-            var items: [Item]
-        }
-        guard let data = try? Data(contentsOf: folder.appending(path: "report.json")),
-              let listing = try? JSONDecoder().decode(Listing.self, from: data)
+        let listing = ReportListing.load(from: folder)
+        guard let screens = listing?.screens,
+              let images = screens.map({ screen in screen.images.map { image in image.notes.map { (screen.title, image.file, $0) } }.allPresent() }).allPresent(),
+              let items = listing?.items?.map({ item in
+                  item.number.flatMap { number in item.title.flatMap { title in item.attachments.map { (number, item.screenTitle ?? title, $0) } } }
+              }).allPresent()
         else {
             return ReportContent.pictures(in: folder).map { Picture(file: $0, title: $0.deletingPathExtension().lastPathComponent, notes: []) }
         }
-        let screens = listing.screens.flatMap { screen in
-            screen.images.map { Picture(file: folder.appending(path: $0.file), title: screen.title ?? "Screen", notes: $0.notes) }
+        let shown = images.flatMap { $0 }.map { title, file, notes in Picture(file: folder.appending(path: file), title: title ?? "Screen", notes: notes) }
+        let attached = items.flatMap { number, title, attachments in
+            attachments.map { Picture(file: folder.appending(path: $0), title: title, notes: [number]) }
         }
-        let attached = listing.items.flatMap { item in
-            item.attachments.map { Picture(file: folder.appending(path: $0), title: item.screenTitle ?? item.title, notes: [item.number]) }
-        }
-        return (screens + attached).filter { FileManager.default.fileExists(atPath: $0.file.path) }
+        return (shown + attached).filter { FileManager.default.fileExists(atPath: $0.file.path) }
     }
 
     /// The first picture that shows a note.
@@ -62,7 +46,7 @@ extension HubWindowModel {
     /// The chat a report went to: from what the hub saved when it delivered the report, or else
     /// the chat that took it. Nil when the report went to no chat.
     nonisolated static func chat(of report: URL) -> ChatLink? {
-        let claim = (try? Data(contentsOf: report.appending(path: InboxQueue.claimFile))).flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
+        let claim = (try? Data(contentsOf: report.appending(path: Inbox.claimFile))).flatMap { try? HubPaths.decoder.decode(Claim.self, from: $0) }
         let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
         if let delivery = ReportDelivery.load(from: report) {
             guard delivery.kind != .waiting, let agent = delivery.agent.flatMap(Agent.init(rawValue:)),
@@ -76,7 +60,7 @@ extension HubWindowModel {
         }
         // A chat the hub started: its ID is in what the agent's command printed.
         if ChatID.isStarted(claim.chat),
-           let output = try? String(contentsOf: report.appending(path: "new-chat-output.jsonl"), encoding: .utf8),
+           let output = try? String(contentsOf: report.appending(path: Inbox.newChatOutputFile), encoding: .utf8),
            let started = AgentCommand.startedChat(agent, in: output), !started.failed {
             return ChatLink(agent: agent, id: started.chat, folder: folder)
         }

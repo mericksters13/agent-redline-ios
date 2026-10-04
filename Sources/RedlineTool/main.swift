@@ -244,8 +244,7 @@ func printReports(_ session: ChatSession, quietWhenNone: Bool = false) -> Bool {
 }
 
 func printStatus(_ paths: HubPaths) {
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
+    let decoder = HubPaths.decoder
     if let pid = HubProcess.running(paths) {
         do {
             let status = try decoder.decode(HubStatus.self, from: Data(contentsOf: paths.status))
@@ -259,19 +258,15 @@ func printStatus(_ paths: HubPaths) {
     } else {
         print("Hub not running")
     }
-    let files = FileManager.default
-    let apps = ((try? files.contentsOfDirectory(atPath: paths.inbox.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
-    guard !apps.isEmpty else {
+    let reports = Dictionary(grouping: Inbox.reports(for: nil, paths: paths), by: \.source.bundleID)
+    guard !reports.isEmpty else {
         print("Inbox empty")
         return
     }
     print("Inbox (\(paths.inbox.path)):")
-    for app in apps {
-        let reports = ((try? files.contentsOfDirectory(atPath: paths.inbox.appending(path: app).path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
-        let newest = reports.last.flatMap { name -> String? in
-            guard let data = try? Data(contentsOf: paths.inbox.appending(path: "\(app)/\(name)/source.json")),
-                  let source = try? decoder.decode(ReportSource.self, from: data) else { return name }
-            return "\(name), from \(source.deviceName), received \(source.receivedAt.formatted(.relative(presentation: .named)))"
+    for (app, reports) in reports.sorted(by: { $0.key < $1.key }) {
+        let newest = reports.last.map { report in
+            "\(report.folder.lastPathComponent), from \(report.source.deviceName), received \(report.source.receivedAt.formatted(.relative(presentation: .named)))"
         }
         print("  \(app): \(reports.count) \(reports.count == 1 ? "report" : "reports")" + (newest.map { "; newest \($0)" } ?? ""))
     }

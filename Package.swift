@@ -8,8 +8,8 @@ let debugOnly: [SwiftSetting] = [.define("REDLINE", .when(configuration: .debug)
 
 let package = Package(
     name: "Redline",
-    // macOS is listed only so the platform-independent logic can be tested with
-    // `swift test` on the Mac. The kit itself runs on iOS.
+    // iOS 18 for the kit. macOS 15 for the redline command and menu bar app, and so swift test
+    // can run the kit's platform-independent logic on the Mac.
     platforms: [.iOS(.v18), .macOS(.v15)],
     products: [
         .library(name: "Redline", targets: ["Redline"]),
@@ -25,6 +25,12 @@ let package = Package(
         // The Mac side: takes reports off paired phones and simulators for agent chats. It runs
         // on the Mac only and never ships in an app, so it isn't limited to debug builds.
         .executableTarget(name: "RedlineTool"),
-        .testTarget(name: "RedlineToolTests", dependencies: ["RedlineTool"]),
+        // Depends on the kit too, so tests check that the Mac reads exactly what the kit writes:
+        // the messages between them and report.json.
+        .testTarget(
+            name: "RedlineToolTests",
+            dependencies: ["RedlineTool", "Redline"],
+            swiftSettings: debugOnly
+        ),
     ]
 )

@@ -85,8 +85,10 @@ struct Devicectl: Sendable {
         defer { try? FileManager.default.removeItem(at: file) }
         let result = try Self.run(executable, arguments: arguments + ["--json-output", file.path, "--quiet"])
         guard result.status == 0 else { throw DevicectlError.failed(status: result.status) }
-        return try JSONDecoder().decode(T.self, from: Data(contentsOf: file))
+        return try Self.decoder.decode(T.self, from: Data(contentsOf: file))
     }
+
+    private static let decoder = JSONDecoder()
 
     enum DevicectlError: Error {
         case failed(status: Int32)

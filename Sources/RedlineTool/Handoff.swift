@@ -17,36 +17,21 @@ enum Destination: Equatable {
 }
 
 enum Routing {
-    /// What the phone saved with the report: the user's pick, and the worktree the app was
-    /// built from.
-    struct Listing: Decodable {
-        struct App: Decodable { var sourceFile: String? }
-        struct Pick: Decodable {
-            var agent: String
-            /// Nil for a new chat.
-            var chat: String?
-            /// Names a "New chat" pick, so its later reports go to the chat its first one started.
-            var newChat: String?
-        }
-        var app: App
-        var destination: Pick?
-    }
-
     static func worktree(of report: URL) -> String? {
-        (try? Data(contentsOf: report.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }?
-            .app.sourceFile.map(Worktree.root(of:))
+        ReportListing.load(from: report)?.app?.sourceFile.map(Worktree.root(of:))
     }
 
     static func destination(of report: URL, bundleID: String, list: (String, String?) -> HubMessage.ChatList) -> Destination {
-        let listing = (try? Data(contentsOf: report.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }
-        let worktree = listing?.app.sourceFile.map(Worktree.root(of:))
+        // A listing without its app reads as if there were none, as it always has.
+        let listing = ReportListing.load(from: report).flatMap { $0.app == nil ? nil : $0 }
+        let worktree = listing?.app?.sourceFile.map(Worktree.root(of:))
         if let pick = listing?.destination, let agent = Agent(rawValue: pick.agent) {
             if let chat = pick.chat { return .chat(agent, id: chat) }
             guard let worktree else { return .undecided("The report doesn't say which worktree the app was built from") }
             return .newChat(agent, folder: worktree, pick: pick.newChat)
         }
         guard let worktree else { return .undecided("The report doesn't say which worktree the app was built from") }
-        let directory = list(bundleID, listing?.app.sourceFile)
+        let directory = list(bundleID, listing?.app?.sourceFile)
         let here = directory.chats.filter(\.sameWorktree)
         if here.count == 1, let chat = here.first, let agent = Agent(rawValue: chat.agent) { return .chat(agent, id: chat.id) }
         if here.isEmpty, let agent = directory.agents.first.flatMap(Agent.init(rawValue:)) { return .newChat(agent, folder: worktree, pick: nil) }
@@ -69,7 +54,7 @@ final class Handoff: Sendable {
 
     func reportFiled(_ folder: URL, source: ReportSource) {
         queue.async { [self] in
-            guard let report = InboxQueue.waiting(for: [source.bundleID], paths: hub.paths).first(where: { $0.folder == folder }) else { return }
+            guard let report = Inbox.waiting(for: [source.bundleID], paths: hub.paths).first(where: { $0.folder == folder }) else { return }
             deliver(report)
         }
     }
@@ -78,8 +63,8 @@ final class Handoff: Sendable {
     func handOverRecent(within interval: TimeInterval = 3600) {
         queue.async { [self] in
             let apps = Set(Chats.live(hub.paths).flatMap(\.bundleIDs))
-            for report in InboxQueue.waiting(for: Array(apps), paths: hub.paths)
-            where Date().timeIntervalSince(report.source.receivedAt) < interval && InboxQueue.address(of: report.folder) == nil {
+            for report in Inbox.waiting(for: Array(apps), paths: hub.paths)
+            where Date().timeIntervalSince(report.source.receivedAt) < interval && Inbox.address(of: report.folder) == nil {
                 deliver(report)
             }
         }
@@ -119,7 +104,7 @@ final class Handoff: Sendable {
     /// Takes the report for a chat. False, after logging why when it isn't another chat that
     /// took it first, when the report can't be taken.
     private func claim(_ report: InboxReport, for chat: ChatRecord) -> Bool {
-        switch InboxQueue.claim(report, for: chat) {
+        switch Inbox.claim(report, for: chat) {
         case .claimed:
             return true
         case .takenByAnotherChat:
@@ -133,7 +118,7 @@ final class Handoff: Sendable {
     /// Lets the report go again, for a chat that opens later.
     private func release(_ report: InboxReport) {
         do {
-            try FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+            try FileManager.default.removeItem(at: report.folder.appending(path: Inbox.claimFile))
         } catch {
             hub.log("Couldn't let report \(report.source.reportID) go for another chat: \(error.localizedDescription)")
         }
@@ -216,7 +201,7 @@ final class Handoff: Sendable {
         }
         do {
             // Addressed before it's let go, so no other chat takes it in between.
-            try InboxQueue.setAddress(Address(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
+            try Inbox.setAddress(Address(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
         } catch {
             hub.log("Couldn't address report \(source.reportID) to the Codex chat \(thread): \(error.localizedDescription)")
         }
@@ -416,7 +401,7 @@ final class Handoff: Sendable {
         case .claude: "A UI report from the user's device comes in the next message. Reply with just: Ready."
         case .codex: reportPrompt
         }
-        let output = report.folder.appending(path: "new-chat-output.jsonl")
+        let output = report.folder.appending(path: Inbox.newChatOutputFile)
         FileManager.default.createFile(atPath: output.path, contents: nil)
         let process = Process()
         process.executableURL = executable
@@ -456,7 +441,7 @@ final class Handoff: Sendable {
             }
             if let answer = started.answer {
                 do {
-                    try answer.write(to: report.folder.appending(path: "answer.md"), atomically: true, encoding: .utf8)
+                    try answer.write(to: report.folder.appending(path: Inbox.answerFile), atomically: true, encoding: .utf8)
                 } catch {
                     hub.log("Couldn't save the answer to report \(source.reportID): \(error.localizedDescription)")
                 }

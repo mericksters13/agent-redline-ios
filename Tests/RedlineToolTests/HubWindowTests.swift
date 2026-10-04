@@ -22,7 +22,7 @@ struct HubWindowTests {
         try JSONSerialization.data(withJSONObject: listing).write(to: folder.appending(path: "report.json"))
         try Data([0xFF, 0xD8]).write(to: folder.appending(path: "screen-1.jpg"))
         let source = ReportSource(kind: .phone, device: "D-\(device)", deviceName: device, bundleID: "com.example.app", reportID: id, receivedAt: date)
-        try Chats.coder.encode(source).write(to: folder.appending(path: "source.json"))
+        try HubPaths.encoder.encode(source).write(to: folder.appending(path: "source.json"))
         return folder
     }
 
@@ -44,6 +44,24 @@ struct HubWindowTests {
         #expect(rows[1].chat == "2 chats work in wt; pick one on the phone")
     }
 
+    @Test func onlyTheNewestReportsAreShown() throws {
+        for minute in 0..<5 {
+            _ = try report("20261004-09\(minute)000", at: Date(timeIntervalSince1970: 1_791_000_000 + Double(minute) * 60))
+        }
+        let rows = HubWindowModel.readReports(paths: paths, limit: 2).map(\.row)
+        #expect(rows.map(\.receivedAt) == [Date(timeIntervalSince1970: 1_791_000_240), Date(timeIntervalSince1970: 1_791_000_180)])
+    }
+
+    @Test func aReportListingWithOnlyItsNotesStillShowsThem() throws {
+        let folder = paths.root.appending(path: "minimal", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try #"{"items":[{"number":1,"title":"Save","note":""}]}"#.write(to: folder.appending(path: "report.json"), atomically: true, encoding: .utf8)
+        #expect(HubWindowModel.notes(in: folder) == [.init(number: 1, text: "Save: No note")])
+        // Without screens, pictures come from the folder; without an app, routing has no worktree.
+        #expect(ReportContent.pictures(in: folder).isEmpty)
+        #expect(Routing.worktree(of: folder) == nil)
+    }
+
     @Test func phonesSayWhyTheyCantTakeReports() {
         func phone(_ state: PhoneState?, text: String = "") -> HubStatus.Phone {
             HubStatus.Phone(name: "P", udid: "U", state: state?.description ?? text, phoneState: state)
@@ -60,12 +78,12 @@ struct HubWindowTests {
     @Test func aReportTakenBeforeDeliveriesWereSavedNamesItsChat() throws {
         let folder = try report("20261004-100000", at: Date())
         let claim = Claim(chat: "started-claude-20261004-100000", agent: "claude", folder: "/repo/.claude/worktrees/report-1", claimedAt: Date())
-        try Chats.coder.encode(claim).write(to: folder.appending(path: InboxQueue.claimFile))
-        let destination = HubWindowModel.destination(of: folder)
+        try HubPaths.encoder.encode(claim).write(to: folder.appending(path: Inbox.claimFile))
+        let destination = HubWindowModel.destination(of: folder, codexDatabase: nil)
         #expect(destination.agent == "Claude Code")
         #expect(destination.chat == "New chat in report-1")
         // A Codex chat stored no folder: never the folder this process happens to be in.
-        #expect(HubWindowModel.chatTitle(Claim(chat: "codex-unknown", agent: "codex", folder: "", claimedAt: Date())) == "Codex chat")
+        #expect(HubWindowModel.chatTitle(Claim(chat: "codex-unknown", agent: "codex", folder: "", claimedAt: Date()), codexDatabase: nil) == "Codex chat")
     }
 
     @Test func theViewerShowsEachPictureWithTheNotesItShows() throws {
@@ -85,7 +103,7 @@ struct HubWindowTests {
 
     @Test func theViewerOpensTheChatAReportWentTo() throws {
         func claim(_ chat: String, agent: String, folder: String = "", in report: URL) throws {
-            try Chats.coder.encode(Claim(chat: chat, agent: agent, folder: folder, claimedAt: Date())).write(to: report.appending(path: InboxQueue.claimFile))
+            try HubPaths.encoder.encode(Claim(chat: chat, agent: agent, folder: folder, claimedAt: Date())).write(to: report.appending(path: Inbox.claimFile))
         }
         // What the hub saved when it delivered it, with the folder of the chat that took it.
         let sent = try report("20261004-140000", at: Date())
