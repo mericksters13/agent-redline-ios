@@ -69,6 +69,20 @@ final class KitPerformanceTests: XCTestCase {
         }
     }
 
+    /// The element check each earlier note gets when its screen's picture is replaced, on a
+    /// full-width card: labels smoothed differently, the slowest case that still matches, and a
+    /// segment switch, which stops at the first few differences.
+    func testElementComparisonOnACard() throws {
+        let before = try GrowthScreen(segment: .weight).image()
+        let smoothed = try GrowthScreen(segment: .weight, textOffset: 0.5).image()
+        let switched = try GrowthScreen(segment: .length).image()
+        let card = GrowthScreen.card.applying(CGAffineTransform(scaleX: GrowthScreen.scale, y: GrowthScreen.scale))
+        measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            _ = PictureComparison.differingPixels(before, in: card, smoothed, in: card, upTo: 8)
+            _ = PictureComparison.differingPixels(before, in: card, switched, in: card, upTo: 8)
+        }
+    }
+
     func testPlanForAStitchedScreen() {
         let captures = (0..<4).map { index -> Capture in
             let offset = CGFloat(index) * 500 - 62

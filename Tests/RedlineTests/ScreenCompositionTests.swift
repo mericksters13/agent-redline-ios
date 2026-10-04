@@ -55,7 +55,13 @@ struct ScreenCompositionTests {
         let first = capture(-62)
         let second = capture(-62)
         #expect(
-            CaptureMerge.decision(previous: first, new: second, picturesMatch: true, overlap: .tooSmallToTell)
+            CaptureMerge.decision(
+                previous: first,
+                new: second,
+                picturesMatch: true,
+                isElementUnchanged: true,
+                overlap: .tooSmallToTell
+            )
                 == .reuse(first.id)
         )
     }
@@ -66,7 +72,13 @@ struct ScreenCompositionTests {
         let first = capture(-62, elements: [row])
         let withMenu = capture(-62, elements: [row, element("PDF report", y: 100), element("CSV file", y: 178)])
         #expect(
-            CaptureMerge.decision(previous: first, new: withMenu, picturesMatch: true, overlap: .tooSmallToTell)
+            CaptureMerge.decision(
+                previous: first,
+                new: withMenu,
+                picturesMatch: true,
+                isElementUnchanged: true,
+                overlap: .tooSmallToTell
+            )
                 == .replace
         )
     }
@@ -78,7 +90,13 @@ struct ScreenCompositionTests {
         later.frame.size.width -= 3
         let second = capture(-62, elements: [later])
         #expect(
-            CaptureMerge.decision(previous: first, new: second, picturesMatch: true, overlap: .tooSmallToTell)
+            CaptureMerge.decision(
+                previous: first,
+                new: second,
+                picturesMatch: true,
+                isElementUnchanged: true,
+                overlap: .tooSmallToTell
+            )
                 == .reuse(first.id)
         )
     }
@@ -89,6 +107,7 @@ struct ScreenCompositionTests {
                 previous: capture(-62),
                 new: capture(-62),
                 picturesMatch: false,
+                isElementUnchanged: true,
                 overlap: .tooSmallToTell
             ) == .replace
         )
@@ -97,6 +116,7 @@ struct ScreenCompositionTests {
                 previous: capture(nil),
                 new: capture(nil),
                 picturesMatch: false,
+                isElementUnchanged: true,
                 overlap: .tooSmallToTell
             ) == .replace
         )
@@ -104,7 +124,13 @@ struct ScreenCompositionTests {
 
     @Test func aScrolledScreenIsStitched() {
         #expect(
-            CaptureMerge.decision(previous: capture(-62), new: capture(400), picturesMatch: false, overlap: .matches)
+            CaptureMerge.decision(
+                previous: capture(-62),
+                new: capture(400),
+                picturesMatch: false,
+                isElementUnchanged: true,
+                overlap: .matches
+            )
                 == .stitch
         )
         // Scrolled too far to overlap: nothing contradicts a scroll.
@@ -113,6 +139,7 @@ struct ScreenCompositionTests {
                 previous: capture(-62),
                 new: capture(1500),
                 picturesMatch: false,
+                isElementUnchanged: true,
                 overlap: .tooSmallToTell
             ) == .stitch
         )
@@ -120,7 +147,13 @@ struct ScreenCompositionTests {
 
     @Test func aScrolledScreenWhoseContentAlsoChangedIsReplaced() {
         #expect(
-            CaptureMerge.decision(previous: capture(-62), new: capture(400), picturesMatch: false, overlap: .differs)
+            CaptureMerge.decision(
+                previous: capture(-62),
+                new: capture(400),
+                picturesMatch: false,
+                isElementUnchanged: true,
+                overlap: .differs
+            )
                 == .replace
         )
     }
@@ -129,7 +162,13 @@ struct ScreenCompositionTests {
         var turned = capture(-62)
         turned.size = CGSize(width: 874, height: 402)
         #expect(
-            CaptureMerge.decision(previous: capture(-62), new: turned, picturesMatch: true, overlap: .tooSmallToTell)
+            CaptureMerge.decision(
+                previous: capture(-62),
+                new: turned,
+                picturesMatch: true,
+                isElementUnchanged: true,
+                overlap: .tooSmallToTell
+            )
                 == .replace
         )
     }
@@ -147,7 +186,15 @@ struct ScreenCompositionTests {
             elements: [element("Feed", y: 338, identifier: "row.feed"), element("Pee", y: 438, identifier: "row.pee")]
         )
         #expect(CaptureMerge.isScroll(from: before, to: after))
-        #expect(CaptureMerge.decision(previous: before, new: after, picturesMatch: false, overlap: .matches) == .stitch)
+        #expect(
+            CaptureMerge.decision(
+                previous: before,
+                new: after,
+                picturesMatch: false,
+                isElementUnchanged: true,
+                overlap: .matches
+            ) == .stitch
+        )
     }
 
     @Test func aPinnedSectionHeaderDoesNotSpoilAScroll() {
@@ -173,7 +220,13 @@ struct ScreenCompositionTests {
         let after = capture(200, elements: [element("Notes", y: 500, height: 30, identifier: "detail.notes")])
         #expect(!CaptureMerge.isScroll(from: before, to: after))
         #expect(
-            CaptureMerge.decision(previous: before, new: after, picturesMatch: false, overlap: .tooSmallToTell)
+            CaptureMerge.decision(
+                previous: before,
+                new: after,
+                picturesMatch: false,
+                isElementUnchanged: true,
+                overlap: .tooSmallToTell
+            )
                 == .replace
         )
     }
@@ -183,7 +236,13 @@ struct ScreenCompositionTests {
         let other = capture(1500, contentHeight: 2400)
         #expect(!CaptureMerge.isScroll(from: capture(-62), to: other))
         #expect(
-            CaptureMerge.decision(previous: capture(-62), new: other, picturesMatch: false, overlap: .tooSmallToTell)
+            CaptureMerge.decision(
+                previous: capture(-62),
+                new: other,
+                picturesMatch: false,
+                isElementUnchanged: true,
+                overlap: .tooSmallToTell
+            )
                 == .replace
         )
     }

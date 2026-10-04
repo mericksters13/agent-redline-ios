@@ -1,7 +1,11 @@
 #if REDLINE
+import CoreGraphics
 import Foundation
 
 /// What a new note's capture does to its screen's picture.
+///
+/// A note keeps the capture of the state it was made on, unless its element looks identical in a
+/// newer capture of the screen.
 enum CaptureMerge {
     enum Decision: Equatable {
         /// Nothing changed: the note uses the screen's existing picture.
@@ -9,8 +13,18 @@ enum CaptureMerge {
         /// The screen scrolled: the new capture is stitched into the screen's picture.
         case stitch
         /// The content changed: the new capture becomes the screen's picture, and earlier
-        /// notes move onto it when their elements can be found there.
+        /// notes move onto it when their elements can be found there and look identical.
         case replace
+    }
+
+    /// What filing a note's capture did.
+    struct Filing: Equatable {
+        /// The capture the note belongs to.
+        var captureID: UUID
+        /// True when the capture was added to its screen, so its image must be kept.
+        var isNewCapture: Bool
+        /// Earlier notes that moved onto the new capture.
+        var movedNotes: [UUID]
     }
 
     /// How the stretch a scrolled capture shares with the previous one compares.
@@ -21,14 +35,159 @@ enum CaptureMerge {
         case tooSmallToTell
     }
 
+    /// Files a new note's capture under its screen, so each state of a screen gets its own picture.
+    ///
+    /// Reuses the screen's picture when nothing changed, stitches the new capture in when the screen
+    /// scrolled, and otherwise makes the new capture the screen's picture and moves each earlier
+    /// note onto it only when its element is still there and looks identical. Under a popup, a
+    /// dimmed backdrop, or after a segment switch inside it, the element doesn't, and the note keeps
+    /// the picture of the state it was made on.
+    /// - Parameters:
+    ///   - capture: the capture just taken, in group 0.
+    ///   - image: its pixels.
+    ///   - element: the element the new note is about.
+    ///   - screen: the screen the capture is of.
+    ///   - screens: the draft's screens, updated.
+    ///   - annotations: the draft's notes, updated when earlier notes move onto the new capture.
+    ///   - imageOf: the pixels of an earlier capture.
+    /// - Returns: The capture the new note belongs to, and what changed.
+    static func file(
+        _ capture: Capture,
+        image: CGImage?,
+        element: ElementSnapshot,
+        screen: ScreenInfo,
+        screens: inout [ScreenRecord],
+        annotations: inout [Annotation],
+        imageOf: (_ capture: Capture) -> CGImage?
+    ) -> Filing {
+        var capture = capture
+        guard let index = screens.firstIndex(where: { $0.info == screen }), let previous = screens[index].captures.last
+        else {
+            screens.append(ScreenRecord(id: UUID(), info: screen, captures: [capture]))
+            return Filing(captureID: capture.id, isNewCapture: true, movedNotes: [])
+        }
+        let before = imageOf(previous)
+        var picturesMatch = false
+        var isElementUnchanged = false
+        if let before, let image {
+            picturesMatch = PictureComparison.difference(before, image) < PictureComparison.samePicture
+            // The new note's element must look identical in the picture it would share.
+            isElementUnchanged = looksIdentical(
+                element.frame,
+                in: before,
+                of: previous,
+                as: element.frame,
+                in: image,
+                of: capture
+            )
+        }
+        let overlap = overlapCheck(previous: previous, before: before, new: capture, after: image)
+
+        switch decision(
+            previous: previous,
+            new: capture,
+            picturesMatch: picturesMatch,
+            isElementUnchanged: isElementUnchanged,
+            overlap: overlap
+        ) {
+        case .reuse(let existing):
+            return Filing(captureID: existing, isNewCapture: false, movedNotes: [])
+        case .stitch:
+            capture.group = previous.group
+            screens[index].captures.append(capture)
+            return Filing(captureID: capture.id, isNewCapture: true, movedNotes: [])
+        case .replace:
+            capture.group = previous.group + 1
+            screens[index].captures.append(capture)
+            let screenCaptures = screens[index].captures
+            let onScreen = CGRect(origin: .zero, size: capture.size)
+            var moved: [UUID] = []
+            for i in annotations.indices {
+                guard let image, let old = annotations[i].captureID, old != capture.id,
+                    let oldCapture = screenCaptures.first(where: { $0.id == old }),
+                    let oldImage = imageOf(oldCapture),
+                    let element = annotations[i].element,
+                    let match = ElementSelection.match(element, in: capture.elements),
+                    onScreen.contains(match.frame.insetBy(dx: 1, dy: 1)),
+                    looksIdentical(element.frame, in: oldImage, of: oldCapture, as: match.frame, in: image, of: capture)
+                else { continue }
+                annotations[i].captureID = capture.id
+                annotations[i].element?.frame = match.frame
+                moved.append(annotations[i].id)
+            }
+            return Filing(captureID: capture.id, isNewCapture: true, movedNotes: moved)
+        }
+    }
+
+    /// Whether an element looks identical in two captures.
+    ///
+    /// Frames are in points.
+    static func looksIdentical(
+        _ frame: CGRect,
+        in image: CGImage,
+        of capture: Capture,
+        as newFrame: CGRect,
+        in newImage: CGImage,
+        of newCapture: Capture
+    ) -> Bool {
+        func pixels(_ rect: CGRect, of picture: CGImage, width: CGFloat) -> CGRect {
+            let ratio = CGFloat(picture.width) / width
+            return CGRect(
+                x: rect.minX * ratio,
+                y: rect.minY * ratio,
+                width: rect.width * ratio,
+                height: rect.height * ratio
+            )
+        }
+        return PictureComparison.differingPixels(
+            image,
+            in: pixels(frame, of: image, width: capture.size.width),
+            newImage,
+            in: pixels(newFrame, of: newImage, width: newCapture.size.width),
+            upTo: PictureComparison.sameElementPixels
+        ) <= PictureComparison.sameElementPixels
+    }
+
+    /// Whether the content two captures of a scrolled screen share looks the same.
+    static func overlapCheck(previous: Capture, before: CGImage?, new: Capture, after: CGImage?) -> OverlapCheck {
+        guard let from = previous.scroll, let to = new.scroll, from.isSameView(as: to),
+            let band = ScreenComposition.band(for: [previous, new]),
+            let old = before, let current = after
+        else { return .tooSmallToTell }
+        let low = max(from.contentY(ofScreenY: band.lowerBound), to.contentY(ofScreenY: band.lowerBound))
+        let high = min(from.contentY(ofScreenY: band.upperBound), to.contentY(ofScreenY: band.upperBound))
+        guard high - low >= 40 else { return .tooSmallToTell }
+        func pixelRows(_ scroll: ScrollState, in image: CGImage, width: CGFloat) -> Range<Int> {
+            let ratio = CGFloat(image.width) / width
+            return Int(
+                (scroll.screenY(ofContentY: low) * ratio).rounded()
+            )..<Int((scroll.screenY(ofContentY: high) * ratio).rounded())
+        }
+        let difference = PictureComparison.difference(
+            old,
+            rows: pixelRows(from, in: old, width: previous.size.width),
+            current,
+            rows: pixelRows(to, in: current, width: new.size.width)
+        )
+        return difference < PictureComparison.sameOverlap ? .matches : .differs
+    }
+
     /// Whether a new capture reuses, extends or replaces the screen's picture.
     /// - Parameters:
     ///   - previous: the screen's capture so far.
     ///   - new: the capture just taken.
     ///   - picturesMatch: the two pictures look the same.
+    ///   - isElementUnchanged: the new note's element looks identical in both. A segment switch
+    ///     inside a card barely changes the whole picture, but the note belongs to the new state.
     ///   - overlap: how the content compares where a scrolled capture overlaps the previous one.
     /// - Returns: What to do with the new capture.
-    static func decision(previous: Capture, new: Capture, picturesMatch: Bool, overlap: OverlapCheck) -> Decision {
+    static func decision(
+        previous: Capture,
+        new: Capture,
+        picturesMatch: Bool,
+        isElementUnchanged: Bool,
+        overlap: OverlapCheck
+    ) -> Decision {
         guard previous.size == new.size else { return .replace }
         if let before = previous.scroll, let after = new.scroll, before.isSameView(as: after),
             abs(before.offsetY - after.offsetY) > 2
@@ -37,7 +196,7 @@ enum CaptureMerge {
             guard overlap != .differs, isScroll(from: previous, to: new) else { return .replace }
             return .stitch
         }
-        return picturesMatch && isSameLayout(previous, as: new) ? .reuse(previous.id) : .replace
+        return picturesMatch && isElementUnchanged && isSameLayout(previous, as: new) ? .reuse(previous.id) : .replace
     }
 
     /// Whether two captures hold the same elements in the same places.

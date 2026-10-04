@@ -433,7 +433,7 @@ final class DebugSession {
         }
         guard let element = selected, let screenshot else { return }
         let id = UUID()
-        let captureID = fileCapture(screenshot)
+        let captureID = fileCapture(screenshot, for: element)
         thumbnails[id] = Self.crop(screenshot, around: element.frame, screenWidth: screenSize.width)
         annotations.append(
             Annotation(
@@ -1063,14 +1063,12 @@ final class DebugSession {
 
     // MARK: - One picture per screen
 
-    /// Files the screen as just read under its screen, so every screen has one picture: reuses the
-    /// screen's picture when nothing changed, stitches the new capture in when the screen scrolled,
-    /// and otherwise makes the new capture the screen's picture and moves the earlier notes onto it
-    /// wherever their elements can be found again.
+    /// Files the screen as just read under its screen (see `CaptureMerge.file`): one picture per
+    /// state of the screen.
     ///
     /// Returns the capture the new note belongs to.
-    private func fileCapture(_ image: UIImage) -> UUID {
-        var capture = Capture(
+    private func fileCapture(_ image: UIImage, for element: ElementSnapshot) -> UUID {
+        let capture = Capture(
             id: UUID(),
             file: "capture-\(UUID().uuidString).png",
             size: screenSize,
@@ -1078,96 +1076,17 @@ final class DebugSession {
             elements: elements,
             group: 0
         )
-        guard let index = screens.firstIndex(where: { $0.info == screen }), let previous = screens[index].captures.last
-        else {
-            screens.append(ScreenRecord(id: UUID(), info: screen, captures: [capture]))
-            keep(image, for: capture)
-            return capture.id
-        }
-        let before = captureImage(previous)
-        let picturesMatch =
-            before?.cgImage.flatMap { old in
-                image.cgImage.map { PictureComparison.difference(old, $0) < PictureComparison.samePicture }
-            } ?? false
-        let overlap = overlapCheck(previous: previous, before: before, new: capture, after: image)
-
-        switch CaptureMerge.decision(previous: previous, new: capture, picturesMatch: picturesMatch, overlap: overlap) {
-        case .reuse(let existing):
-            return existing
-        case .stitch:
-            capture.group = previous.group
-            screens[index].captures.append(capture)
-            keep(image, for: capture)
-            return capture.id
-        case .replace:
-            capture.group = previous.group + 1
-            screens[index].captures.append(capture)
-            keep(image, for: capture)
-            let screenCaptures = screens[index].captures
-            let onScreen = CGRect(origin: .zero, size: screenSize)
-            for i in annotations.indices {
-                // An earlier note moves onto the new picture only if its element is still
-                // there and still looks the same. Under a popup or a dimmed backdrop it doesn't,
-                // and the note keeps the picture it was made on, as an earlier state.
-                guard let old = annotations[i].captureID, old != capture.id,
-                    let oldCapture = screenCaptures.first(where: { $0.id == old }),
-                    let element = annotations[i].element,
-                    let match = ElementSelection.match(element, in: capture.elements),
-                    onScreen.contains(match.frame.insetBy(dx: 1, dy: 1)),
-                    looksTheSame(element.frame, in: oldCapture, as: match.frame, in: image)
-                else { continue }
-                annotations[i].captureID = capture.id
-                annotations[i].element?.frame = match.frame
-                thumbnails[annotations[i].id] = nil
-            }
-            return capture.id
-        }
-    }
-
-    /// Whether the content two captures of a scrolled screen share looks the same.
-    private func overlapCheck(previous: Capture, before: UIImage?, new: Capture, after: UIImage)
-        -> CaptureMerge.OverlapCheck
-    {
-        guard let from = previous.scroll, let to = new.scroll, from.isSameView(as: to),
-            let band = ScreenComposition.band(for: [previous, new]),
-            let old = before?.cgImage, let current = after.cgImage
-        else { return .tooSmallToTell }
-        let low = max(from.contentY(ofScreenY: band.lowerBound), to.contentY(ofScreenY: band.lowerBound))
-        let high = min(from.contentY(ofScreenY: band.upperBound), to.contentY(ofScreenY: band.upperBound))
-        guard high - low >= 40 else { return .tooSmallToTell }
-        func pixelRows(_ scroll: ScrollState, in image: CGImage) -> Range<Int> {
-            let ratio = CGFloat(image.width) / screenSize.width
-            return Int(
-                (scroll.screenY(ofContentY: low) * ratio).rounded()
-            )..<Int((scroll.screenY(ofContentY: high) * ratio).rounded())
-        }
-        let difference = PictureComparison.difference(
-            old,
-            rows: pixelRows(from, in: old),
-            current,
-            rows: pixelRows(to, in: current)
-        )
-        return difference < PictureComparison.sameOverlap ? .matches : .differs
-    }
-
-    /// Whether an element looks the same in an earlier capture and in the new screen.
-    private func looksTheSame(_ frame: CGRect, in capture: Capture, as newFrame: CGRect, in image: UIImage) -> Bool {
-        guard let old = captureImage(capture)?.cgImage, let new = image.cgImage else { return false }
-        func pixels(_ rect: CGRect, of picture: CGImage, width: CGFloat) -> CGRect {
-            let ratio = CGFloat(picture.width) / width
-            return CGRect(
-                x: rect.minX * ratio,
-                y: rect.minY * ratio,
-                width: rect.width * ratio,
-                height: rect.height * ratio
-            )
-        }
-        return PictureComparison.difference(
-            old,
-            in: pixels(frame, of: old, width: capture.size.width),
-            new,
-            in: pixels(newFrame, of: new, width: screenSize.width)
-        ) < PictureComparison.sameElement
+        let filing = CaptureMerge.file(
+            capture,
+            image: image.cgImage,
+            element: element,
+            screen: screen,
+            screens: &screens,
+            annotations: &annotations
+        ) { captureImage($0)?.cgImage }
+        if filing.isNewCapture { keep(image, for: capture) }
+        for id in filing.movedNotes { thumbnails[id] = nil }
+        return filing.captureID
     }
 
     private func keep(_ image: UIImage, for capture: Capture) {
