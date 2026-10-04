@@ -52,10 +52,23 @@ struct HubPaths: Sendable {
         var stoppedHub = false
         var fixedApps: [String] = []
         if let running = HubProcess.running(old), running != getpid() {
-            // Read before it stops: the apps it was given on the command line. A hub from before
-            // fixedApps was saved lists them only among all its apps.
-            if let status = HubWindowModel.savedStatus(old), status.pid == running { fixedApps = status.fixedApps ?? status.apps }
-            kill(running, SIGTERM)
+            // Read before it stops: the apps it was given on the command line. A hub saves its
+            // status, with those apps, as it starts; give one starting now a moment. One that
+            // doesn't say which apps it watches is left running, as the app's takeover leaves
+            // one, so its apps aren't silently dropped.
+            var status = HubWindowModel.savedStatus(old)
+            for _ in 0..<50 where status?.pid != running && HubProcess.running(old) == running {
+                usleep(100_000)
+                status = HubWindowModel.savedStatus(old)
+            }
+            if HubProcess.running(old) == running {
+                guard let status, status.pid == running else {
+                    return .blocked("The hub of an earlier version (pid \(running)) didn't say which apps it watches, so it was left running and its folder can't move to Redline's yet. Run redline again in a moment, or stop that hub first.")
+                }
+                // A hub from before fixedApps was saved lists them only among all its apps.
+                fixedApps = status.fixedApps ?? status.apps
+                kill(running, SIGTERM)
+            }
             for _ in 0..<30 where HubProcess.running(old) != nil { usleep(100_000) }
             guard HubProcess.running(old) == nil else {
                 return .blocked("The hub of an earlier version (pid \(running)) is still running, so its folder can't move to Redline's yet. It stops on its own once the reports it's handing over reach their chats; run redline again then.")

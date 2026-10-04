@@ -135,6 +135,10 @@ struct AgentHookTests {
         }
         try "\(hub.processIdentifier)".write(to: old.pid, atomically: false, encoding: .utf8)
         close(descriptor)
+        let status = HubStatus(pid: hub.processIdentifier, startedAt: Date(), apps: [], hosts: [], port: 0, phones: [], simulatorContainers: 0)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(status).write(to: old.status)
         let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
         // The command is told to stop, and the old folder stays where the old hub uses it.
         guard case .blocked = HubPaths.moveFromOldName(to: paths) else {
@@ -144,6 +148,35 @@ struct AgentHookTests {
         #expect(hub.isRunning)
         #expect(!FileManager.default.fileExists(atPath: paths.root.path))
         #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: old.root.path)) == nil)
+    }
+
+    @Test func anEarlierVersionsHubThatDoesntSayItsAppsIsLeftRunning() throws {
+        let support = root.appending(path: "unsaid", directoryHint: .isDirectory)
+        let old = HubPaths(root: support.appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
+        try FileManager.default.createDirectory(at: old.hub, withIntermediateDirectories: true)
+        // Stands in for an old hub still starting: it holds the lock but hasn't saved its status,
+        // so the apps it was given on the command line aren't known.
+        let descriptor = open(old.pid.path, O_RDWR | O_CREAT, 0o644)
+        #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+        let hub = Process()
+        hub.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        hub.arguments = ["30"]
+        hub.standardInput = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+        try hub.run()
+        defer {
+            kill(hub.processIdentifier, SIGKILL)
+            hub.waitUntilExit()
+        }
+        try "\(hub.processIdentifier)".write(to: old.pid, atomically: false, encoding: .utf8)
+        close(descriptor)
+        let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
+        // It isn't stopped, so the apps it watches keep being watched, and nothing moves.
+        guard case .blocked = HubPaths.moveFromOldName(to: paths) else {
+            Issue.record("The earlier version's hub was stopped without its apps being known")
+            return
+        }
+        #expect(hub.isRunning)
+        #expect(!FileManager.default.fileExists(atPath: paths.root.path))
     }
 
     @Test func aPidLeftByAnEarlierHubThatCrashedIsNeverSignaled() throws {
