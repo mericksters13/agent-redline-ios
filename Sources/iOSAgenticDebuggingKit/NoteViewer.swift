@@ -78,13 +78,18 @@ struct NoteViewer: View {
         // The panel follows the keyboard itself; SwiftUI must not also push the whole viewer up.
         .ignoresSafeArea()
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.25), value: detailsVisible)
-        .onChange(of: session.viewerID, initial: true) { _, _ in
-            saveDraft()
-            draftOwner = session.viewerID
+        .onChange(of: session.viewerID, initial: true) { _, id in
+            guard id != draftOwner else { return }
+            // An edit that couldn't be saved keeps its note on screen, so it isn't lost.
+            if let owner = draftOwner, !saveDraft() {
+                session.showInViewer(owner)
+                return
+            }
+            draftOwner = id
             draft = current?.note ?? ""
             isZoomed = false
         }
-        .onDisappear(perform: saveDraft)
+        .onDisappear { saveDraft() }
     }
 
     // MARK: - Pager
@@ -294,13 +299,16 @@ struct NoteViewer: View {
         }
     }
 
-    private func saveDraft() {
-        guard let owner = draftOwner else { return }
-        session.updateNote(owner, to: draft)
+    /// Returns false when the edit couldn't be saved; the session has already said so.
+    @discardableResult
+    private func saveDraft() -> Bool {
+        guard let owner = draftOwner else { return true }
+        return session.updateNote(owner, to: draft)
     }
 
+    /// Stays open when the edit couldn't be saved, so it can be retried instead of lost.
     private func close() {
-        saveDraft()
+        guard saveDraft() else { return }
         draftOwner = nil
         session.closeViewer()
     }
