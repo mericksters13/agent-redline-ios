@@ -158,7 +158,7 @@ struct AgentHookTests {
         }
     }
 
-    @Test func aNewChatGetsItsOwnWorktreeWithTheBuildsChanges() throws {
+    @Test func aNewChatGetsItsOwnWorktreeFromMain() throws {
         let repository = root.appending(path: "repo", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
         func git(_ arguments: String...) throws {
@@ -170,16 +170,21 @@ struct AgentHookTests {
             try process.run()
             process.waitUntilExit()
         }
-        try git("init", "-q")
+        try git("init", "-q", "-b", "main")
         try "one\n".write(to: repository.appending(path: "App.swift"), atomically: true, encoding: .utf8)
         try git("add", ".")
         try git("commit", "-q", "-m", "First")
-        // Built with a change not committed yet.
+        // The app was built from a feature branch, with a change not committed yet.
+        try git("checkout", "-q", "-b", "feature")
         try "one\ntwo\n".write(to: repository.appending(path: "App.swift"), atomically: true, encoding: .utf8)
+        try git("commit", "-q", "-am", "Second")
+        try "one\ntwo\nthree\n".write(to: repository.appending(path: "App.swift"), atomically: true, encoding: .utf8)
+        #expect(NewWorktree.mainBranch(of: repository.path)?.name == "main")
 
+        // The new chat's worktree starts from main.
         let made = try #require(NewWorktree.create(from: repository.path, name: "report-1", agent: .claude))
-        #expect(made == repository.standardizedFileURL.path + "/.claude/worktrees/report-1" || made.hasSuffix("/.claude/worktrees/report-1"))
-        #expect(try String(contentsOfFile: made + "/App.swift", encoding: .utf8) == "one\ntwo\n")
+        #expect(made.hasSuffix("/.claude/worktrees/report-1"))
+        #expect(try String(contentsOfFile: made + "/App.swift", encoding: .utf8) == "one\n")
         // The same name again gets a number rather than failing.
         let again = try #require(NewWorktree.create(from: repository.path, name: "report-1", agent: .claude))
         #expect(again.hasSuffix("/report-1-2"))

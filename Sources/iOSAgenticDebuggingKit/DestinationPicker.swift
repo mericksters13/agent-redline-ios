@@ -87,7 +87,7 @@ struct DestinationPicker: View {
         let chats = list.chats.filter { $0.agent == agent }
         return ScrollView {
             VStack(spacing: 0) {
-                row(title: "New chat", detail: "In a new worktree from \(list.worktree ?? "this build's code")", tag: nil, icon: "plus",
+                row(title: "New chat", detail: "In a new worktree from \(list.newChatBase ?? "main")", tag: nil, icon: "plus",
                     choice: Report.Destination(agent: agent, chat: nil, title: "a new \(HubLink.agentName(agent)) chat"))
                 ForEach(chats) { chat in
                     Rectangle().fill(Mono.hairline).frame(height: 1)

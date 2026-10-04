@@ -80,8 +80,10 @@ enum HubMessage {
         var agents: [String]
         /// The open chats on the app, those in the app's worktree first, then by last use.
         var chats: [Chat]
-        /// The last part of the worktree the app was built from, where a new chat starts.
+        /// The last part of the worktree the app was built from.
         var worktree: String?
+        /// The branch a new chat's worktree starts from, such as "main".
+        var newChatBase: String? = nil
         /// Why the request was turned down, when it was.
         var refused: String?
     }

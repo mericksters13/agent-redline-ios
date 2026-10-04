@@ -85,8 +85,10 @@ enum HubLink {
         /// The agents on the Mac reports can go to, in the order to show them.
         var agents: [String]
         var chats: [Chat]
-        /// The last part of the worktree the app was built from, where a new chat starts.
+        /// The last part of the worktree the app was built from.
         var worktree: String?
+        /// The branch a new chat's worktree starts from, such as "main".
+        var newChatBase: String? = nil
         var refused: String?
     }
 

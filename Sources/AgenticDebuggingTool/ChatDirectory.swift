@@ -53,7 +53,8 @@ enum ChatDirectory {
                             folder: $0.folder, lastActive: $0.lastActiveAt) }
         }
         chats.sort { ($0.sameWorktree ? 1 : 0, $0.lastActive) > ($1.sameWorktree ? 1 : 0, $1.lastActive) }
-        return HubMessage.ChatList(agents: agents.map(\.rawValue), chats: chats, worktree: worktree.map { URL(fileURLWithPath: $0).lastPathComponent })
+        return HubMessage.ChatList(agents: agents.map(\.rawValue), chats: chats, worktree: worktree.map { URL(fileURLWithPath: $0).lastPathComponent },
+                                   newChatBase: worktree.flatMap { NewWorktree.mainBranch(of: $0)?.name })
     }
 }
 
