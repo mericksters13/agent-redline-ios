@@ -153,6 +153,25 @@ struct ChatSessionTests {
         #expect(!held.isInterrupted)
     }
 
+    @Test func reportsWaitingForClaudeGoOnlyIfNoChatTookThemMeanwhile() throws {
+        let folder = try project()
+        try inboxReport("20261003-223449")
+        try inboxReport("20261003-223450")
+        let other = try inboxReport("20261003-223451", bundleID: "com.example.other")
+        let waited = Inbox.unclaimedReports(for: ["com.example.app", "com.example.other"], paths: paths)
+        #expect(waited.count == 3)
+        // While the claude command wasn't ready, a chat took the oldest and the other app's report was
+        // removed.
+        let chat = session(folder)
+        let taken = chat.take(budget: 1)
+        #expect(taken.reports.map(\.folder.lastPathComponent) == ["20261003-223449-00000001"])
+        ChatSession.settle(taken.reports, isDelivered: true)
+        try FileManager.default.removeItem(at: other)
+
+        let still = Handoff.stillWaiting(waited, paths: paths)
+        #expect(still.map(\.folder.lastPathComponent) == ["20261003-223450-00000001"])
+    }
+
     @Test func aChatTakesOnlyReportsSentToItOrSentNowhere() throws {
         let folder = try project()
         let app = "com.example.app"

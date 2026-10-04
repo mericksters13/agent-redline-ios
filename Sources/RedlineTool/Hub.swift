@@ -172,11 +172,13 @@ final class Hub: @unchecked Sendable {
             chatsWatcher?.cancel()
             network.cancel()
             listener?.stop()
+            // Before the simulator watcher: stopping it waits for a rescan under way, and hand-overs
+            // queued meanwhile, or reports that rescan finds, must not start new chats.
+            handoff?.finish()
             simulators?.stop()
             // A connection the listener took can still be filing a report: it finishes, with its
             // delivered ID queued to write, and later uploads are turned down.
             inbox.sync { state.withLock { $0.isStopping = true } }
-            handoff?.finish()
             log("Hub stopped")
             // Queued writes land before the process exits.
             flushWrites()
