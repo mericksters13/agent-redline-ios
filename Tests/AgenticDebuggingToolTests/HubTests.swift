@@ -133,6 +133,21 @@ struct HubTests {
         #expect(hub.statusSnapshot().phones.map(\.udid) == [phone])
     }
 
+    @Test func reportsReceivedInTheSameSecondShowNewestFirst() throws {
+        let hub = try hub()
+        let second = Date(timeIntervalSince1970: 1_791_000_000)
+        // Named so that their names sort the other way from when they arrived.
+        for (id, offset) in [("b-first", 0.2), ("a-second", 0.7)] {
+            let source = ReportSource(kind: .phone, device: phone, deviceName: "Mark iPhone", bundleID: app, reportID: id,
+                                      receivedAt: second.addingTimeInterval(offset))
+            #expect(hub.receive(source) { destination in
+                (try? FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)) != nil
+            })
+        }
+        let rows = HubWindowModel.readReports(paths: paths).rows
+        #expect(rows.map(\.folder.lastPathComponent) == ["a-second-0CF3C01C", "b-first-0CF3C01C"])
+    }
+
     @Test func aReportArrivingTwiceAtOnceIsFiledOnce() throws {
         let hub = try hub()
         let source = ReportSource(kind: .phone, device: phone, deviceName: "Mark iPhone", bundleID: app, reportID: "20261004-031600", receivedAt: Date())

@@ -366,12 +366,10 @@ final class Hub: @unchecked Sendable {
             log("Couldn't copy report \(source.reportID) of \(source.bundleID) from \(source.deviceName)")
             return false
         }
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        // The inbox lists a report only by its source.json, so without one it isn't filed.
+        // The inbox lists a report only by its source.json, so without one it isn't filed. Its
+        // date keeps milliseconds, so reports received in the same second stay in order.
         do {
-            try encoder.encode(source).write(to: incoming.appending(path: "source.json"))
+            try Chats.coder.encode(source).write(to: incoming.appending(path: "source.json"))
         } catch {
             log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
             return false

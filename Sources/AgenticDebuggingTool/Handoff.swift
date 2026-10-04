@@ -172,7 +172,7 @@ final class Handoff: @unchecked Sendable {
                 let chat = ChatRecord(id: "claude-\(id)", agent: Agent.claude.rawValue, folder: worktree, bundleIDs: [source.bundleID],
                                       pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
                 guard InboxQueue.claim(report, for: chat) else { return }
-                openClaude(id, in: worktree, thenSend: ReportContent.text(for: report), for: report)
+                openClaude(id, in: worktree, thenSend: ReportContent.text(for: report), for: report, reopening: true)
             } else if worktree != nil {
                 waitForClaudeSignIn(report)
             } else {
@@ -292,8 +292,10 @@ final class Handoff: @unchecked Sendable {
     /// Opens a Claude Code chat the claude command made: in the desktop app with
     /// `claude --desktop --resume`, or in a terminal without the app. Once the chat is open, sends
     /// it the report through its socket, so the user sees it start. If the chat doesn't open in
-    /// time, the report goes in with the claude command instead.
-    private func openClaude(_ id: String, in folder: String, thenSend text: String, for report: InboxReport, pick: String? = nil) {
+    /// time, the report goes in with the claude command instead. `reopening` is a chat that
+    /// closed, rather than one the hub just started.
+    private func openClaude(_ id: String, in folder: String, thenSend text: String, for report: InboxReport, pick: String? = nil,
+                            reopening: Bool = false) {
         let source = report.source
         guard let claude = AgentCommand.locate(.claude) else {
             pickSettled(pick)
@@ -309,6 +311,8 @@ final class Handoff: @unchecked Sendable {
             Self.openTerminal(in: folder, running: claude.path, arguments: ["--resume"], with: id)
         }
         let place = Self.folderName(folder)
+        let kind: ReportDelivery.Kind = reopening ? .sent : .newChat
+        let title = reopening ? place : "New chat in \(place)"
         hub.log("Opened the Claude Code chat \(id) in \(AgentCommand.hasClaudeApp ? "the Claude app" : "a terminal"), in \(folder)")
         queue.async { [self] in
             defer { pickSettled(pick) }
@@ -316,7 +320,7 @@ final class Handoff: @unchecked Sendable {
                 if let session = ClaudeSessions.open().first(where: { $0.id == id }), ClaudeSessions.send(text, to: session) {
                     InboxQueue.handedOver(report)
                     hub.log("Sent report \(source.reportID) to the Claude Code chat \(id), now open")
-                    ReportDelivery.save(.init(agent: .claude, chat: id, title: session.title ?? "New chat in \(place)", kind: .newChat), in: report.folder)
+                    ReportDelivery.save(.init(agent: .claude, chat: id, title: session.title ?? title, kind: kind), in: report.folder)
                     Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code is looking into it in \(AgentCommand.hasClaudeApp ? "the Claude app" : "Terminal"), in worktree \(place).")
                     return
                 }
@@ -333,6 +337,8 @@ final class Handoff: @unchecked Sendable {
                 return
             }
             InboxQueue.handedOver(report)
+            // The claim names the folder the chat was started from, not its worktree: this says where it ran.
+            ReportDelivery.save(.init(agent: .claude, chat: id, title: title, kind: kind), in: report.folder)
             Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code looked into it. Open the chat in worktree \(place) to see it.")
         }
     }

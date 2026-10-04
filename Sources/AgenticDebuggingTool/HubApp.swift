@@ -162,7 +162,9 @@ final class HubWindowModel {
             }
         }
         let lastReport = Dictionary(found.map { ($0.source.device, $0.source.receivedAt) }, uniquingKeysWith: max)
-        let rows = found.sorted { $0.source.receivedAt > $1.source.receivedAt }.prefix(limit).map { folder, source in
+        let rows = found.sorted {
+            ($0.source.receivedAt, $0.folder.lastPathComponent) > ($1.source.receivedAt, $1.folder.lastPathComponent)
+        }.prefix(limit).map { folder, source in
             let (agent, chat, waiting) = destination(of: folder)
             return ReportRow(id: folder.path, folder: folder, device: source.deviceName, receivedAt: source.receivedAt,
                              agent: agent, chat: chat, waiting: waiting,

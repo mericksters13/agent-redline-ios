@@ -81,7 +81,8 @@ case "app":
             guard let status, status.pid == running else {
                 failToStart("A hub is already running (pid \(running)) and didn't say which apps it watches, so it was left running.")
             }
-            keptApps = status.fixedApps ?? []
+            // A hub from before fixedApps was saved lists them only among all its apps.
+            keptApps = status.fixedApps ?? status.apps
             // Stopping can wait for a simulator scan to finish, and the PID file stays locked until
             // it has. A hub that hasn't stopped in 30 seconds is ended, which frees the lock at once.
             kill(running, SIGTERM)
@@ -277,8 +278,7 @@ func printReports(_ session: ChatSession, quietWhenNone: Bool = false) -> Bool {
 }
 
 func printStatus(_ paths: HubPaths) {
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
+    let decoder = Chats.decoder
     if let pid = HubProcess.running(paths), let data = try? Data(contentsOf: paths.status), let status = try? decoder.decode(HubStatus.self, from: data) {
         print("Hub running (pid \(pid)) since \(status.startedAt.formatted(date: .omitted, time: .shortened)), for \(status.apps.joined(separator: ", "))")
         print("  Apps reach it at \(status.hosts.joined(separator: ", ")), port \(status.port)")

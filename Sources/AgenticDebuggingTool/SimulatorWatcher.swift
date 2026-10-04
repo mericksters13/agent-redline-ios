@@ -20,9 +20,14 @@ final class SimulatorWatcher: @unchecked Sendable {
     private var names: [String: String] = [:]
     private var stream: FSEventStreamRef?
     private var count = 0
+    private var simulators: Set<String> = []
     private let lock = NSLock()
 
     var containerCount: Int { lock.withLock { count } }
+
+    /// The simulators with a watched app installed. Read under the lock, so the menu bar panel
+    /// never waits for a rescan.
+    var simulatorIDs: Set<String> { lock.withLock { simulators } }
 
     init(hub: Hub) {
         self.hub = hub
@@ -39,17 +44,20 @@ final class SimulatorWatcher: @unchecked Sendable {
             guard found != self.watched || roots != self.roots else { return }
             self.watched = found
             self.roots = roots
-            self.lock.withLock { self.count = found.count }
+            let simulators = Self.simulatorIDs(of: Array(found.keys))
+            self.lock.withLock {
+                self.count = found.count
+                self.simulators = simulators
+            }
             self.watch(roots)
             for container in found.keys { self.takeNewReports(in: container) }
             self.hub.writeStatus()
         }
     }
 
-    /// The simulators with a watched app installed, from their containers' paths.
-    var simulatorIDs: Set<String> {
-        let containers = queue.sync { Array(watched.keys) }
-        return Set(containers.compactMap { path in
+    /// The simulators these containers are in, from their paths.
+    static func simulatorIDs(of containers: [String]) -> Set<String> {
+        Set(containers.compactMap { path in
             let parts = path.split(separator: "/")
             return parts.firstIndex(of: "Devices").flatMap { parts.indices.contains($0 + 1) ? String(parts[$0 + 1]) : nil }
         })
