@@ -168,6 +168,7 @@ final class Hub: @unchecked Sendable {
             log("Couldn't list paired phones")
             return
         }
+        forgetPhones(except: Set(paired.map(\.udid)))
         for phone in paired {
             link(for: phone).update(hosts: hosts, port: HubListener.port, rediscover: rediscover)
         }
@@ -412,6 +413,27 @@ final class Hub: @unchecked Sendable {
     func phoneChanged(_ phone: Devicectl.Phone, state description: String) {
         lock.withLock { phoneStates[phone.udid] = HubStatus.Phone(name: phone.name, udid: phone.udid, state: description,
                                                                              model: phone.model.isEmpty ? nil : phone.model) }
+        writeStatus()
+    }
+
+    /// Phones no longer paired leave the status, and their links stop giving them the address.
+    /// A link's state goes once the try it has in progress is over, so that try can't bring it back.
+    func forgetPhones(except paired: Set<String>) {
+        let unpaired = lock.withLock {
+            let gone = links.filter { !paired.contains($0.key) }
+            for udid in gone.keys { links[udid] = nil }
+            for udid in phoneStates.keys where !paired.contains(udid) && gone[udid] == nil { phoneStates[udid] = nil }
+            return Array(gone.values)
+        }
+        for link in unpaired {
+            link.unpair { [weak self] in
+                guard let self else { return }
+                let udid = link.phone.udid
+                // Paired again meanwhile: the new link's state stays.
+                lock.withLock { if links[udid] == nil { phoneStates[udid] = nil } }
+                writeStatus()
+            }
+        }
         writeStatus()
     }
 

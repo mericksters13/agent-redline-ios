@@ -111,6 +111,24 @@ struct HubTests {
         #expect(try hub().statusSnapshot().fixedApps == [app])
     }
 
+    @Test func aPhoneNoLongerPairedLeavesTheStatus() async throws {
+        let hub = try hub()
+        let kept = Devicectl.Phone(udid: phone, name: "Mark iPhone", model: "iPhone 17 Pro")
+        let unpaired = Devicectl.Phone(udid: "00008150-000000000000AAAA", name: "Old iPhone", model: "iPhone 15")
+        hub.phoneChanged(kept, state: "Ready for \(app)")
+        hub.phoneChanged(unpaired, state: "Ready for \(app)")
+        hub.forgetPhones(except: [phone])
+        #expect(hub.statusSnapshot().phones.map(\.udid) == [phone])
+
+        // A link whose phone was unpaired stops trying, and so never reports the phone again.
+        let link = PhoneLink(phone: unpaired, hub: hub)
+        await withCheckedContinuation { done in link.unpair { done.resume() } }
+        link.update(hosts: ["192.168.1.2"], port: 47361, rediscover: true)
+        link.phoneWoke()
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(hub.statusSnapshot().phones.map(\.udid) == [phone])
+    }
+
     @Test func aReportArrivingTwiceAtOnceIsFiledOnce() throws {
         let hub = try hub()
         let source = ReportSource(kind: .phone, device: phone, deviceName: "Mark iPhone", bundleID: app, reportID: "20261004-031600", receivedAt: Date())

@@ -103,6 +103,7 @@ final class Handoff: @unchecked Sendable {
         case .chat(.cursor, let id) where !Chats.live(paths).contains(where: { $0.id == "cursor-\(id)" }):
             // A Cursor chat gets reports only through its own hooks, which a closed chat never runs.
             hub.log("The Cursor chat \(id) for report \(source.reportID) is closed; it waits in the inbox")
+            Self.leaveWaiting(report, agent: .cursor, chat: id, because: "The chat is closed")
             Self.notify(title: "Report from \(source.deviceName)", message: "The Cursor chat it was sent to is closed. The report waits in the inbox.")
         case .chat(.cursor, let id):
             InboxQueue.setAddress(Address(chat: "cursor-\(id)", agent: Agent.cursor.rawValue, folder: worktree ?? ""), of: report.folder)
@@ -122,6 +123,7 @@ final class Handoff: @unchecked Sendable {
             } else if let pick, startingPicks[pick] != nil {
                 startingPicks[pick, default: []].append(report)
                 hub.log("Report \(source.reportID) waits for the \(agent.name) chat its pick is starting")
+                Self.leaveWaiting(report, agent: agent, chat: nil, because: "Waiting for the new chat to start")
             } else if agent == .claude, !ClaudeCLI.ready() {
                 waitForClaudeSignIn(report)
             } else {
@@ -130,7 +132,7 @@ final class Handoff: @unchecked Sendable {
             }
         case .undecided(let reason):
             hub.log("Report \(source.reportID) waits in the inbox: \(reason)")
-            ReportDelivery.save(.init(agent: nil, chat: nil, title: reason, kind: .waiting), in: report.folder)
+            Self.leaveWaiting(report, agent: nil, chat: nil, because: reason)
             Self.notify(title: "Report from \(source.deviceName)", message: "\(reason).")
         }
     }
@@ -149,6 +151,9 @@ final class Handoff: @unchecked Sendable {
                 openClaude(id, in: worktree, thenSend: ReportContent.text(for: report), for: report)
             } else if worktree != nil {
                 waitForClaudeSignIn(report)
+            } else {
+                hub.log("Report \(source.reportID) waits in the inbox: it doesn't say where the app was built, to reopen the chat there")
+                Self.leaveWaiting(report, agent: .claude, chat: id, because: "The chat is closed")
             }
             return
         }
@@ -162,6 +167,7 @@ final class Handoff: @unchecked Sendable {
             ReportDelivery.save(.init(agent: .claude, chat: id, title: name, kind: .sent), in: report.folder)
             Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Claude Code chat \(name).")
         } else {
+            Self.leaveWaiting(report, agent: .claude, chat: id, because: "\(name) didn't take it")
             InboxQueue.release(report)
             hub.log("The Claude Code chat \(name) didn't take report \(source.reportID); it waits in the inbox")
             Self.notify(title: "Report from \(source.deviceName)", message: "The Claude Code chat \(name) didn't take it. It waits in the inbox.")
@@ -192,10 +198,11 @@ final class Handoff: @unchecked Sendable {
             Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Codex chat, with its pictures.")
             return
         }
+        // Saved before the report is free, so a claim the chat's hook makes is always newer than this.
+        ReportDelivery.save(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread) ?? "Codex chat", kind: .nextMessage), in: report.folder)
         InboxQueue.release(report)
         InboxQueue.setAddress(Address(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
         hub.log("The Codex app didn't take report \(source.reportID) (\(outcome)); it goes in with the chat's next message")
-        ReportDelivery.save(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread) ?? "Codex chat", kind: .nextMessage), in: report.folder)
         Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Codex chat with your next message there.")
     }
 
@@ -264,6 +271,7 @@ final class Handoff: @unchecked Sendable {
         let source = report.source
         guard let claude = AgentCommand.locate(.claude) else {
             pickSettled(pick)
+            Self.leaveWaiting(report, agent: .claude, chat: id, because: "Couldn't find the claude command")
             InboxQueue.release(report)
             hub.log("Couldn't find the claude command to open the chat for report \(source.reportID); it waits in the inbox")
             return
@@ -296,8 +304,6 @@ final class Handoff: @unchecked Sendable {
         }
     }
 
-    /// The claude command, which starts new Claude Code chats, isn't signed in: the report waits
-    /// in the inbox, and the Mac says what to run once.
     /// The chat a "New chat" pick was starting has started or failed: the reports that waited
     /// for it go on, to that chat once it's remembered, or else to start one again.
     private func pickSettled(_ pick: String?) {
@@ -307,10 +313,18 @@ final class Handoff: @unchecked Sendable {
         }
     }
 
+    /// The report stays in the inbox for a chat to take later; the panel shows why. Saved before
+    /// a claim is released, so a chat that takes the report next is always newer than this.
+    private static func leaveWaiting(_ report: InboxReport, agent: Agent?, chat: String?, because reason: String) {
+        ReportDelivery.save(.init(agent: agent, chat: chat, title: reason, kind: .waiting), in: report.folder)
+    }
+
+    /// The claude command, which starts new Claude Code chats, isn't signed in: the report waits
+    /// in the inbox, and the Mac says what to run once.
     private func waitForClaudeSignIn(_ report: InboxReport) {
         let source = report.source
         hub.log("Report \(source.reportID) waits: the claude command that starts new chats isn't signed in or is older than \(ClaudeCLI.desktopVersion.map(String.init).joined(separator: "."))")
-        ReportDelivery.save(.init(agent: .claude, chat: nil, title: "Waiting for claude auth login", kind: .waiting), in: report.folder)
+        Self.leaveWaiting(report, agent: .claude, chat: nil, because: "Waiting for claude auth login")
         Self.notify(title: "Report from \(source.deviceName)", message: "To start new Claude Code chats, run claude auth login once in Terminal. The report waits until then.")
     }
 
@@ -322,6 +336,7 @@ final class Handoff: @unchecked Sendable {
         guard let executable = AgentCommand.locate(agent) else {
             pickSettled(pick)
             hub.log("Couldn't find \(agent.name)'s command to start a chat for report \(source.reportID)")
+            Self.leaveWaiting(report, agent: agent, chat: resuming, because: "Couldn't find the \(agent.name) command")
             Self.notify(title: "Report from \(source.deviceName)", message: "Couldn't find \(agent.name) to start a chat. The report waits in the inbox.")
             return
         }
@@ -339,6 +354,7 @@ final class Handoff: @unchecked Sendable {
         if resuming == nil {
             guard let made = NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: agent) else {
                 pickSettled(pick)
+                Self.leaveWaiting(report, agent: agent, chat: nil, because: "Couldn't make a worktree")
                 InboxQueue.release(report)
                 hub.log("Couldn't make a worktree from the main branch of \(folder) for report \(source.reportID); it waits in the inbox")
                 Self.notify(title: "Report from \(source.deviceName)",
@@ -380,10 +396,11 @@ final class Handoff: @unchecked Sendable {
             let started = AgentCommand.startedChat(agent, in: text)
             guard finished.terminationStatus == 0, let started, !started.failed else {
                 // Free the report for a chat that opens later, and take back the unused worktree.
+                let reason = AgentCommand.failure(in: text)
+                Handoff.leaveWaiting(report, agent: agent, chat: resuming, because: "Couldn't start the chat: \(reason)")
                 InboxQueue.release(report)
                 if madeWorktree { NewWorktree.remove(workFolder) }
                 self.pickSettled(pick)
-                let reason = AgentCommand.failure(in: text)
                 hub.log("The \(agent.name) chat for report \(source.reportID) failed (\(finished.terminationStatus)): \(reason)")
                 Handoff.notify(title: "Couldn't start a \(agent.name) chat", message: "\(reason). The report waits in the inbox.")
                 return
@@ -422,6 +439,7 @@ final class Handoff: @unchecked Sendable {
             hub.log("\(resuming == nil ? "Started" : "Continued") a \(agent.name) chat in \(workFolder) for report \(source.reportID)")
             Self.notify(title: "\(agent.name) is looking into a report", message: "From \(source.deviceName), in worktree \(place).")
         } catch {
+            Self.leaveWaiting(report, agent: agent, chat: resuming, because: "Couldn't start the chat")
             InboxQueue.release(report)
             if madeWorktree { NewWorktree.remove(workFolder) }
             pickSettled(pick)

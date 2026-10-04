@@ -90,6 +90,19 @@ struct HubWindowTests {
         #expect(try Chats.decoder.decode(Claim.self, from: older).claimedAt == Date(timeIntervalSince1970: 1_791_120_672))
     }
 
+    @Test func aReportForAChatsNextMessageShowsAsNotThereYet() throws {
+        let folder = try report("20261004-135000", at: Date())
+        ReportDelivery.save(.init(agent: .codex, chat: "t-1", title: "Fix the chart", kind: .nextMessage), in: folder)
+        let pending = HubWindowModel.destination(of: folder)
+        #expect(pending.agent == "Codex")
+        #expect(pending.chat == "Fix the chart (next message)")
+        #expect(pending.waiting)
+        // Once the chat's hook takes it, it's in the chat.
+        try Chats.coder.encode(Claim(chat: "codex-t-1", agent: "codex", folder: "", claimedAt: Date().addingTimeInterval(1)))
+            .write(to: folder.appending(path: InboxQueue.claimFile))
+        #expect(!HubWindowModel.destination(of: folder).waiting)
+    }
+
     @Test func aClaimWhoseHandOverWasInterruptedLeavesTheReportWaiting() throws {
         let folder = try report("20261004-134000", at: Date())
         let ended = Process()
