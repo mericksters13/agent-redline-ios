@@ -59,9 +59,13 @@ final class HubWindowModel {
     struct DeviceRow: Identifiable, Equatable {
         var id: String
         var name: String
+        /// "iPhone 17 Pro", or "Simulator".
         var kind: String
         var state: String
         var lastReport: Date?
+        /// Ready to send reports. A paired phone that isn't still shows, dimmed, with why.
+        var active = true
+        var isSimulator: Bool { kind == "Simulator" }
     }
 
     struct ReportRow: Identifiable, Equatable {
@@ -109,15 +113,25 @@ final class HubWindowModel {
             let booted = HubWindowModel.bootedSimulators().filter { watchedSimulators.contains($0.udid) }
             await MainActor.run {
                 let last = Dictionary(reports.map { ($0.deviceID, $0.row.receivedAt) }, uniquingKeysWith: max)
-                var devices: [DeviceRow] = (status?.phones ?? []).filter { $0.state.hasPrefix("Ready") }.map {
-                    DeviceRow(id: $0.udid, name: $0.name, kind: "iPhone", state: "Ready", lastReport: last[$0.udid])
+                let phones = (status?.phones ?? []).map {
+                    DeviceRow(id: $0.udid, name: $0.name, kind: $0.model ?? "iPhone", state: HubWindowModel.phoneState($0.state),
+                              lastReport: last[$0.udid], active: $0.state.hasPrefix("Ready"))
                 }
-                devices += booted.map { DeviceRow(id: $0.udid, name: $0.name, kind: "Simulator", state: "Running", lastReport: last[$0.udid]) }
-                self.devices = devices
+                let simulators = booted.map { DeviceRow(id: $0.udid, name: $0.name, kind: "Simulator", state: "Running", lastReport: last[$0.udid]) }
+                // Ready phones and running simulators first, then paired phones that can't take reports now.
+                self.devices = phones.filter(\.active) + simulators + phones.filter { !$0.active }
                 self.reports = reports.map(\.row)
                 if let status { self.address = "\(status.hosts.first ?? "") · port \(status.port)" }
             }
         }
+    }
+
+    /// A phone's state as the panel shows it, short.
+    nonisolated static func phoneState(_ state: String) -> String {
+        if state.hasPrefix("Ready") { return "Ready" }
+        if state.hasPrefix("Not reachable") { return "Not reachable" }
+        if state.hasPrefix("None of the watched apps") { return "No watched app installed" }
+        return state
     }
 
     /// The status the hub last saved, when this process isn't the hub.
@@ -216,9 +230,12 @@ final class HubWindowModel {
     }
 }
 
-/// The panel: active devices, then the reports sent.
+/// The panel: the devices, then the reports sent.
 struct HubPanel: View {
     let model: HubWindowModel
+    /// The report list's own height. A scroll view in the menu bar panel has no height of its
+    /// own, so the list sets it, up to a limit.
+    @State private var listHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -226,7 +243,7 @@ struct HubPanel: View {
             Divider().overlay(Color.white.opacity(0.12))
             section("Devices")
             if model.devices.isEmpty {
-                Text("No phone or simulator is active.")
+                Text("No paired iPhone or running simulator.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 16)
@@ -243,7 +260,10 @@ struct HubPanel: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
             } else {
-                ScrollView { reportList }.frame(maxHeight: 520)
+                ScrollView {
+                    reportList.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
+                }
+                .frame(height: min(max(listHeight, 1), 520))
             }
             Divider().overlay(Color.white.opacity(0.12))
             footer
@@ -256,7 +276,7 @@ struct HubPanel: View {
     }
 
     private var reportList: some View {
-        LazyVStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(model.reports) { report in
                 ReportRowView(report: report)
                 Divider().overlay(Color.white.opacity(0.08)).padding(.leading, 84)
@@ -307,7 +327,7 @@ struct DeviceRowView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: device.kind == "iPhone" ? "iphone.gen3" : "iphone.gen3.badge.play")
+            Image(systemName: device.isSimulator ? "iphone.gen3.badge.play" : "iphone.gen3")
                 .font(.body)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 1) {
@@ -320,6 +340,7 @@ struct DeviceRowView: View {
             }
             Spacer()
         }
+        .opacity(device.active ? 1 : 0.5)
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
     }

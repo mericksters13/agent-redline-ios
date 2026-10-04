@@ -42,6 +42,8 @@ struct HubStatus: Codable, Sendable {
         var name: String
         var udid: String
         var state: String
+        /// "iPhone 17 Pro": tells apart phones with the same name.
+        var model: String? = nil
     }
 
     var pid: Int32
@@ -371,7 +373,8 @@ final class Hub: @unchecked Sendable {
     // MARK: - Status
 
     func phoneChanged(_ phone: Devicectl.Phone, state description: String) {
-        lock.withLock { phoneStates[phone.udid] = HubStatus.Phone(name: phone.name, udid: phone.udid, state: description) }
+        lock.withLock { phoneStates[phone.udid] = HubStatus.Phone(name: phone.name, udid: phone.udid, state: description,
+                                                                             model: phone.model.isEmpty ? nil : phone.model) }
         writeStatus()
     }
 
