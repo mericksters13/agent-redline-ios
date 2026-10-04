@@ -33,7 +33,7 @@ enum AgentSettings {
         let tools = "Bash|mcp__.*"
         // Claude Code and Codex show the status message while the hook runs, and Codex names the
         // hook by it when asking the user to trust it.
-        let built = hook(.built, agent == .cursor ? [:] : ["statusMessage": "Link app builds to this chat for phone reports"])
+        let built = hook(.built, agent == .cursor ? [:] : ["statusMessage": "Linking app build request to this thread"])
         switch agent {
         case .claude:
             // Claude Code chats are reached through their own socket; only builds need noting.
@@ -41,7 +41,7 @@ enum AgentSettings {
         case .codex:
             // Codex chats are reached through the Codex app. The message hook is the safety net
             // for when the app doesn't take a report.
-            return [("PostToolUse", tools, [built]), ("UserPromptSubmit", nil, [hook(.prompt, ["statusMessage": "Deliver phone reports waiting for this chat"])])]
+            return [("PostToolUse", tools, [built]), ("UserPromptSubmit", nil, [hook(.prompt, ["statusMessage": "Report delivery"])])]
         case .cursor:
             // A little longer than the hold, so Cursor never cuts it short.
             let stop = hook(.stop, ["timeout": Int(AgentHooks.holdOpen) + 60, "loop_limit": NSNull()])
