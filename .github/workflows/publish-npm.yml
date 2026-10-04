@@ -1,0 +1,53 @@
+# Publishes the npm package agent-redline-ios when a GitHub release is published, with npm
+# provenance. It needs an NPM_TOKEN repository secret (an npm automation token); without one it
+# says so and publishes nothing. The release tag must match package.json's version, as 0.1.0 or
+# v0.1.0.
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - name: Check for the npm token
+        id: token
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::warning::No NPM_TOKEN repository secret, so nothing was published. Add one and publish the release again."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.present == 'true'
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Check that the release tag matches the package version
+        if: steps.token.outputs.present == 'true'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "${TAG#v}" != "$version" ]; then
+            echo "::error::The release tag $TAG doesn't match package.json's version $version."
+            exit 1
+          fi
+
+      - name: Publish
+        if: steps.token.outputs.present == 'true'
+        run: npm publish --provenance --access public
