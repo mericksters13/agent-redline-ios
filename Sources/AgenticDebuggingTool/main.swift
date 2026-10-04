@@ -303,7 +303,8 @@ func printStatus(_ paths: HubPaths) {
     let decoder = Chats.decoder
     if let pid = HubProcess.running(paths), let data = try? Data(contentsOf: paths.status), let status = try? decoder.decode(HubStatus.self, from: data) {
         print("Hub running (pid \(pid)) since \(status.startedAt.formatted(date: .omitted, time: .shortened)), for \(status.apps.joined(separator: ", "))")
-        print("  Apps reach it at \(status.hosts.joined(separator: ", ")), port \(status.port)")
+        print(status.hosts.isEmpty ? "  Not on a network, so apps can't reach it"
+                                   : "  Apps reach it at \(status.hosts.joined(separator: ", ")), port \(status.port)")
         for phone in status.phones { print("  \(phone.name) (\([phone.model, phone.udid].compactMap { $0 }.joined(separator: ", "))): \(phone.state)") }
         print("  Simulators: \(status.simulatorContainers) app \(status.simulatorContainers == 1 ? "container" : "containers") watched")
     } else {

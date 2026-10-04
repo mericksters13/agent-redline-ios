@@ -186,7 +186,10 @@ final class Hub: @unchecked Sendable {
         }
         forgetPhones(except: Set(paired.map(\.udid)))
         for phone in paired {
-            link(for: phone).update(hosts: hosts, port: HubListener.port, rediscover: rediscover)
+            let link = link(for: phone)
+            // Off every network, phones keep the address they have, which works again once the
+            // Mac is back on theirs; the new address follows as soon as the Mac has one.
+            if !hosts.isEmpty { link.update(hosts: hosts, port: HubListener.port, rediscover: rediscover) }
         }
         writeStatus()
     }
@@ -327,7 +330,8 @@ final class Hub: @unchecked Sendable {
     }
 
     /// The Mac's addresses on its local networks, then its `.local` name, which keeps working
-    /// when the address changes.
+    /// when the address changes. None while no Wi-Fi or Ethernet link is up, since phones can't
+    /// reach the Mac by any of them then.
     static func addresses() -> [String] {
         var found: [String] = []
         var list: UnsafeMutablePointer<ifaddrs>?
@@ -348,7 +352,7 @@ final class Hub: @unchecked Sendable {
             }
         }
         let name = ProcessInfo.processInfo.hostName
-        if name.hasSuffix(".local") { found.append(name) }
+        if !found.isEmpty, name.hasSuffix(".local") { found.append(name) }
         return found
     }
 

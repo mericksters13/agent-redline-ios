@@ -76,8 +76,10 @@ final class Handoff: @unchecked Sendable {
     /// "New chat" picks whose first report is still starting the chat, with the reports that
     /// arrived for them meanwhile. They go to that chat once it's started. Used on `queue`.
     private var startingPicks: [String: [InboxReport]] = [:]
-    /// Set once the hub is stopping: no new hand-over starts. Used on `queue`.
-    private var finishing = false
+    /// Set once the hub is stopping: no new hand-over starts. Set outside `queue`, so work
+    /// already queued there sees it at once rather than after it has run.
+    private let finishing = NSLock()
+    private var isFinishing = false
 
     init(hub: Hub) {
         self.hub = hub
@@ -88,7 +90,10 @@ final class Handoff: @unchecked Sendable {
     /// next hub would hand the report over again while the chat or command this one started
     /// still has it. The reports not handed over wait in the inbox for the next hub.
     func finish() {
-        queue.sync { finishing = true }
+        finishing.withLock { isFinishing = true }
+        // A hand-over that started before the flag was set has made its claim once this returns,
+        // so the wait below sees it.
+        queue.sync {}
         var logged = false
         while true {
             let count = InboxQueue.handingOver(by: getpid(), paths: hub.paths)
@@ -131,7 +136,7 @@ final class Handoff: @unchecked Sendable {
 
     private func deliver(_ report: InboxReport) {
         let source = report.source
-        guard !finishing else {
+        guard !finishing.withLock({ isFinishing }) else {
             hub.log("Report \(source.reportID) waits in the inbox for the next hub: this one is stopping")
             return
         }
