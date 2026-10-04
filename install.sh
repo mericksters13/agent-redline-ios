@@ -676,7 +676,9 @@ register_mcp() {
 # Writes the login item's property list to $1. It starts Redline's own executable at login, which
 # opens in the background as a menu bar app, so System Settings > General > Login Items names it
 # after Redline, not after open. The executable is signed with the app, which
-# AssociatedBundleIdentifiers needs to show the item as the app.
+# AssociatedBundleIdentifiers needs to show the item as the app. launchd gives it only the system's
+# folders on PATH, so the folder of the claude command found here goes first: installed under a
+# Node version manager, claude (and the node it runs) is only there.
 write_launch_agent_plist() {
     rm -f "$1"
     plutil -create xml1 "$1" &&
@@ -684,7 +686,10 @@ write_launch_agent_plist() {
         plutil -insert AssociatedBundleIdentifiers -string "$LABEL" "$1" &&
         plutil -insert ProgramArguments -array "$1" &&
         plutil -insert ProgramArguments -string "$APP/Contents/MacOS/redline" -append "$1" &&
-        plutil -insert RunAtLoad -bool true "$1"
+        plutil -insert RunAtLoad -bool true "$1" || return 1
+    [ -n "$CLAUDE" ] || return 0
+    plutil -insert EnvironmentVariables -dictionary "$1" &&
+        plutil -insert EnvironmentVariables.PATH -string "$(dirname "$CLAUDE"):/usr/bin:/bin:/usr/sbin:/sbin" "$1"
 }
 
 start_redline() {
