@@ -13,27 +13,27 @@ Redline has two parts: a Mac side (the `redline` command and the `Redline.app` m
 
 ## 1. Run the installer
 
-Run one of these from any folder. They run the same installer.
+Run one of these from any folder. They run the same installer. `--no-input` makes sure it never waits for an answer: it lists what needs the user instead (it turns this on by itself when it sees Claude Code, Codex or CI, but pass it anyway).
 
 ```sh
-npx --yes agent-redline-ios@latest
+npx --yes agent-redline-ios@latest --no-input
 ```
 
-If `npx` is not installed, or npm can't find the package yet:
+If `npx` is not installed, or npm can't find the package yet, download the script first and then run it. Don't pipe curl into bash: if the download fails, bash runs an empty script and exits 0, and you would think Redline is installed.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "${TMPDIR:-/tmp}/redline-install.sh" && /bin/bash "${TMPDIR:-/tmp}/redline-install.sh" --no-input
 ```
 
-(`npx --yes github:mericksters13/agent-redline-ios` also works.)
+(`npx --yes github:mericksters13/agent-redline-ios --no-input` also works.)
 
 What to expect:
 
-- It builds Redline from source with Xcode, which takes a few minutes the first time. Allow a timeout of at least 15 minutes.
-- It writes outside the project: `~/.local/bin/redline`, `~/Applications/Redline.app`, `~/Library/LaunchAgents/com.agentredline.hub.plist`, `~/.zprofile` (one line, only when `~/.local/bin` is not on `PATH`), `~/.claude.json` (through `claude mcp add`), `~/.codex/hooks.json`, and `~/Library/Application Support/Redline`. If your sandbox blocks writes outside the project, ask the user to allow the command outside the sandbox, or to run it in their terminal and tell you when it has finished.
-- With no terminal to ask in, it never waits for input. It does everything it can and lists what needs the user.
-- It ends with a checklist marked Done, Needs you or Skipped. The same checklist is saved in `~/Library/Application Support/Redline/install-report.txt`; read it there if the output was cut off.
-- **Exit status 0** means Redline is installed, even when some items need the user. **Any other status** means it stopped: the checklist's Stopped line names the problem and the one fix. Give the user the fix (for example `sudo xcodebuild -license accept`), wait until they have done it, and run the same command again.
+- It builds Redline from source with Xcode, which takes a few minutes the first time and can take longer than a command timeout allows (Claude Code stops a foreground command after 10 minutes at most). Run it in the background, wait for it to exit, and then check the result: in Claude Code, use the Bash tool's `run_in_background` and wait for the notice that it finished; in Codex, raise the command timeout to 20 minutes or more.
+- It writes outside the project: `~/.local/bin/redline`, `~/Applications/Redline.app`, `~/Library/LaunchAgents/com.agentredline.hub.plist`, `~/.zprofile` (one line, only when `~/.local/bin` is not on `PATH`), `~/.claude.json` (through `claude mcp add`), `~/.codex/hooks.json`, `~/Library/Caches/Redline` and `~/Library/Application Support/Redline`. If your sandbox blocks writes outside the project, ask the user to allow the command outside the sandbox, or to run it in their terminal and tell you when it has finished.
+- It ends with a checklist marked Done, Needs you or Skipped, under the heading `Redline install checklist`. The same checklist is saved in `~/Library/Application Support/Redline/install-report.txt`, whose first line ends with the date and time of the run.
+- **It worked** when the command exited with status 0 **and** printed `Redline install checklist`, or, if you lost the output, when `install-report.txt` starts with `Redline install checklist` and today's date. Exit status 0 alone is not enough. Items marked Needs you don't mean it failed.
+- **It stopped** when the status is anything else, or the report starts with `Redline is not installed.`: the Stopped line names the problem and the one fix. Give the user the fix (for example `sudo xcodebuild -license accept`), wait until they have done it, and run the same command again.
 
 ## 2. Find the app's project
 
@@ -157,4 +157,4 @@ End with a short message that gives:
 
 If the installer stopped and the user hasn't fixed it yet, say that first, with the fix.
 
-To remove Redline later: `npx agent-redline-ios uninstall`, or the curl command with `| bash -s -- uninstall`. Saved reports stay in `~/Library/Application Support/Redline`.
+To remove Redline later: `npx --yes agent-redline-ios@latest uninstall`, or download the script as in step 1 and run it with `uninstall`. Saved reports stay in `~/Library/Application Support/Redline`.

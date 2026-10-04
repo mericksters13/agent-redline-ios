@@ -18,7 +18,8 @@
     "Tests",
     "scripts",
     "bin",
-    "README.md"
+    "README.md",
+    "INSTALL.md"
   ],
   "os": [
     "darwin"
