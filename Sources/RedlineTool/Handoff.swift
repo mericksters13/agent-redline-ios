@@ -54,8 +54,9 @@ final class Handoff: Sendable {
 
     func reportFiled(_ folder: URL, source: ReportSource) {
         queue.async { [self] in
-            guard let report = Inbox.waiting(for: [source.bundleID], paths: hub.paths).first(where: { $0.folder == folder }) else { return }
-            deliver(report)
+            // A chat may have taken it already, through MCP or a hook.
+            guard Inbox.claim(of: folder) == nil else { return }
+            deliver(InboxReport(folder: folder, source: source, claim: nil))
         }
     }
 
@@ -71,6 +72,9 @@ final class Handoff: Sendable {
     }
 
     private func deliver(_ report: InboxReport) {
+        // The menu bar app has no window, so App Nap would slow a delivery the user is waiting for.
+        let activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Handing a report to a chat")
+        defer { ProcessInfo.processInfo.endActivity(activity) }
         let source = report.source
         let paths = hub.paths
         let destination = Routing.destination(of: report.folder, bundleID: source.bundleID) { bundleID, sourceFile in

@@ -543,6 +543,9 @@ final class Hub: @unchecked Sendable {
         let destination = folder.appending(path: name, directoryHint: .isDirectory)
         let files = FileManager.default
         let started = Date()
+        // The menu bar app has no window, so App Nap would slow filing a report the user just sent.
+        let activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Filing a report from a device")
+        defer { ProcessInfo.processInfo.endActivity(activity) }
         do {
             try files.createDirectory(at: folder, withIntermediateDirectories: true)
             // Left by an earlier try that didn't finish.

@@ -44,7 +44,8 @@ enum ChatDirectory {
                 .map { chat(.claude, id: $0.id, title: $0.title ?? "Untitled", folder: $0.folder, lastActive: $0.updatedAt) }
         }
         if agents.contains(.codex) {
-            chats += CodexThreads.recent(in: CodexThreads.newestDatabase()).filter { buildsApp($0.folder) }.prefix(15)
+            // Lazy, so projects are read only until 15 chats are found.
+            chats += CodexThreads.recent(in: CodexThreads.newestDatabase()).lazy.filter { buildsApp($0.folder) }.prefix(15)
                 .map { chat(.codex, id: $0.id, title: $0.title, folder: $0.folder, lastActive: $0.updated) }
         }
         chats.sort { ($0.sameWorktree ? 1 : 0, $0.lastActive) > ($1.sameWorktree ? 1 : 0, $1.lastActive) }

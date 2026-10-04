@@ -31,15 +31,28 @@ enum ClaudeSessions {
         return sessions
     }
 
+    /// One session file, as Claude Code writes it. Times are in milliseconds.
+    private struct SessionFile: Decodable {
+        var sessionId: String?
+        var cwd: String?
+        var messagingSocketPath: String?
+        var pid: Int32?
+        var kind: String?
+        var name: String?
+        var updatedAt: Double?
+        var startedAt: Double?
+    }
+
+    private static let decoder = JSONDecoder()
+
+    /// The session a file describes, when it's an interactive chat that's still running.
     static func session(from data: Data) -> Session? {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let id = object["sessionId"] as? String, let folder = object["cwd"] as? String,
-              let socket = object["messagingSocketPath"] as? String, let pid = object["pid"] as? Int,
-              object["kind"] as? String == "interactive", Chats.isRunning(Int32(pid))
+        guard let file = try? decoder.decode(SessionFile.self, from: data),
+              let id = file.sessionId, let folder = file.cwd, let socket = file.messagingSocketPath, let pid = file.pid,
+              file.kind == "interactive", Chats.isRunning(pid)
         else { return nil }
-        let updated = (object["updatedAt"] as? Double) ?? (object["startedAt"] as? Double) ?? 0
-        return Session(id: id, folder: folder, socket: socket, updatedAt: Date(timeIntervalSince1970: updated / 1000),
-                       title: object["name"] as? String)
+        let updated = file.updatedAt ?? file.startedAt ?? 0
+        return Session(id: id, folder: folder, socket: socket, updatedAt: Date(timeIntervalSince1970: updated / 1000), title: file.name)
     }
 
     /// The line a chat's socket takes: one message, as if typed by another of the user's chats.

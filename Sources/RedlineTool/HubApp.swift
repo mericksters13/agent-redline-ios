@@ -255,16 +255,19 @@ final class HubWindowModel {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
+        // Without Xcode's simctl there are no simulators to show.
         guard (try? process.run()) != nil else { return [] }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let runtimes = object["devices"] as? [String: [[String: Any]]]
-        else { return [] }
-        return runtimes.values.flatMap { $0 }.compactMap { device in
-            guard let udid = device["udid"] as? String, let name = device["name"] as? String else { return nil }
-            return (udid, name)
+        struct List: Decodable {
+            struct Device: Decodable {
+                var udid: String
+                var name: String
+            }
+            var devices: [String: [Device]]
         }
+        guard let list = try? HubPaths.decoder.decode(List.self, from: data) else { return [] }
+        return list.devices.values.flatMap { $0 }.map { ($0.udid, $0.name) }
     }
 }
 

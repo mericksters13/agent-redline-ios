@@ -52,9 +52,11 @@ final class ChatSession: Sendable {
     /// that get reports through hooks. Nil when there's none.
     func takeAddressed() -> String? {
         let chat = self.chat
-        let texts = Inbox.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths)
-            .filter { if case .claimed = Inbox.claim($0, for: chat) { true } else { false } }
-            .map(ReportContent.text(for:))
+        var texts: [String] = []
+        for report in Inbox.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths) {
+            guard case .claimed = Inbox.claim(report, for: chat) else { continue }
+            texts.append(ReportContent.text(for: report))
+        }
         return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
     }
 
@@ -65,8 +67,11 @@ final class ChatSession: Sendable {
         var items: [ReportContent.Item] = []
         var used = 0
         var taken = 0
-        for report in Inbox.waiting(for: chat.bundleIDs, paths: paths) {
+        var lookedAt = 0
+        let waiting = Inbox.waiting(for: chat.bundleIDs, paths: paths)
+        for report in waiting {
             if taken > 0, used >= budget { break }
+            lookedAt += 1
             // Another chat may have taken it a moment ago.
             guard case .claimed = Inbox.claim(report, for: chat) else { continue }
             let content = ReportContent.items(for: report, budget: max(budget - used, 0))
@@ -74,7 +79,7 @@ final class ChatSession: Sendable {
             used += content.bytes
             taken += 1
         }
-        return (items, taken, Inbox.waiting(for: chat.bundleIDs, paths: paths).count)
+        return (items, taken, waiting.count - lookedAt)
     }
 
     /// How long a chat that wasn't used most recently waits for the one that was to take a
@@ -153,7 +158,9 @@ final class ChatSession: Sendable {
             source.resume()
             sources.append(source)
         }
-        defer { sources.forEach { $0.cancel() } }
+        defer {
+            for source in sources { source.cancel() }
+        }
         while true {
             if ready() { return true }
             if waiter.isCancelled { return false }
