@@ -166,7 +166,7 @@ final class Hub: @unchecked Sendable {
         chatsWatcher = source
     }
 
-    private func updateApps(starting: Bool) {
+    func updateApps(starting: Bool) {
         let apps = Array(Set(fixedApps + Chats.live(paths).flatMap(\.bundleIDs))).sorted()
         let changed = lock.withLock {
             defer { currentApps = apps }
