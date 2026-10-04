@@ -389,16 +389,32 @@ private struct ReportPicture: View {
         }
         .task(id: url) {
             guard let url else { return }
-            let loaded = await Self.load(url, pixelWidth: pointWidth * displayScale)
+            let pixelWidth = pointWidth * displayScale
+            let key = "\(url.path(percentEncoded: false))|\(Int(pixelWidth))" as NSString
+            if let cached = Self.cache.object(forKey: key) {
+                image = cached
+                return
+            }
+            let loaded = await Self.load(url, pixelWidth: pixelWidth)
             // A row scrolled away, or a newer picture asked for: an older load mustn't replace it.
             guard !Task.isCancelled else { return }
+            if let loaded { Self.cache.setObject(loaded, forKey: key) }
             image = loaded
         }
     }
 
+    /// Decoded pictures, so reopening the list doesn't decode every cover again. Touched only
+    /// from the main actor, in `.task`.
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 60
+        return cache
+    }()
+
     /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
     nonisolated private static func load(_ url: URL, pixelWidth: CGFloat) async -> UIImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+        // Only the thumbnail is kept; the full image is never cached.
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
               let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
@@ -406,6 +422,7 @@ private struct ReportPicture: View {
         else { return nil }
         // The longest side, at no more than the width it's shown at.
         let longest = max(width, height) * min(pixelWidth / width, 1)
+        guard !Task.isCancelled else { return nil }
         let options = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,

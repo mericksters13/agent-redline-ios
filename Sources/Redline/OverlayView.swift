@@ -444,8 +444,8 @@ struct OverlayView: View {
         return HStack(spacing: -14) {
             ForEach(0..<max(min(pending.count, 3), 1), id: \.self) { index in
                 Group {
-                    if pending.images.indices.contains(index) {
-                        Image(uiImage: pending.images[index]).resizable().scaledToFill()
+                    if pending.previews.indices.contains(index) {
+                        Image(uiImage: pending.previews[index]).resizable().scaledToFill()
                     } else {
                         Color(white: 0.16).overlay {
                             if index == 0 { ProgressView().controlSize(.small).tint(Mono.text) }
@@ -730,7 +730,7 @@ struct OverlayView: View {
     /// close button on its inner corner and a send button below it.
     private func suggestionCard(_ suggestion: DebugSession.Suggestion) -> some View {
         let cardWidth: CGFloat = 96
-        let aspect = suggestion.image.size.height / max(suggestion.image.size.width, 1)
+        let aspect = suggestion.preview.size.height / max(suggestion.preview.size.width, 1)
         let cardHeight = min(cardWidth * aspect, 220)
         let center = session.buttonCenter ?? CGPoint(x: width - 34, y: session.screenSize.height / 2)
         let onRight = center.x > width / 2
@@ -742,7 +742,7 @@ struct OverlayView: View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         return VStack(spacing: 12) {
             Button { session.sendSuggestion() } label: {
-                Image(uiImage: suggestion.image)
+                Image(uiImage: suggestion.preview)
                     .resizable()
                     .scaledToFill()
                     .frame(width: cardWidth, height: cardHeight, alignment: .top)

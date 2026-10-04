@@ -29,8 +29,10 @@ final class DebugSession {
     /// Images waiting for their note: what the note card is about when no element is picked.
     struct PendingAttachment {
         var kind: Annotation.Kind
-        /// The images, or small previews of them while the full ones load.
+        /// The images, or small previews of them while the full ones load. Saved with the note.
         var images: [UIImage]
+        /// The note box's small pictures of the first few images, at the size they're shown.
+        var previews: [UIImage]
         var screen: ScreenInfo?
         /// True for a suggested screenshot: its note box sends the report.
         var sendsReport: Bool
@@ -48,6 +50,8 @@ final class DebugSession {
     struct Suggestion: Identifiable {
         let id = UUID()
         var image: UIImage
+        /// The card's picture, at the size it's shown. The full image is kept for sending.
+        var preview: UIImage
         var kind: Annotation.Kind
         var screen: ScreenInfo?
     }
@@ -129,7 +133,12 @@ final class DebugSession {
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var thumbnails: [UUID: UIImage] = [:]
     /// Full-size images for the viewer, kept for the few around the one showing.
-    @ObservationIgnored private var fullImages: [String: UIImage] = [:]
+    @ObservationIgnored private let fullImages: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        // The page showing and its neighbors, with room for one more.
+        cache.countLimit = 6
+        return cache
+    }()
     /// Images still being written to the draft. Send waits for them.
     @ObservationIgnored private var writes: [Task<Void, Never>] = []
     /// The send in progress, waiting for the draft's images before it saves the report.
@@ -374,7 +383,7 @@ final class DebugSession {
             captureID: captureID
         ))
         pruneCaptures()
-        fullImages = [:]
+        fullImages.removeAllObjects()
         persist()
         levels = []
         refreshMarkers()
@@ -427,7 +436,7 @@ final class DebugSession {
         annotations.remove(at: index)
         thumbnails[annotation.id] = nil
         // Other notes on the same screen show this one's outline, so their pictures are redrawn.
-        fullImages = [:]
+        fullImages.removeAllObjects()
         annotation.screenshots.forEach(store.deleteScreenshot(named:))
         pruneCaptures()
         persist()
@@ -460,7 +469,7 @@ final class DebugSession {
 
     func closeViewer() {
         viewerID = nil
-        fullImages = [:]
+        fullImages.removeAllObjects()
         setMode(annotations.isEmpty ? trayReturnMode : .tray)
     }
 
@@ -509,13 +518,11 @@ final class DebugSession {
     func fullImage(for annotation: Annotation, at index: Int) -> UIImage? {
         if let captureID = annotation.captureID { return screenPicture(for: annotation, on: captureID) }
         guard annotation.screenshots.indices.contains(index) else { return nil }
-        let key = "\(annotation.id.uuidString)-\(index)"
-        if let cached = fullImages[key] { return cached }
+        let key = "\(annotation.id.uuidString)-\(index)" as NSString
+        if let cached = fullImages.object(forKey: key) { return cached }
         let url = store.draftDirectory.appending(path: annotation.screenshots[index])
         guard let image = UIImage(contentsOfFile: url.path) else { return nil }
-        // Keep only a few; a long session can collect many full-screen images.
-        if fullImages.count >= 5 { fullImages.removeAll() }
-        fullImages[key] = image
+        fullImages.setObject(image, forKey: key)
         return image
     }
 
@@ -556,7 +563,9 @@ final class DebugSession {
         let capture = captureScreen()
         UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
         captureFlight = capture.image
-        beginAttachmentNote(PendingAttachment(kind: .screen, images: [capture.image], screen: capture.screen, sendsReport: false))
+        beginAttachmentNote(PendingAttachment(
+            kind: .screen, images: [capture.image], previews: [Self.preview(of: capture.image)], screen: capture.screen, sendsReport: false
+        ))
     }
 
     /// The captured screen has landed in the note box.
@@ -568,7 +577,9 @@ final class DebugSession {
     /// box opens at once with `previews`, and the full images take their place once loaded.
     func attachPhotos(previews: [UIImage], count: Int, loading: Task<[UIImage], Never>) {
         guard mode == .attaching, count > 0 else { return }
-        beginAttachmentNote(PendingAttachment(kind: .photo, images: previews, screen: nil, sendsReport: false, count: count, loading: loading))
+        beginAttachmentNote(PendingAttachment(
+            kind: .photo, images: previews, previews: previews, screen: nil, sendsReport: false, count: count, loading: loading
+        ))
         Task {
             let images = await loading.value
             guard pending?.loading == loading else { return }
@@ -578,7 +589,16 @@ final class DebugSession {
                 return
             }
             if images.count < count { logger.error("Loaded \(images.count) of \(count) chosen photos") }
+            // The grid's thumbnails stay as the previews. The system photo picker gives none, and
+            // a photo that didn't load leaves them out of step, so then they're made from the photos.
+            var shown = pending?.previews ?? []
+            if shown.count != images.count {
+                shown = []
+                for image in images.prefix(3) { shown.append(await Self.preparedPreview(of: image)) }
+                guard pending?.loading == loading else { return }
+            }
             pending?.images = images
+            pending?.previews = shown
             pending?.count = images.count
             pending?.loading = nil
         }
@@ -591,7 +611,9 @@ final class DebugSession {
         guard let suggestion, mode == .idle || mode == .picking else { return }
         suggestionTimer?.cancel()
         self.suggestion = nil
-        let attachment = PendingAttachment(kind: suggestion.kind, images: [suggestion.image], screen: suggestion.screen, sendsReport: true)
+        let attachment = PendingAttachment(
+            kind: suggestion.kind, images: [suggestion.image], previews: [suggestion.preview], screen: suggestion.screen, sendsReport: true
+        )
         beginAttachmentNote(attachment, returningTo: mode)
     }
 
@@ -620,7 +642,7 @@ final class DebugSession {
         guard window != nil, mode == .idle || mode == .picking else { return }
         let capture = captureScreen()
         rememberInAppCapture(at: .now)
-        offer(Suggestion(image: capture.image, kind: .screen, screen: capture.screen))
+        offer(Suggestion(image: capture.image, preview: Self.cardPreview(of: capture.image), kind: .screen, screen: capture.screen))
     }
 
     /// The newest screenshot taken in another app in the last 10 minutes, offered once,
@@ -640,7 +662,9 @@ final class DebugSession {
             guard let image = await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels),
                   mode == .idle || mode == .picking, suggestion == nil
             else { return }
-            offer(Suggestion(image: image, kind: .photo, screen: nil))
+            let preview = await image.byPreparingThumbnail(ofSize: Self.cardPreviewSize(of: image)) ?? image
+            guard mode == .idle || mode == .picking, suggestion == nil else { return }
+            offer(Suggestion(image: image, preview: preview, kind: .photo, screen: nil))
         }
     }
 
@@ -863,7 +887,7 @@ final class DebugSession {
         annotations = []
         screens = []
         thumbnails = [:]
-        fullImages = [:]
+        fullImages.removeAllObjects()
         captureImages = [:]
         levels = []
         markers = []
@@ -1018,8 +1042,8 @@ final class DebugSession {
     /// The capture a note was made on, with every note of its screen that's in view
     /// outlined and numbered, the note itself standing out.
     private func screenPicture(for annotation: Annotation, on captureID: UUID) -> UIImage? {
-        let key = "\(annotation.id.uuidString)-screen"
-        if let cached = fullImages[key] { return cached }
+        let key = "\(annotation.id.uuidString)-screen" as NSString
+        if let cached = fullImages.object(forKey: key) { return cached }
         guard let (record, capture) = capture(withID: captureID), let image = captureImage(capture),
               let plan = ScreenComposition.plan(for: [capture]) else { return nil }
         let group = record.captures.filter { $0.group == capture.group }
@@ -1032,8 +1056,7 @@ final class DebugSession {
             return ReportRenderer.Outline(number: index + 1, rect: rect, style: other.id == annotation.id ? .current : .quiet)
         }
         let picture = ReportRenderer.render(plan, pictures: [capture.id: image], outlines: outlines, scale: 2)
-        if fullImages.count >= 5 { fullImages.removeAll() }
-        fullImages[key] = picture
+        fullImages.setObject(picture, forKey: key)
         return picture
     }
 
@@ -1042,6 +1065,44 @@ final class DebugSession {
     func selectedElementPreview() -> UIImage? {
         guard let frame = selected?.frame, let image = screenshot else { return nil }
         return Self.crop(image, around: frame, screenWidth: screenSize.width)
+    }
+
+    /// The suggestion card's width in pixels: 96 points at 3x.
+    private static let cardPreviewWidth: CGFloat = 288
+    /// The note box's image slot's height in pixels: 56 points at 3x.
+    private static let notePreviewHeight: CGFloat = 168
+    /// The largest a thumbnail is shown, in pixels: 52 points at 3x.
+    private static let thumbnailSide: CGFloat = 156
+
+    private static func cardPreviewSize(of image: UIImage) -> CGSize {
+        CGSize(width: cardPreviewWidth, height: (cardPreviewWidth * image.size.height / max(image.size.width, 1)).rounded())
+    }
+
+    private static func notePreviewSize(of image: UIImage) -> CGSize {
+        CGSize(width: (notePreviewHeight * image.size.width / max(image.size.height, 1)).rounded(), height: notePreviewHeight)
+    }
+
+    /// The suggestion card's picture of an image.
+    private static func cardPreview(of image: UIImage) -> UIImage {
+        image.preparingThumbnail(of: cardPreviewSize(of: image)) ?? image
+    }
+
+    /// The note box's picture of an image.
+    private static func preview(of image: UIImage) -> UIImage {
+        image.preparingThumbnail(of: notePreviewSize(of: image)) ?? image
+    }
+
+    /// The note box's picture of an image, made off the main thread.
+    private static func preparedPreview(of image: UIImage) async -> UIImage {
+        await image.byPreparingThumbnail(ofSize: notePreviewSize(of: image)) ?? image
+    }
+
+    /// A bitmap of its own, no bigger than a thumbnail is shown. A cropped image keeps the
+    /// whole picture it was cut from alive; this one doesn't.
+    private static func thumbnailBitmap(_ image: CGImage) -> UIImage? {
+        let scale = min(thumbnailSide / CGFloat(max(image.width, 1)), thumbnailSide / CGFloat(max(image.height, 1)), 1)
+        let size = CGSize(width: (CGFloat(image.width) * scale).rounded(), height: (CGFloat(image.height) * scale).rounded())
+        return UIImage(cgImage: image).preparingThumbnail(of: size)
     }
 
     /// A square crop for a thumbnail. A wide element keeps its leading end and a tall one its
@@ -1055,7 +1116,7 @@ final class DebugSession {
         let crop = CGRect(x: area.minX * scale, y: area.minY * scale, width: area.width * scale, height: area.height * scale)
             .intersection(CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
         guard !crop.isEmpty, let cropped = cgImage.cropping(to: crop) else { return nil }
-        return UIImage(cgImage: cropped)
+        return thumbnailBitmap(cropped)
     }
 
     /// The top of an attached image, square, where a screen's title usually is.
@@ -1063,7 +1124,7 @@ final class DebugSession {
         guard let cgImage = image.cgImage else { return nil }
         let side = min(cgImage.width, cgImage.height)
         let crop = CGRect(x: (cgImage.width - side) / 2, y: 0, width: side, height: side)
-        return cgImage.cropping(to: crop).map { UIImage(cgImage: $0) }
+        return cgImage.cropping(to: crop).flatMap(thumbnailBitmap)
     }
 
     /// A small picture of the item for the notes list: a close crop around its element,
