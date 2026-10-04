@@ -14,6 +14,14 @@ struct ReportSourcesTests {
                 == #"{"delivered":[],"want":["20261003-215826"]}"# + "\n")
         #expect(HubMessage.decode(HubMessage.Upload.self, from: Data(#"{"files":{"report.md":"IyBIaQ=="},"id":"r"}"#.utf8))
                 == HubMessage.Upload(id: "r", files: ["report.md": Data("# Hi".utf8)]))
+        let ask = #"{"bundleID":"com.example.app","device":"D","kind":"chats","sourceFile":"/w/App.swift","token":"secret"}"#
+        #expect(HubMessage.decode(HubMessage.ChatsRequest.self, from: Data(ask.utf8))
+                == HubMessage.ChatsRequest(kind: "chats", device: "D", bundleID: "com.example.app", token: "secret", sourceFile: "/w/App.swift"))
+        // An offer isn't taken for a question about chats.
+        #expect(HubMessage.decode(HubMessage.ChatsRequest.self, from: Data(line.utf8)) == nil)
+        let list = HubMessage.ChatList(agents: ["claude"], chats: [HubMessage.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt",
+                                                                                 sameWorktree: true, lastActive: Date(timeIntervalSince1970: 1_791_000_000))], worktree: "wt")
+        #expect(String(decoding: HubMessage.encode(list), as: UTF8.self) == #"{"agents":["claude"],"chats":[{"agent":"claude","folder":"wt","id":"s1","lastActive":"2026-10-03T04:00:00Z","sameWorktree":true,"title":"Let"}],"worktree":"wt"}"# + "\n")
     }
 
     @Test func onlyFinishedReportsAreCopied() {

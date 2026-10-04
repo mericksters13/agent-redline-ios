@@ -23,9 +23,6 @@ enum HookEvent: String, Sendable {
     case start
     /// The user sent a message (Codex, Cursor): hand over reports sent to this chat.
     case prompt
-    /// A command or tool finished (every agent): if it built the app, note that this chat
-    /// built it, so reports from that build come here.
-    case built
     /// The agent finished a reply (Codex, Cursor, whose hooks can't wake an idle chat): if
     /// this chat builds the app, keep it open a while and continue it with a report sent to it.
     case stop
@@ -37,14 +34,6 @@ enum HookEvent: String, Sendable {
 struct HookInput: Equatable {
     var chat: String
     var folder: String
-    /// The command or tool that just finished, for the `built` event.
-    var tool = ""
-
-    /// The finished command or tool built an app, such as `xcodebuild` or an MCP build tool.
-    var ranABuild: Bool {
-        let tool = tool.lowercased()
-        return tool.contains("xcodebuild") || (tool.hasPrefix("mcp__") && tool.contains("build"))
-    }
 
     init?(_ agent: Agent, json: Data) {
         guard let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any] else { return nil }
@@ -60,10 +49,6 @@ struct HookInput: Equatable {
             chat = id
             folder = root
         }
-        // The tool's name and its whole input, which names the project or folder it built.
-        let input = (object["tool_input"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.withoutEscapingSlashes]) }
-            .map { String(decoding: $0, as: UTF8.self) }
-        tool = [object["tool_name"] as? String, input, object["command"] as? String].compactMap { $0 }.joined(separator: " ")
     }
 }
 
@@ -81,21 +66,6 @@ enum AgentHooks {
         let id = "\(agent.rawValue)-\(input.chat)"
         let folder = URL(fileURLWithPath: input.folder)
 
-        if event == .built {
-            // Runs after every command, so it looks for a new build before reading the project.
-            let recorded = Builds.record(chat: id, agent: agent.rawValue, folder: input.folder, paths: paths,
-                                         buildCommand: input.ranABuild ? input.tool : nil) {
-                ProjectApps.bundleIDs(in: folder)
-            }
-            guard let build = recorded.last else { return 0 }
-            let session = ChatSession(paths: paths, folder: folder, extraApps: [build.bundleID], agent: agent.rawValue, id: id,
-                                      pid: AgentProcess.find(agent, chat: input.chat))
-            // Registered, so the hub takes this app's reports.
-            session.register()
-            ProjectHistory.note(session.chat, paths: paths)
-            return 0
-        }
-
         let session = ChatSession(paths: paths, folder: folder, extraApps: [], agent: agent.rawValue, id: id,
                                   pid: AgentProcess.find(agent, chat: input.chat))
         // Not an app project: nothing to do, in every project the agent opens.
@@ -112,8 +82,9 @@ enum AgentHooks {
 
         case .stop:
             if let text = session.takeAddressed() { return answer(agent, event, reportPrompt(text)) }
-            // Only a chat that built the app can be sent its reports; any other stops as usual.
-            guard Builds.madeBy(id, paths: paths), let lock = WaitLock(chat: id, paths: paths) else { return answer(agent, event, nil) }
+            // Only a chat a report was sent to waits for more; any other stops as usual.
+            guard !InboxQueue.reports(for: session.chat.bundleIDs, paths: paths).filter({ InboxQueue.address(of: $0.folder)?.chat == id }).isEmpty,
+                  let lock = WaitLock(chat: id, paths: paths) else { return answer(agent, event, nil) }
             session.registerWaiting()
             let waiter = ChatSession.Waiter()
             let deadline = Date().addingTimeInterval(holdOpen)
@@ -126,9 +97,6 @@ enum AgentHooks {
 
         case .end:
             session.unregister()
-            return 0
-
-        case .built:
             return 0
         }
     }
@@ -166,7 +134,7 @@ enum AgentHooks {
             ? "Its pictures are attached, in the order listed."
             : "Open its pictures and show them to the user in this chat, with your tool for sending files to the user if you have one."
         return """
-        A UI report arrived from the user's device through iOSAgenticDebuggingKit, from the build of the app this chat made. \
+        A UI report arrived from the user's device through iOSAgenticDebuggingKit. \
         \(pictures) Find the code for each noted element by its identifier or label, tell the user what you found and \
         propose a fix before changing code.
 

@@ -46,7 +46,13 @@ final class HubListener: @unchecked Sendable {
 
     private func serve(_ lines: Lines) async {
         guard await lines.open() else { return }
-        guard let first = await lines.read(), let offer = HubMessage.decode(HubMessage.Offer.self, from: first) else {
+        guard let first = await lines.read() else { return }
+        // Before sending, the app asks where a report can go.
+        if let request = HubMessage.decode(HubMessage.ChatsRequest.self, from: first), request.kind == "chats" {
+            _ = await lines.send(HubMessage.encode(hub.chats(request)))
+            return
+        }
+        guard let offer = HubMessage.decode(HubMessage.Offer.self, from: first) else {
             hub.log("A connection didn't start with an offer from an app")
             return
         }

@@ -107,10 +107,18 @@ struct Report: Codable, Sendable {
         var name: String?
         var version: String?
         var build: String?
-        /// The running build's binary UUIDs, which the Mac matches to the chat that built it.
-        var buildIDs: [String]? = nil
-        /// The project file that attached the kit, naming the folder the app was built from.
+        /// The project file that attached the kit, naming the worktree the app was built from.
         var sourceFile: String? = nil
+    }
+
+    /// Where the user picked for the report to go, on the phone.
+    struct Destination: Codable, Equatable, Sendable {
+        /// `claude`, `codex` or `cursor`.
+        var agent: String
+        /// The agent's ID for the chat; nil for a new chat in the worktree the app was built from.
+        var chat: String?
+        /// What the phone showed, for its own messages.
+        var title: String
     }
 
     struct Device: Codable, Sendable {
@@ -183,6 +191,8 @@ struct Report: Codable, Sendable {
     var device: Device
     var screens: [Screen]
     var items: [Item]
+    /// Nil when the user didn't pick: the Mac sends it to the chat working in the worktree.
+    var destination: Destination? = nil
 }
 
 extension Report {

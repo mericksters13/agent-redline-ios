@@ -31,9 +31,9 @@ struct AgentHookTests {
         let added = AgentSettings.adding(.codex, to: codexSettings, executable: executable)
         // Codex chats are woken through the Codex app: no stop hook holds them open.
         #expect(commands(added, "Stop") == ["node hook.mjs"])
-        #expect(commands(added, "PostToolUse") == ["node hook.mjs", "'\(executable)' hook codex built"])
+        #expect(commands(added, "PostToolUse") == ["node hook.mjs"])
+        // One hook for Codex: the safety net for a report the Codex app didn't take.
         #expect(commands(added, "UserPromptSubmit") == ["'\(executable)' hook codex prompt"])
-        // Two hooks for Codex: noting builds, and the message safety net.
         #expect((added["hooks"] as? [String: Any])?.keys.sorted() == ["PostToolUse", "Stop", "UserPromptSubmit"])
         // Run again, nothing changes.
         #expect(json(AgentSettings.adding(.codex, to: added, executable: executable)) == json(added))
@@ -42,13 +42,8 @@ struct AgentHookTests {
     }
 
     @Test func eachAgentGetsItsOwnShape() {
-        let claude = AgentSettings.adding(.claude, to: ["model": "opus"], executable: executable)
-        #expect(claude["model"] as? String == "opus")
-        // Claude Code chats are reached through their socket: only builds are noted.
-        #expect((claude["hooks"] as? [String: Any])?.keys.sorted() == ["PostToolUse"])
-        #expect(commands(claude, "PostToolUse") == ["'\(executable)' hook claude built"])
-        let group = ((claude["hooks"] as? [String: Any])?["PostToolUse"] as? [[String: Any]])?.first
-        #expect(group?["matcher"] as? String == "Bash|mcp__.*")
+        // Claude Code chats are found from their own records: no hooks, and the file is left as it was.
+        #expect(json(AgentSettings.adding(.claude, to: ["model": "opus"], executable: executable)) == json(["model": "opus"]))
 
         let cursor = AgentSettings.adding(.cursor, to: [:], executable: executable)
         #expect(cursor["version"] as? Int == 1)
@@ -121,78 +116,71 @@ struct AgentHookTests {
         return final
     }
 
-    /// A derived data folder with one built app, as Xcode leaves it.
-    private func derivedData(project: URL, executable: URL) throws -> URL {
-        let root = root.appending(path: "DerivedData/App-abc", directoryHint: .isDirectory)
-        let app = root.appending(path: "Build/Products/Debug-iphoneos/App.app", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
-        try (["WorkspacePath": project.appending(path: "App.xcodeproj").path] as NSDictionary).write(to: root.appending(path: "info.plist"))
-        try (["CFBundleIdentifier": "com.example.app", "CFBundleExecutable": "App"] as NSDictionary).write(to: app.appending(path: "Info.plist"))
-        try FileManager.default.copyItem(at: executable, to: app.appending(path: "App"))
-        // Just built.
-        try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: app.appending(path: "App").path)
-        return root
+    /// A report folder with what the phone saved: the worktree's file and the user's pick.
+    private func report(sourceFile: String?, pick: [String: Any]?) throws -> URL {
+        let folder = root.appending(path: "report-\(UUID().uuidString.prefix(6))", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var listing: [String: Any] = ["app": sourceFile.map { ["sourceFile": $0] } ?? [String: Any]()]
+        if let pick { listing["destination"] = pick }
+        try JSONSerialization.data(withJSONObject: listing).write(to: folder.appending(path: "report.json"))
+        return folder
     }
 
-    @Test func buildUUIDsMatchWhatXcodeToolsRead() throws {
-        let binary = URL(fileURLWithPath: "/usr/bin/true")
-        let dwarfdump = Process()
-        dwarfdump.executableURL = URL(fileURLWithPath: "/usr/bin/dwarfdump")
-        dwarfdump.arguments = ["--uuid", binary.path]
-        let pipe = Pipe()
-        dwarfdump.standardOutput = pipe
-        try dwarfdump.run()
-        dwarfdump.waitUntilExit()
-        let expected = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            .split(separator: "\n").compactMap { $0.split(separator: " ").dropFirst().first.map(String.init) }
-        #expect(!expected.isEmpty)
-        #expect(Builds.machOUUIDs(binary) == expected)
+    private func chat(_ id: String, _ agent: String, sameWorktree: Bool) -> HubMessage.Chat {
+        HubMessage.Chat(id: id, agent: agent, title: id, folder: "wt", sameWorktree: sameWorktree, lastActive: Date())
     }
 
-    @Test func aReportGoesToTheChatThatBuiltTheApp() throws {
-        let project = root.appending(path: "worktree-a", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: project.appending(path: ".git"), withIntermediateDirectories: true)
-        let derived = try derivedData(project: project, executable: URL(fileURLWithPath: "/usr/bin/true"))
-        let ids = Builds.machOUUIDs(URL(fileURLWithPath: "/usr/bin/true"))
+    @Test func aReportGoesWhereThePhonePickedOrElseToItsWorktreesChat() throws {
+        let worktree = root.appending(path: "worktree-a", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: worktree.appending(path: ".git"), withIntermediateDirectories: true)
+        let file = worktree.appending(path: "App/AppMain.swift").path
+        let folder = worktree.standardizedFileURL.path
+        func route(_ report: URL, _ chats: [HubMessage.Chat]) -> Destination {
+            Routing.destination(of: report, bundleID: "com.example.app", paths: paths) { _, _ in
+                HubMessage.ChatList(agents: ["claude", "codex"], chats: chats)
+            }
+        }
+        let others = [chat("A", "claude", sameWorktree: true), chat("B", "codex", sameWorktree: false)]
 
-        // The chat's hook runs after its build command.
-        let recorded = Builds.record(chat: "codex-A", agent: "codex", folder: project.appending(path: "App").path, paths: paths,
-                                     roots: [derived]) { ["com.example.app"] }
-        let build = try #require(recorded.first)
-        #expect(recorded.count == 1)
-        #expect(build.folder == project.standardizedFileURL.path)
-        // Another chat's next command doesn't take the credit, even a build command elsewhere.
-        #expect(Builds.record(chat: "claude-B", agent: "claude", folder: project.path, paths: paths, roots: [derived]) { ["com.example.app"] }.isEmpty)
-        #expect(Builds.record(chat: "claude-B", agent: "claude", folder: "/elsewhere", paths: paths, roots: [derived], buildCommand: "xcodebuild -project \(project.path)/App.xcodeproj") { [] }.isEmpty)
-        // A build command in a chat working elsewhere counts for the build it just made.
-        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)],
-                                              ofItemAtPath: derived.appending(path: "Build/Products/Debug-iphoneos/App.app/App").path)
-        #expect(Builds.record(chat: "claude-C", agent: "claude", folder: "/elsewhere", paths: paths, roots: [derived], now: Date().addingTimeInterval(6)) { [] }.isEmpty)
-        // A build command that doesn't name the folder doesn't get the build another chat just made.
-        #expect(Builds.record(chat: "claude-C", agent: "claude", folder: "/elsewhere", paths: paths, roots: [derived],
-                              now: Date().addingTimeInterval(6), buildCommand: "xcodebuild -project /elsewhere/Other.xcodeproj") { [] }.isEmpty)
-        let elsewhere = Builds.record(chat: "claude-C", agent: "claude", folder: "/elsewhere", paths: paths, roots: [derived],
-                                      now: Date().addingTimeInterval(6), buildCommand: "cd \(project.path)/App && xcodebuild build") { [] }
-        #expect(elsewhere.first?.folder == project.standardizedFileURL.path)
-        #expect(HookInput(.claude, json: Data(#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{"command":"cd x && xcodebuild -scheme App build"}}"#.utf8))?.ranABuild == true)
-        #expect(HookInput(.codex, json: Data(#"{"session_id":"s","cwd":"/p","tool_name":"mcp__XcodeBuildMCP__build_sim"}"#.utf8))?.ranABuild == true)
-        #expect(HookInput(.claude, json: Data(#"{"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{"command":"ls"}}"#.utf8))?.ranABuild == false)
+        // The user's pick wins, even over the chat in the worktree.
+        #expect(route(try report(sourceFile: file, pick: ["agent": "codex", "chat": "B"]), others) == .chat(.codex, id: "B"))
+        #expect(route(try report(sourceFile: file, pick: ["agent": "codex"]), others) == .newChat(.codex, folder: folder))
+        // No pick: the one chat in the worktree, or a new chat there with the first agent.
+        #expect(route(try report(sourceFile: file, pick: nil), others) == .chat(.claude, id: "A"))
+        #expect(route(try report(sourceFile: file, pick: nil), [chat("B", "codex", sameWorktree: false)]) == .newChat(.claude, folder: folder))
+        // Several chats in the worktree and no pick: no guessing.
+        if case .undecided = route(try report(sourceFile: file, pick: nil), others + [chat("C", "codex", sameWorktree: true)]) {} else {
+            Issue.record("Two chats in the worktree should leave the report undecided")
+        }
+        if case .undecided = route(try report(sourceFile: nil, pick: nil), others) {} else {
+            Issue.record("A report without its worktree should be undecided")
+        }
+    }
 
-        let incoming = root.appending(path: "incoming", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
-        try JSONSerialization.data(withJSONObject: ["app": ["buildIDs": [try #require(ids.first)]]]).write(to: incoming.appending(path: "report.json"))
-        // The newest build with the UUID wins: the one on the device.
-        #expect(Routing.destination(of: incoming, bundleID: "com.example.app", paths: paths) == .chat(try #require(elsewhere.first)))
-        _ = build
-
-        // A build no chat made: a new chat in the folder it was built from.
-        try JSONSerialization.data(withJSONObject: ["app": ["buildIDs": ["00000000-0000-0000-0000-000000000000"],
-                                                            "sourceFile": project.appending(path: "App/AppMain.swift").path]])
-            .write(to: incoming.appending(path: "report.json"))
-        #expect(Routing.destination(of: incoming, bundleID: "com.example.app", paths: paths, roots: []) == .newChat(.claude, folder: project.standardizedFileURL.path))
-        // An app with an older kit says nothing about its build.
-        try JSONSerialization.data(withJSONObject: ["app": [String: Any]()]).write(to: incoming.appending(path: "report.json"))
-        #expect(Routing.destination(of: incoming, bundleID: "com.example.app", paths: paths, roots: []) == .unknown)
+    @Test func codexChatsLeaveOutWhatCodexRunsOnItsOwn() throws {
+        let database = root.appending(path: "state_5.sqlite")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let old = now - 30 * 86_400_000
+        let sql = """
+            CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, updated_at_ms INTEGER,
+                                  archived INTEGER, agent_role TEXT, thread_source TEXT, source TEXT);
+            INSERT INTO threads VALUES ('t-user', 'Fix the paywall', 'Fix the paywall', 'fix it', '/p', \(now), 0, NULL, 'user', 'vscode');
+            INSERT INTO threads VALUES ('t-older', '', '', 'Why is the outline wide', '/p', \(now - 1000), 0, NULL, NULL, 'vscode');
+            INSERT INTO threads VALUES ('t-guardian', 'Guardian review', '', '', '/p', \(now), 0, NULL, 'guardian_review', '{"subagent":{"other":"guardian"}}');
+            INSERT INTO threads VALUES ('t-auto', 'Nightly', '', '', '/p', \(now), 0, NULL, 'automation', 'vscode');
+            INSERT INTO threads VALUES ('t-archived', 'Old', '', '', '/p', \(now), 1, NULL, 'user', 'vscode');
+            INSERT INTO threads VALUES ('t-stale', 'Stale', '', '', '/p', \(old), 0, NULL, 'user', 'vscode');
+            """
+        let sqlite = Process()
+        sqlite.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        sqlite.arguments = [database.path, sql]
+        try sqlite.run()
+        sqlite.waitUntilExit()
+        let threads = CodexThreads.recent(in: database)
+        #expect(threads.map(\.id) == ["t-user", "t-older"])
+        // A chat without a name goes by its first message.
+        #expect(threads.last?.title == "Why is the outline wide")
     }
 
     @Test func onlyTheAddressedChatTakesAReport() throws {

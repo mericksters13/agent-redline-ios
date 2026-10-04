@@ -14,6 +14,9 @@ enum HubMessage {
         /// Proves an offer comes from the phone and app the address was given to: only a Mac
         /// paired with the phone can leave it there.
         var token: String?
+        /// False in a simulator app, whose reports the hub takes from its folder: the app only
+        /// asks which chats a report can go to.
+        var uploads: Bool? = nil
     }
 
     struct Offer: Codable, Equatable, Sendable {
@@ -45,6 +48,42 @@ enum HubMessage {
 
     struct Reply: Codable, Equatable, Sendable {
         var delivered: [String]
+    }
+
+    /// Before the user sends, the app asks which chats a report can go to.
+    struct ChatsRequest: Codable, Equatable, Sendable {
+        /// Always "chats": tells this request from an offer, which has no kind.
+        var kind: String
+        var device: String
+        var bundleID: String
+        var token: String
+        /// The project file that attached the kit, naming the worktree the app was built from.
+        var sourceFile: String?
+    }
+
+    /// An open chat a report can go to.
+    struct Chat: Codable, Equatable, Sendable {
+        /// The agent's own ID for the chat: Claude Code's session ID, Codex's thread ID.
+        var id: String
+        /// `claude`, `codex` or `cursor`.
+        var agent: String
+        var title: String
+        /// The last part of the chat's folder.
+        var folder: String
+        /// The chat works in the worktree the app was built from.
+        var sameWorktree: Bool
+        var lastActive: Date
+    }
+
+    struct ChatList: Codable, Equatable, Sendable {
+        /// The agents on this Mac reports can go to, in the order to show them.
+        var agents: [String]
+        /// The open chats on the app, those in the app's worktree first, then by last use.
+        var chats: [Chat]
+        /// The last part of the worktree the app was built from, where a new chat starts.
+        var worktree: String?
+        /// Why the request was turned down, when it was.
+        var refused: String?
     }
 
     /// Where the kit looks for the hub's address, inside an app's data container.

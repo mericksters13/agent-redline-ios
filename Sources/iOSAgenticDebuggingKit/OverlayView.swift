@@ -46,7 +46,7 @@ struct OverlayView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if session.mode != .idle && session.mode != .viewer && session.mode != .reports {
+            if session.mode != .idle && session.mode != .viewer && session.mode != .reports && session.mode != .destination {
                 touchSurface
                 ForEach(session.markers) { marker in
                     savedNoteMarker(number: marker.number, frame: marker.frame)
@@ -104,6 +104,11 @@ struct OverlayView: View {
                     .transition(.opacity)
             }
 
+            if session.mode == .destination {
+                DestinationPicker(session: session)
+                    .transition(.opacity)
+            }
+
             if session.mode == .idle {
                 if let toast = session.toast {
                     toastView(toast)
@@ -149,7 +154,7 @@ struct OverlayView: View {
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture { session.toggleTray() }
-        case .noting, .idle, .viewer, .attaching, .reports:
+        case .noting, .idle, .viewer, .attaching, .reports, .destination:
             Color.clear.contentShape(Rectangle())
         }
     }
@@ -504,6 +509,10 @@ struct OverlayView: View {
                     }
                     noteRow(number: index + 1, annotation: annotation)
                 }
+                if session.canPickDestination {
+                    Rectangle().fill(Mono.hairline).frame(height: 1)
+                    destinationRow
+                }
             }
             .padding(.vertical, 6)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listContentHeight = $0 }
@@ -517,6 +526,38 @@ struct OverlayView: View {
         .padding(.leading, panelLeading)
         .padding(.top, islandBottom + 8)
         .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    /// Where Send goes, and the way to change it.
+    private var destinationRow: some View {
+        Button { session.openDestinations() } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "paperplane")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Mono.text)
+                    .frame(width: 52)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Send to")
+                        .font(.caption)
+                        .foregroundStyle(Mono.secondary)
+                    Text(session.destination.map { "\($0.title) · \(HubLink.agentName($0.agent))" } ?? "Choose a chat")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Mono.text)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Mono.secondary)
+                    .frame(width: 44, height: 44)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(session.destination.map { "Send to \($0.title), \(HubLink.agentName($0.agent))" } ?? "Choose where to send")
+        .accessibilityHint("Changes where reports go")
     }
 
     private func noteRow(number: Int, annotation: Annotation) -> some View {

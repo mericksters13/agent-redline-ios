@@ -1,44 +1,61 @@
 #if os(macOS)
 import Foundation
 
-/// Where a report goes: the chat that built the app it came from. The app sends its build's
-/// UUIDs; the agents' hooks noted which chat built each one.
+/// Where a report goes.
 enum Destination: Equatable {
-    /// The chat that built the app.
-    case chat(BuildRecord)
-    /// No chat built it (built in Xcode by hand, or before builds were noted): a new chat in
-    /// the folder it was built from.
+    /// An open chat: the one the user picked on the phone, or the only chat working in the
+    /// worktree the app was built from.
+    case chat(Agent, id: String)
+    /// A new chat in the worktree the app was built from: picked on the phone, or because no
+    /// chat works there.
     case newChat(Agent, folder: String)
-    /// Nothing tells where it's from, such as a report from an app with an older kit.
-    case unknown
+    /// Nothing says where: several chats work in the worktree and none was picked, or the
+    /// report doesn't say where the app was built. It waits in the inbox.
+    case undecided(String)
 }
 
 enum Routing {
-    /// Reads where the report came from. `incoming` is its folder, before it's in the inbox.
-    static func destination(of incoming: URL, bundleID: String, paths: HubPaths, roots: [URL]? = nil) -> Destination {
-        struct Listing: Decodable {
-            struct App: Decodable {
-                var buildIDs: [String]?
-                var sourceFile: String?
-            }
-            var app: App
+    /// What the phone saved with the report: the user's pick, and the worktree the app was
+    /// built from.
+    struct Listing: Decodable {
+        struct App: Decodable { var sourceFile: String? }
+        struct Pick: Decodable {
+            var agent: String
+            /// Nil for a new chat.
+            var chat: String?
         }
-        let app = (try? Data(contentsOf: incoming.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }?.app
-        let ids = app?.buildIDs ?? []
-        if !ids.isEmpty, let build = Builds.find(ids, paths: paths) { return .chat(build) }
-        let folder = (ids.isEmpty ? nil : Builds.folder(of: ids, bundleID: bundleID, roots: roots)) ?? app?.sourceFile.map(Builds.worktreeRoot)
-        guard let folder else { return .unknown }
-        let agent = ProjectHistory.all(paths)[bundleID].flatMap { Agent(rawValue: $0.agent) } ?? .claude
-        return .newChat(agent, folder: folder)
+        var app: App
+        var destination: Pick?
+    }
+
+    static func worktree(of report: URL) -> String? {
+        (try? Data(contentsOf: report.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }?
+            .app.sourceFile.map(Worktree.root(of:))
+    }
+
+    static func destination(of report: URL, bundleID: String, paths: HubPaths,
+                            list: (String, String?) -> HubMessage.ChatList) -> Destination {
+        let listing = (try? Data(contentsOf: report.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }
+        let worktree = listing?.app.sourceFile.map(Worktree.root(of:))
+        if let pick = listing?.destination, let agent = Agent(rawValue: pick.agent) {
+            if let chat = pick.chat { return .chat(agent, id: chat) }
+            guard let worktree else { return .undecided("The report doesn't say which worktree the app was built from") }
+            return .newChat(agent, folder: worktree)
+        }
+        guard let worktree else { return .undecided("The report doesn't say which worktree the app was built from") }
+        let directory = list(bundleID, listing?.app.sourceFile)
+        let here = directory.chats.filter(\.sameWorktree)
+        if here.count == 1, let chat = here.first, let agent = Agent(rawValue: chat.agent) { return .chat(agent, id: chat.id) }
+        if here.isEmpty, let agent = directory.agents.first.flatMap(Agent.init(rawValue:)) { return .newChat(agent, folder: worktree) }
+        return .undecided("\(here.count) chats work in \(URL(fileURLWithPath: worktree).lastPathComponent); pick one on the phone")
     }
 }
 
-/// Sends each report to the chat that built the app it came from. An open Claude Code chat
-/// gets it through its socket, which starts a turn even when the chat is idle. An open Codex
-/// or Cursor chat gets it when its hooks next run: right away if the chat is waiting after a
-/// reply, otherwise after its next reply or with the user's next message. If that chat is
-/// closed, or no chat built the app, the hub starts a chat in the folder the app was built
-/// from, which looks into the report and proposes a fix without changing code.
+/// Sends each report where the user picked on the phone, or else to the chat working in the
+/// worktree the app was built from. A Claude Code chat gets it through its socket, which
+/// starts a turn even when the chat is idle. A Codex chat gets it through the Codex app with
+/// its pictures attached. A Cursor chat gets it when its hooks next run. A new chat starts in
+/// the worktree and looks into the report without changing code.
 final class Handoff: @unchecked Sendable {
     private unowned let hub: Hub
     private let queue = DispatchQueue(label: "handoff")
@@ -47,30 +64,10 @@ final class Handoff: @unchecked Sendable {
         self.hub = hub
     }
 
-    /// Decides where a report goes, before it appears in the inbox: a chat waiting for its
-    /// reports sees it addressed the moment it arrives.
-    func address(_ incoming: URL, source: ReportSource) -> Destination {
-        let destination = Routing.destination(of: incoming, bundleID: source.bundleID, paths: hub.paths)
-        if case .chat(let build) = destination {
-            InboxQueue.setAddress(Address(chat: build.chat, agent: build.agent, folder: build.folder), of: incoming)
-        }
-        return destination
-    }
-
-    /// Delivers a report now in the inbox.
-    func deliver(_ folder: URL, source: ReportSource, to destination: Destination) {
+    func reportFiled(_ folder: URL, source: ReportSource) {
         queue.async { [self] in
             guard let report = InboxQueue.waiting(for: [source.bundleID], paths: hub.paths).first(where: { $0.folder == folder }) else { return }
-            switch destination {
-            case .chat(let build):
-                deliver(report, to: build)
-            case .newChat(let agent, let folder):
-                hub.log("No chat built the app report \(source.reportID) came from; starting one in \(folder)")
-                startChat(agent, in: folder, for: report)
-            case .unknown:
-                hub.log("Report \(source.reportID) doesn't say which build it came from; it waits in the inbox")
-                Self.notify(title: "Report from \(source.deviceName)", message: "Rebuild the app with the newest kit so reports find the chat that built it.")
-            }
+            deliver(report)
         }
     }
 
@@ -78,121 +75,140 @@ final class Handoff: @unchecked Sendable {
     func handOverRecent(within interval: TimeInterval = 3600) {
         queue.async { [self] in
             let apps = Set(Chats.live(hub.paths).flatMap(\.bundleIDs) + ProjectHistory.all(hub.paths).keys)
-            for report in InboxQueue.waiting(for: Array(apps), paths: hub.paths) where Date().timeIntervalSince(report.source.receivedAt) < interval {
-                let destination = address(report.folder, source: report.source)
-                // Already in the inbox: wake a chat waiting for it.
-                InboxQueue.signal(report.source.bundleID, paths: hub.paths)
-                deliver(report.folder, source: report.source, to: destination)
+            for report in InboxQueue.waiting(for: Array(apps), paths: hub.paths)
+            where Date().timeIntervalSince(report.source.receivedAt) < interval && InboxQueue.address(of: report.folder) == nil {
+                deliver(report)
             }
         }
     }
 
-    private func deliver(_ report: InboxReport, to build: BuildRecord) {
+    private func deliver(_ report: InboxReport) {
         let source = report.source
-        guard let agent = Agent(rawValue: build.agent) else { return }
-        let place = Self.folderName(build.folder)
-        switch agent {
-        case .claude:
-            let sessionID = build.chat.replacingOccurrences(of: "claude-", with: "", options: .anchored)
-            guard let session = ClaudeSessions.open().first(where: { $0.id == sessionID }) else {
-                hub.log("The Claude Code chat that built report \(source.reportID)'s app is closed; starting one in \(build.folder)")
-                startChat(.claude, in: build.folder, for: report)
-                return
-            }
-            let chat = ChatRecord(id: build.chat, agent: build.agent, folder: build.folder, bundleIDs: [source.bundleID], pid: getpid(),
-                                  registeredAt: Date(), lastActiveAt: Date())
-            guard InboxQueue.claim(report, for: chat) else { return }
-            if ClaudeSessions.send(AgentHooks.reportPrompt(ReportContent.text(for: report)), to: session) {
-                hub.log("Sent report \(source.reportID) to the Claude Code chat that built it, in \(session.folder)")
-                Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Claude Code chat that built the app, in \(place).")
-            } else {
-                try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
-                hub.log("The Claude Code chat in \(session.folder) didn't take report \(source.reportID); it waits in the inbox")
-                Self.notify(title: "Report from \(source.deviceName)", message: "The Claude Code chat in \(place) didn't take it. It waits in the inbox.")
-            }
-        case .codex:
-            sendToCodex(report, build: build, place: place)
-        case .cursor:
-            guard let chat = Chats.live(hub.paths).first(where: { $0.id == build.chat }) else {
-                hub.log("The Cursor chat that built report \(source.reportID)'s app is closed; starting one in \(build.folder)")
-                startChat(.cursor, in: build.folder, for: report)
-                return
-            }
-            // A chat waiting after a reply takes it the moment it's in the inbox.
-            guard !chat.isWaiting else { return }
-            hub.log("Report \(source.reportID) goes to the Cursor chat in \(build.folder) when its hooks next run")
-            Self.notify(title: "Report from \(source.deviceName)",
-                        message: "Goes to the Cursor chat that built the app, in \(place), after its next reply or with your next message there.")
+        let paths = hub.paths
+        let destination = Routing.destination(of: report.folder, bundleID: source.bundleID, paths: paths) { bundleID, sourceFile in
+            ChatDirectory.list(bundleID: bundleID, sourceFile: sourceFile, paths: paths)
+        }
+        let worktree = Routing.worktree(of: report.folder)
+        switch destination {
+        case .chat(.claude, let id):
+            sendToClaude(report, session: id, worktree: worktree)
+        case .chat(.codex, let id):
+            sendToCodex(report, thread: id)
+        case .chat(.cursor, let id):
+            InboxQueue.setAddress(Address(chat: "cursor-\(id)", agent: Agent.cursor.rawValue, folder: worktree ?? ""), of: report.folder)
+            InboxQueue.signal(source.bundleID, paths: paths)
+            hub.log("Report \(source.reportID) goes to the Cursor chat \(id) when its hooks next run")
+            Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Cursor chat after its next reply or with your next message there.")
+        case .newChat(let agent, let folder):
+            startChat(agent, in: folder, for: report)
+        case .undecided(let reason):
+            hub.log("Report \(source.reportID) waits in the inbox: \(reason)")
+            Self.notify(title: "Report from \(source.deviceName)", message: "\(reason).")
         }
     }
 
-    /// Starts a turn with the report, pictures attached, in the Codex chat that built the app.
-    /// A chat that isn't open in a Codex window is opened first. If the app can't take it, the
-    /// report goes in with the chat's next message.
-    private func sendToCodex(_ report: InboxReport, build: BuildRecord, place: String) {
+    /// Puts the report into a Claude Code chat through its socket. If the chat closed, a new
+    /// one starts in the worktree.
+    private func sendToClaude(_ report: InboxReport, session id: String, worktree: String?) {
         let source = report.source
-        let thread = build.chat.replacingOccurrences(of: "codex-", with: "", options: .anchored)
-        let chat = ChatRecord(id: build.chat, agent: build.agent, folder: build.folder, bundleIDs: [source.bundleID], pid: getpid(),
+        guard let session = ClaudeSessions.open().first(where: { $0.id == id }) else {
+            hub.log("The Claude Code chat for report \(source.reportID) is closed")
+            if let worktree { startChat(.claude, in: worktree, for: report) }
+            return
+        }
+        let chat = ChatRecord(id: "claude-\(id)", agent: Agent.claude.rawValue, folder: session.folder, bundleIDs: [source.bundleID],
+                              pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
+        guard InboxQueue.claim(report, for: chat) else { return }
+        let name = session.title ?? Self.folderName(session.folder)
+        if ClaudeSessions.send(AgentHooks.reportPrompt(ReportContent.text(for: report)), to: session) {
+            hub.log("Sent report \(source.reportID) to the Claude Code chat \(name), in \(session.folder)")
+            Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Claude Code chat \(name).")
+        } else {
+            try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+            hub.log("The Claude Code chat \(name) didn't take report \(source.reportID); it waits in the inbox")
+            Self.notify(title: "Report from \(source.deviceName)", message: "The Claude Code chat \(name) didn't take it. It waits in the inbox.")
+        }
+    }
+
+    /// Starts a turn with the report, pictures attached, in a Codex chat. A chat no Codex window
+    /// has open is opened first. If the app can't take it, the chat's own hook hands it over
+    /// with the next message.
+    private func sendToCodex(_ report: InboxReport, thread: String) {
+        let source = report.source
+        let chat = ChatRecord(id: "codex-\(thread)", agent: Agent.codex.rawValue, folder: "", bundleIDs: [source.bundleID], pid: getpid(),
                               registeredAt: Date(), lastActiveAt: Date())
         guard InboxQueue.claim(report, for: chat) else { return }
         let pictures = ReportContent.pictures(in: report.folder)
         let text = AgentHooks.reportPrompt(ReportContent.text(for: report), picturesAttached: true)
         var outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
-        if outcome == .notOpen, let link = URL(string: "codex://threads/\(thread)") {
+        if outcome == .notOpen {
             hub.log("The Codex chat for report \(source.reportID) isn't open; opening it")
-            let open = Process()
-            open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            open.arguments = [link.absoluteString]
-            try? open.run()
-            open.waitUntilExit()
+            Self.open("codex://threads/\(thread)")
             Thread.sleep(forTimeInterval: 5)
             outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
         }
         if outcome == .started {
-            hub.log("Sent report \(source.reportID) with \(pictures.count) pictures to the Codex chat that built it, in \(build.folder)")
-            Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Codex chat that built the app, in \(place).")
+            hub.log("Sent report \(source.reportID) with \(pictures.count) pictures to the Codex chat \(thread)")
+            Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Codex chat, with its pictures.")
             return
         }
-        // The chat's own hooks hand it over with the next message.
         try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+        InboxQueue.setAddress(Address(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
         hub.log("The Codex app didn't take report \(source.reportID) (\(outcome)); it goes in with the chat's next message")
-        Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Codex chat that built the app, in \(place), with your next message there.")
+        Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Codex chat with your next message there.")
+    }
+
+    private static func open(_ link: String) {
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = [link]
+        try? open.run()
+        open.waitUntilExit()
     }
 
     private func startChat(_ agent: Agent, in folder: String, for report: InboxReport) {
         let source = report.source
         guard let executable = AgentCommand.locate(agent) else {
             hub.log("Couldn't find \(agent.name)'s command to start a chat for report \(source.reportID)")
-            Self.notify(title: "Report from \(source.deviceName)", message: "Couldn't find \(agent.name) to start a chat. Open one in \(Self.folderName(folder)).")
+            Self.notify(title: "Report from \(source.deviceName)", message: "Couldn't find \(agent.name) to start a chat. The report waits in the inbox.")
             return
         }
         let chat = ChatRecord(id: "started-\(agent.rawValue)-\(report.folder.lastPathComponent)", agent: agent.rawValue, folder: folder,
                               bundleIDs: [source.bundleID], pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
         guard InboxQueue.claim(report, for: chat) else { return }
 
-        let answer = report.folder.appending(path: "answer.md")
-        FileManager.default.createFile(atPath: answer.path, contents: nil)
+        let pictures = ReportContent.pictures(in: report.folder)
+        let prompt = AgentHooks.reportPrompt(ReportContent.text(for: report), picturesAttached: agent == .codex)
+        let output = report.folder.appending(path: agent == .codex ? "new-chat.jsonl" : "answer.md")
+        FileManager.default.createFile(atPath: output.path, contents: nil)
         let process = Process()
         process.executableURL = executable
-        process.arguments = AgentCommand.arguments(agent, folder: folder, prompt: AgentHooks.reportPrompt(ReportContent.text(for: report)))
+        process.arguments = AgentCommand.arguments(agent, folder: folder, prompt: prompt, pictures: pictures)
         process.currentDirectoryURL = URL(fileURLWithPath: folder)
         process.environment = ProcessInfo.processInfo.environment.merging([AgentHooks.startedByHub: "1"]) { $1 }
         process.standardInput = FileHandle.nullDevice
-        if let output = try? FileHandle(forWritingTo: answer) {
-            process.standardOutput = output
-            process.standardError = output
+        if let handle = try? FileHandle(forWritingTo: output) {
+            process.standardOutput = handle
+            process.standardError = handle
         }
         process.terminationHandler = { [hub] finished in
-            let text = (try? String(contentsOf: answer, encoding: .utf8)) ?? ""
+            let text = (try? String(contentsOf: output, encoding: .utf8)) ?? ""
             let lastLine = text.split(separator: "\n").last.map(String.init) ?? ""
-            if finished.terminationStatus == 0 {
-                hub.log("The \(agent.name) chat finished with report \(source.reportID); its answer is in \(answer.path)")
-                Self.notify(title: "\(agent.name) looked into a report", message: "Its answer is in the report's folder: \(answer.lastPathComponent)")
-            } else {
-                // Free the report for the next chat that opens on the project.
+            guard finished.terminationStatus == 0 else {
+                // Free the report for a chat that opens later.
                 try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
-                hub.log("The \(agent.name) chat for report \(source.reportID) failed (\(finished.terminationStatus)): \(lastLine)")
-                Self.notify(title: "Couldn't start a \(agent.name) chat", message: lastLine.isEmpty ? "The report waits for a chat on the project." : lastLine)
+                hub.log("The new \(agent.name) chat for report \(source.reportID) failed (\(finished.terminationStatus)): \(lastLine)")
+                Self.notify(title: "Couldn't start a \(agent.name) chat", message: lastLine.isEmpty ? "The report waits in the inbox." : lastLine)
+                return
+            }
+            if agent == .codex, let thread = AgentCommand.codexThread(in: text) {
+                // Shown in the Codex app, where the user can carry on.
+                Handoff.open("codex://threads/\(thread)")
+                hub.log("The new Codex chat \(thread) looked into report \(source.reportID)")
+                Handoff.notify(title: "Codex looked into a report", message: "Opened in Codex.")
+            } else {
+                hub.log("The new \(agent.name) chat finished with report \(source.reportID); its answer is in \(output.path)")
+                Handoff.notify(title: "\(agent.name) looked into a report", message: "Its answer is in the report's folder: \(output.lastPathComponent)")
             }
         }
         do {
@@ -240,13 +256,25 @@ enum AgentCommand {
         return candidates.first(where: FileManager.default.isExecutableFile(atPath:)).map(URL.init(fileURLWithPath:))
     }
 
-    static func arguments(_ agent: Agent, folder: String, prompt: String) -> [String] {
+    static func arguments(_ agent: Agent, folder: String, prompt: String, pictures: [URL] = []) -> [String] {
         switch agent {
         case .claude: ["-p", prompt, "--permission-mode", "plan"]
-        case .codex: ["exec", "-C", folder, "--sandbox", "read-only", "--skip-git-repo-check", prompt]
+        // Pictures go in with the prompt; "--" ends them, so the prompt isn't read as one.
+        case .codex: ["exec", "-C", folder, "--sandbox", "read-only", "--skip-git-repo-check", "--json"]
+            + pictures.flatMap { ["-i", $0.path] } + ["--", prompt]
         // Without --force, Cursor's command line only proposes changes.
         case .cursor: ["-p", "--workspace", folder, prompt]
         }
+    }
+
+    /// The new chat's ID, from `codex exec --json`'s first event.
+    static func codexThread(in output: String) -> String? {
+        for line in output.split(separator: "\n") {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  object["type"] as? String == "thread.started" else { continue }
+            return object["thread_id"] as? String
+        }
+        return nil
     }
 }
 #endif

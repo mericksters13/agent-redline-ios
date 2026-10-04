@@ -14,6 +14,16 @@ final class DebugSession {
         case idle, picking, noting, tray, viewer, attaching
         /// The reports already sent, opened with a long press on the floating button.
         case reports
+        /// Picking where reports go: an agent on the Mac, then one of its chats.
+        case destination
+    }
+
+    /// The Mac's answer to which chats a report can go to.
+    enum ChatListState: Equatable {
+        case loading
+        case loaded(HubLink.ChatList)
+        /// The Mac couldn't be reached; it will send the report to the chat in the worktree.
+        case unavailable
     }
 
     /// Images waiting for their note: what the note card is about when no element is picked.
@@ -460,7 +470,7 @@ final class DebugSession {
             guard !annotations.isEmpty else { return }
             trayReturnMode = mode
             setMode(.tray)
-        case .noting, .viewer, .attaching, .reports:
+        case .noting, .viewer, .attaching, .reports, .destination:
             break
         }
     }
@@ -595,6 +605,12 @@ final class DebugSession {
             store.recordDelivery(.noHub)
             return .noHub
         }
+        // In a simulator the hub takes reports from the app's folder as they're saved.
+        if address.uploads == false {
+            store.markDelivered(reports.map(\.id))
+            store.recordDelivery(.delivered)
+            return .delivered
+        }
         let result = await HubLink.deliver(reports, bundleID: bundleID, address: address, files: { store.reportFiles($0) }, patience: patience)
         store.markDelivered(result.delivered)
         store.recordDelivery(result.outcome)
@@ -604,9 +620,9 @@ final class DebugSession {
     }
 
     /// What the toast after Send says, so a report that didn't reach the Mac says why.
-    nonisolated static func toast(for outcome: HubLink.Outcome?, notes: String) -> String {
+    nonisolated static func toast(for outcome: HubLink.Outcome?, notes: String, to destination: String? = nil) -> String {
         switch outcome {
-        case .delivered: "Sent \(notes) to the Mac"
+        case .delivered: "Sent \(notes) to \(destination ?? "the Mac")"
         case .noHub, nil: "Saved \(notes) on this iPhone"
         case .unreachable: "Saved on this iPhone. Couldn't reach the Mac"
         case .refused: "Saved on this iPhone. The Mac didn't accept it"
@@ -648,8 +664,101 @@ final class DebugSession {
         UserDefaults.standard.set(Array(dates.suffix(10)), forKey: Self.inAppCapturesKey)
     }
 
-    func send() {
+    // MARK: - Where reports go
+
+    /// Where reports from this build go, as the user picked. Kept per worktree the app was built
+    /// from, so a build from another worktree starts with that worktree's chat.
+    private(set) var destination: Report.Destination? = DebugSession.savedDestination()
+    private(set) var chatList: ChatListState = .loading
+    /// The agent whose chats the picker shows.
+    var pickerAgent: String?
+    /// What's selected in the picker: a chat, or a new chat when `chat` is nil.
+    var pickerChoice: Report.Destination?
+    /// The picker opened from Send: confirming it sends the report.
+    private(set) var sendsAfterPicking = false
+    private var modeBeforePicking: Mode = .picking
+
+    /// The hub has set this app up, so there are chats to pick from.
+    var canPickDestination: Bool { store.hubAddress() != nil }
+
+    private static var destinationKey: String {
+        "AgenticDebuggingDestination|" + (BuildIdentity.sourceFile ?? Bundle.main.bundleIdentifier ?? "")
+    }
+
+    private static func savedDestination() -> Report.Destination? {
+        UserDefaults.standard.data(forKey: destinationKey).flatMap { try? JSONDecoder().decode(Report.Destination.self, from: $0) }
+    }
+
+    /// Opens the picker and asks the Mac for its chats. `thenSend` when opened from Send.
+    func openDestinations(thenSend: Bool = false) {
+        sendsAfterPicking = thenSend
+        modeBeforePicking = mode == .noting || mode == .destination ? .picking : mode
+        pickerChoice = destination
+        pickerAgent = destination?.agent
+        chatList = .loading
+        setMode(.destination)
+        guard let address = store.hubAddress(), let bundleID = Bundle.main.bundleIdentifier else {
+            chatList = .unavailable
+            return
+        }
+        // The first time, iOS asks about local network access before the hub can answer.
+        let patience: TimeInterval = UserDefaults.standard.bool(forKey: Self.hubReachedKey) ? 8 : 60
+        let sourceFile = BuildIdentity.sourceFile
+        Task {
+            let list = await HubLink.chats(bundleID: bundleID, address: address, sourceFile: sourceFile, patience: patience)
+            guard mode == .destination else { return }
+            guard let list else {
+                chatList = .unavailable
+                return
+            }
+            UserDefaults.standard.set(true, forKey: Self.hubReachedKey)
+            chatList = .loaded(list)
+            // A saved chat that closed isn't offered; the chat in the build's worktree is.
+            if let choice = pickerChoice, let chat = choice.chat, !list.chats.contains(where: { $0.id == chat && $0.agent == choice.agent }) {
+                pickerChoice = nil
+            }
+            if pickerChoice == nil, let here = list.chats.first(where: \.sameWorktree) {
+                pickerChoice = Report.Destination(agent: here.agent, chat: here.id, title: here.title)
+            }
+            if pickerAgent == nil || !list.agents.contains(pickerAgent ?? "") {
+                pickerAgent = pickerChoice?.agent ?? list.agents.first
+            }
+        }
+    }
+
+    func choose(agent: String) {
+        pickerAgent = agent
+    }
+
+    func choose(_ choice: Report.Destination) {
+        pickerChoice = choice
+    }
+
+    /// Keeps the pick and, when the picker opened from Send, sends.
+    func confirmDestination() {
+        if let choice = pickerChoice {
+            destination = choice
+            if let data = try? JSONEncoder().encode(choice) { UserDefaults.standard.set(data, forKey: Self.destinationKey) }
+        }
+        let thenSend = sendsAfterPicking
+        sendsAfterPicking = false
+        setMode(modeBeforePicking)
+        if thenSend { send(pickingFirst: false) }
+    }
+
+    func cancelDestinations() {
+        sendsAfterPicking = false
+        setMode(modeBeforePicking)
+    }
+
+    /// Sends the draft. The first time, the user picks where reports go; after that they go
+    /// there at once.
+    func send(pickingFirst: Bool = true) {
         guard !annotations.isEmpty else { return }
+        if pickingFirst, destination == nil, canPickDestination {
+            openDestinations(thenSend: true)
+            return
+        }
         // The report takes the draft's files with it, so every image must be on disk first.
         let pending = writes
         writes = []
@@ -672,9 +781,11 @@ final class DebugSession {
             show(toast: "Couldn't save the report")
             return
         }
+        let destination = destination
         let input = ReportBuilder.Input(
             id: started.id, date: date, app: .current, device: .current,
-            annotations: annotations, screens: screens, draft: started.draft, folder: started.folder
+            annotations: annotations, screens: screens, draft: started.draft, folder: started.folder,
+            destination: destination
         )
         let count = annotations.count
         annotations = []
@@ -699,7 +810,7 @@ final class DebugSession {
                 let patience: TimeInterval = UserDefaults.standard.bool(forKey: DebugSession.hubReachedKey) ? 8 : 60
                 let outcome = await DebugSession.deliverReports(from: store, patience: patience)
                 let notes = count == 1 ? "1 note" : "\(count) notes"
-                await self?.show(toast: DebugSession.toast(for: outcome, notes: notes))
+                await self?.show(toast: DebugSession.toast(for: outcome, notes: notes, to: destination?.title))
             } catch {
                 logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
                 await self?.show(toast: "Couldn't save the report")
@@ -1153,7 +1264,6 @@ extension Report.App {
             name: (info["CFBundleDisplayName"] ?? info["CFBundleName"]) as? String,
             version: info["CFBundleShortVersionString"] as? String,
             build: info["CFBundleVersion"] as? String,
-            buildIDs: BuildIdentity.ids(),
             sourceFile: BuildIdentity.sourceFile
         )
     }

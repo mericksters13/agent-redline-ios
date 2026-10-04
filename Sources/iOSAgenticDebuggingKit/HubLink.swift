@@ -22,6 +22,9 @@ enum HubLink {
         /// Proves to the hub that an offer comes from this phone and app. Missing from addresses
         /// left by an older hub, which the hub turns down until it leaves a new one.
         var token: String?
+        /// False in a simulator, where the hub takes reports from the app's folder: the app only
+        /// asks which chats a report can go to.
+        var uploads: Bool? = nil
     }
 
     struct Offer: Codable, Equatable, Sendable {
@@ -53,6 +56,65 @@ enum HubLink {
 
     struct Reply: Codable, Equatable, Sendable {
         var delivered: [String]
+    }
+
+    /// Before the user sends, the app asks which chats a report can go to.
+    struct ChatsRequest: Codable, Equatable, Sendable {
+        /// Always "chats": tells this request from an offer.
+        var kind = "chats"
+        var device: String
+        var bundleID: String
+        var token: String
+        var sourceFile: String?
+    }
+
+    /// An open chat a report can go to.
+    struct Chat: Codable, Equatable, Sendable, Identifiable {
+        var id: String
+        /// `claude`, `codex` or `cursor`.
+        var agent: String
+        var title: String
+        /// The last part of the chat's folder.
+        var folder: String
+        /// The chat works in the worktree the app was built from.
+        var sameWorktree: Bool
+        var lastActive: Date
+    }
+
+    struct ChatList: Codable, Equatable, Sendable {
+        /// The agents on the Mac reports can go to, in the order to show them.
+        var agents: [String]
+        var chats: [Chat]
+        /// The last part of the worktree the app was built from, where a new chat starts.
+        var worktree: String?
+        var refused: String?
+    }
+
+    /// The agent's name as the user knows it.
+    static func agentName(_ agent: String) -> String {
+        switch agent {
+        case "claude": "Claude Code"
+        case "codex": "Codex"
+        case "cursor": "Cursor"
+        default: agent
+        }
+    }
+
+    /// Asks the hub which chats a report from this app can go to. Nil when the hub can't be
+    /// reached or turns the question down.
+    static func chats(bundleID: String, address: Address, sourceFile: String?, patience: TimeInterval) async -> ChatList? {
+        guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return nil }
+        let request = ChatsRequest(device: address.device, bundleID: bundleID, token: token, sourceFile: sourceFile)
+        for host in address.hosts {
+            let line = Line(host: host, port: port)
+            guard await line.open(patience: patience) else { continue }
+            defer { line.close() }
+            guard await line.send(encode(request)), let data = await line.read(), let list = decode(ChatList.self, from: data),
+                  list.refused == nil
+            else { return nil }
+            return list
+        }
+        return nil
     }
 
     /// How an attempt to deliver went, kept so the phone can say why a report isn't on the Mac.

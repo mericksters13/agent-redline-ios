@@ -30,23 +30,20 @@ enum AgentSettings {
             if agent != .cursor { hook["type"] = "command" }
             return hook.merging(extra) { $1 }
         }
-        let tools = "Bash|mcp__.*"
-        // Claude Code and Codex show the status message while the hook runs, and Codex names the
-        // hook by it when asking the user to trust it.
-        let built = hook(.built, agent == .cursor ? [:] : ["statusMessage": "Linking app build request to this thread"])
         switch agent {
         case .claude:
-            // Claude Code chats are reached through their own socket; only builds need noting.
-            return [("PostToolUse", tools, [built])]
+            // Claude Code chats are found from their own session records and reached through their socket.
+            return []
         case .codex:
-            // Codex chats are reached through the Codex app. The message hook is the safety net
-            // for when the app doesn't take a report.
-            return [("PostToolUse", tools, [built]), ("UserPromptSubmit", nil, [hook(.prompt, ["statusMessage": "Report delivery"])])]
+            // Codex chats are reached through the Codex app. This hook is the safety net for a
+            // report the app didn't take: it goes in with the chat's next message.
+            return [("UserPromptSubmit", nil, [hook(.prompt, ["statusMessage": "Report delivery"])])]
         case .cursor:
-            // A little longer than the hold, so Cursor never cuts it short.
+            // Cursor's chats can't be found or woken from outside, so its hooks register them and
+            // hand reports over. A little longer than the hold, so Cursor never cuts it short.
             let stop = hook(.stop, ["timeout": Int(AgentHooks.holdOpen) + 60, "loop_limit": NSNull()])
-            return [("sessionStart", nil, [hook(.start)]), ("beforeSubmitPrompt", nil, [hook(.prompt)]), ("afterShellExecution", nil, [built]),
-                    ("afterMCPExecution", nil, [built]), ("stop", nil, [stop]), ("sessionEnd", nil, [hook(.end)])]
+            return [("sessionStart", nil, [hook(.start)]), ("beforeSubmitPrompt", nil, [hook(.prompt)]), ("stop", nil, [stop]),
+                    ("sessionEnd", nil, [hook(.end)])]
         }
     }
 
@@ -71,7 +68,7 @@ enum AgentSettings {
             }
             events[event] = entries
         }
-        settings["hooks"] = events
+        settings["hooks"] = events.isEmpty ? nil : events
         if agent == .cursor, settings["version"] == nil { settings["version"] = 1 }
         return settings
     }

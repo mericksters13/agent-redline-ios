@@ -107,6 +107,7 @@ final class Hub: @unchecked Sendable {
         log(apps.isEmpty ? "Hub started; no chats open yet" : "Hub started for \(apps.joined(separator: ", "))")
         watchChats()
         handoff = Handoff(hub: self)
+        ChatDirectory.warm(paths: paths)
         handoff?.handOverRecent()
         let simulators = SimulatorWatcher(hub: self)
         self.simulators = simulators
@@ -232,6 +233,16 @@ final class Hub: @unchecked Sendable {
         return HubMessage.Answer(want: want, delivered: settled(device: offer.device, bundleID: offer.bundleID, finished: finished))
     }
 
+    /// The chats a report from this app can go to, for the phone to show before the user sends.
+    func chats(_ request: HubMessage.ChatsRequest) -> HubMessage.ChatList {
+        let expected = lock.withLock { tokens["\(request.device)|\(request.bundleID)"] }
+        guard let expected, Self.same(expected, request.token) else {
+            log("Turned down \(request.bundleID)'s question about chats from \(phoneName(request.device)): its token doesn't match")
+            return HubMessage.ChatList(agents: [], chats: [], refused: "The app needs this Mac's address again.")
+        }
+        return ChatDirectory.list(bundleID: request.bundleID, sourceFile: request.sourceFile, paths: paths)
+    }
+
     /// Files a report the hub asked for. False when it can't be filed.
     @discardableResult
     func store(_ upload: HubMessage.Upload, offeredIn offer: HubMessage.Offer) -> Bool {
@@ -341,8 +352,6 @@ final class Hub: @unchecked Sendable {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? encoder.encode(source).write(to: incoming.appending(path: "source.json"))
-        // Addressed before it's in the inbox, so a chat waiting for it sees it's for that chat.
-        let route = handoff?.address(incoming, source: source) ?? .unknown
         try? files.removeItem(at: destination)
         do {
             try files.moveItem(at: incoming, to: destination)
@@ -355,7 +364,7 @@ final class Hub: @unchecked Sendable {
             saveState()
         }
         log(String(format: "Received %@ from %@ (%@) in %.2f s", source.reportID, source.deviceName, source.bundleID, Date().timeIntervalSince(started)))
-        handoff?.deliver(destination, source: source, to: route)
+        handoff?.reportFiled(destination, source: source)
         return true
     }
 

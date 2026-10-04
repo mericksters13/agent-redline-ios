@@ -14,6 +14,8 @@ enum ClaudeSessions {
         var updatedAt: Date
         /// Not in the middle of a turn.
         var isIdle: Bool
+        /// The chat's name in Claude Code, when it has one.
+        var title: String? = nil
     }
 
     /// The interactive chats that are still running.
@@ -38,7 +40,7 @@ enum ClaudeSessions {
         else { return nil }
         let updated = (object["updatedAt"] as? Double) ?? (object["startedAt"] as? Double) ?? 0
         return Session(id: id, folder: folder, socket: socket, updatedAt: Date(timeIntervalSince1970: updated / 1000),
-                       isIdle: object["status"] as? String == "idle")
+                       isIdle: object["status"] as? String == "idle", title: object["name"] as? String)
     }
 
     /// The line a chat's socket takes: one message, as if typed by another of the user's chats.

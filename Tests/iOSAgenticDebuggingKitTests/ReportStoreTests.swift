@@ -164,6 +164,26 @@ struct ReportStoreTests {
                 == HubLink.Answer(want: ["20261003-215826"], delivered: []))
         let upload = String(decoding: HubLink.encode(HubLink.Upload(id: "r", files: ["report.md": Data("# Hi".utf8)])), as: UTF8.self)
         #expect(upload == #"{"files":{"report.md":"IyBIaQ=="},"id":"r"}"# + "\n")
+        // Asking which chats a report can go to, and the answer.
+        let ask = String(decoding: HubLink.encode(HubLink.ChatsRequest(device: "D", bundleID: "com.example.app", token: "secret", sourceFile: "/w/App.swift")), as: UTF8.self)
+        #expect(ask == #"{"bundleID":"com.example.app","device":"D","kind":"chats","sourceFile":"/w/App.swift","token":"secret"}"# + "\n")
+        let list = #"{"agents":["claude"],"chats":[{"agent":"claude","folder":"wt","id":"s1","lastActive":"2026-10-03T04:00:00Z","sameWorktree":true,"title":"Let"}],"worktree":"wt"}"#
+        #expect(HubLink.decode(HubLink.ChatList.self, from: Data(list.utf8)) == HubLink.ChatList(
+            agents: ["claude"], chats: [HubLink.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt", sameWorktree: true,
+                                                     lastActive: Date(timeIntervalSince1970: 1_791_000_000))], worktree: "wt"))
+        // A simulator app's address says it doesn't upload.
+        try Data(#"{"device":"S","hosts":["127.0.0.1"],"port":47361,"token":"t","uploads":false}"#.utf8).write(to: store.hubAddressFile)
+        #expect(store.hubAddress()?.uploads == false)
+    }
+
+    @Test func thePickedChatIsSavedWithTheReport() throws {
+        let report = Report(id: "r", createdAt: Date(timeIntervalSince1970: 1_791_000_000),
+                            app: Report.App(bundleIdentifier: "com.example.app", sourceFile: "/w/App.swift"),
+                            device: Report.Device(model: "iPhone18,1", systemName: "iOS", systemVersion: "27.0"), screens: [], items: [],
+                            destination: Report.Destination(agent: "codex", chat: "t-1", title: "Fix the paywall"))
+        let decoded = try JSONDecoder().decode(Report.self, from: JSONEncoder().encode(report))
+        #expect(decoded.destination == report.destination)
+        #expect(decoded.app.sourceFile == "/w/App.swift")
     }
 
     @Test func aReportsFilesAreSentWithoutItsDraftOrMark() throws {

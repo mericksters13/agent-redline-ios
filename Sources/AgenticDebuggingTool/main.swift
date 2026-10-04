@@ -16,9 +16,9 @@ Usage:
       agent's background, it wakes the chat when a report arrives. With several chats waiting,
       the one used most recently gets the report.
   agentic-debugging setup | remove
-      Adds to (or removes from) Claude Code's, Codex's and Cursor's hook settings the hooks that
-      note which chat built each app, so its reports go to that chat. Other hooks stay as they are.
-  agentic-debugging hook <claude | codex | cursor> <start | prompt | built | stop | end>
+      Adds to (or removes from) Codex's and Cursor's hook settings the hooks that hand reports to
+      a chat when nothing else can. Claude Code needs none. Other hooks stay as they are.
+  agentic-debugging hook <claude | codex | cursor> <start | prompt | stop | end>
       Run by the agents' hooks, with the event's JSON on standard input.
   agentic-debugging hub [--app <bundle ID> ...]
       Takes reports from phones and simulators for the open chats' apps and files them in the inbox.
@@ -136,14 +136,18 @@ case "setup", "remove":
             try AgentSettings.update(agent) {
                 adding ? AgentSettings.adding(agent, to: $0, executable: executable) : AgentSettings.removing(agent, from: $0, executable: executable)
             }
-            print("\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.file(agent).path)")
-            if adding, agent == .codex { print("  Codex runs new hooks only once you trust them: open /hooks in Codex and trust \"Linking app build request to this thread\" and \"Report delivery\".") }
+            if adding, AgentSettings.hooks(agent, executable: executable).isEmpty {
+                print("\(agent.name): no hooks needed")
+            } else {
+                print("\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.file(agent).path)")
+            }
+            if adding, agent == .codex { print("  Codex runs a new hook only once you trust it: open /hooks in Codex and trust \"Report delivery\".") }
         } catch {
             print("\(agent.name): couldn't update \(AgentSettings.file(agent).path): \(error.localizedDescription)")
             failed = true
         }
     }
-    if adding { print("Reports now go to the chat that built the app they came from.") }
+    if adding { print("Reports go to the chat picked on the phone, or else the chat in the worktree the app was built from.") }
     exit(failed ? 1 : 0)
 
 case "status":

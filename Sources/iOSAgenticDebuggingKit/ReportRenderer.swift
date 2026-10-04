@@ -147,6 +147,7 @@ enum ReportBuilder {
         var draft: URL
         /// Where the report's pictures go.
         var folder: URL
+        var destination: Report.Destination? = nil
     }
 
     static func build(_ input: Input) throws -> Report {
@@ -267,7 +268,7 @@ enum ReportBuilder {
 
         return Report(
             id: input.id, createdAt: input.date, app: input.app, device: input.device,
-            screens: screens, items: items.keys.sorted().compactMap { items[$0] }
+            screens: screens, items: items.keys.sorted().compactMap { items[$0] }, destination: input.destination
         )
     }
 

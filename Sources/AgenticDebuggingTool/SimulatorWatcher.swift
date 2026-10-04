@@ -32,6 +32,7 @@ final class SimulatorWatcher: @unchecked Sendable {
     func rescan() {
         queue.async {
             let found = self.watchedContainers()
+            for (container, bundleID) in found { self.giveAddress(to: container, of: bundleID) }
             let roots = Self.roots(for: Array(found.keys))
             guard found != self.watched || roots != self.roots else { return }
             self.watched = found
@@ -71,6 +72,19 @@ final class SimulatorWatcher: @unchecked Sendable {
             }
         }
         return found
+    }
+
+    /// Leaves the hub's address in a simulator app's folder, so the app can ask which chats a
+    /// report can go to. It doesn't upload: the hub takes simulator reports from the folder.
+    private func giveAddress(to container: String, of bundleID: String) {
+        guard let path = SimulatorReportPath.parse(container + "/" + ReportFolder.path + "/x/") else { return }
+        let address = HubMessage.Address(device: path.device, hosts: ["127.0.0.1"], port: HubListener.port,
+                                         token: hub.token(device: path.device, bundleID: bundleID), uploads: false)
+        let file = URL(fileURLWithPath: container).appending(path: HubMessage.addressPath)
+        let data = HubMessage.encode(address)
+        guard (try? Data(contentsOf: file)) != data else { return }
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: file, options: .atomic)
     }
 
     /// The kit's folder where it exists, so the app's own writes don't wake the hub; the whole
