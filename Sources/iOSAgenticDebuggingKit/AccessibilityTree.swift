@@ -104,13 +104,14 @@ enum AccessibilityTree {
 
     /// The screen the user is looking at: the navigation bar title, else the
     /// topmost header on screen (custom headers such as a large "Today"), else the
-    /// selected tab, plus the view controller type.
+    /// selected tab, plus the view controller type. Only a presented sheet is read
+    /// while one is up, so it never takes the title of the screen it covers.
     static func screen(of window: UIWindow?, elements: [ElementSnapshot]) -> ScreenInfo {
         guard let window else { return ScreenInfo() }
         let controller = topController(from: window.rootViewController)
-        let title = navigationBarTitle(in: window)
+        let title = navigationBarTitle(in: visibleRoot(of: window))
             ?? ElementSelection.headerTitle(in: elements)
-            ?? selectedTabTitle(from: window.rootViewController)
+            ?? selectedTabTitle(from: presentedController(of: window))
             ?? controller?.navigationItem.title?.nonEmpty
             ?? controller?.title?.nonEmpty
         let typeName = controller.map { String(describing: type(of: $0)).split(separator: "<").first.map(String.init) ?? "" }
@@ -153,14 +154,20 @@ enum AccessibilityTree {
     /// A presented sheet or full-screen cover hides what's under it, so only its
     /// view is read when one is up.
     private static func visibleRoot(of window: UIWindow) -> UIView {
+        if let controller = presentedController(of: window), controller !== window.rootViewController,
+           let view = controller.viewIfLoaded {
+            return view
+        }
+        return window
+    }
+
+    /// The topmost presented controller, or the root one when nothing is presented.
+    private static func presentedController(of window: UIWindow) -> UIViewController? {
         var controller = window.rootViewController
         while let presented = controller?.presentedViewController, !presented.isBeingDismissed {
             controller = presented
         }
-        if let controller, controller !== window.rootViewController, let view = controller.viewIfLoaded {
-            return view
-        }
-        return window
+        return controller
     }
 
     private static func role(of object: NSObject, isContainer: Bool) -> String {
