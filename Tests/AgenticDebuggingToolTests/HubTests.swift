@@ -12,7 +12,7 @@ struct HubTests {
     /// A hub that's never started: no listener, no simulators, no devicectl.
     private func hub() throws -> Hub {
         try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        return Hub(paths: paths, devicectl: Devicectl(executable: URL(fileURLWithPath: "/usr/bin/true")), apps: [app])
+        return Hub(paths: paths, devicectl: Devicectl(executable: URL(fileURLWithPath: "/usr/bin/true")), apps: [app], claudeChats: { [] })
     }
 
     private func store(_ id: String, in hub: Hub, offeredIn offer: HubMessage.Offer) -> Bool {
@@ -51,7 +51,7 @@ struct HubTests {
         esac
         """.write(to: devicectl, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: devicectl.path)
-        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app])
+        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app], claudeChats: { [] })
         hub.updateApps(starting: true)
         let link = PhoneLink(phone: .init(udid: phone, name: "Mark iPhone", model: "iPhone 17 Pro"), hub: hub)
 
@@ -82,7 +82,7 @@ struct HubTests {
         esac
         """.write(to: devicectl, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: devicectl.path)
-        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app])
+        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app], claudeChats: { [] })
         hub.updateApps(starting: true)
         let link = PhoneLink(phone: .init(udid: phone, name: "Mark iPhone", model: "iPhone 17 Pro"), hub: hub)
         func called() -> [String] { ((try? String(contentsOf: calls, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init) }
@@ -158,6 +158,20 @@ struct HubTests {
         chat.unregister()
         hub.updateApps(starting: true)
         #expect(hub.apps.contains(other))
+    }
+
+    @Test func anOpenClaudeChatsAppIsWatched() throws {
+        try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
+        let project = paths.root.appending(path: "claude-project", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try "targets:\n  App:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.claude\n"
+            .write(to: project.appending(path: "project.yml"), atomically: true, encoding: .utf8)
+        let session = ClaudeSessions.Session(id: "s1", folder: project.path, socket: "/tmp/none", updatedAt: Date(), isIdle: true)
+        let hub = Hub(paths: paths, devicectl: Devicectl(executable: URL(fileURLWithPath: "/usr/bin/true")), apps: [], claudeChats: { [session] })
+        hub.updateApps(starting: true)
+        #expect(hub.apps == ["com.example.claude"])
+        // Claude Code runs no hooks: the app is noted for it, so it stays watched once the chat closes.
+        #expect(ProjectHistory.all(paths)["com.example.claude"]?.agent == "claude")
     }
 
     @Test func chatsNotingTheirAppsAtOnceKeepEachOthers() {
