@@ -208,8 +208,10 @@ final class Hub: @unchecked Sendable {
         chatsWatcher?.cancel()
         network.cancel()
         listener?.stop()
-        simulators?.stop()
+        // Before the simulator watcher: stopping it waits for a rescan under way, and hand-overs
+        // queued meanwhile, or reports that rescan finds, must not start new chats.
         handoff?.finish()
+        simulators?.stop()
         try? FileManager.default.removeItem(at: paths.pid)
         if let pidFile { close(pidFile) }
         log("Hub stopped")
