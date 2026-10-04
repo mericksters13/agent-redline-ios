@@ -123,7 +123,7 @@ struct OverlayView: View {
             }
 
             if let capture = session.captureFlight {
-                CaptureFlight(image: capture, screenSize: session.screenSize, slot: session.attachmentSlot) {
+                CaptureFlight(image: capture, screenSize: session.screenSize, session: session) {
                     session.finishCaptureFlight()
                 }
                 // Shown at once: fading in with the mode change would swallow the flash.
@@ -171,10 +171,11 @@ struct OverlayView: View {
 
     /// Under the island after a tap that found nothing: which mode this is and the way out.
     private func hintChip(_ title: String) -> some View {
-        (Text(title).foregroundStyle(Mono.text)
-            + Text("  Tap ").foregroundStyle(Mono.secondary)
-            + Text(Image(systemName: "xmark.circle.fill")).foregroundStyle(Mono.text)
-            + Text(" to use the app").foregroundStyle(Mono.secondary))
+        let name = Text(title).foregroundStyle(Mono.text)
+        let tap = Text("  Tap ").foregroundStyle(Mono.secondary)
+        let close = Text(Image(systemName: "xmark.circle.fill")).foregroundStyle(Mono.text)
+        let rest = Text(" to use the app").foregroundStyle(Mono.secondary)
+        return Text("\(name)\(tap)\(close)\(rest)")
             .font(.footnote.weight(.semibold))
             .lineLimit(1)
             .padding(.horizontal, 14)
@@ -339,11 +340,14 @@ struct OverlayView: View {
 
     private var noteCard: some View {
         let pending = session.pending
+        // Worked out once per pass: where the card goes, and so whether it hides the element.
+        let height = cardHeight == 0 ? 190 : cardHeight
+        let top = session.noteCardTop(height: height, reservedHeight: reservedCardHeight)
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
                 if let pending {
                     attachmentPreview(pending)
-                } else if elementIsHidden, let preview = session.selectedElementPreview() {
+                } else if isElementHidden(cardTop: top, cardHeight: height), let preview = session.selectedElementPreview() {
                     // The element is behind the keyboard or this card, so show what was picked.
                     Image(uiImage: preview)
                         .resizable()
@@ -418,7 +422,7 @@ struct OverlayView: View {
             if openingCardHeight == 0 { openingCardHeight = height }
         }
         .padding(.leading, panelLeading)
-        .padding(.top, session.noteCardTop(height: cardHeight == 0 ? 190 : cardHeight, reservedHeight: reservedCardHeight))
+        .padding(.top, top)
         .onAppear { noteFocused = true }
         .onDisappear {
             cardHeight = 0
@@ -466,11 +470,10 @@ struct OverlayView: View {
     }
 
     /// True when the picked element sits under the keyboard or under the card itself.
-    private var elementIsHidden: Bool {
+    private func isElementHidden(cardTop: CGFloat, cardHeight height: CGFloat) -> Bool {
         guard let frame = session.selected?.frame else { return false }
         let visibleBottom = min(session.noteKeyboardTop, session.screenSize.height)
-        let height = cardHeight == 0 ? 190 : cardHeight
-        let card = CGRect(x: panelLeading, y: session.noteCardTop(height: height, reservedHeight: reservedCardHeight), width: panelWidth, height: height)
+        let card = CGRect(x: panelLeading, y: cardTop, width: panelWidth, height: height)
         let center = CGPoint(x: frame.midX, y: frame.midY)
         return center.y >= visibleBottom || card.contains(center)
     }
@@ -790,9 +793,12 @@ struct OverlayView: View {
 struct CaptureFlight: View {
     let image: UIImage
     let screenSize: CGSize
-    /// Where it lands. It follows the slot as the note box rises with the keyboard.
-    let slot: CGRect
+    /// Read here rather than by the overlay, so only this view follows the landing slot.
+    let session: DebugSession
     let landed: () -> Void
+
+    /// Where it lands. It follows the slot as the note box rises with the keyboard.
+    private var slot: CGRect { session.attachmentSlot }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var flash = 0.9

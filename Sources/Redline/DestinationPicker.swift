@@ -4,7 +4,7 @@ import SwiftUI
 /// Where reports go: an agent on the Mac, then one of its chats that work on this app, or a
 /// new chat. The chat in the worktree the app was built from is marked and picked at first.
 struct DestinationPicker: View {
-    @Bindable var session: DebugSession
+    let session: DebugSession
 
     private var width: CGFloat { min(session.screenSize.width - 24, 420) }
 
@@ -109,8 +109,7 @@ struct DestinationPicker: View {
     }
 
     private func detail(_ chat: HubLink.Chat) -> String {
-        let ago = RelativeDateTimeFormatter().localizedString(for: chat.lastActive, relativeTo: .now)
-        return "\(chat.folder) · \(ago)"
+        "\(chat.folder) · \(chat.lastActive.formatted(.relative(presentation: .numeric, unitsStyle: .wide)))"
     }
 
     private func row(title: String, detail: String, tag: String?, icon: String?, choice: Report.Destination) -> some View {

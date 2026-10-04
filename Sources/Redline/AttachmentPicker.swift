@@ -10,11 +10,12 @@ import SwiftUI
 /// the grid offers to show recent photos, which asks for access, or to open the system
 /// photo picker, which runs outside the app and needs no permission.
 struct AttachmentPicker: View {
-    @Bindable var session: DebugSession
+    let session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var expanded = false
-    @State private var library = RecentPhotos()
+    /// Made in `.task`, so a parent update never builds a model only to throw it away.
+    @State private var library: RecentPhotos?
     @State private var selectedIDs: [String] = []
     @State private var showsSystemPicker = false
     @State private var pickerItems: [PhotosPickerItem] = []
@@ -82,7 +83,11 @@ struct AttachmentPicker: View {
         }
         .buttonStyle(.plain)
         .onAppear { withAnimation(motion) { expanded = true } }
-        .task { await library.load() }
+        .task {
+            let recent = RecentPhotos()
+            library = recent
+            await recent.load()
+        }
         .photosPicker(
             isPresented: $showsSystemPicker,
             selection: $pickerItems,
@@ -101,9 +106,9 @@ struct AttachmentPicker: View {
 
     /// The height the photos page needs: the header, the rows of tiles and the footer.
     private func photosHeight(width: CGFloat) -> CGFloat {
-        guard !library.items.isEmpty else { return headerHeight + 170 + footerHeight }
+        guard let items = library?.items, !items.isEmpty else { return headerHeight + 170 + footerHeight }
         let tileWidth = (width - 2 * gridInset - CGFloat(columns - 1) * gridSpacing) / CGFloat(columns)
-        let rows = CGFloat((library.items.count + columns - 1) / columns)
+        let rows = CGFloat((items.count + columns - 1) / columns)
         let grid = rows * tileWidth / tileAspect + (rows - 1) * gridSpacing
         return headerHeight + grid + footerHeight
     }
@@ -120,9 +125,7 @@ struct AttachmentPicker: View {
                 .frame(height: headerHeight)
                 .accessibilityAddTraits(.isHeader)
 
-            if library.items.isEmpty {
-                emptyPhotos
-            } else {
+            if let library, !library.items.isEmpty {
                 ScrollView {
                     LazyVGrid(
                         columns: Array(repeating: GridItem(.flexible(), spacing: gridSpacing), count: columns),
@@ -135,6 +138,8 @@ struct AttachmentPicker: View {
                     .padding(.horizontal, gridInset)
                 }
                 .scrollIndicators(.hidden)
+            } else {
+                emptyPhotos
             }
 
             HStack {
@@ -170,40 +175,42 @@ struct AttachmentPicker: View {
     @ViewBuilder
     private var emptyPhotos: some View {
         VStack(spacing: 14) {
-            if !library.isLoaded {
+            if let library, library.isLoaded {
+                if library.canAskForAccess {
+                    Text("Your recent photos and screenshots show here.")
+                        .font(.subheadline)
+                        .foregroundStyle(Mono.secondary)
+                        .multilineTextAlignment(.center)
+                    Button { Task { await library.requestAccess() } } label: {
+                        Text("Show recent photos")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color.black)
+                            .padding(.horizontal, 22)
+                            .frame(height: 44)
+                            .background(Color.white, in: Capsule(style: .continuous))
+                    }
+                    .accessibilityHint("Asks for access to your photos")
+                } else if library.hasAccess {
+                    Text("No recent photos")
+                        .font(.subheadline)
+                        .foregroundStyle(Mono.secondary)
+                } else {
+                    Text("Choose from your photo library.")
+                        .font(.subheadline)
+                        .foregroundStyle(Mono.secondary)
+                    Button { showsSystemPicker = true } label: {
+                        Text("Open photo library")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color.black)
+                            .padding(.horizontal, 22)
+                            .frame(height: 44)
+                            .background(Color.white, in: Capsule(style: .continuous))
+                    }
+                }
+            } else {
                 Text("Loading…")
                     .font(.subheadline)
                     .foregroundStyle(Mono.secondary)
-            } else if library.canAskForAccess {
-                Text("Your recent photos and screenshots show here.")
-                    .font(.subheadline)
-                    .foregroundStyle(Mono.secondary)
-                    .multilineTextAlignment(.center)
-                Button { Task { await library.requestAccess() } } label: {
-                    Text("Show recent photos")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Color.black)
-                        .padding(.horizontal, 22)
-                        .frame(height: 44)
-                        .background(Color.white, in: Capsule(style: .continuous))
-                }
-                .accessibilityHint("Asks for access to your photos")
-            } else if library.hasAccess {
-                Text("No recent photos")
-                    .font(.subheadline)
-                    .foregroundStyle(Mono.secondary)
-            } else {
-                Text("Choose from your photo library.")
-                    .font(.subheadline)
-                    .foregroundStyle(Mono.secondary)
-                Button { showsSystemPicker = true } label: {
-                    Text("Open photo library")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Color.black)
-                        .padding(.horizontal, 22)
-                        .frame(height: 44)
-                        .background(Color.white, in: Capsule(style: .continuous))
-                }
             }
         }
         .padding(.horizontal, 28)
@@ -265,9 +272,9 @@ struct AttachmentPicker: View {
 
     /// Opens the note box at once with the grid's thumbnails; the full photos load behind it.
     private func addSelected() {
+        guard let library else { return }
         let ids = selectedIDs
         let previews = ids.compactMap { id in library.items.first { $0.id == id }?.thumbnail }
-        let library = library
         session.attachPhotos(previews: previews, count: ids.count, loading: Task { await library.images(for: ids) })
     }
 

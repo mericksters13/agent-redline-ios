@@ -52,7 +52,7 @@ final class DebugSession {
         var screen: ScreenInfo?
     }
 
-    struct Marker: Identifiable {
+    struct Marker: Identifiable, Equatable {
         var id: UUID
         var number: Int
         var frame: CGRect
@@ -307,8 +307,9 @@ final class DebugSession {
         if found.first != levels.first, found.first != nil {
             selectionFeedback.selectionChanged()
         }
-        levels = found
-        levelIndex = 0
+        // Called on every frame of a drag: publish only what changed.
+        if found != levels { levels = found }
+        if levelIndex != 0 { levelIndex = 0 }
     }
 
     func finishHover(at point: CGPoint) {
@@ -1295,12 +1296,13 @@ final class DebugSession {
     }
 
     private func refreshMarkers() {
-        markers = annotations.enumerated().compactMap { index, annotation in
+        let found = annotations.enumerated().compactMap { index, annotation -> Marker? in
             guard let element = annotation.element, annotation.screen == screen,
                   let match = ElementSelection.match(element, in: elements)
             else { return nil }
             return Marker(id: annotation.id, number: index + 1, frame: match.frame)
         }
+        if found != markers { markers = found }
     }
 
     private func show(toast message: String) {
@@ -1337,12 +1339,16 @@ final class DebugSession {
     /// Moves the note card with the keyboard, on the keyboard's own timing curve.
     private func updateKeyboard(_ frame: CGRect?, duration: Double) {
         let visible = frame.map { $0.minY < screenSize.height && $0.height > 0 } ?? false
+        // The keyboard reports the same frame again and again; publish and save only changes.
         withAnimation(.timingCurve(0.38, 0.7, 0.125, 1, duration: max(duration, 0.2))) {
             if visible, let frame {
-                keyboardTop = frame.minY
-                awaitingKeyboard = false
-                UserDefaults.standard.set(Double(screenSize.height - frame.minY), forKey: Self.keyboardHeightKey)
-            } else {
+                if keyboardTop != frame.minY { keyboardTop = frame.minY }
+                if awaitingKeyboard { awaitingKeyboard = false }
+                let height = Double(screenSize.height - frame.minY)
+                if UserDefaults.standard.double(forKey: Self.keyboardHeightKey) != height {
+                    UserDefaults.standard.set(height, forKey: Self.keyboardHeightKey)
+                }
+            } else if keyboardTop != .infinity {
                 keyboardTop = .infinity
             }
         }

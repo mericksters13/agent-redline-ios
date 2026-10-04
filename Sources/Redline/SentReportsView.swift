@@ -8,7 +8,7 @@ import UIKit
 /// screen's pictures and their numbered outlines, then the notes. Tap a note to jump to
 /// its outline.
 struct SentReportsView: View {
-    @Bindable var session: DebugSession
+    let session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Nil while the list loads.
     @State private var reports: [SentReport]?
@@ -146,10 +146,11 @@ private struct ReportDetail: View {
 
     private var report: Report { sent.report }
     private var width: CGFloat { session.screenSize.width - 32 }
-    private var items: [Int: Report.Item] { Dictionary(report.items.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first }) }
-    private var attachments: [Report.Item] { report.items.filter { $0.screen == nil } }
 
     var body: some View {
+        // Built once per pass and handed to each section, not once per note.
+        let items = Dictionary(report.items.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+        let attachments = report.items.filter { $0.screen == nil }
         VStack(spacing: 0) {
             ViewerBar(title: SentReportsView.time(report.createdAt), icon: "chevron.left", label: "Back", top: session.safeAreaTop, action: back)
             ScrollViewReader { proxy in
@@ -162,9 +163,9 @@ private struct ReportDetail: View {
                         .font(.caption)
                         .foregroundStyle(Mono.secondary)
                         ForEach(report.screens, id: \.id) { screen in
-                            section(screen, proxy: proxy)
+                            section(screen, items: items, proxy: proxy)
                         }
-                        if !attachments.isEmpty { attachmentSection }
+                        if !attachments.isEmpty { attachmentSection(attachments) }
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
@@ -197,7 +198,7 @@ private struct ReportDetail: View {
 
     // MARK: - Screens
 
-    private func section(_ screen: Report.Screen, proxy: ScrollViewProxy) -> some View {
+    private func section(_ screen: Report.Screen, items: [Int: Report.Item], proxy: ScrollViewProxy) -> some View {
         // The screen as it was last, then any earlier state kept for notes it no longer showed.
         let pictures = screen.images.filter { !$0.earlierState } + screen.images.filter(\.earlierState)
         return VStack(alignment: .leading, spacing: 12) {
@@ -299,7 +300,7 @@ private struct ReportDetail: View {
 
     // MARK: - Attachments
 
-    private var attachmentSection: some View {
+    private func attachmentSection(_ attachments: [Report.Item]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Attachments")
                 .font(.title3.weight(.semibold))
@@ -371,20 +372,19 @@ private struct ReportPicture: View {
 
     var body: some View {
         Group {
-            if let image, fits {
+            if let image {
+                // One image either way, so the fit and fill cases keep the same identity.
                 Image(uiImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
-            } else if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: alignment)
+                    .aspectRatio(contentMode: fits ? .fit : .fill)
+                    .frame(
+                        minWidth: 0, maxWidth: fits ? nil : .infinity,
+                        minHeight: 0, maxHeight: fits ? nil : .infinity,
+                        alignment: alignment
+                    )
                     .clipped()
-            } else if fits {
-                Mono.fill.frame(height: pointWidth)
             } else {
-                Mono.fill
+                Mono.fill.frame(height: fits ? pointWidth : nil)
             }
         }
         .task(id: url) {
