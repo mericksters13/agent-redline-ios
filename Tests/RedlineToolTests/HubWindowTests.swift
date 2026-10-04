@@ -172,6 +172,38 @@ struct HubWindowTests {
         #expect(HubWindowModel.chat(of: try report("20261004-140500", at: Date())) == nil)
     }
 
+    @Test func theViewerOpensTheSameChatTheReportRowNames() throws {
+        let ended = Process()
+        ended.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try ended.run()
+        ended.waitUntilExit()
+        let delivered = Date(timeIntervalSince1970: 1_791_120_000)
+        let later = delivered.addingTimeInterval(60)
+
+        // The hub exited after claiming the report but before handing it over: no chat has it.
+        let stranded = try report("20261004-141000", at: Date())
+        try Chats.coder.encode(Claim(chat: "claude-gone", agent: "claude", folder: "/repo", claimedAt: later, handingOverIn: ended.processIdentifier))
+            .write(to: stranded.appending(path: InboxQueue.claimFile))
+        #expect(HubWindowModel.destination(of: stranded).waiting)
+        #expect(HubWindowModel.chat(of: stranded) == nil)
+
+        // The same, after the hub had left it waiting.
+        var waiting = ReportDelivery(agent: nil, chat: nil, title: "Waiting for claude auth login", kind: .waiting)
+        waiting.at = delivered
+        ReportDelivery.save(waiting, in: stranded)
+        #expect(HubWindowModel.destination(of: stranded).waiting)
+        #expect(HubWindowModel.chat(of: stranded) == nil)
+
+        // Left waiting, then taken by a chat: the row and the viewer both name that chat.
+        let taken = try report("20261004-141100", at: Date())
+        ReportDelivery.save(waiting, in: taken)
+        try Chats.coder.encode(Claim(chat: "codex-t-3", agent: "codex", folder: "/repo", claimedAt: later))
+            .write(to: taken.appending(path: InboxQueue.claimFile))
+        #expect(!HubWindowModel.destination(of: taken).waiting)
+        let chat = try #require(HubWindowModel.chat(of: taken))
+        #expect(chat.agent == .codex && chat.id == "t-3" && chat.folder == "/repo")
+    }
+
     @Test func chatsOpenInTheirAgentsAppWhenItIsInstalled() {
         #expect(Handoff.appLink(.claude, id: "c28a077b-d80c-4c2b-844e-c544401d77ec", hasClaudeApp: true, hasCodexApp: false)
             == "claude://resume?session=c28a077b-d80c-4c2b-844e-c544401d77ec")
