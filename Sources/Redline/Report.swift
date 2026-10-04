@@ -59,11 +59,6 @@ struct Report: Codable, Sendable {
         /// whose content changed between notes keeps a snapshot of its earlier state for the notes
         /// that weren't on the newer one.
         var snapshots: [Snapshot]
-
-        private enum CodingKeys: String, CodingKey {
-            case id, title, viewController, notes
-            case snapshots = "images"
-        }
     }
 
     /// One snapshot of a screen, or one part of a tall one.
@@ -117,11 +112,6 @@ struct Report: Codable, Sendable {
         var outline: Box?
         /// Attached snapshots, for whole-screen captures and photos.
         var attachments: [String]
-
-        private enum CodingKeys: String, CodingKey {
-            case number, kind, note, createdAt, title, element, ancestors, screen, screenTitle, outline, attachments
-            case snapshot = "picture"
-        }
     }
 
     var id: String
@@ -132,10 +122,62 @@ struct Report: Codable, Sendable {
     var items: [Item]
     /// Nil when the user didn't pick: the Mac sends it to the chat working in the worktree.
     var destination: Destination? = nil
-    /// The version of this format, raised when a field changes meaning or is removed.
+    /// The version of this format, raised when a field changes meaning, is renamed or is removed.
     ///
     /// Nil in reports written before the format had a version, which read as version 1.
-    var version: Int? = 1
+    var version: Int? = Report.currentVersion
+
+    /// The version this kit writes.
+    ///
+    /// Version 2 renamed a screen's `images` to `snapshots` and an item's `picture` to `snapshot`;
+    /// both are still read under their old names.
+    static let currentVersion = 2
+}
+
+/// The names version 1 of report.json used for what version 2 calls snapshots.
+private enum VersionOneKeys: String, CodingKey {
+    /// A screen's snapshots.
+    case images
+    /// The snapshot an item's outline is drawn on.
+    case picture
+}
+
+extension Report.Screen {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        viewController = try container.decodeIfPresent(String.self, forKey: .viewController)
+        notes = try container.decode([Int].self, forKey: .notes)
+        if let snapshots = try container.decodeIfPresent([Report.Snapshot].self, forKey: .snapshots) {
+            self.snapshots = snapshots
+        } else {
+            snapshots = try decoder.container(keyedBy: VersionOneKeys.self).decode(
+                [Report.Snapshot].self,
+                forKey: .images
+            )
+        }
+    }
+}
+
+extension Report.Item {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        number = try container.decode(Int.self, forKey: .number)
+        kind = try container.decode(Annotation.Kind.self, forKey: .kind)
+        note = try container.decode(String.self, forKey: .note)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        title = try container.decode(String.self, forKey: .title)
+        element = try container.decodeIfPresent(ElementSnapshot.self, forKey: .element)
+        ancestors = try container.decode([ElementSnapshot].self, forKey: .ancestors)
+        screen = try container.decodeIfPresent(String.self, forKey: .screen)
+        screenTitle = try container.decodeIfPresent(String.self, forKey: .screenTitle)
+        snapshot =
+            try container.decodeIfPresent(String.self, forKey: .snapshot)
+            ?? decoder.container(keyedBy: VersionOneKeys.self).decodeIfPresent(String.self, forKey: .picture)
+        outline = try container.decodeIfPresent(Report.Box.self, forKey: .outline)
+        attachments = try container.decode([String].self, forKey: .attachments)
+    }
 }
 
 extension Report {

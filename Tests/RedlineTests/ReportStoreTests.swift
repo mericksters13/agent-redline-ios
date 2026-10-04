@@ -299,8 +299,11 @@ struct ReportStoreTests {
         let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
         try store.finishReport(Fixtures.report(id: started.id), in: started.folder)
         let json = try String(decoding: Data(contentsOf: started.folder.appending(path: "report.json")), as: UTF8.self)
-        #expect(json.contains(#""version" : 1"#))
-        // Reports written before the format had a version still list.
+        #expect(json.contains(#""version" : 2"#))
+        #expect(json.contains(#""snapshots" : ["#) && json.contains(#""snapshot" : ""#))
+        #expect(!json.contains(#""images""#) && !json.contains(#""picture""#))
+        // Reports written before the format had a version, which called snapshots "images" and
+        // "picture", still list.
         let old = store.reportsDirectory.appending(path: "20261001-120000")
         try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
         var unversioned =
@@ -308,9 +311,22 @@ struct ReportStoreTests {
             as? [String: Any] ?? [:]
         unversioned["version"] = nil
         unversioned["id"] = "20261001-120000"
+        unversioned["screens"] = (unversioned["screens"] as? [[String: Any]])?.map { screen in
+            var screen = screen
+            screen["images"] = screen.removeValue(forKey: "snapshots")
+            return screen
+        }
+        unversioned["items"] = (unversioned["items"] as? [[String: Any]])?.map { item in
+            var item = item
+            item["picture"] = item.removeValue(forKey: "snapshot")
+            return item
+        }
         try JSONSerialization.data(withJSONObject: unversioned).write(to: old.appending(path: "report.json"))
         #expect(Set(store.sentReports().map(\.id)) == [started.id, "20261001-120000"])
-        #expect(store.sentReports().first { $0.id == "20261001-120000" }?.report.version == nil)
+        let report = try #require(store.sentReports().first { $0.id == "20261001-120000" }?.report)
+        #expect(report.version == nil)
+        #expect(report.screens.first?.snapshots.map(\.file) == Array(Fixtures.snapshotFiles.prefix(2)))
+        #expect(report.items.map(\.snapshot) == [Fixtures.snapshotFiles[0], Fixtures.snapshotFiles[1], nil])
     }
 
     @Test func thePickedChatIsSavedWithTheReport() throws {

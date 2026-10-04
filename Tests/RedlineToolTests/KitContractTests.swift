@@ -329,6 +329,84 @@ struct KitContractTests {
         let order = [files[2], files[0], files[1], files[3], files[4]]
         #expect(ReportContent.snapshots(in: folder).map(\.lastPathComponent) == order)
         #expect(HubWindowModel.snapshots(in: folder).map(\.file.lastPathComponent) == order)
+
+        // Only version 2's keys are written.
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        #expect(object["version"] as? Int == 2)
+        let screen = try #require((object["screens"] as? [[String: Any]])?.first)
+        #expect(screen["snapshots"] != nil && screen["images"] == nil)
+        let item = try #require((object["items"] as? [[String: Any]])?.first)
+        #expect(item["snapshot"] as? String == files[0] && item["picture"] == nil)
+    }
+
+    /// A report written before images were called snapshots, as the phone keeps it among its sent
+    /// reports and as the Mac keeps it in its inbox.
+    @Test func aVersionOneReportReadsOnBothSides() throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "KitContractTests-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let phone = ReportStore(root: root.appending(path: "phone", directoryHint: .isDirectory))
+        let sent = phone.reportsDirectory.appending(path: VersionOneReport.id, directoryHint: .isDirectory)
+        let inbox = root.appending(path: "inbox/com.example.app/20261004-162330-00000001", directoryHint: .isDirectory)
+        for folder in [sent, inbox] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data(VersionOneReport.json.utf8).write(to: folder.appending(path: "report.json"))
+            try Data(VersionOneReport.markdown.utf8).write(to: folder.appending(path: "report.md"))
+            for file in VersionOneReport.files { try Data([0xFF, 0xD8]).write(to: folder.appending(path: file)) }
+        }
+
+        // The phone: the list of sent reports and the report as sent.
+        let report = try #require(phone.sentReports().first?.report)
+        #expect(report.version == nil)
+        #expect(
+            report.screens.map { $0.snapshots.map(\.file) } == [
+                ["screen-1-earlier-1.jpg", "screen-1.jpg"], ["screen-2.jpg"],
+            ]
+        )
+        #expect(report.screens.first?.snapshots.first?.isEarlierState == true)
+        #expect(
+            report.items.map(\.snapshot) == [
+                "screen-1-earlier-1.jpg", "screen-1.jpg", "screen-1.jpg", "screen-2.jpg", nil,
+            ]
+        )
+        #expect(report.items.last?.attachments == ["note-5.jpg"])
+        #expect(report.contents == "5 notes, 2 screens")
+
+        // The Mac: the panel, the report viewer and the message to the agent.
+        let listing = try #require(ReportListing.load(from: inbox))
+        #expect(
+            listing.screens?.map { $0.snapshots.map(\.file) } == [
+                ["screen-1-earlier-1.jpg", "screen-1.jpg"], ["screen-2.jpg"],
+            ]
+        )
+        #expect(ReportContent.snapshots(in: inbox).map(\.lastPathComponent) == VersionOneReport.files)
+        #expect(
+            HubWindowModel.snapshots(in: inbox).map(\.title) == ["Patterns", "Patterns", "History", "Today"]
+        )
+        #expect(
+            HubWindowModel.snapshot(showing: 1, in: HubWindowModel.snapshots(in: inbox))?.lastPathComponent
+                == "screen-1-earlier-1.jpg"
+        )
+        #expect(HubWindowModel.notes(in: inbox).count == 5)
+        let source = ReportSource(
+            kind: .phone,
+            device: "D",
+            deviceName: "Test iPhone",
+            bundleID: "com.example.app",
+            reportID: VersionOneReport.id,
+            receivedAt: date
+        )
+        let inboxReport = InboxReport(folder: inbox, source: source, claim: nil)
+        let text = ReportContent.text(for: inboxReport)
+        #expect(text.hasPrefix("UI report from Test iPhone · Tiny Tally"))
+        #expect(text.contains(inbox.appending(path: "screen-1-earlier-1.jpg").path + "\n1. Weight in kg by age"))
+        #expect(text.contains(inbox.appending(path: "note-5.jpg").path + "\n5. Today: Same bug in another app"))
+        let attached = ReportContent.items(for: inboxReport, budget: 1_000_000).items.compactMap { item -> String? in
+            if case .image(let file, _) = item { file.lastPathComponent } else { nil }
+        }
+        #expect(attached == VersionOneReport.files)
     }
 }
 #endif

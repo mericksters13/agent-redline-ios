@@ -240,7 +240,8 @@ struct ReportStore: Sendable {
 
     /// Reports already sent, newest first.
     ///
-    /// One still being drawn isn't listed yet, nor one saved in an earlier format.
+    /// One still being drawn isn't listed yet, nor one that can't be read. Reports in version 1 of
+    /// the format are read too.
     func sentReports() -> [SentReport] {
         let folders =
             (try? FileManager.default.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: nil)) ?? []

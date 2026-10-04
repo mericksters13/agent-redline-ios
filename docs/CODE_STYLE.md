@@ -370,7 +370,7 @@ struct Chat: Codable {
 }
 ```
 
-**Check:** Any rename of a stored property on a Codable type in `HubLink`, `HubMessage`, `Report`, `ReportStore` or the Mac's state files comes with a `CodingKeys` entry or a migration in the same diff. `Tests/RedlineToolTests/KitContractTests.swift` (its target depends on both `Redline` and `RedlineTool`, which both build on the Mac in Debug) encodes each message with the kit's type, decodes it as the Mac's type, and back; a new message or report field gets a case there. A change to the shape of a message adds a version field or a new message type, as `Report.version` does for `report.json`.
+**Check:** Any rename of a stored property on a Codable type in `HubLink`, `HubMessage`, `Report`, `ReportStore` or the Mac's state files comes with a `CodingKeys` entry or a migration in the same diff. `Tests/RedlineToolTests/KitContractTests.swift` (its target depends on both `Redline` and `RedlineTool`, which both build on the Mac in Debug) encodes each message with the kit's type, decodes it as the Mac's type, and back; a new message or report field gets a case there. A change to the shape of a message adds a version field or a new message type, as `Report.version` does for `report.json`. A key renamed on purpose raises that version, is written only under its new name and is still read under its old one, as version 2 does for `snapshots` and `snapshot`.
 
 **Source:** <https://developer.apple.com/documentation/foundation/encoding-and-decoding-custom-types#Choose-Properties-to-Encode-and-Decode-Using-Coding-Keys>
 

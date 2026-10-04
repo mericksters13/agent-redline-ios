@@ -33,8 +33,17 @@ struct ReportListing: Decodable {
         var snapshots: [ListedSnapshot]
 
         private enum CodingKeys: String, CodingKey {
-            case title
-            case snapshots = "images"
+            case title, snapshots
+            /// The name version 1 of report.json used for `snapshots`.
+            case images
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            title = try container.decodeIfPresent(String.self, forKey: .title)
+            snapshots =
+                try container.decodeIfPresent([ListedSnapshot].self, forKey: .snapshots)
+                ?? container.decode([ListedSnapshot].self, forKey: .images)
         }
     }
 

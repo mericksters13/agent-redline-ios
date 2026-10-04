@@ -92,4 +92,4 @@ Redline runs inside other people's apps, so a few rules are strict:
 - Keep each pull request to one change, and stage only the files it needs.
 - Run `git diff --check`, the build and test commands, the iOS builds, the documentation build and the format lint before you open it.
 - Say what you checked and how, including any device checks and, for performance work, the numbers you measured.
-- A change to the messages between the phone and the Mac, or to `report.json`, keeps older versions readable: rename a field only with a `CodingKeys` entry that keeps the old key, and extend the contract tests in `Tests/RedlineToolTests/KitContractTests.swift`.
+- A change to the messages between the phone and the Mac, or to `report.json`, keeps older versions readable: rename a field only with a `CodingKeys` entry that keeps the old key, or, for `report.json`, raise `Report.version`, write the new key and keep reading the old one, as version 2 does for snapshots; and extend the contract tests in `Tests/RedlineToolTests/KitContractTests.swift`.
