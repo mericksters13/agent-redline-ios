@@ -2,173 +2,77 @@
 import AppKit
 import SwiftUI
 
-extension HubWindowModel {
-    /// A picture as the agent gets it, with the numbered outlines already drawn in, and the
-    /// notes it shows.
-    struct Picture: Equatable {
-        var file: URL
-        /// The screen's title, or the title of the note the picture is attached to.
-        var title: String
-        var notes: [Int]
-    }
-
-    /// The report's pictures in the order the agent gets them: each screen's pictures, then the
-    /// pictures attached to notes.
-    nonisolated static func pictures(in folder: URL) -> [Picture] {
-        struct Listing: Decodable {
-            struct Screen: Decodable {
-                struct Image: Decodable {
-                    var file: String
-                    var notes: [Int]
-                }
-                var title: String?
-                var images: [Image]
-            }
-            struct Item: Decodable {
-                var number: Int
-                var title: String
-                var screenTitle: String?
-                var attachments: [String]
-            }
-            var screens: [Screen]
-            var items: [Item]
-        }
-        guard let data = try? Data(contentsOf: folder.appending(path: "report.json")),
-              let listing = try? JSONDecoder().decode(Listing.self, from: data)
-        else {
-            return ReportContent.pictures(in: folder).map { Picture(file: $0, title: $0.deletingPathExtension().lastPathComponent, notes: []) }
-        }
-        let screens = listing.screens.flatMap { screen in
-            screen.images.map { Picture(file: folder.appending(path: $0.file), title: screen.title ?? "Screen", notes: $0.notes) }
-        }
-        let attached = listing.items.flatMap { item in
-            item.attachments.map { Picture(file: folder.appending(path: $0), title: item.screenTitle ?? item.title, notes: [item.number]) }
-        }
-        return (screens + attached).filter { FileManager.default.fileExists(atPath: $0.file.path) }
-    }
-
-    /// The first picture that shows a note.
-    nonisolated static func picture(showing note: Int, in pictures: [Picture]) -> URL? {
-        pictures.first { $0.notes.contains(note) }?.file
-    }
-
-    /// The chat a report went to, to open it again: from what the hub saved when it delivered
-    /// the report, or else the chat that took it. `folder` is where that chat works, when known.
-    /// Nil when the report went to no chat, or to an agent other than Claude Code and Codex.
-    nonisolated static func chat(of report: URL) -> (agent: Agent, id: String, folder: String?)? {
-        let claim = (try? Data(contentsOf: report.appending(path: InboxQueue.claimFile))).flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
-        let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
-        if let delivery = ReportDelivery.load(from: report) {
-            guard delivery.kind != .waiting, let agent = delivery.agent.flatMap(Agent.init(rawValue:)), agent != .cursor,
-                  let id = delivery.chat
-            else { return nil }
-            return (agent, id, folder)
-        }
-        guard let claim, let agent = Agent(rawValue: claim.agent), agent != .cursor else { return nil }
-        if claim.chat.hasPrefix("\(agent.rawValue)-") {
-            return (agent, String(claim.chat.dropFirst(agent.rawValue.count + 1)), folder)
-        }
-        // A chat the hub started: its ID is in what the agent's command printed.
-        if claim.chat.hasPrefix("started-"),
-           let output = try? String(contentsOf: report.appending(path: "new-chat-output.jsonl"), encoding: .utf8),
-           let started = AgentCommand.startedChat(agent, in: output), !started.failed {
-            return (agent, started.chat, folder)
-        }
-        return nil
-    }
-}
-
-/// One window per report, opened from the panel.
-@MainActor
-enum ReportWindows {
-    private static var open: [URL: (window: NSWindow, observer: any NSObjectProtocol)] = [:]
-
-    /// Opens the report's window, or brings it forward, in front of the other apps: Redline is
-    /// a menu bar app, so it isn't active when the panel is clicked. An open window reads the
-    /// report again, since it may have gone to a chat since it opened.
-    static func show(_ report: HubWindowModel.ReportRow) {
-        defer { NSApp.activate() }
-        if let window = open[report.folder]?.window {
-            window.title = ReportViewer.title(of: report)
-            (window.contentViewController as? NSHostingController<ReportViewer>)?.rootView = ReportViewer(report: report)
-            window.makeKeyAndOrderFront(nil)
-            return
-        }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 720),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.title = ReportViewer.title(of: report)
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = .black
-        window.contentViewController = NSHostingController(rootView: ReportViewer(report: report))
-        window.center()
-        let folder = report.folder
-        let observer = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
-            MainActor.assumeIsolated {
-                if let observer = open[folder]?.observer { NotificationCenter.default.removeObserver(observer) }
-                open[folder] = nil
-            }
-        }
-        open[folder] = (window, observer)
-        window.makeKeyAndOrderFront(nil)
-    }
-}
-
 /// A report as the agent got it: its pictures, with the numbered outlines drawn in, and its
 /// notes. Clicking a note brings the picture that shows it into view.
 struct ReportViewer: View {
-    let report: HubWindowModel.ReportRow
-    private let pictures: [HubWindowModel.Picture]
-    private let images: [URL: NSImage]
-    private let chat: (agent: Agent, id: String, folder: String?)?
-    @State private var selected: Int?
-
-    init(report: HubWindowModel.ReportRow) {
-        self.report = report
-        pictures = HubWindowModel.pictures(in: report.folder)
-        images = Dictionary(pictures.compactMap { picture in NSImage(contentsOf: picture.file).map { (picture.file, $0) } }) { first, _ in first }
-        chat = HubWindowModel.chat(of: report.folder)
+    /// What the viewer reads from the report's folder, before its window shows.
+    struct Contents: Sendable {
+        var pictures: [HubWindowModel.Picture]
+        var chat: HubWindowModel.ChatLink?
     }
 
+    let report: HubWindowModel.ReportRow
+    private let pictures: [HubWindowModel.Picture]
+    private let chat: HubWindowModel.ChatLink?
+    @State private var selected: Int?
+
+    init(report: HubWindowModel.ReportRow, contents: Contents) {
+        self.report = report
+        pictures = contents.pictures
+        chat = contents.chat
+    }
+
+    private nonisolated static let loader = DispatchQueue(label: "Redline.viewer.loader", qos: .userInitiated)
+
+    /// Reads the report's pictures and chat. Runs off the main actor. Add @concurrent when the
+    /// tools version reaches 6.2.
+    nonisolated static func load(_ folder: URL) async -> Contents {
+        await withCheckedContinuation { continuation in
+            loader.async {
+                continuation.resume(returning: Contents(pictures: HubWindowModel.pictures(in: folder), chat: HubWindowModel.chat(of: folder)))
+            }
+        }
+    }
+
+    /// The report window's title.
     static func title(of report: HubWindowModel.ReportRow) -> String {
         "Redline · \(report.device) · \(report.receivedAt.formatted(date: .abbreviated, time: .shortened))"
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            pictureStrip
-            Divider().overlay(Color.white.opacity(0.12))
-            sidebar.frame(width: 340)
+        ScrollViewReader { proxy in
+            HStack(spacing: 0) {
+                pictureStrip
+                Divider().overlay(Color.white.opacity(0.12))
+                sidebar(proxy).frame(width: 340)
+            }
         }
         .frame(minWidth: 820, idealWidth: 1040, minHeight: 600, idealHeight: 720)
         .background(Color.black)
-        .environment(\.colorScheme, .dark)
     }
 
-    /// The pictures side by side, each as tall as the window allows.
+    /// Room in the strip's height for its padding (48) and each picture's caption (28).
+    private static let pictureMargin: CGFloat = 76
+
+    /// The pictures side by side, each as tall as the window allows. The strip measures its own
+    /// height: inside a horizontal scroll view, containerRelativeFrame doesn't get it (a render
+    /// showed the pictures shrunk to their minimum), and a picture's width follows its height.
     private var pictureStrip: some View {
-        GeometryReader { size in
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal) {
-                    HStack(alignment: .top, spacing: 20) {
-                        ForEach(pictures, id: \.file) { picture in
-                            // Room for the padding and the caption below.
-                            pictureView(picture, height: max(size.size.height - 48 - 28, 120))
-                                .id(picture.file)
-                        }
-                    }
-                    .padding(24)
-                }
-                .overlay {
-                    if pictures.isEmpty {
-                        Text("This report has no pictures.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+        GeometryReader { geometry in
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 20) {
+                    ForEach(pictures, id: \.file) { picture in
+                        pictureView(picture, height: max(geometry.size.height - Self.pictureMargin, 120))
+                            .id(picture.file)
                     }
                 }
-                .onChange(of: selected) { _, note in
-                    guard let note, let file = HubWindowModel.picture(showing: note, in: pictures) else { return }
-                    withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(file, anchor: .center) }
+                .padding(24)
+            }
+            .overlay {
+                if pictures.isEmpty {
+                    Text("This report has no pictures.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -178,16 +82,10 @@ struct ReportViewer: View {
     private func pictureView(_ picture: HubWindowModel.Picture, height: CGFloat) -> some View {
         let showsSelected = selected.map(picture.notes.contains) ?? false
         return VStack(alignment: .leading, spacing: 8) {
-            Group {
-                if let image = images[picture.file], image.size.height > 0 {
-                    Image(nsImage: image).resizable().frame(width: height * image.size.width / image.size.height, height: height)
-                } else {
-                    Color.white.opacity(0.08).frame(width: height * 9 / 19.5, height: height)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.white.opacity(showsSelected ? 0.9 : 0.16), lineWidth: showsSelected ? 2 : 1))
+            PictureImage(file: picture.file, height: height)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.white.opacity(showsSelected ? 0.9 : 0.16), lineWidth: showsSelected ? 2 : 1))
             HStack(spacing: 6) {
                 Text(picture.title)
                     .font(.caption)
@@ -196,18 +94,26 @@ struct ReportViewer: View {
                 ForEach(picture.notes, id: \.self) { NoteNumber(number: $0) }
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(picture.notes.isEmpty ? picture.title : "\(picture.title), notes \(picture.notes.map(String.init).joined(separator: ", "))")
     }
 
-    private var sidebar: some View {
+    /// Brings the picture that shows a note into view, every time the note is clicked.
+    private func scroll(to note: Int, _ proxy: ScrollViewProxy) {
+        guard let file = HubWindowModel.picture(showing: note, in: pictures) else { return }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) { proxy.scrollTo(file, anchor: .center) }
+    }
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private func sidebar(_ proxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(report.device) · \(report.receivedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                (Text(report.agent).foregroundStyle(report.waiting ? .secondary : .primary)
-                    + Text(" · ").foregroundStyle(.secondary)
-                    + Text(report.chat))
+                DestinationText(report: report)
                     .font(.callout.weight(.semibold))
                     .lineLimit(2)
             }
@@ -215,14 +121,22 @@ struct ReportViewer: View {
             HStack(spacing: 8) {
                 if let chat {
                     Button("Open in \(chat.agent.name)") {
-                        let folder = chat.folder ?? NSHomeDirectory()
-                        Task.detached { Handoff.openChat(chat.agent, id: chat.id, in: folder) }
+                        let folder = chat.folder ?? URL.homeDirectory.path
+                        let hub = HubAppContext.hub
+                        // Opening runs /usr/bin/open and waits for it, so not on the main thread.
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            do {
+                                try Handoff.openChat(chat.agent, id: chat.id, in: folder)
+                            } catch {
+                                hub?.log("Couldn't open the \(chat.agent.name) chat \(chat.id): \(error.localizedDescription)")
+                            }
+                        }
                     }
-                    .buttonStyle(ViewerButtonStyle(prominent: true))
+                    .buttonStyle(ViewerButtonStyle(isProminent: true))
                     .help("Opens the chat this report went to")
                 }
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([report.folder]) }
-                    .buttonStyle(ViewerButtonStyle(prominent: false))
+                    .buttonStyle(ViewerButtonStyle(isProminent: false))
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
@@ -236,7 +150,10 @@ struct ReportViewer: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(report.notes, id: \.number) { note in
-                        Button { selected = note.number } label: {
+                        Button {
+                            selected = note.number
+                            scroll(to: note.number, proxy)
+                        } label: {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 NoteNumber(number: note.number)
                                 Text(note.text)
@@ -261,18 +178,40 @@ struct ReportViewer: View {
     }
 }
 
+/// One of the viewer's pictures, as tall as `height`, decoded off the main actor. A placeholder
+/// of a phone screen's shape shows until it's ready.
+private struct PictureImage: View {
+    let file: URL
+    let height: CGFloat
+    @State private var image: NSImage?
+
+    /// Big enough for the picture to stay sharp in a full-screen window on a Retina display.
+    private static let maxPixels = 3000
+
+    var body: some View {
+        Group {
+            if let image, image.size.height > 0 {
+                Image(nsImage: image).resizable().frame(width: height * image.size.width / image.size.height, height: height)
+            } else {
+                Color.white.opacity(0.08).frame(width: height * 9 / 19.5, height: height)
+            }
+        }
+        .task(id: file) { image = await Thumbnails.load(file, maxPixels: Self.maxPixels) }
+    }
+}
+
 /// The viewer's buttons: white on black for the main one, gray for the other.
-struct ViewerButtonStyle: ButtonStyle {
-    let prominent: Bool
+private struct ViewerButtonStyle: ButtonStyle {
+    let isProminent: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.callout.weight(.medium))
-            .foregroundStyle(prominent ? Color.black : Color.white)
+            .foregroundStyle(isProminent ? Color.black : Color.white)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(prominent ? Color.white : Color.white.opacity(0.12)))
+                .fill(isProminent ? Color.white : Color.white.opacity(0.12)))
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

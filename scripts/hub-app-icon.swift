@@ -5,7 +5,11 @@
 //   swift scripts/hub-app-icon.swift <folder>.iconset
 import AppKit
 
-let folder = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+guard CommandLine.arguments.count == 2 else {
+    FileHandle.standardError.write(Data("Usage: swift scripts/hub-app-icon.swift <folder>.iconset\n".utf8))
+    exit(64)
+}
+let folder = URL(filePath: CommandLine.arguments[1], directoryHint: .isDirectory)
 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
 let red = NSColor(srgbRed: 1, green: 0.231, blue: 0.188, alpha: 1).cgColor
@@ -27,7 +31,12 @@ func squircle(_ rect: CGRect) -> CGPath {
         let angle = CGFloat(step) / 720 * 2 * .pi
         let x = rect.midX + rect.width / 2 * copysign(pow(abs(cos(angle)), 0.4), cos(angle))
         let y = rect.midY + rect.height / 2 * copysign(pow(abs(sin(angle)), 0.4), sin(angle))
-        step == 0 ? path.move(to: CGPoint(x: x, y: y)) : path.addLine(to: CGPoint(x: x, y: y))
+        let point = CGPoint(x: x, y: y)
+        if step == 0 {
+            path.move(to: point)
+        } else {
+            path.addLine(to: point)
+        }
     }
     path.closeSubpath()
     return path
@@ -57,7 +66,9 @@ func draw(_ context: CGContext, pixels: CGFloat, small: Bool) {
     context.saveGState()
     context.addPath(squircle(body))
     context.clip()
-    let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [gray(0.17), gray(0.02)] as CFArray, locations: [0, 1])!
+    guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [gray(0.17), gray(0.02)] as CFArray, locations: [0, 1]) else {
+        fatalError("Couldn't make the body's gradient")
+    }
     context.drawLinearGradient(gradient, start: CGPoint(x: 512, y: 100), end: CGPoint(x: 512, y: 924), options: [])
     context.restoreGState()
     stroke(squircle(body.insetBy(dx: 2, dy: 2)), gray(1, 0.14), 4)
@@ -94,9 +105,10 @@ let sizes: [(name: String, pixels: Int)] = [
     ("128x128@2x", 256), ("256x256", 256), ("256x256@2x", 512), ("512x512", 512), ("512x512@2x", 1024),
 ]
 for size in sizes {
-    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size.pixels, pixelsHigh: size.pixels, bitsPerSample: 8,
-                               samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-    let context = NSGraphicsContext(bitmapImageRep: rep)!.cgContext
+    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size.pixels, pixelsHigh: size.pixels, bitsPerSample: 8,
+                                     samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+          let context = NSGraphicsContext(bitmapImageRep: rep)?.cgContext
+    else { fatalError("Couldn't make a \(size.pixels)-pixel bitmap") }
     let scale = CGFloat(size.pixels) / 1024
     context.translateBy(x: 0, y: CGFloat(size.pixels))
     context.scaleBy(x: scale, y: -scale)
@@ -104,5 +116,6 @@ for size in sizes {
     NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
     draw(context, pixels: CGFloat(size.pixels), small: size.pixels <= 64)
     NSGraphicsContext.restoreGraphicsState()
-    try rep.representation(using: .png, properties: [:])!.write(to: folder.appending(path: "icon_\(size.name).png"))
+    guard let png = rep.representation(using: .png, properties: [:]) else { fatalError("Couldn't encode icon_\(size.name).png") }
+    try png.write(to: folder.appending(path: "icon_\(size.name).png"))
 }

@@ -1,0 +1,127 @@
+#if os(macOS)
+import Foundation
+import Testing
+@testable import RedlineTool
+
+struct ChatSessionTests {
+    private let temporary = TemporaryFolder("ChatSessionTests")
+    private var root: URL { temporary.url }
+    private var paths: HubPaths { HubPaths(root: root.appending(path: "hub-root", directoryHint: .isDirectory)) }
+
+    /// A project folder with two ways of setting bundle IDs.
+    private func project() throws -> URL {
+        let folder = root.appending(path: "ExampleApp", directoryHint: .isDirectory)
+        let files = FileManager.default
+        try files.createDirectory(at: folder.appending(path: "App/App.xcodeproj"), withIntermediateDirectories: true)
+        try files.createDirectory(at: folder.appending(path: "Pods/Vendor.xcodeproj"), withIntermediateDirectories: true)
+        try "targets:\n  App:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.app\n".write(to: folder.appending(path: "App/project.yml"), atomically: true, encoding: .utf8)
+        try """
+        { objects = {
+            T1 = {isa = PBXNativeTarget; productType = "com.apple.product-type.application"; buildConfigurationList = L1; };
+            L1 = {isa = XCConfigurationList; buildConfigurations = (C1); };
+            C1 = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_BUNDLE_IDENTIFIER = com.example.app; }; };
+        }; }
+        """.write(to: folder.appending(path: "App/App.xcodeproj/project.pbxproj"), atomically: true, encoding: .utf8)
+        // Other people's code doesn't count.
+        try """
+        { objects = {
+            T1 = {isa = PBXNativeTarget; productType = "com.apple.product-type.application"; buildConfigurationList = L1; };
+            L1 = {isa = XCConfigurationList; buildConfigurations = (C1); };
+            C1 = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_BUNDLE_IDENTIFIER = org.cocoapods.vendor; }; };
+        }; }
+        """.write(to: folder.appending(path: "Pods/Vendor.xcodeproj/project.pbxproj"), atomically: true, encoding: .utf8)
+        return folder
+    }
+
+    /// A report in the inbox with a screen picture and one attached to a note, `pictureBytes` each.
+    @discardableResult
+    private func inboxReport(_ id: String, bundleID: String = "com.example.app", pictureBytes: Int = 10) throws -> URL {
+        let listing: [String: Any] = ["screens": [["images": [["file": "screen-1.jpg"]]]], "items": [["attachments": [String]()], ["attachments": ["note-2.jpg"]]]]
+        return try fileInboxReport("\(id)-00000001", bundleID: bundleID, in: paths, listing: listing,
+                                   pictures: ["screen-1.jpg": Data(repeating: 0xFF, count: pictureBytes), "note-2.jpg": Data(repeating: 0xD8, count: pictureBytes)],
+                                   summary: "# UI report: Example\n\n1. **Milk stash**: Test.\n", receivedAt: Date(timeIntervalSince1970: 1_791_000_000))
+    }
+
+    private func session(_ folder: URL) -> ChatSession {
+        ChatSession(paths: paths, folder: folder, extraApps: [], agent: "test", startsHub: false)
+    }
+
+    @Test func aChatOutsideAnAppProjectStaysOut() throws {
+        let notes = root.appending(path: "Notes", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
+        session(notes).register(agent: "claude-code")
+        #expect(Chats.removeClosedChats(paths).isEmpty)
+    }
+
+    @Test func onlyOneChatTakesAReport() throws {
+        let folder = try project()
+        _ = try inboxReport("20261003-223449")
+        let first = session(folder), second = session(folder)
+        #expect(first.take(budget: 1_000_000).taken == 1)
+        #expect(second.take(budget: 1_000_000).taken == 0)
+        let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
+        #expect(report.claim?.chat == first.chat.id)
+    }
+
+    @Test func aChatOnAnotherAppNeverGetsTheReport() throws {
+        _ = try inboxReport("20261003-223449")
+        let other = root.appending(path: "Other", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try "PRODUCT_BUNDLE_IDENTIFIER: com.example.other".write(to: other.appending(path: "project.yml"), atomically: true, encoding: .utf8)
+        #expect(session(other).take(budget: 1_000_000).taken == 0)
+    }
+
+    @Test func theMoreRecentChatGetsTheReportEvenAfterEarlierChanges() async throws {
+        let folder = try project()
+        let older = ChatSession(paths: paths, folder: folder, extraApps: [], agent: "test", id: "older", startsHub: false)
+        older.registerWaiting()
+        // Used a minute ago: saved times have whole seconds.
+        var record = older.chat
+        record.lastActiveAt = Date.now.addingTimeInterval(-60)
+        try Chats.register(record, paths: paths)
+        let recent = ChatSession(paths: paths, folder: folder, extraApps: [], agent: "test", id: "recent", startsHub: false)
+        recent.registerWaiting()
+        _ = try inboxReport("20261003-231000")
+        // A change the older chat's wait already counted, left over from before.
+        let waiter = ChatSession.Waiter()
+        waiter.wake()
+        // The more recent chat takes it during the older one's deferral.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { _ = recent.take(budget: 1_000_000) }
+        let tookIt = await offPool { older.waitForRoutedReport(timeout: 2, waiter: waiter) }
+        #expect(!tookIt)
+        #expect(older.take(budget: 1_000_000).taken == 0)
+    }
+
+    @Test func waitingReturnsWhenAReportArrives() async throws {
+        let chat = session(try project())
+        let waiter = ChatSession.Waiter()
+        let started = Date.now
+        async let arrived = offPool { chat.waitForReport(timeout: 30, waiter: waiter) }
+        try await Task.sleep(for: .milliseconds(300))
+        try inboxReport("20261003-230000")
+        #expect(await arrived)
+        // Woken by the report arriving, long before the timeout.
+        #expect(Date.now.timeIntervalSince(started) < 10)
+        #expect(chat.take(budget: 1_000_000).taken == 1)
+        // Nothing more: a short wait ends with no report.
+        #expect(await offPool { !chat.waitForReport(timeout: 0.2, waiter: ChatSession.Waiter()) })
+    }
+
+    @Test func anotherHookKeepsTheChatsWaiter() throws {
+        let folder = root.appending(path: "App", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let waiting = ChatSession(paths: paths, folder: folder, extraApps: ["com.example.app"], agent: "claude", id: "claude-s1", startsHub: false)
+        waiting.registerWaiting()
+        // A prompt hook, in another process, saves the same chat without a waiter of its own.
+        let prompt = ChatSession(paths: paths, folder: folder, extraApps: ["com.example.app"], agent: "claude", id: "claude-s1", startsHub: false)
+        prompt.touch()
+        let saved = try #require(Chats.record("claude-s1", paths: paths))
+        #expect(saved.waiter == getpid())
+        #expect(saved.isWaiting)
+        // A waiter that's gone doesn't count.
+        var gone = saved
+        gone.waiter = Int32.max
+        #expect(!gone.isWaiting)
+    }
+}
+#endif

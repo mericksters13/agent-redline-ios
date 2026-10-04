@@ -6,11 +6,16 @@ cd "$(dirname "$0")/.."
 destination="${1:-$HOME/Applications}"
 swift build -c release --product redline
 binary="$(swift build -c release --show-bin-path)/redline"
+# The same as `version` in Sources/RedlineTool/main.swift, which the MCP server reports.
+version="0.1.0"
 app="$destination/Redline.app"
-staging="$(mktemp -d)/Redline.app"
+# One temporary folder for the bundle being built and its icon, removed however the script ends.
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+staging="$work/Redline.app"
 mkdir -p "$staging/Contents/MacOS" "$staging/Contents/Resources"
 cp "$binary" "$staging/Contents/MacOS/redline"
-iconset="$(mktemp -d)/AppIcon.iconset"
+iconset="$work/AppIcon.iconset"
 swift scripts/hub-app-icon.swift "$iconset"
 iconutil --convert icns --output "$staging/Contents/Resources/AppIcon.icns" "$iconset"
 cat > "$staging/Contents/Info.plist" <<PLIST
@@ -23,7 +28,7 @@ cat > "$staging/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>com.agentredline.hub</string>
     <key>CFBundleName</key><string>Redline</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1</string>
+    <key>CFBundleShortVersionString</key><string>$version</string>
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>LSUIElement</key><true/>
 </dict>

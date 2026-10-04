@@ -1,34 +1,33 @@
 #if os(macOS)
+import Darwin
 import Foundation
 
 /// Adds this tool's hooks to each agent's user hook settings, keeping every other hook there,
 /// and takes them out again. Running it twice changes nothing.
 enum AgentSettings {
-    static func file(_ agent: Agent) -> URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+    /// The agent's user hook settings file.
+    static func fileURL(for agent: Agent) -> URL {
+        let home = URL.homeDirectory
         switch agent {
         case .claude: return home.appending(path: ".claude/settings.json")
         case .codex: return home.appending(path: ".codex/hooks.json")
-        case .cursor: return home.appending(path: ".cursor/hooks.json")
         }
     }
 
     /// The agent's settings folder exists, so the agent has been used on this Mac.
     static func isPresent(_ agent: Agent) -> Bool {
-        FileManager.default.fileExists(atPath: file(agent).deletingLastPathComponent().path)
+        FileManager.default.fileExists(atPath: fileURL(for: agent).deletingLastPathComponent().path)
     }
 
-    static func command(_ executable: String, _ agent: Agent, _ event: HookEvent) -> String {
-        "'\(executable.replacingOccurrences(of: "'", with: "'\\''"))' hook \(agent.rawValue) \(event.rawValue)"
+    private static func command(running executable: String, agent: Agent, event: HookEvent) -> String {
+        "'\(executable.replacing("'", with: "'\\''"))' hook \(agent.rawValue) \(event.rawValue)"
     }
 
     /// This tool's hooks, by the agent's event name, with the matcher that limits them to
     /// commands and MCP tools where an agent supports one.
     static func hooks(_ agent: Agent, executable: String) -> [(event: String, matcher: String?, hooks: [[String: Any]])] {
         func hook(_ event: HookEvent, _ extra: [String: Any] = [:]) -> [String: Any] {
-            var hook: [String: Any] = ["command": command(executable, agent, event)]
-            if agent != .cursor { hook["type"] = "command" }
-            return hook.merging(extra) { $1 }
+            ["type": "command", "command": command(running: executable, agent: agent, event: event)].merging(extra) { $1 }
         }
         switch agent {
         case .claude:
@@ -38,51 +37,43 @@ enum AgentSettings {
             // Codex chats are reached through the Codex app. This hook is the safety net for a
             // report the app didn't take: it goes in with the chat's next message.
             return [("UserPromptSubmit", nil, [hook(.prompt, ["statusMessage": "Report delivery"])])]
-        case .cursor:
-            // Cursor's chats can't be found or woken from outside, so its hooks register them and
-            // hand reports over. A little longer than the hold, so Cursor never cuts it short.
-            let stop = hook(.stop, ["timeout": Int(AgentHooks.holdOpen) + 60, "loop_limit": NSNull()])
-            return [("sessionStart", nil, [hook(.start)]), ("beforeSubmitPrompt", nil, [hook(.prompt)]), ("stop", nil, [stop]),
-                    ("sessionEnd", nil, [hook(.end)])]
         }
     }
 
-    /// The names this tool's command has had. A hook that runs any of them, from any folder, is
-    /// an older copy of this tool's, such as one from before the rename or a move.
-    static let commandNames = ["redline", "agentic-debugging"]
+    /// The tool's command name. A hook that runs it, from any folder, is a copy of this tool's,
+    /// such as one from before a move.
+    private static let commandName = "redline"
 
-    static func isOurs(_ hook: Any) -> Bool {
+    private static func isOurs(_ hook: Any) -> Bool {
         guard let command = (hook as? [String: Any])?["command"] as? String, command.hasPrefix("'"),
               let end = command.range(of: "' hook ") else { return false }
-        let path = command[command.index(after: command.startIndex)..<end.lowerBound].replacingOccurrences(of: "'\\''", with: "'")
-        return commandNames.contains(URL(fileURLWithPath: path).lastPathComponent)
+        let path = String(command[command.index(after: command.startIndex)..<end.lowerBound]).replacing("'\\''", with: "'")
+        return URL(filePath: path).lastPathComponent == commandName
     }
 
     /// The settings with this tool's hooks in place, replacing any older copy of them.
     static func adding(_ agent: Agent, to settings: [String: Any], executable: String) -> [String: Any] {
         var settings = removing(agent, from: settings)
+        let hooks = self.hooks(agent, executable: executable)
+        guard !hooks.isEmpty else { return settings }
         var events = settings["hooks"] as? [String: Any] ?? [:]
-        for (event, matcher, hooks) in self.hooks(agent, executable: executable) {
+        for (event, matcher, hooks) in hooks {
             var entries = events[event] as? [Any] ?? []
-            // Claude Code and Codex group hooks under a matcher; Cursor lists them directly.
-            if agent == .cursor {
-                entries += hooks
-            } else {
-                var group: [String: Any] = ["hooks": hooks]
-                if let matcher { group["matcher"] = matcher }
-                entries.append(group)
-            }
+            // Claude Code and Codex group hooks under a matcher.
+            var group: [String: Any] = ["hooks": hooks]
+            if let matcher { group["matcher"] = matcher }
+            entries.append(group)
             events[event] = entries
         }
         settings["hooks"] = events.isEmpty ? nil : events
-        if agent == .cursor, settings["version"] == nil { settings["version"] = 1 }
         return settings
     }
 
-    /// The settings without this tool's hooks, under any of its names; everything else stays.
+    /// The settings without this tool's hooks; everything else stays.
     static func removing(_ agent: Agent, from settings: [String: Any]) -> [String: Any] {
         var settings = settings
         guard var events = settings["hooks"] as? [String: Any] else { return settings }
+        var removedAny = false
         for (event, value) in events {
             guard let entries = value as? [Any] else { continue }
             let kept: [Any] = entries.compactMap { entry in
@@ -93,29 +84,44 @@ enum AgentSettings {
                 group["hooks"] = others
                 return group
             }
+            guard kept.count != entries.count || !NSArray(array: kept).isEqual(to: entries) else { continue }
+            removedAny = true
             events[event] = kept.isEmpty ? nil : kept
         }
+        // Without any of this tool's hooks, the user's settings stay exactly as they were.
+        guard removedAny else { return settings }
         settings["hooks"] = events.isEmpty ? nil : events
         return settings
     }
 
     /// Reads, changes and writes an agent's settings, keeping a copy of the file as it was the
     /// first time this tool changed it.
-    static func update(_ agent: Agent, _ change: ([String: Any]) -> [String: Any]) throws {
-        let file = file(agent)
+    static func update(_ agent: Agent, applying change: (_ settings: [String: Any]) -> [String: Any]) throws {
+        try update(fileURL(for: agent), applying: change)
+    }
+
+    /// Changes a settings file. A change that leaves the settings as they were writes nothing,
+    /// not even the copy, so the file keeps its own formatting. A file that exists but can't be
+    /// read throws, so it's never written over as if it were empty.
+    static func update(_ file: URL, applying change: (_ settings: [String: Any]) -> [String: Any]) throws {
         let files = FileManager.default
-        try files.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         var current: [String: Any] = [:]
-        if let data = try? Data(contentsOf: file) {
+        let data = try StoredFile.read(file)
+        if let data {
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw CocoaError(.fileReadCorruptFile, userInfo: [NSFilePathErrorKey: file.path])
             }
             current = object
+        }
+        let changed = change(current)
+        if data != nil, NSDictionary(dictionary: changed).isEqual(to: current) { return }
+        try files.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data {
             let backup = file.appendingPathExtension("before-redline")
             if !files.fileExists(atPath: backup.path) { try data.write(to: backup) }
         }
-        let data = try JSONSerialization.data(withJSONObject: change(current), options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        try data.write(to: file, options: .atomic)
+        let output = try JSONSerialization.data(withJSONObject: changed, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        try output.write(to: file, options: .atomic)
     }
 }
 #endif

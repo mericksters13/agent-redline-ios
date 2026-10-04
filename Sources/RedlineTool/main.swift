@@ -3,8 +3,14 @@ import AppKit
 import Foundation
 import UserNotifications
 
-/// `redline`: the Mac side of Redline. It takes reports off paired
-/// phones and simulators and keeps them in an inbox on the Mac for agent chats.
+// `redline`: the Mac side of Redline. It takes reports off paired phones and simulators and
+// keeps them in an inbox on the Mac for agent chats.
+
+/// The tool's version, which the MCP server reports. scripts/build-hub-app.sh writes the same
+/// into the app bundle.
+let version = "0.1.0"
+
+/// The help text printed for `redline` with no or unknown arguments.
 let usage = """
 Usage:
   redline mcp [--project <folder>] [--app <bundle ID> ...]
@@ -18,9 +24,9 @@ Usage:
       agent's background, it wakes the chat when a report arrives. With several chats waiting,
       the one used most recently gets the report.
   redline setup | remove
-      Adds to (or removes from) Codex's and Cursor's hook settings the hooks that hand reports to
-      a chat when nothing else can. Claude Code needs none. Other hooks stay as they are.
-  redline hook <claude | codex | cursor> <start | prompt | stop | end>
+      Adds to (or removes from) Codex's hook settings the hook that hands reports to a chat when
+      nothing else can. Claude Code needs none. Other hooks stay as they are.
+  redline hook <claude | codex> prompt
       Run by the agents' hooks, with the event's JSON on standard input.
   redline hub [--app <bundle ID> ...]
       Takes reports from phones and simulators for the open chats' apps and files them in the inbox.
@@ -35,32 +41,41 @@ Usage:
 
 /// The options the chat commands share.
 struct ChatOptions {
-    var project = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    var project = URL(filePath: FileManager.default.currentDirectoryPath)
     var apps: [String] = []
     var timeout: TimeInterval?
     var session: String?
     var agent = "command line"
 
-    init(_ arguments: ArraySlice<String>) {
+    /// The options in `arguments`; nil for a flag it doesn't know or one without its value.
+    static func parse(_ arguments: ArraySlice<String>) -> ChatOptions? {
+        var options = ChatOptions()
         var rest = arguments
         while let flag = rest.popFirst() {
             switch (flag, rest.popFirst()) {
-            case ("--project", let value?): project = URL(fileURLWithPath: (value as NSString).expandingTildeInPath)
-            case ("--app", let value?): apps.append(value)
-            case ("--timeout", let value?): timeout = TimeInterval(value)
-            case ("--session", let value?): session = value
-            case ("--agent", let value?): agent = value
-            default:
-                FileHandle.standardError.write(Data(usage.utf8))
-                exit(64)
+            case ("--project", let value?): options.project = URL(filePath: (value as NSString).expandingTildeInPath)
+            case ("--app", let value?): options.apps.append(value)
+            case ("--timeout", let value?): options.timeout = TimeInterval(value)
+            case ("--session", let value?): options.session = value
+            case ("--agent", let value?): options.agent = value
+            default: return nil
             }
         }
+        return options
+    }
+
+    /// The options in `arguments`, or the usage printed and an exit with code 64.
+    static func parseOrExit(_ arguments: ArraySlice<String>) -> ChatOptions {
+        guard let options = parse(arguments) else {
+            printError(usage)
+            exit(64)
+        }
+        return options
     }
 }
 
 var arguments = Array(CommandLine.arguments.dropFirst())
 let paths = HubPaths.standard
-HubPaths.moveFromOldName(to: paths)
 // Opened as an app bundle, it's the menu bar app.
 if arguments.isEmpty, Bundle.main.bundleURL.pathExtension == "app" { arguments = ["app"] }
 
@@ -76,7 +91,10 @@ case "app":
         exit(1)
     }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: [])
-    hub.start()
+    guard hub.start() else {
+        print("Another hub is running and didn't stop. Quit it, then open Redline again.")
+        exit(1)
+    }
     stopOnSignals { hub.stop() }
     HubAppContext.hub = hub
     // Report notifications come from Redline; macOS asks the user once.
@@ -85,7 +103,7 @@ case "app":
     HubMenuBarApp.main()
 
 case "hub":
-    let options = ChatOptions(arguments.dropFirst())
+    let options = ChatOptions.parseOrExit(arguments.dropFirst())
     if let running = HubProcess.running(paths) {
         print("A hub is already running (pid \(running)).")
         exit(1)
@@ -95,23 +113,26 @@ case "hub":
         exit(1)
     }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: options.apps)
-    hub.start()
+    guard hub.start() else {
+        print("A hub is already running\(HubProcess.running(paths).map { " (pid \($0))" } ?? "").")
+        exit(1)
+    }
     stopOnSignals { hub.stop() }
     dispatchMain()
 
 case "mcp":
-    let options = ChatOptions(arguments.dropFirst())
+    let options = ChatOptions.parseOrExit(arguments.dropFirst())
     let session = ChatSession(paths: paths, folder: options.project, extraApps: options.apps, agent: "unknown")
     stopOnSignals { session.unregister() }
     MCPServer(session: session).run()
 
 case "check":
-    let options = ChatOptions(arguments.dropFirst())
+    let options = ChatOptions.parseOrExit(arguments.dropFirst())
     let session = ChatSession(paths: paths, folder: options.project, extraApps: options.apps, agent: "command line")
     printReports(session)
 
 case "wait":
-    let options = ChatOptions(arguments.dropFirst())
+    let options = ChatOptions.parseOrExit(arguments.dropFirst())
     let session = ChatSession(paths: paths, folder: options.project, extraApps: options.apps, agent: options.agent, id: options.session)
     guard !session.chat.bundleIDs.isEmpty else {
         print("No app found for \(options.project.path). Pass --app <bundle ID>.")
@@ -128,7 +149,7 @@ case "wait":
     }
     parent.resume()
     let waiter = ChatSession.Waiter()
-    let deadline = options.timeout.map { Date().addingTimeInterval($0) }
+    let deadline = options.timeout.map { Date.now.addingTimeInterval($0) }
     while true {
         let left = deadline.map { $0.timeIntervalSinceNow }
         guard session.waitForRoutedReport(timeout: left, waiter: waiter) else {
@@ -137,7 +158,7 @@ case "wait":
             break
         }
         // Another chat may have taken it in the meantime; then keep waiting.
-        if printReports(session, quietWhenNone: true) {
+        if printReports(session, isQuietWhenNone: true) {
             session.unregister()
             break
         }
@@ -145,16 +166,16 @@ case "wait":
 
 case "hook":
     guard arguments.count == 3, let agent = Agent(rawValue: arguments[1]), let event = HookEvent(rawValue: arguments[2]) else {
-        FileHandle.standardError.write(Data(usage.utf8))
+        printError(usage)
         exit(64)
     }
-    exit(AgentHooks.run(agent, event, paths: paths))
+    exit(AgentHooks.run(for: agent, event: event, paths: paths))
 
 case "setup", "remove":
     let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
     let adding = arguments.first == "setup"
     // Before anything else: new Claude Code chats need the claude command signed in.
-    if adding, AgentSettings.isPresent(.claude) || AgentCommand.hasClaudeApp {
+    if adding, AgentSettings.isPresent(.claude) || AgentCommand.isClaudeAppInstalled() {
         guard ClaudeCLI.prepare() else { exit(1) }
         print("Claude Code: the claude command is signed in and ready to start new chats.")
     }
@@ -164,18 +185,19 @@ case "setup", "remove":
             if adding { print("\(agent.name): not used on this Mac, skipped.") }
             continue
         }
+        // An agent that needs no hooks is left alone: its settings file isn't touched.
+        if adding, AgentSettings.hooks(agent, executable: executable).isEmpty {
+            print("\(agent.name): no hooks needed")
+            continue
+        }
         do {
             try AgentSettings.update(agent) {
                 adding ? AgentSettings.adding(agent, to: $0, executable: executable) : AgentSettings.removing(agent, from: $0)
             }
-            if adding, AgentSettings.hooks(agent, executable: executable).isEmpty {
-                print("\(agent.name): no hooks needed")
-            } else {
-                print("\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.file(agent).path)")
-            }
+            print("\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.fileURL(for: agent).path)")
             if adding, agent == .codex { print("  Codex runs a new hook only once you trust it: open /hooks in Codex and trust \"Report delivery\".") }
         } catch {
-            print("\(agent.name): couldn't update \(AgentSettings.file(agent).path): \(error.localizedDescription)")
+            print("\(agent.name): couldn't update \(AgentSettings.fileURL(for: agent).path): \(error.localizedDescription)")
             failed = true
         }
     }
@@ -189,7 +211,14 @@ default:
     print(usage, terminator: "")
 }
 
-/// Runs `cleanup` and exits on Control-C or a termination request.
+/// Writes a line to standard error.
+func printError(_ message: String) {
+    try? FileHandle.standardError.write(contentsOf: Data((message + "\n").utf8))
+}
+
+/// Runs `cleanup` and exits on Control-C or a termination request. Called from the top-level
+/// code above, on the main actor.
+@MainActor
 func stopOnSignals(_ cleanup: @escaping @Sendable () -> Void) {
     for number in [SIGINT, SIGTERM, SIGHUP] {
         signal(number, SIG_IGN)
@@ -205,17 +234,18 @@ func stopOnSignals(_ cleanup: @escaping @Sendable () -> Void) {
 
 /// Kept alive for as long as the process runs. A static, not a top-level variable: those
 /// start existing only when execution reaches their line, after the commands above use this.
+@MainActor
 enum SignalSources {
-    nonisolated(unsafe) static var all: [DispatchSourceSignal] = []
+    static var all: [DispatchSourceSignal] = []
 }
 
 /// Prints the reports waiting for the session's apps and takes them. Pictures are named by
 /// path; an agent opens them with its own tools. True when it printed any.
 @discardableResult
-func printReports(_ session: ChatSession, quietWhenNone: Bool = false) -> Bool {
+func printReports(_ session: ChatSession, isQuietWhenNone: Bool = false) -> Bool {
     let taken = session.take(budget: Int.max)
     guard taken.taken > 0 else {
-        if !quietWhenNone {
+        if !isQuietWhenNone {
             print(session.chat.bundleIDs.isEmpty ? "No app found for \(session.chat.folder). Pass --app <bundle ID>." : "No reports waiting for \(session.chat.bundleIDs.joined(separator: ", ")).")
         }
         return false
@@ -229,30 +259,31 @@ func printReports(_ session: ChatSession, quietWhenNone: Bool = false) -> Bool {
     return true
 }
 
+/// Prints what the hub is doing and what's in the inbox, for `redline status`.
 func printStatus(_ paths: HubPaths) {
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
-    if let pid = HubProcess.running(paths), let data = try? Data(contentsOf: paths.status), let status = try? decoder.decode(HubStatus.self, from: data) {
-        print("Hub running (pid \(pid)) since \(status.startedAt.formatted(date: .omitted, time: .shortened)), for \(status.apps.joined(separator: ", "))")
-        print("  Apps reach it at \(status.hosts.joined(separator: ", ")), port \(status.port)")
-        for phone in status.phones { print("  \(phone.name) (\([phone.model, phone.udid].compactMap { $0 }.joined(separator: ", "))): \(phone.state)") }
-        print("  Simulators: \(status.simulatorContainers) app \(status.simulatorContainers == 1 ? "container" : "containers") watched")
+    let decoder = HubPaths.decoder
+    if let pid = HubProcess.running(paths) {
+        do {
+            let status = try decoder.decode(HubStatus.self, from: Data(contentsOf: paths.status))
+            print("Hub running (pid \(pid)) since \(status.startedAt.formatted(date: .omitted, time: .shortened)), for \(status.apps.joined(separator: ", "))")
+            print("  Apps reach it at \(status.hosts.joined(separator: ", ")), port \(status.port)")
+            for phone in status.phones { print("  \(phone.name) (\([phone.model, phone.udid].compactMap { $0 }.joined(separator: ", "))): \(phone.state)") }
+            print("  Simulators: \(status.simulatorContainers) app \(status.simulatorContainers == 1 ? "container" : "containers") watched")
+        } catch {
+            print("Hub running (pid \(pid)), but its status couldn't be read: \(error.localizedDescription)")
+        }
     } else {
         print("Hub not running")
     }
-    let files = FileManager.default
-    let apps = ((try? files.contentsOfDirectory(atPath: paths.inbox.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
-    guard !apps.isEmpty else {
+    let reports = Dictionary(grouping: Inbox.reports(for: nil, paths: paths), by: \.source.bundleID)
+    guard !reports.isEmpty else {
         print("Inbox empty")
         return
     }
     print("Inbox (\(paths.inbox.path)):")
-    for app in apps {
-        let reports = ((try? files.contentsOfDirectory(atPath: paths.inbox.appending(path: app).path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
-        let newest = reports.last.flatMap { name -> String? in
-            guard let data = try? Data(contentsOf: paths.inbox.appending(path: "\(app)/\(name)/source.json")),
-                  let source = try? decoder.decode(ReportSource.self, from: data) else { return name }
-            return "\(name), from \(source.deviceName), received \(source.receivedAt.formatted(.relative(presentation: .named)))"
+    for (app, reports) in reports.sorted(by: { $0.key < $1.key }) {
+        let newest = reports.last.map { report in
+            "\(report.folder.lastPathComponent), from \(report.source.deviceName), received \(report.source.receivedAt.formatted(.relative(presentation: .named)))"
         }
         print("  \(app): \(reports.count) \(reports.count == 1 ? "report" : "reports")" + (newest.map { "; newest \($0)" } ?? ""))
     }
