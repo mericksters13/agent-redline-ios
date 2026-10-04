@@ -302,6 +302,13 @@ enum ReportSummary {
             if element.label != nil, element.label != item.title { details.append("label \"\(element.label!)\"") }
             text += " (\(details.joined(separator: ", ")))"
         }
+        // The elements holding it, such as the row or card with the identifier, tell apart
+        // elements that share a label.
+        let inside = item.ancestors.compactMap { ancestor -> String? in
+            guard ancestor.label != nil || ancestor.identifier != nil else { return nil }
+            return [ancestor.role, ancestor.label.map { "\"\($0)\"" }, ancestor.identifier.map { "`\($0)`" }].compactMap { $0 }.joined(separator: " ")
+        }
+        if !inside.isEmpty { text += ", in " + inside.joined(separator: " in ") }
         if item.note.isEmpty {
             text += ". No note."
         } else {
@@ -426,6 +433,28 @@ struct ReportStore: Sendable {
         return (id, folder, draft)
     }
 
+    /// The most a report's files may add up to: the Mac's hub turns down a bigger one, as
+    /// `Hub.largestReport`. Checked before the report is finished, while its notes can still go
+    /// back into the draft for photos to be taken out.
+    static let largestReport = 50_000_000
+
+    /// A report too big for the Mac to take.
+    struct TooLarge: Error, Equatable {
+        var bytes: Int
+    }
+
+    /// Checks that a report drawn in `folder`, with the summary and listing `finishReport` adds,
+    /// fits what the Mac takes. Call before `finishReport`: a finished report can't be changed.
+    func checkSize(of report: Report, in folder: URL, limit: Int = Self.largestReport) throws {
+        var bytes = Data(ReportSummary.markdown(report).utf8).count + (try Self.encoder.encode(report)).count
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where !name.hasPrefix(".") {
+            let values = try? folder.appending(path: name).resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+            if values?.isDirectory == true { continue }
+            bytes += values?.fileSize ?? 0
+        }
+        if bytes > limit { throw TooLarge(bytes: bytes) }
+    }
+
     /// Finishes a report: writes `report.md` and `report.json` and removes the old draft.
     /// `report.json` goes last, so a report is listed as sent only once it is complete.
     func finishReport(_ report: Report, in folder: URL) throws {
@@ -455,6 +484,51 @@ struct ReportStore: Sendable {
         try? FileManager.default.removeItem(at: folder)
     }
 
+    /// Brings back reports cut short, such as by the app being killed while their pictures were
+    /// drawn. A finished one only loses the draft it was drawn from. An unfinished one's notes,
+    /// screens and pictures go back into the draft, ahead of any made since, so they can be sent
+    /// again. Call at launch only, before any report starts. Safe to run again after being cut
+    /// short itself: notes and screens already back in the draft aren't added twice.
+    func recoverInterruptedReports() {
+        let files = FileManager.default
+        let folders = (try? files.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        // Newest first, so each older report's notes go ahead of it.
+        for folder in folders.sorted(by: { $0.lastPathComponent > $1.lastPathComponent })
+        where (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            let old = folder.appending(path: "draft", directoryHint: .isDirectory)
+            let finished = files.fileExists(atPath: folder.appending(path: "report.json").path)
+            guard files.fileExists(atPath: old.path) else {
+                // Cut short before the draft moved in: there's nothing to bring back.
+                if !finished { discardReport(folder) }
+                continue
+            }
+            if finished {
+                try? files.removeItem(at: old)
+                continue
+            }
+            do {
+                let annotations = Self.load([Annotation].self, from: old.appending(path: draftFile.lastPathComponent)) ?? []
+                let screens = Self.load([ScreenRecord].self, from: old.appending(path: screensFile.lastPathComponent)) ?? []
+                try reclaimPictures(from: folder)
+                // Screens first, as when a note is added: a listed screen no note uses is harmless.
+                let currentScreens = loadScreens()
+                let screenIDs = Set(currentScreens.map(\.id))
+                try saveScreens(screens.filter { !screenIDs.contains($0.id) } + currentScreens)
+                let draft = loadDraft()
+                let noteIDs = Set(draft.map(\.id))
+                try saveDraft(annotations.filter { !noteIDs.contains($0.id) } + draft)
+                discardReport(folder)
+            } catch {
+                // Left as it is, to be tried again at the next launch.
+                continue
+            }
+        }
+    }
+
+    private static func load<T: Decodable>(_ type: T.Type, from file: URL) -> T? {
+        (try? Data(contentsOf: file)).flatMap { try? decoder.decode(type, from: $0) }
+    }
+
     /// Where the Mac's hub leaves its address, over Xcode's device link.
     var hubAddressFile: URL { root.appending(path: "hub.json") }
 
@@ -472,13 +546,17 @@ struct ReportStore: Sendable {
     }
 
     /// A sent report's files, as the hub keeps them: everything in its folder but the draft
-    /// and the delivery mark.
+    /// and the delivery mark. Empty when any of them can't be read: the hub turns down a report
+    /// without its `report.json`, so the report stays on the phone and is offered again,
+    /// rather than reaching the Mac without a picture it names.
     func reportFiles(_ id: String) -> [String: Data] {
         let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [:] }
         var files: [String: Data] = [:]
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name != "delivered" && !name.hasPrefix(".") {
+        for name in names where name != "delivered" && !name.hasPrefix(".") {
             let file = folder.appending(path: name)
-            guard (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true, let data = try? Data(contentsOf: file) else { continue }
+            if (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true { continue }
+            guard let data = try? Data(contentsOf: file) else { return [:] }
             files[name] = data
         }
         return files

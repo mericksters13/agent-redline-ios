@@ -10,7 +10,9 @@ enum ReportContent {
     }
 
     /// The pictures a report refers to, in the order its summary lists them: each screen's
-    /// pictures, then attachments.
+    /// pictures, then attachments. Only regular files directly in the report's folder: the
+    /// phone or simulator wrote report.json, so a name that leads out of the folder, or a link
+    /// to another file on the Mac, is left out.
     static func pictures(in folder: URL) -> [URL] {
         struct Listing: Decodable {
             struct Screen: Decodable { struct Picture: Decodable { var file: String }; var images: [Picture] }
@@ -23,7 +25,14 @@ enum ReportContent {
             .map { $0.screens.flatMap { $0.images.map(\.file) } + $0.items.flatMap(\.attachments) }
         let names = listed ?? ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
             .filter { $0.hasSuffix(".jpg") || $0.hasSuffix(".png") }.sorted()
-        return names.map { folder.appending(path: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
+        return names.compactMap { file($0, in: folder) }.filter {
+            (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.type] as? FileAttributeType == .typeRegular
+        }
+    }
+
+    /// The file a report names, when the name is a plain file name in its folder.
+    private static func file(_ name: String, in folder: URL) -> URL? {
+        Hub.isSafeName(name) ? folder.appending(path: name) : nil
     }
 
     /// The report as an agent reads it in a chat: each picture's path, then the notes on it,
@@ -37,22 +46,25 @@ enum ReportContent {
         var blocks: [String] = []
         for image in listing.screens.flatMap(\.images) {
             let notes = image.notes.compactMap { items[$0] }.map(line)
-            blocks.append(([report.folder.appending(path: image.file).path] + notes).joined(separator: "\n"))
+            blocks.append(([file(image.file, in: report.folder)?.path].compactMap { $0 } + notes).joined(separator: "\n"))
         }
         for item in listing.items where !item.attachments.isEmpty {
-            blocks.append((item.attachments.map { report.folder.appending(path: $0).path } + [line(item)]).joined(separator: "\n"))
+            blocks.append((item.attachments.compactMap { file($0, in: report.folder)?.path } + [line(item)]).joined(separator: "\n"))
         }
         let app = listing.app.name ?? report.source.bundleID
         return (["UI report from \(report.source.deviceName) · \(app)"] + blocks).joined(separator: "\n\n")
     }
 
-    /// "1. Log milestone (Button, today.milestones): This is ugly".
+    /// "1. Log milestone (Button, today.milestones), in Cell "Milestones" (today.list): This is ugly".
+    /// The elements holding it, innermost first, tell apart elements that share a label.
     private static func line(_ item: Listing.Item) -> String {
         let element = item.element
         let name = element?.label ?? element?.identifier ?? item.title
         let details = [element?.role, element?.identifier == name ? nil : element?.identifier].compactMap { $0 }.joined(separator: ", ")
+        let inside = (item.ancestors ?? []).compactMap(\.description)
         let note = item.note.isEmpty ? "No note" : item.note
-        return "\(item.number). \(name)\(details.isEmpty ? "" : " (\(details))"): \(note)"
+        return "\(item.number). \(name)\(details.isEmpty ? "" : " (\(details))")"
+            + (inside.isEmpty ? "" : ", in " + inside.joined(separator: " in ")) + ": \(note)"
     }
 
     /// What `text(for:)` reads from report.json.
@@ -70,11 +82,19 @@ enum ReportContent {
                 var identifier: String?
                 var label: String?
                 var role: String?
+
+                /// `Cell "Milestones" (today.list)`; nil for an element with no label or identifier.
+                var description: String? {
+                    guard label != nil || identifier != nil else { return nil }
+                    return [role, label.map { "\"\($0)\"" }, identifier.map { "(\($0))" }].compactMap { $0 }.joined(separator: " ")
+                }
             }
             var number: Int
             var title: String
             var note: String
             var element: Element?
+            /// The elements holding it, innermost first. Missing in reports from before they were saved.
+            var ancestors: [Element]?
             var attachments: [String]
         }
         var app: App

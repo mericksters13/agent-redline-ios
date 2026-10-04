@@ -280,7 +280,8 @@ struct AttachmentPicker: View {
     }
 
     /// Off the main thread and in parallel: reading and shrinking a large photo takes long
-    /// enough to stall the UI. Keeps the order they were chosen in.
+    /// enough to stall the UI. Keeps the order they were chosen in. One that can't be loaded is
+    /// left out; the note box says how many are missing.
     nonisolated private static func images(from items: [PhotosPickerItem]) async -> [UIImage] {
         await withTaskGroup(of: (Int, UIImage?).self) { group in
             for (index, item) in items.enumerated() {
@@ -356,6 +357,7 @@ final class RecentPhotos {
     }
 
     /// The chosen photos at attachment size, in the order they were chosen, all requested at once.
+    /// One that can't be loaded is left out; the note box says how many are missing.
     func images(for ids: [String]) async -> [UIImage] {
         if usesSamples { return ids.compactMap { UIImage(contentsOfFile: $0) } }
         let requests = ids.compactMap { assets[$0] }.map { asset in

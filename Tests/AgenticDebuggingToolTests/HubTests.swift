@@ -15,6 +15,10 @@ struct HubTests {
         return Hub(paths: paths, devicectl: Devicectl(executable: URL(fileURLWithPath: "/usr/bin/true")), apps: [app])
     }
 
+    private func store(_ id: String, in hub: Hub, offeredIn offer: HubMessage.Offer) -> Bool {
+        hub.store(HubMessage.Upload(id: id, files: ["report.json": Data("{}".utf8)]), offeredIn: offer)
+    }
+
     private func offer(token: String, reports: [(String, Date)]) -> HubMessage.Offer {
         HubMessage.Offer(device: phone, bundleID: app, token: token, reports: reports.map { .init(id: $0.0, finishedAt: $0.1) })
     }
@@ -179,6 +183,41 @@ struct HubTests {
         #expect(hub.apps.contains(other))
     }
 
+    @Test func chatsNotingTheirAppsAtOnceKeepEachOthers() {
+        let paths = self.paths
+        // Each stands in for a chat's own process: the file lock is per open file, not per process.
+        DispatchQueue.concurrentPerform(iterations: 40) { index in
+            let chat = ChatRecord(id: "c\(index)", agent: "test", folder: "/p\(index)", bundleIDs: ["com.example.app\(index)"],
+                                  pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
+            ProjectHistory.note(chat, paths: paths)
+        }
+        #expect(ProjectHistory.all(paths).count == 40)
+    }
+
+    @Test func aSimulatorReportWithALinkIsNotTaken() throws {
+        let files = FileManager.default
+        let folder = paths.root.appending(path: "copied", directoryHint: .isDirectory)
+        try files.createDirectory(at: folder.appending(path: "draft"), withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: folder.appending(path: "report.json"))
+        try Data("# Hi".utf8).write(to: folder.appending(path: "draft/report.md"))
+        #expect(SimulatorWatcher.holdsOnlyFilesAndFolders(folder))
+        // A link to a file elsewhere on the Mac, at any depth.
+        try files.createSymbolicLink(atPath: folder.appending(path: "draft/new-chat-output.jsonl").path, withDestinationPath: "/etc/hosts")
+        #expect(!SimulatorWatcher.holdsOnlyFilesAndFolders(folder))
+        try files.removeItem(at: folder.appending(path: "draft/new-chat-output.jsonl"))
+        // A hard link shares the file it names, so writing to it writes there.
+        let outside = paths.root.appending(path: "outside.txt")
+        try Data("secret".utf8).write(to: outside)
+        try files.linkItem(at: outside, to: folder.appending(path: "report.md"))
+        #expect(!SimulatorWatcher.holdsOnlyFilesAndFolders(folder))
+        try files.removeItem(at: folder.appending(path: "report.md"))
+        #expect(SimulatorWatcher.holdsOnlyFilesAndFolders(folder))
+        // The report folder itself a link.
+        let linked = paths.root.appending(path: "linked")
+        try files.createSymbolicLink(at: linked, withDestinationURL: folder)
+        #expect(!SimulatorWatcher.holdsOnlyFilesAndFolders(linked))
+    }
+
     @Test func aTokenOutlivesTheHub() throws {
         let token = try hub().token(device: phone, bundleID: app)
         #expect(token.count == 64)
@@ -204,10 +243,11 @@ struct HubTests {
         let old = ("20261002-135144", Date().addingTimeInterval(-86_400))
         let new = ("20261004-031600", Date())
         let offered = offer(token: token, reports: [old, new])
+        // The old one was sent before this hub set the app up, and is still waiting for a Mac.
+        #expect(store(old.0, in: hub, offeredIn: offered))
         let answer = hub.answer(offered)
         #expect(answer.refused == nil)
         #expect(answer.want == ["20261004-031600"])
-        // From before the hub first looked: the app can stop offering it.
         #expect(answer.delivered == ["20261002-135144"])
 
         // Unsafe file names and reports without their report.json are turned down.
@@ -224,13 +264,17 @@ struct HubTests {
         #expect(Set(again.delivered) == ["20261002-135144", "20261004-031600"])
     }
 
-    @Test func aSourceFirstSeenLaterTakesOnlyReportsFromThen() throws {
+    @Test func reportsSentBeforeTheHubSetTheAppUpAreTakenNotJustSettled() throws {
         let hub = try hub()
-        let firstLook = Date().addingTimeInterval(3 * 3600)
-        let before = FinishedReport(id: "20261004-120000", finishedAt: firstLook.addingTimeInterval(-3600))
-        let fresh = FinishedReport(id: "20261004-145930", finishedAt: firstLook.addingTimeInterval(-30))
-        #expect(hub.toCopy(device: phone, bundleID: app, finished: [before, fresh], now: firstLook) == ["20261004-145930"])
-        #expect(hub.settled(device: phone, bundleID: app, finished: [before, fresh]) == ["20261004-120000"])
+        let token = hub.token(device: phone, bundleID: app)
+        // Sent a day before any Mac gave the app its address, offered now that one has.
+        let early = offer(token: token, reports: [("20261003-120000", Date().addingTimeInterval(-86_400))])
+        let first = hub.answer(early)
+        #expect(first.want == ["20261003-120000"])
+        // Not confirmed until the hub has it.
+        #expect(first.delivered.isEmpty)
+        #expect(store("20261003-120000", in: hub, offeredIn: early))
+        #expect(hub.answer(early).delivered == ["20261003-120000"])
     }
 
     @Test func aReportWhoseSourceCannotBeWrittenIsNotFiled() throws {

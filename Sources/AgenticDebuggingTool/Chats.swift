@@ -30,8 +30,9 @@ struct Claim: Codable, Equatable, Sendable {
     var handingOverIn: Int32? = nil
 
     /// True when the process handing the report over ended before the chat had it, such as
-    /// when it crashed: the report is free for another chat to take.
-    var isInterrupted: Bool { handingOverIn.map { !Chats.isRunning($0) } ?? false }
+    /// when it crashed: the report is free for another chat to take. A process that started
+    /// after the claim only reuses the PID, so it doesn't hold the report.
+    var isInterrupted: Bool { handingOverIn.map { !Chats.isRunning($0, since: claimedAt) } ?? false }
 }
 
 /// A report in the inbox.
@@ -159,9 +160,15 @@ enum ProjectHistory {
     }
 
     static func note(_ chat: ChatRecord, paths: HubPaths) {
+        try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
+        // Each chat notes its apps from its own process: one at a time reads and rewrites the
+        // file, so none drops the apps another just added. Released when the descriptor closes.
+        let lock = open(paths.hub.appending(path: "projects.lock").path, O_RDWR | O_CREAT, 0o600)
+        guard lock >= 0 else { return }
+        defer { close(lock) }
+        guard flock(lock, LOCK_EX) == 0 else { return }
         var uses = all(paths)
         for bundleID in chat.bundleIDs { uses[bundleID] = ProjectUse(agent: chat.agent, folder: chat.folder, at: Date()) }
-        try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
         try? Chats.coder.encode(uses).write(to: file(paths), options: .atomic)
     }
 }
@@ -189,6 +196,22 @@ enum InboxQueue {
     /// Reports for this chat that it hasn't taken yet, oldest first.
     static func addressed(to chat: String, bundleIDs: [String], paths: HubPaths) -> [InboxReport] {
         waiting(for: bundleIDs, paths: paths).filter { address(of: $0.folder)?.chat == chat }
+    }
+
+    /// The chat a report was sent to, as its chat record's ID: its address, or else the pick
+    /// the phone saved with it, which the hub may still be handing over. A "New chat" pick names
+    /// the chat it started, or no chat ("") until it has. Nil when nothing says where it goes.
+    static func recipient(of report: URL, paths: HubPaths) -> String? {
+        if let address = address(of: report) { return address.chat }
+        guard let pick = Routing.pick(of: report) else { return nil }
+        if let chat = pick.chat { return "\(pick.agent)-\(chat)" }
+        return pick.newChat.flatMap { StartedChats.find($0, paths: paths) }.map { "\(pick.agent)-\($0.chat)" } ?? ""
+    }
+
+    /// Reports a chat may take, oldest first: those sent to it, and those sent nowhere. A report
+    /// sent to another chat, or to a new one, is never taken by a chat that only builds its app.
+    static func takeable(by chat: ChatRecord, paths: HubPaths) -> [InboxReport] {
+        waiting(for: chat.bundleIDs, paths: paths).filter { recipient(of: $0.folder, paths: paths).map { $0 == chat.id } ?? true }
     }
 
     /// Wakes chats waiting on an app's reports, after a report already in the inbox changed.

@@ -47,9 +47,17 @@ enum AgentSettings {
         }
     }
 
+    /// A hook `command(_:_:_:)` made, by this tool's current path or any earlier one, so hooks
+    /// left by a copy since moved or reinstalled are replaced and removed too. Any other hook,
+    /// including another tool's `hook` command, isn't.
     static func isOurs(_ hook: Any, executable: String) -> Bool {
-        let prefix = "'\(executable.replacingOccurrences(of: "'", with: "'\\''"))' hook "
-        return ((hook as? [String: Any])?["command"] as? String)?.hasPrefix(prefix) ?? false
+        guard let command = (hook as? [String: Any])?["command"] as? String, command.hasPrefix("'"),
+              let end = command.range(of: "' hook ", options: .backwards)
+        else { return false }
+        let path = command[command.index(after: command.startIndex)..<end.lowerBound].replacingOccurrences(of: "'\\''", with: "'")
+        let words = command[end.upperBound...].split(separator: " ", omittingEmptySubsequences: false)
+        return URL(fileURLWithPath: path).lastPathComponent == URL(fileURLWithPath: executable).lastPathComponent
+            && words.count == 2 && Agent(rawValue: String(words[0])) != nil && HookEvent(rawValue: String(words[1])) != nil
     }
 
     /// The settings with this tool's hooks in place, replacing any older copy of them.

@@ -259,7 +259,7 @@ enum SignalSources {
 @discardableResult
 func printReports(_ session: ChatSession, quietWhenNone: Bool = false) -> Bool {
     let taken = session.take(budget: Int.max)
-    guard taken.taken > 0 else {
+    guard !taken.reports.isEmpty else {
         if !quietWhenNone {
             print(session.chat.bundleIDs.isEmpty ? "No app found for \(session.chat.folder). Pass --app <bundle ID>." : "No reports waiting for \(session.chat.bundleIDs.joined(separator: ", ")).")
         }
@@ -271,6 +271,8 @@ func printReports(_ session: ChatSession, quietWhenNone: Bool = false) -> Bool {
         case .image(let file, _): print("Picture: \(file.path)")
         }
     }
+    // The reports are the chat's once they're written out.
+    ChatSession.settle(taken.reports, delivered: fflush(stdout) == 0 && ferror(stdout) == 0)
     return true
 }
 
