@@ -14,6 +14,7 @@ struct HubMenuBarApp: App {
             HubPanel(model: model)
         } label: {
             Image(nsImage: MenuBarIcon.image)
+                .accessibilityLabel("Redline")
         }
         .menuBarExtraStyle(.window)
     }
@@ -106,7 +107,8 @@ final class HubWindowModel {
 
     private(set) var devices: [DeviceRow] = []
     private(set) var reports: [ReportRow] = []
-    private(set) var address = ""
+    /// Where apps reach the hub, as the header says it.
+    private(set) var reach = "Starting"
     private let hub: Hub
     private var timer: Timer?
     /// The refresh under way; one at a time, cancelled when the panel closes.
@@ -159,9 +161,13 @@ final class HubWindowModel {
         }
         let simulators = snapshot.simulators.map { DeviceRow(id: $0.udid, name: $0.name, kind: "Simulator", state: "Running", lastReport: last[$0.udid]) }
         // Ready phones and running simulators first, then paired phones that can't take reports now.
-        devices = phones.filter(\.isActive) + simulators + phones.filter { !$0.isActive }
-        reports = snapshot.reports.map(\.row)
-        address = "\(snapshot.status.hosts.first ?? "") · port \(snapshot.status.port)"
+        // Only what changed is set, so the panel redraws only when something did.
+        let newDevices = phones.filter(\.isActive) + simulators + phones.filter { !$0.isActive }
+        if newDevices != devices { devices = newDevices }
+        let newReports = snapshot.reports.map(\.row)
+        if newReports != reports { reports = newReports }
+        let newReach = snapshot.status.hosts.first.map { "Apps reach it at \($0) · port \(snapshot.status.port)" } ?? "No local network"
+        if newReach != reach { reach = newReach }
     }
 
     /// Where refreshes read the inbox and run simctl, which block.
@@ -308,7 +314,11 @@ struct HubPanel: View {
                     .padding(.bottom, 12)
             } else {
                 ScrollView {
-                    reportList.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
+                    reportList.onGeometryChange(for: CGFloat.self) { proxy in
+                        proxy.size.height
+                    } action: { height in
+                        listHeight = height
+                    }
                 }
                 .frame(height: min(max(listHeight, 1), 520))
             }
@@ -317,7 +327,7 @@ struct HubPanel: View {
         }
         .frame(width: 400)
         .background(Color.black)
-        .environment(\.colorScheme, .dark)
+        .preferredColorScheme(.dark)
         .onAppear { model.panelDidOpen() }
         .onDisappear { model.panelDidClose() }
     }
@@ -347,7 +357,7 @@ struct HubPanel: View {
                         .overlay(Circle().stroke(Color.black, lineWidth: 2))
                         .offset(x: 4, y: -4)
                 }
-            Text(model.address.isEmpty ? "Starting" : "Apps reach it at \(model.address)")
+            Text(model.reach)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -367,15 +377,31 @@ struct HubPanel: View {
 
     private var footer: some View {
         HStack {
-            Button("Open inbox") { NSWorkspace.shared.open(model.inbox) }
+            Button {
+                NSWorkspace.shared.open(model.inbox)
+            } label: {
+                footerLabel("Open inbox")
+            }
             Spacer()
-            Button("Quit") { NSApplication.shared.terminate(nil) }
+            Button {
+                NSApplication.shared.terminate(nil)
+            } label: {
+                footerLabel("Quit")
+            }
         }
         .buttonStyle(.plain)
         .font(.callout)
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+    }
+
+    /// A footer button's label, with a click target at least 28 points tall.
+    private func footerLabel(_ title: String) -> some View {
+        Text(title)
+            .frame(minHeight: 28)
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
     }
 }
 
@@ -387,19 +413,30 @@ struct DeviceRowView: View {
             Image(systemName: device.isSimulator ? "iphone.gen3.badge.play" : "iphone.gen3")
                 .font(.body)
                 .frame(width: 24)
+                .opacity(device.isActive ? 1 : 0.5)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
-                Text(device.name).font(.callout.weight(.semibold))
-                Text([device.kind, device.state, device.lastReport.map { "last report \($0.formatted(.relative(presentation: .named)))" }]
-                    .compactMap { $0 }.joined(separator: " · "))
+                Text(device.name)
+                    .font(.callout.weight(.semibold))
+                    .opacity(device.isActive ? 1 : 0.5)
+                // Not dimmed: for a phone that can't take reports, this says why.
+                details
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer()
         }
-        .opacity(device.isActive ? 1 : 0.5)
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// "iPhone 17 Pro · Ready · last report 5 minutes ago", the time kept current by the system.
+    private var details: Text {
+        let base = Text(verbatim: "\(device.kind) · \(device.state)")
+        guard let lastReport = device.lastReport else { return base }
+        return Text("\(base) · last report \(Text(.currentDate, format: .reference(to: lastReport)))")
     }
 }
 
@@ -407,16 +444,25 @@ struct ReportRowView: View {
     let report: HubWindowModel.ReportRow
 
     var body: some View {
+        Button {
+            ReportWindows.show(report)
+        } label: {
+            row
+        }
+        .buttonStyle(.plain)
+        .help("Opens the report")
+    }
+
+    private var row: some View {
         HStack(alignment: .top, spacing: 12) {
             Thumbnail(url: report.thumbnail)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
-                Text("\(report.device) · \(report.receivedAt.formatted(.relative(presentation: .named)))")
+                Text("\(report.device) · \(Text(.currentDate, format: .reference(to: report.receivedAt)))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                (Text(report.agent).foregroundStyle(report.isWaiting ? .secondary : .primary)
-                    + Text(" · ").foregroundStyle(.secondary)
-                    + Text(report.chat))
+                DestinationText(report: report)
                     .font(.callout.weight(.semibold))
                     .lineLimit(1)
                 ForEach(report.notes.prefix(3), id: \.number) { note in
@@ -438,8 +484,15 @@ struct ReportRowView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .onTapGesture { ReportWindows.show(report) }
-        .help("Opens the report")
+    }
+}
+
+/// Where a report went, "Claude Code · Fix the paywall", with the agent dimmed while it waits.
+struct DestinationText: View {
+    let report: HubWindowModel.ReportRow
+
+    var body: some View {
+        Text("\(Text(report.agent).foregroundStyle(report.isWaiting ? .secondary : .primary))\(Text(" · ").foregroundStyle(.secondary))\(report.chat)")
     }
 }
 
