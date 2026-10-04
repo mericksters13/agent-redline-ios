@@ -22,6 +22,8 @@ export PATH
 DEFAULT_REPO="https://github.com/mericksters13/agent-redline-ios"
 # The login item's label, which is also Redline.app's bundle identifier.
 LABEL="com.agentredline.hub"
+# The bundle identifier of the earlier version's app, Agentic Debugging.app.
+OLD_LABEL="com.iosagenticdebuggingkit.hub"
 # Added to ~/.zprofile when ~/.local/bin isn't on PATH. Removed on uninstall by this exact text.
 # shellcheck disable=SC2016 # $HOME and $PATH are for the login shell to expand.
 PATH_LINE='export PATH="$HOME/.local/bin:$PATH" # Added by the Redline installer'
@@ -199,9 +201,9 @@ stop_app() {
     return 0
 }
 
-# The bundle identifier of the app at $APP, or nothing.
+# The bundle identifier of the app at $1 (default $APP), or nothing.
 app_identifier() {
-    /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist" 2>/dev/null
+    /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${1:-$APP}/Contents/Info.plist" 2>/dev/null
 }
 
 # Whether the app at $APP is Redline, by its bundle identifier. Another app with the same name is
@@ -215,6 +217,19 @@ app_is_ours() {
 # or deleted.
 command_is_ours() {
     [ -f "$COMMAND" ] && LC_ALL=C grep -qaF "$LABEL" "$COMMAND" 2>/dev/null
+}
+
+# Whether the app at $OLD_APP is the earlier version's, by its bundle identifier. Another app with
+# the same name is never stopped or deleted.
+old_app_is_ours() {
+    [ "$(app_identifier "$OLD_APP")" = "$OLD_LABEL" ]
+}
+
+# Whether the file at $OLD_COMMAND is the earlier version's command, which holds the name of its
+# data folder, or a link to a file that is gone (deleting it deletes nothing else). Read, never run.
+old_command_is_ours() {
+    if [ -L "$OLD_COMMAND" ] && [ ! -e "$OLD_COMMAND" ]; then return 0; fi
+    [ -f "$OLD_COMMAND" ] && LC_ALL=C grep -qaF "iOSAgenticDebuggingKit" "$OLD_COMMAND" 2>/dev/null
 }
 
 # Stops before the build when Redline's app or command path holds another app or command.
@@ -345,9 +360,11 @@ move_old_data() {
     local pid pid_file try pending_log="$LOG" pending_report="$REPORT"
     $MOVE_OLD_DATA || return 0
     step "Moving the earlier version's reports"
-    stop_app "$OLD_APP"
-    if [ $? -eq 2 ]; then
-        stop "The earlier version (Agentic Debugging) is still running." "Quit it from its menu bar icon."
+    if [ ! -e "$OLD_APP" ] || old_app_is_ours; then
+        stop_app "$OLD_APP"
+        if [ $? -eq 2 ]; then
+            stop "The earlier version (Agentic Debugging) is still running." "Quit it from its menu bar icon."
+        fi
     fi
     pid_file="$OLD_DATA/hub/hub.pid"
     pid="$(tr -d '[:space:]' 2>/dev/null <"$pid_file")"
@@ -465,6 +482,10 @@ find_source() {
     repo="${REDLINE_REPO:-$DEFAULT_REPO}"
     ref="${REDLINE_REF:-main}"
     case "$repo" in -*) stop "REDLINE_REPO ($repo) isn't a repository." "Set it to a git URL or folder, or unset it." ;; esac
+    # A folder is made absolute: git resolves a relative remote against the clone, not this folder.
+    if [ -d "$repo" ]; then
+        repo="$(cd "$repo" && pwd -P)" || stop "Couldn't open the folder REDLINE_REPO names ($REDLINE_REPO)." "Check that you can read it."
+    fi
     case "$ref" in -*) stop "REDLINE_REF ($ref) isn't a branch, tag or commit." "Set it to one, or unset it." ;; esac
     step "Downloading Redline from $repo ($ref)"
     SOURCE="$CACHE/source"
@@ -614,17 +635,23 @@ run_setup() {
 # its command goes once setup has moved every hook over to redline.
 remove_old_install() {
     local removed="" status
-    stop_app "$OLD_APP"
-    status=$?
-    if [ "$status" -eq 2 ]; then
-        item "Needs you" "Earlier version (Agentic Debugging): it is still running, so $OLD_APP stays." \
-            "Quit it from its menu bar icon, then run the installer again."
+    if [ -e "$OLD_APP" ] && ! old_app_is_ours; then
+        item "Skipped" "Kept $OLD_APP: it is another app (bundle identifier: $(app_identifier "$OLD_APP" || true)), not the earlier version"
     else
-        if [ "$status" -eq 0 ]; then removed="stopped it"; fi
-        if remove_old_file "$OLD_APP"; then removed="${removed:+$removed, }removed $OLD_APP"; fi
+        stop_app "$OLD_APP"
+        status=$?
+        if [ "$status" -eq 2 ]; then
+            item "Needs you" "Earlier version (Agentic Debugging): it is still running, so $OLD_APP stays." \
+                "Quit it from its menu bar icon, then run the installer again."
+        else
+            if [ "$status" -eq 0 ]; then removed="stopped it"; fi
+            if remove_old_file "$OLD_APP"; then removed="${removed:+$removed, }removed $OLD_APP"; fi
+        fi
     fi
     if [ -e "$OLD_COMMAND" ] || [ -L "$OLD_COMMAND" ]; then
-        if ! $SETUP_OK; then
+        if ! old_command_is_ours; then
+            item "Skipped" "Kept $OLD_COMMAND: it is another command, not the earlier version's"
+        elif ! $SETUP_OK; then
             item "Skipped" "Earlier version: kept $OLD_COMMAND until redline setup succeeds, because hooks may still run it"
         elif remove_old_file "$OLD_COMMAND"; then
             removed="${removed:+$removed, }removed $OLD_COMMAND"
