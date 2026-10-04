@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" width="960" height="420" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="t">Steps 2 and 3 on an iPhone and in a simulator</title>
+  <desc id="d">Steps 2 and 3, drawn twice. Physical iPhone: the hub, on the Mac, puts hub.json in the app over Xcode&#39;s device link, and the app sends the report to the hub over the local network. Simulator: the app and the hub are both on the Mac; the hub writes hub.json with 127.0.0.1, used only to list chats, and copies the finished report from the app&#39;s folder itself.</desc>
+  <rect x="0" y="0" width="960" height="420" rx="24" fill="#F2F2F7"/>
+  <!-- Zones and divider -->
+  <rect x="676" y="70" width="260" height="124" rx="18" fill="none" stroke="#8E8E93" stroke-width="1.5" stroke-dasharray="6 6"/>
+  <text x="692" y="62" font-size="20" font-weight="600" fill="#6E6E73" stroke="#F2F2F7" stroke-width="6" stroke-linejoin="round" paint-order="stroke">Mac</text>
+  <line x1="24" y1="210" x2="936" y2="210" stroke="#D1D1D6" stroke-width="1.5"/>
+  <rect x="24" y="228" width="912" height="164" rx="18" fill="none" stroke="#8E8E93" stroke-width="1.5" stroke-dasharray="6 6"/>
+  <text x="916" y="258" font-size="20" font-weight="600" fill="#6E6E73" text-anchor="end">Mac</text>
+  <!-- Physical iPhone -->
+  <text x="48" y="64" font-size="24" font-weight="600" fill="#000000">Physical iPhone</text>
+  <line x1="696" y1="108" x2="292" y2="108" stroke="#000000" stroke-width="3" stroke-linecap="butt" stroke-dasharray="8.1 6"/>
+  <line x1="252" y1="108" x2="244" y2="108" stroke="#000000" stroke-width="3" stroke-linecap="butt" stroke-dasharray="8 6"/>
+  <path d="M244 102 L230 108 L244 114 Z" fill="#000000"/>
+  <line x1="228" y1="156" x2="680" y2="156" stroke="#000000" stroke-width="3" stroke-linecap="round"/>
+  <path d="M680 150 L694 156 L680 162 Z" fill="#000000"/>
+  <rect x="48" y="84" width="180" height="96" rx="16" fill="#FFFFFF" stroke="#000000" stroke-width="2.5"/>
+  <rect x="71" y="102" width="33.6" height="60" rx="7.2" fill="none" stroke="#000000" stroke-width="2.5"/>
+  <rect x="78.2" y="115.2" width="19.2" height="4.8" rx="2.4" fill="#E5E5EA"/>
+  <rect x="78.2" y="129.6" width="19.2" height="8.4" rx="2.4" fill="#000000"/>
+  <rect x="75.8" y="127.2" width="24" height="13.2" rx="3.6" fill="none" stroke="#FF3B30" stroke-width="2"/>
+  <rect x="78.2" y="146.4" width="14.4" height="4.8" rx="2.4" fill="#E5E5EA"/>
+  <circle cx="75.8" cy="127.2" r="5" fill="#FF3B30" stroke="#FFFFFF" stroke-width="1.5"/>
+  <text x="116.6" y="140" font-size="22" font-weight="600" fill="#000000">Your app</text>
+  <rect x="696" y="84" width="216" height="96" rx="16" fill="#FFFFFF" stroke="#000000" stroke-width="2.5"/>
+  <rect x="712" y="108" width="48" height="48" rx="11.1" fill="#111111" stroke="rgba(255,255,255,0.14)" stroke-width="1.5"/>
+  <rect x="724.9" y="113.6" width="22.1" height="36.8" rx="5.6" fill="none" stroke="#FFFFFF" stroke-width="2.7"/>
+  <rect x="729" y="128.3" width="14" height="6.5" rx="1.4" fill="#FFFFFF"/>
+  <rect x="727.4" y="126.6" width="17.2" height="9.8" rx="2.3" fill="none" stroke="#FF3B30" stroke-width="1.7"/>
+  <circle cx="744.6" cy="126.6" r="5.6" fill="#1A1A1A"/>
+  <circle cx="744.6" cy="126.6" r="4.4" fill="#FF3B30"/>
+  <text x="770" y="140" font-size="22" font-weight="600" fill="#000000">Redline hub</text>
+  <text x="302" y="98" font-size="20" font-weight="600" fill="#000000">hub.json over Xcode&#39;s device link</text>
+  <text x="302" y="146" font-size="20" font-weight="600" fill="#000000">Report over the local network</text>
+  <circle cx="272" cy="108" r="20" fill="#F2F2F7"/>
+  <circle cx="272" cy="108" r="16" fill="#000000"/>
+  <text x="272" y="115" font-size="20" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <circle cx="272" cy="156" r="20" fill="#F2F2F7"/>
+  <circle cx="272" cy="156" r="16" fill="#000000"/>
+  <text x="272" y="163" font-size="20" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+  <!-- Simulator -->
+  <text x="48" y="260" font-size="24" font-weight="600" fill="#000000">Simulator</text>
+  <line x1="696" y1="304" x2="292" y2="304" stroke="#000000" stroke-width="3" stroke-linecap="butt" stroke-dasharray="8.1 6"/>
+  <line x1="252" y1="304" x2="244" y2="304" stroke="#000000" stroke-width="3" stroke-linecap="butt" stroke-dasharray="8 6"/>
+  <path d="M244 298 L230 304 L244 310 Z" fill="#000000"/>
+  <line x1="228" y1="352" x2="680" y2="352" stroke="#000000" stroke-width="3" stroke-linecap="round"/>
+  <path d="M680 346 L694 352 L680 358 Z" fill="#000000"/>
+  <rect x="48" y="280" width="180" height="96" rx="16" fill="#FFFFFF" stroke="#000000" stroke-width="2.5"/>
+  <rect x="71" y="298" width="33.6" height="60" rx="7.2" fill="none" stroke="#000000" stroke-width="2.5"/>
+  <rect x="78.2" y="311.2" width="19.2" height="4.8" rx="2.4" fill="#E5E5EA"/>
+  <rect x="78.2" y="325.6" width="19.2" height="8.4" rx="2.4" fill="#000000"/>
+  <rect x="75.8" y="323.2" width="24" height="13.2" rx="3.6" fill="none" stroke="#FF3B30" stroke-width="2"/>
+  <rect x="78.2" y="342.4" width="14.4" height="4.8" rx="2.4" fill="#E5E5EA"/>
+  <circle cx="75.8" cy="323.2" r="5" fill="#FF3B30" stroke="#FFFFFF" stroke-width="1.5"/>
+  <text x="116.6" y="336" font-size="22" font-weight="600" fill="#000000">Your app</text>
+  <rect x="696" y="280" width="216" height="96" rx="16" fill="#FFFFFF" stroke="#000000" stroke-width="2.5"/>
+  <rect x="712" y="304" width="48" height="48" rx="11.1" fill="#111111" stroke="rgba(255,255,255,0.14)" stroke-width="1.5"/>
+  <rect x="724.9" y="309.6" width="22.1" height="36.8" rx="5.6" fill="none" stroke="#FFFFFF" stroke-width="2.7"/>
+  <rect x="729" y="324.3" width="14" height="6.5" rx="1.4" fill="#FFFFFF"/>
+  <rect x="727.4" y="322.6" width="17.2" height="9.8" rx="2.3" fill="none" stroke="#FF3B30" stroke-width="1.7"/>
+  <circle cx="744.6" cy="322.6" r="5.6" fill="#1A1A1A"/>
+  <circle cx="744.6" cy="322.6" r="4.4" fill="#FF3B30"/>
+  <text x="770" y="336" font-size="22" font-weight="600" fill="#000000">Redline hub</text>
+  <text x="302" y="294" font-size="20" font-weight="600" fill="#000000">hub.json with 127.0.0.1, to list chats</text>
+  <text x="302" y="342" font-size="20" font-weight="600" fill="#000000">Report copied from the app&#39;s folder</text>
+  <circle cx="272" cy="304" r="20" fill="#F2F2F7"/>
+  <circle cx="272" cy="304" r="16" fill="#000000"/>
+  <text x="272" y="311" font-size="20" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <circle cx="272" cy="352" r="20" fill="#F2F2F7"/>
+  <circle cx="272" cy="352" r="16" fill="#000000"/>
+  <text x="272" y="359" font-size="20" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+</svg>
