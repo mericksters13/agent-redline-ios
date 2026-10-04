@@ -190,9 +190,15 @@ enum ReportBuilder {
                 let ids = Set(group.map(\.id))
                 let notes = input.annotations.filter { $0.captureID.map(ids.contains) ?? false }
                 guard !notes.isEmpty, let plan = ScreenComposition.plan(for: group) else { continue }
-                let images = Dictionary(uniqueKeysWithValues: group.compactMap { capture in
-                    UIImage(contentsOfFile: input.draft.appending(path: capture.file).path).map { (capture.id, $0) }
-                })
+                // The newest group is the screen as it is; older groups are its earlier states.
+                let earlier = groupIndex < groups.count - 1
+                let base = earlier ? "\(screenID)-earlier-\(groupIndex + 1)" : screenID
+                // A capture that can't be read would leave part of the picture blank.
+                var images: [UUID: UIImage] = [:]
+                for capture in group {
+                    guard let image = UIImage(contentsOfFile: input.draft.appending(path: capture.file).path) else { throw PictureFailed(file: "\(base).jpg") }
+                    images[capture.id] = image
+                }
                 let outlines = notes.compactMap { note -> ReportRenderer.Outline? in
                     guard let number = numbers[note.id], let frame = note.element?.frame, let captureID = note.captureID,
                           let rect = plan.place(frame, from: captureID) else { return nil }
@@ -200,9 +206,6 @@ enum ReportBuilder {
                 }
                 screenNotes += outlines.map(\.number)
 
-                // The newest group is the screen as it is; older groups are its earlier states.
-                let earlier = groupIndex < groups.count - 1
-                let base = earlier ? "\(screenID)-earlier-\(groupIndex + 1)" : screenID
                 // Everything that was on screen, where it sits in the picture, so cuts fall between rows and sections.
                 let onScreen = group.flatMap { capture in
                     capture.elements.compactMap { plan.place($0.frame, from: capture.id) }

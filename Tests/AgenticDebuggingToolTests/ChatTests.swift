@@ -120,6 +120,33 @@ struct ChatTests {
         #expect(ProjectApps.bundleIDs(in: folder) == ["com.example.My-App", "com.example.My-App.debug"])
     }
 
+    @Test func inheritedSettingsKeepTheValueFromTheLevelBelow() throws {
+        let folder = root.appending(path: "Inherited", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder.appending(path: "App.xcodeproj"), withIntermediateDirectories: true)
+        try "PRODUCT_BUNDLE_IDENTIFIER = com.example.base\nPRODUCT_BUNDLE_IDENTIFIER = $(inherited).app\n"
+            .write(to: folder.appending(path: "Project.xcconfig"), atomically: true, encoding: .utf8)
+        try """
+        // !$*UTF8*$!
+        {
+          archiveVersion = 1;
+          rootObject = P1;
+          objects = {
+            P1 = {isa = PBXProject; mainGroup = G1; buildConfigurationList = L0; };
+            L0 = {isa = XCConfigurationList; buildConfigurations = (C0, C00); };
+            C0 = {isa = XCBuildConfiguration; name = Debug; baseConfigurationReference = F1; buildSettings = {}; };
+            C00 = {isa = XCBuildConfiguration; name = Release; buildSettings = {PRODUCT_BUNDLE_IDENTIFIER = com.example.release; }; };
+            G1 = {isa = PBXGroup; sourceTree = "<group>"; children = (F1); };
+            F1 = {isa = PBXFileReference; path = Project.xcconfig; sourceTree = "<group>"; };
+            T1 = {isa = PBXNativeTarget; name = App; productType = "com.apple.product-type.application"; buildConfigurationList = L1; };
+            L1 = {isa = XCConfigurationList; buildConfigurations = (C1, C2); };
+            C1 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {PRODUCT_BUNDLE_IDENTIFIER = "$(inherited).debug"; }; };
+            C2 = {isa = XCBuildConfiguration; name = Release; buildSettings = {PRODUCT_BUNDLE_IDENTIFIER = "${inherited}"; }; };
+          };
+        }
+        """.write(to: folder.appending(path: "App.xcodeproj/project.pbxproj"), atomically: true, encoding: .utf8)
+        #expect(ProjectApps.bundleIDs(in: folder) == ["com.example.base.app.debug", "com.example.release"])
+    }
+
     @Test func settingReferencesAreFilledInAsXcodeDoes() {
         let settings = ["TARGET_NAME": "Tiny Tally", "PRODUCT_NAME": "$(TARGET_NAME)", "BASE": "com.example"]
         #expect(ProjectApps.expand("${BASE}.$(PRODUCT_NAME:rfc1034identifier:lower)", with: settings) == "com.example.tiny-tally")
@@ -212,6 +239,19 @@ struct ChatTests {
         #expect(summary.contains("1. **Milk stash**: Test."))
         #expect(content.items.contains { if case .image(let file, _) = $0 { file.lastPathComponent == "screen-1.jpg" } else { false } })
         #expect(content.items.contains { if case .text(let text) = $0 { text.contains("note-2.jpg isn't attached") } else { false } })
+    }
+
+    @Test func onlyPicturesInTheReportsOwnFolderAreRead() throws {
+        let folder = try inboxReport("20261003-223449")
+        let secret = root.appending(path: "secret.txt")
+        try "private".write(to: secret, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: folder.appending(path: "link.jpg"), withDestinationURL: secret)
+        try FileManager.default.createDirectory(at: folder.appending(path: "folder.jpg"), withIntermediateDirectories: true)
+        let escape = "../../../../secret.txt"
+        #expect(FileManager.default.fileExists(atPath: folder.appending(path: escape).path))
+        try #"{"screens":[{"images":[{"file":"\#(escape)"},{"file":"screen-1.jpg"}]}],"items":[{"attachments":["link.jpg","folder.jpg","\#(secret.path)"]}]}"#
+            .write(to: folder.appending(path: "report.json"), atomically: true, encoding: .utf8)
+        #expect(ReportContent.pictures(in: folder).map(\.lastPathComponent) == ["screen-1.jpg"])
     }
 
     @Test func aLongPastedNoteStaysWithinTheReplyBudget() throws {

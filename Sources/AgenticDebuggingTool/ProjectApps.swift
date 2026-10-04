@@ -52,8 +52,8 @@ enum ProjectApps {
             && target["productType"] as? String == "com.apple.product-type.application" {
             for configuration in project.configurations(of: target["buildConfigurationList"] as? String) {
                 var settings = ["TARGET_NAME": target["name"] as? String ?? "", "PRODUCT_NAME": "$(TARGET_NAME)"]
-                settings.merge(projectSettings[configuration["name"] as? String ?? ""] ?? [:]) { $1 }
-                settings.merge(project.settings(of: configuration)) { $1 }
+                settings = ProjectApps.settings(projectSettings[configuration["name"] as? String ?? ""] ?? [:], over: settings)
+                settings = ProjectApps.settings(project.settings(of: configuration), over: settings)
                 // A watch, TV, Mac or Vision app; the kit runs only on iOS.
                 if let sdk = settings["SDKROOT"], ["watchos", "appletvos", "macosx", "xros"].contains(sdk) { continue }
                 if let id = settings["PRODUCT_BUNDLE_IDENTIFIER"].flatMap({ expand($0, with: settings) }), isLiteral(id) { found.insert(id) }
@@ -84,8 +84,9 @@ enum ProjectApps {
                 file = folder.appending(path: relative)
             }
             if let file { settings = ProjectApps.xcconfigSettings(at: file) }
-            for case let (key, value as String) in configuration["buildSettings"] as? [String: Any] ?? [:] { settings[key] = value }
-            return settings
+            var own: [String: String] = [:]
+            for case let (key, value as String) in configuration["buildSettings"] as? [String: Any] ?? [:] { own[key] = value }
+            return ProjectApps.settings(own, over: settings)
         }
 
         /// Where a file or group the project lists is.
@@ -118,7 +119,7 @@ enum ProjectApps {
                 guard parts.count >= 3 else { continue }
                 let path = String(parts[1])
                 let included = path.hasPrefix("/") ? URL(fileURLWithPath: path) : file.deletingLastPathComponent().appending(path: path)
-                settings.merge(xcconfigSettings(at: included, depth: depth + 1)) { $1 }
+                settings = Self.settings(xcconfigSettings(at: included, depth: depth + 1), over: settings)
                 continue
             }
             guard let equals = line.firstIndex(of: "=") else { continue }
@@ -126,7 +127,23 @@ enum ProjectApps {
             guard !key.isEmpty, !key.contains("[") else { continue }
             var value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces)
             if value.hasSuffix(";") { value.removeLast() }
-            settings[key] = value.trimmingCharacters(in: CharacterSet(charactersIn: " \t\""))
+            settings = Self.settings([key: value.trimmingCharacters(in: CharacterSet(charactersIn: " \t\""))], over: settings)
+        }
+        return settings
+    }
+
+    /// One level of settings over the levels below it, as Xcode layers them: the project's
+    /// `.xcconfig`, the project, the target's `.xcconfig`, then the target. `$(inherited)` in a
+    /// setting becomes the value below it; where nothing below sets it yet, it stays for a lower
+    /// level to fill in, and `expand` leaves it empty.
+    static func settings(_ upper: [String: String], over lower: [String: String]) -> [String: String] {
+        var settings = lower
+        for (key, value) in upper {
+            guard let below = lower[key] else {
+                settings[key] = value
+                continue
+            }
+            settings[key] = value.replacingOccurrences(of: "$(inherited)", with: below).replacingOccurrences(of: "${inherited}", with: below)
         }
         return settings
     }
@@ -146,6 +163,7 @@ enum ProjectApps {
             guard !reference.contains("$") else { return nil }
             let parts = reference.split(separator: ":", omittingEmptySubsequences: false)
             var filled = ""
+            // `settings(_:over:)` has put in what each level inherits; what's left, nothing sets.
             if parts[0] != "inherited" {
                 guard let setting = settings[String(parts[0])], let expanded = expand(setting, with: settings, depth: depth + 1) else { return nil }
                 filled = expanded

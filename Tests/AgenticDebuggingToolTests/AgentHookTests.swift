@@ -41,6 +41,20 @@ struct AgentHookTests {
         #expect(json(AgentSettings.removing(.codex, from: added, executable: executable)) == json(codexSettings))
     }
 
+    @Test func hooksFromAnEarlierInstallAreReplacedAndRemoved() {
+        let moved = AgentSettings.adding(.codex, to: codexSettings, executable: "/Users/someone/Downloads/it's here/agentic-debugging")
+        var settings = moved
+        // Another tool's command that also runs `hook` stays.
+        var events = settings["hooks"] as? [String: Any] ?? [:]
+        events["SessionStart"] = [["hooks": [["type": "command", "command": "'/usr/local/bin/other-tool' hook codex start"]]]]
+        settings["hooks"] = events
+        let added = AgentSettings.adding(.codex, to: settings, executable: executable)
+        #expect(commands(added, "UserPromptSubmit") == ["'\(executable)' hook codex prompt"])
+        #expect(commands(added, "SessionStart") == ["'/usr/local/bin/other-tool' hook codex start"])
+        let removed = AgentSettings.removing(.codex, from: moved, executable: executable)
+        #expect(json(removed) == json(codexSettings))
+    }
+
     @Test func eachAgentGetsItsOwnShape() {
         // Claude Code chats are found from their own records: no hooks, and the file is left as it was.
         #expect(json(AgentSettings.adding(.claude, to: ["model": "opus"], executable: executable)) == json(["model": "opus"]))
@@ -307,7 +321,8 @@ struct AgentHookTests {
             "screens": [["images": [["file": "screen-1.jpg", "notes": [1]]]], ["images": [["file": "screen-2.jpg", "notes": [3]]]]],
             "items": [
                 ["number": 1, "title": "Log milestone", "note": "This is ugly", "attachments": [String](),
-                 "element": ["identifier": "today.milestones", "label": "Log milestone", "role": "Button"]],
+                 "element": ["identifier": "today.milestones", "label": "Log milestone", "role": "Button"],
+                 "ancestors": [["role": "Group"], ["identifier": "today.card", "label": "Milestones", "role": "Group"]]],
                 ["number": 2, "title": "History", "note": "The list breaks", "attachments": ["note-2.jpg"]],
                 ["number": 3, "title": "growth.card", "note": "", "attachments": [String](), "element": ["identifier": "growth.card", "role": "Group"]],
             ],
@@ -319,7 +334,7 @@ struct AgentHookTests {
             UI report from Mark iPhone · Tiny Tally
 
             \(report.path)/screen-1.jpg
-            1. Log milestone (Button, today.milestones): This is ugly
+            1. Log milestone (Button, today.milestones), in Group "Milestones" (today.card): This is ugly
 
             \(report.path)/screen-2.jpg
             3. growth.card (Group): No note

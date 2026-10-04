@@ -107,11 +107,14 @@ final class SimulatorWatcher: @unchecked Sendable {
         }
         guard !roots.isEmpty else { return }
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
-        let callback: FSEventStreamCallback = { _, info, count, paths, _, _ in
+        let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
             guard let info else { return }
             let watcher = Unmanaged<SimulatorWatcher>.fromOpaque(info).takeUnretainedValue()
             let changed = unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []
-            watcher.changed(Array(changed.prefix(count)))
+            // macOS dropped events or merged them into a folder: the paths don't name every change.
+            let incomplete = FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped)
+            let dropped = (0..<count).contains { flags[$0] & incomplete != 0 }
+            watcher.changed(Array(changed.prefix(count)), dropped: dropped)
         }
         let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes)
         guard let stream = FSEventStreamCreate(nil, callback, &context, roots as CFArray,
@@ -125,8 +128,13 @@ final class SimulatorWatcher: @unchecked Sendable {
         self.stream = stream
     }
 
-    /// Runs on `queue`, called by the event stream.
-    private func changed(_ paths: [String]) {
+    /// Runs on `queue`, called by the event stream. When events were `dropped`, every watched
+    /// app's reports are looked at, so none waits for the next unrelated change.
+    private func changed(_ paths: [String], dropped: Bool) {
+        if dropped {
+            for container in watched.keys { takeNewReports(in: container) }
+            return
+        }
         let reports = Set(paths.compactMap { SimulatorReportPath.parse($0).map { "\($0.container)\n\($0.reportID)" } })
         for key in reports {
             let parts = key.split(separator: "\n").map(String.init)

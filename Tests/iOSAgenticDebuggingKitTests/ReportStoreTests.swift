@@ -253,16 +253,22 @@ struct ReportStoreTests {
         #expect(text.contains("## Screen: Today"))
         #expect(text.contains("One screenshot of this screen, stitched from 2 scroll positions, in 2 parts: screen-1.jpg, screen-1-part-2.jpg."))
         #expect(text.contains("Notes 1 and 2 are outlined and numbered on it."))
-        #expect(text.contains("1. **Save** (Button, identifier `save`): Cut off. See screen-1.jpg."))
+        #expect(text.contains("1. **Save** (Button, identifier `save`), in Cell \"Milestones\" `today.row` in List `today.list`: Cut off. See screen-1.jpg."))
         #expect(text.contains("## Attachments"))
         #expect(text.contains("3. **2 images from Photos**: Same bug. Images: note-3-1.jpg, note-3-2.jpg."))
     }
 
     private func sampleReport(id: String) -> Report {
         let element = ElementSnapshot(role: "Button", label: "Save", value: nil, identifier: "save", className: nil, isContainer: false, frame: CGRect(x: 1, y: 2, width: 3, height: 4))
+        func container(_ role: String, label: String?, identifier: String?) -> ElementSnapshot {
+            ElementSnapshot(role: role, label: label, value: nil, identifier: identifier, className: nil, isContainer: true, frame: .zero)
+        }
+        // Unnamed holders don't help find the code, so they're left out.
+        let ancestors = [container("Cell", label: "Milestones", identifier: "today.row"), container("Group", label: nil, identifier: nil),
+                         container("List", label: nil, identifier: "today.list")]
         func item(_ number: Int, _ note: String, picture: String) -> Report.Item {
             Report.Item(number: number, kind: .element, note: note, createdAt: Date(timeIntervalSince1970: 1_790_000_000), title: "Save",
-                        element: element, ancestors: [], screen: "screen-1", screenTitle: "Today", picture: picture,
+                        element: element, ancestors: ancestors, screen: "screen-1", screenTitle: "Today", picture: picture,
                         outline: Report.Box(x: 10, y: 20, width: 30, height: 40), attachments: [])
         }
         return Report(

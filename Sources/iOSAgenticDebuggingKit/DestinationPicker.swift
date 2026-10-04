@@ -101,7 +101,9 @@ struct DestinationPicker: View {
                     caption("No open \(HubLink.agentName(agent)) chats work on this app.")
                 }
                 if !startsNew {
-                    caption("New \(HubLink.agentName(agent)) chats need its command line on the Mac.")
+                    caption(list.newChatBase == nil
+                        ? "New chats need the app's project in a Git repository with a main branch."
+                        : "New \(HubLink.agentName(agent)) chats need its command line on the Mac.")
                 }
             }
         }
