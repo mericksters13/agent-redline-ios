@@ -75,24 +75,46 @@ struct ReportStore: Sendable {
         try? FileManager.default.removeItem(at: draftDirectory.appending(path: name))
     }
 
-    /// Moves the draft into a new report folder and clears the draft.
+    /// Copies the draft into a new report folder and clears the draft once the report is
+    /// complete. If any step fails, the draft stays as it was and no report is left behind.
     /// Returns the report folder.
     func send(_ annotations: [Annotation], app: Report.App, device: Report.Device, date: Date) throws -> URL {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let id = formatter.string(from: date)
-        let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+        let stamp = formatter.string(from: date)
         let files = FileManager.default
-        try files.createDirectory(at: folder, withIntermediateDirectories: true)
-        for annotation in annotations {
-            let source = draftDirectory.appending(path: annotation.screenshot)
-            if files.fileExists(atPath: source.path) {
-                try files.moveItem(at: source, to: folder.appending(path: annotation.screenshot))
+        try files.createDirectory(at: reportsDirectory, withIntermediateDirectories: true)
+
+        // Creating the folder itself fails when it exists, so two reports in the same
+        // second, or a clock set back, get their own folders instead of sharing one.
+        var id = stamp
+        var folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+        var attempt = 1
+        while true {
+            do {
+                try files.createDirectory(at: folder, withIntermediateDirectories: false)
+                break
+            } catch CocoaError.fileWriteFileExists where attempt < 100 {
+                attempt += 1
+                id = "\(stamp)-\(attempt)"
+                folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
             }
         }
-        let report = Report(id: id, createdAt: date, app: app, device: device, annotations: annotations)
-        try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)
+
+        do {
+            for annotation in annotations {
+                let source = draftDirectory.appending(path: annotation.screenshot)
+                if files.fileExists(atPath: source.path) {
+                    try files.copyItem(at: source, to: folder.appending(path: annotation.screenshot))
+                }
+            }
+            let report = Report(id: id, createdAt: date, app: app, device: device, annotations: annotations)
+            try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)
+        } catch {
+            try? files.removeItem(at: folder)
+            throw error
+        }
         try? files.removeItem(at: draftDirectory)
         return folder
     }

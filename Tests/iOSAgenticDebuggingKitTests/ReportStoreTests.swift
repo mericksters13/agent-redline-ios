@@ -29,7 +29,7 @@ struct ReportStoreTests {
         #expect(store.loadDraft().isEmpty)
     }
 
-    @Test func sendMovesScreenshotsIntoTheReportAndClearsTheDraft() throws {
+    @Test func sendPutsScreenshotsInTheReportAndClearsTheDraft() throws {
         let annotations = [annotation("Cut off"), annotation("Wrong color")]
         for item in annotations {
             try store.saveScreenshot(Data([1, 2, 3]), named: item.screenshot)
@@ -50,6 +50,44 @@ struct ReportStoreTests {
         }
         #expect(store.loadDraft().isEmpty)
         #expect(!FileManager.default.fileExists(atPath: store.draftDirectory.path))
+    }
+
+    private let app = Report.App(bundleIdentifier: "com.example.app", name: "Example", version: "1.0", build: "1")
+    private let device = Report.Device(model: "iPhone17,1", systemName: "iOS", systemVersion: "27.0")
+
+    @Test func reportsInTheSameSecondGetTheirOwnFolders() throws {
+        let date = Date(timeIntervalSince1970: 1_790_000_000)
+        let first = try store.send([annotation("Cut off")], app: app, device: device, date: date)
+        let second = try store.send([annotation("Wrong color")], app: app, device: device, date: date)
+        #expect(first != second)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let firstReport = try decoder.decode(Report.self, from: Data(contentsOf: first.appending(path: "report.json")))
+        let secondReport = try decoder.decode(Report.self, from: Data(contentsOf: second.appending(path: "report.json")))
+        #expect(firstReport.annotations.map(\.note) == ["Cut off"])
+        #expect(secondReport.annotations.map(\.note) == ["Wrong color"])
+        #expect(firstReport.id != secondReport.id)
+    }
+
+    @Test func aFailedSendLeavesTheDraftWhole() throws {
+        let kept = annotation("Cut off")
+        var broken = annotation("Wrong color")
+        // A screenshot in a subfolder the report doesn't have, so copying it fails
+        // after the first screenshot has already been copied.
+        broken.screenshot = "nested/\(broken.screenshot)"
+        try store.saveScreenshot(Data([1]), named: kept.screenshot)
+        try FileManager.default.createDirectory(at: store.draftDirectory.appending(path: "nested"), withIntermediateDirectories: true)
+        try store.saveScreenshot(Data([2]), named: broken.screenshot)
+        try store.saveDraft([kept, broken])
+
+        #expect(throws: (any Error).self) {
+            try store.send([kept, broken], app: app, device: device, date: .now)
+        }
+        #expect(store.loadDraft() == [kept, broken])
+        #expect(FileManager.default.fileExists(atPath: store.draftDirectory.appending(path: kept.screenshot).path))
+        #expect(FileManager.default.fileExists(atPath: store.draftDirectory.appending(path: broken.screenshot).path))
+        let reports = try FileManager.default.contentsOfDirectory(atPath: store.reportsDirectory.path)
+        #expect(reports.isEmpty)
     }
 }
 #endif
