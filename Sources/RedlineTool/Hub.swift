@@ -23,37 +23,56 @@ struct HubPaths: Sendable {
     /// The token each app on each phone was given; secret, readable only by the user.
     var tokens: URL { hub.appending(path: "tokens.json") }
 
+    /// What `moveFromOldName` did.
+    enum OldFolderMove: Equatable {
+        /// Nothing had to stop: the folder moved, or there was nothing to move.
+        case done
+        /// The folder moved once the earlier version's hub stopped. This version's has to take
+        /// over, watching the apps that hub was given on the command line.
+        case stoppedHub(fixedApps: [String])
+        /// The folder couldn't move yet, for the reason given. Nothing may use this version's
+        /// folder until it has, or what the earlier version kept would stay behind for good.
+        case blocked(String)
+    }
+
     /// Moves the folder an earlier version kept under its old name, iOSAgenticDebuggingKit, to
     /// this one, so reports, chats and settings carry over. Only while nothing is here yet. A hub
     /// of the earlier version that is still running knows only the old folder, so it's stopped
-    /// first; if it won't stop, nothing moves. Only a process holding the old PID file's lock is
-    /// that hub, so a pid left behind by a hub that crashed, and since reused, is never signaled.
+    /// first; if it doesn't stop in time, such as while it hands a report over, nothing moves
+    /// and the result says why. Only a process holding the old PID file's lock is that hub, so a
+    /// pid left behind by a hub that crashed, and since reused, is never signaled.
     /// The old name is left as a link to the new folder: an MCP server of the earlier version
     /// still serving an open chat knows only the old folder, and through the link it keeps
     /// reading the same inbox and chat records as this version's hub.
-    /// True when it stopped that hub, so this version's has to take over.
     @discardableResult
-    static func moveFromOldName(to paths: HubPaths) -> Bool {
+    static func moveFromOldName(to paths: HubPaths) -> OldFolderMove {
         let old = HubPaths(root: paths.root.deletingLastPathComponent().appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
         let files = FileManager.default
-        guard files.fileExists(atPath: old.root.path), !files.fileExists(atPath: paths.root.path) else { return false }
-        var stopped = false
+        guard files.fileExists(atPath: old.root.path), !files.fileExists(atPath: paths.root.path) else { return .done }
+        var stoppedHub = false
+        var fixedApps: [String] = []
         if let running = HubProcess.running(old), running != getpid() {
+            // Read before it stops: the apps it was given on the command line. A hub from before
+            // fixedApps was saved lists them only among all its apps.
+            if let status = HubWindowModel.savedStatus(old), status.pid == running { fixedApps = status.fixedApps ?? status.apps }
             kill(running, SIGTERM)
             for _ in 0..<30 where HubProcess.running(old) != nil { usleep(100_000) }
             guard HubProcess.running(old) == nil else {
-                FileHandle.standardError.write(Data("The hub of an earlier version (pid \(running)) is still running. Quit Agentic Debugging, then run redline again.\n".utf8))
-                return false
+                return .blocked("The hub of an earlier version (pid \(running)) is still running, so its folder can't move to Redline's yet. It stops on its own once the reports it's handing over reach their chats; run redline again then.")
             }
-            stopped = true
+            stoppedHub = true
         }
         do {
             try files.moveItem(at: old.root, to: paths.root)
+        } catch {
+            return .blocked("Couldn't move \(old.root.path) to \(paths.root.path): \(error.localizedDescription)")
+        }
+        do {
             try files.createSymbolicLink(at: old.root, withDestinationURL: paths.root)
         } catch {
-            FileHandle.standardError.write(Data("Couldn't move \(old.root.path) to \(paths.root.path): \(error.localizedDescription)\n".utf8))
+            FileHandle.standardError.write(Data("Couldn't leave a link to \(paths.root.path) at \(old.root.path): \(error.localizedDescription)\n".utf8))
         }
-        return stopped
+        return stoppedHub ? .stoppedHub(fixedApps: fixedApps) : .done
     }
 }
 

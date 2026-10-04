@@ -55,6 +55,26 @@ struct ReportSourcesTests {
         let path = container + "/Library/Application Support/Redline/reports/20261003-151826/report.md"
         #expect(SimulatorReportPath.parse(path) == SimulatorReportPath(container: container, device: "198F6C2F-B757-44A8-88BB-A574EC16F621", reportID: "20261003-151826"))
         #expect(SimulatorReportPath.parse(container + "/Library/Caches/whatever") == nil)
+        // A build from before the rename keeps its reports under the old name.
+        let earlier = container + "/Library/Application Support/iOSAgenticDebuggingKit/reports/20261003-151826/report.md"
+        #expect(SimulatorReportPath.parse(earlier) == SimulatorReportPath(container: container, device: "198F6C2F-B757-44A8-88BB-A574EC16F621",
+                                                                           reportID: "20261003-151826", folder: ReportFolder.earlierPath))
+    }
+
+    @Test func aSimulatorAppsKitFoldersAreWatchedUnderEitherName() throws {
+        let files = FileManager.default
+        let container = files.temporaryDirectory.appending(path: "ReportSourcesTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? files.removeItem(at: container) }
+        let support = container.appending(path: "Library/Application Support", directoryHint: .isDirectory)
+        try files.createDirectory(at: container, withIntermediateDirectories: true)
+        // Until the kit has written anything, the whole container.
+        #expect(SimulatorWatcher.roots(for: [container.path]) == [container.path])
+        // A build from before the rename, still running after the Mac tool is updated, while
+        // the hub has left its address under the new name.
+        try files.createDirectory(at: support.appending(path: "iOSAgenticDebuggingKit/reports"), withIntermediateDirectories: true)
+        try files.createDirectory(at: support.appending(path: "Redline"), withIntermediateDirectories: true)
+        #expect(SimulatorWatcher.roots(for: [container.path]) == [container.path + "/Library/Application Support/Redline",
+                                                                  container.path + "/Library/Application Support/iOSAgenticDebuggingKit"].sorted())
     }
 
     @Test func inboxFoldersSortByTimeAndKeepPhonesApart() {

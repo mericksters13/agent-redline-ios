@@ -117,6 +117,10 @@ struct FinishedReport: Equatable {
 /// Where the kit keeps sent reports, inside an app's data container.
 enum ReportFolder {
     static let path = "Library/Application Support/Redline/reports"
+    /// Where a build from before the rename keeps them. A simulator app still running such a
+    /// build after the Mac tool is updated writes its reports here, until a new build moves them.
+    static let earlierPath = "Library/Application Support/iOSAgenticDebuggingKit/reports"
+    static let paths = [path, earlierPath]
     /// The empty file in a report's folder that says the Mac has it, as the kit's `ReportStore` names it.
     static let deliveredMark = "delivered"
 
@@ -157,20 +161,25 @@ struct SourceState: Codable, Equatable {
 }
 
 /// A report folder inside a simulator app's data container, found from the path of a file in it.
-struct SimulatorReportPath: Equatable {
+struct SimulatorReportPath: Hashable {
     /// The app's data container.
     var container: String
     /// The simulator's UDID.
     var device: String
     var reportID: String
+    /// The reports folder in the container, one of `ReportFolder.paths`.
+    var folder = ReportFolder.path
 
     static func parse(_ path: String) -> SimulatorReportPath? {
-        guard let marker = path.range(of: "/" + ReportFolder.path + "/") else { return nil }
-        let container = String(path[..<marker.lowerBound])
-        guard let id = path[marker.upperBound...].split(separator: "/").first.map(String.init), !id.isEmpty else { return nil }
-        let parts = container.split(separator: "/")
-        guard let devices = parts.lastIndex(of: "Devices"), devices + 1 < parts.count else { return nil }
-        return SimulatorReportPath(container: container, device: String(parts[devices + 1]), reportID: id)
+        for folder in ReportFolder.paths {
+            guard let marker = path.range(of: "/" + folder + "/") else { continue }
+            let container = String(path[..<marker.lowerBound])
+            guard let id = path[marker.upperBound...].split(separator: "/").first.map(String.init), !id.isEmpty else { return nil }
+            let parts = container.split(separator: "/")
+            guard let devices = parts.lastIndex(of: "Devices"), devices + 1 < parts.count else { return nil }
+            return SimulatorReportPath(container: container, device: String(parts[devices + 1]), reportID: id, folder: folder)
+        }
+        return nil
     }
 }
 

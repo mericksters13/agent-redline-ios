@@ -243,13 +243,14 @@ enum HubProcess {
 
     /// Starts the hub in its own session, so it keeps running after the chat that started it
     /// closes, with nothing attached to the chat's input and output. The menu bar app is the
-    /// hub when it's installed.
-    static func startIfNeeded(_ paths: HubPaths) {
+    /// hub when it's installed. It watches `apps` too, as if given them on the command line.
+    static func startIfNeeded(_ paths: HubPaths, apps: [String] = []) {
         guard running(paths) == nil else { return }
+        let appArguments = apps.flatMap { ["--app", $0] }
         if let app {
             let open = Process()
             open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            open.arguments = ["-g", app.path]
+            open.arguments = ["-g", app.path] + (apps.isEmpty ? [] : ["--args", "app"] + appArguments)
             try? open.run()
             return
         }
@@ -265,7 +266,7 @@ enum HubProcess {
             posix_spawn_file_actions_addopen(&files, descriptor, "/dev/null", descriptor == STDIN_FILENO ? O_RDONLY : O_WRONLY, 0)
         }
         var pid: pid_t = 0
-        let arguments = [executable, "hub"]
+        let arguments = [executable, "hub"] + appArguments
         var argv = arguments.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         posix_spawn(&pid, executable, &files, &attributes, &argv, environ)

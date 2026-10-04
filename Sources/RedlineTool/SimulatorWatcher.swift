@@ -15,7 +15,7 @@ final class SimulatorWatcher: @unchecked Sendable {
     private var owners: [String: String] = [:]
     /// The watched apps' containers.
     private var watched: [String: String] = [:]
-    /// The folders the event stream covers: each container's kit folder where it exists.
+    /// The folders the event stream covers: each container's kit folders where they exist.
     private var roots: [String] = []
     private var names: [String: String] = [:]
     private var stream: FSEventStreamRef?
@@ -106,12 +106,14 @@ final class SimulatorWatcher: @unchecked Sendable {
         try? data.write(to: file, options: .atomic)
     }
 
-    /// The kit's folder where it exists, so the app's own writes don't wake the hub; the whole
-    /// container until the kit has written anything.
-    private static func roots(for containers: [String]) -> [String] {
-        containers.map { container in
-            let kit = container + "/Library/Application Support/Redline"
-            return FileManager.default.fileExists(atPath: kit) ? kit : container
+    /// The kit's folders where they exist, so the app's own writes don't wake the hub; the whole
+    /// container until the kit has written anything. A build from before the rename keeps its
+    /// reports under the old name, so that folder is watched as well while it's there.
+    static func roots(for containers: [String]) -> [String] {
+        containers.flatMap { container in
+            let kits = ReportFolder.paths.map { container + "/" + ($0 as NSString).deletingLastPathComponent }
+                .filter { FileManager.default.fileExists(atPath: $0) }
+            return kits.isEmpty ? [container] : kits
         }.sorted()
     }
 
@@ -152,24 +154,25 @@ final class SimulatorWatcher: @unchecked Sendable {
             for container in watched.keys { takeNewReports(in: container) }
             return
         }
-        let reports = Set(paths.compactMap { SimulatorReportPath.parse($0).map { "\($0.container)\n\($0.reportID)" } })
-        for key in reports {
-            let parts = key.split(separator: "\n").map(String.init)
-            take(reportID: parts[1], in: parts[0])
+        for report in Set(paths.compactMap(SimulatorReportPath.parse)) {
+            take(reportID: report.reportID, in: report.container, from: report.folder)
         }
     }
 
     private func takeNewReports(in container: String) {
-        let folder = URL(fileURLWithPath: container).appending(path: ReportFolder.path, directoryHint: .isDirectory)
-        for id in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] {
-            take(reportID: id, in: container)
+        for reports in ReportFolder.paths {
+            let folder = URL(fileURLWithPath: container).appending(path: reports, directoryHint: .isDirectory)
+            for id in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] {
+                take(reportID: id, in: container, from: reports)
+            }
         }
     }
 
-    private func take(reportID: String, in container: String) {
-        guard let bundleID = watched[container], let path = SimulatorReportPath.parse(container + "/" + ReportFolder.path + "/" + reportID + "/") else { return }
+    /// Takes a report from `reports`, one of the container's `ReportFolder.paths`.
+    private func take(reportID: String, in container: String, from reports: String) {
+        guard let bundleID = watched[container], let path = SimulatorReportPath.parse(container + "/" + reports + "/" + reportID + "/") else { return }
         let files = FileManager.default
-        let folder = URL(fileURLWithPath: container).appending(path: ReportFolder.path + "/" + reportID, directoryHint: .isDirectory)
+        let folder = URL(fileURLWithPath: container).appending(path: reports + "/" + reportID, directoryHint: .isDirectory)
         let entries = ((try? files.contentsOfDirectory(atPath: folder.path)) ?? []).map { name -> (path: String, modified: Date?) in
             let attributes = try? files.attributesOfItem(atPath: folder.appending(path: name).path)
             return ("\(reportID)/\(name)", attributes?[.modificationDate] as? Date)

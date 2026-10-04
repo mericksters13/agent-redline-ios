@@ -65,7 +65,7 @@ struct AgentHookTests {
         try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
         let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
         // No hub was running, so none is started for it.
-        #expect(!HubPaths.moveFromOldName(to: paths))
+        #expect(HubPaths.moveFromOldName(to: paths) == .done)
         #expect(FileManager.default.fileExists(atPath: paths.inbox.path))
         // The old name now leads to the new folder, so an MCP server of the earlier version
         // still serving a chat sees what this version's hub writes.
@@ -96,13 +96,54 @@ struct AgentHookTests {
         try hub.run()
         try "\(hub.processIdentifier)".write(to: old.pid, atomically: false, encoding: .utf8)
         close(descriptor)
+        // The hub was given an app on the command line, which it saved in its status.
+        let status = HubStatus(pid: hub.processIdentifier, startedAt: Date(), apps: ["com.example.chat", "com.example.kept"],
+                               fixedApps: ["com.example.kept"], hosts: [], port: 0, phones: [], simulatorContainers: 0)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(status).write(to: old.status)
         let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
-        // It says it stopped the hub, so the command that moved the folder starts this version's.
-        #expect(HubPaths.moveFromOldName(to: paths))
+        // It says it stopped the hub, so the command that moved the folder starts this version's
+        // for the app that hub was given.
+        #expect(HubPaths.moveFromOldName(to: paths) == .stoppedHub(fixedApps: ["com.example.kept"]))
         hub.waitUntilExit()
         #expect(hub.terminationReason == .uncaughtSignal)
         #expect(FileManager.default.fileExists(atPath: paths.hub.path))
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: old.root.path) == paths.root.path)
+    }
+
+    @Test func nothingMovesWhileTheEarlierVersionsHubWontStop() throws {
+        let support = root.appending(path: "busy", directoryHint: .isDirectory)
+        let old = HubPaths(root: support.appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
+        try FileManager.default.createDirectory(at: old.hub, withIntermediateDirectories: true)
+        // Stands in for an old hub still handing a report over: it holds the lock and doesn't
+        // stop when asked to.
+        let descriptor = open(old.pid.path, O_RDWR | O_CREAT, 0o644)
+        #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+        let hub = Process()
+        hub.executableURL = URL(fileURLWithPath: "/bin/sh")
+        hub.arguments = ["-c", "trap '' TERM; echo ready; exec /bin/sleep 30"]
+        hub.standardInput = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+        let ready = Pipe()
+        hub.standardOutput = ready
+        try hub.run()
+        // Once it says so, it ignores the request to stop.
+        _ = ready.fileHandleForReading.availableData
+        defer {
+            kill(hub.processIdentifier, SIGKILL)
+            hub.waitUntilExit()
+        }
+        try "\(hub.processIdentifier)".write(to: old.pid, atomically: false, encoding: .utf8)
+        close(descriptor)
+        let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
+        // The command is told to stop, and the old folder stays where the old hub uses it.
+        guard case .blocked = HubPaths.moveFromOldName(to: paths) else {
+            Issue.record("The folder moved while the earlier version's hub was running")
+            return
+        }
+        #expect(hub.isRunning)
+        #expect(!FileManager.default.fileExists(atPath: paths.root.path))
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: old.root.path)) == nil)
     }
 
     @Test func aPidLeftByAnEarlierHubThatCrashedIsNeverSignaled() throws {
@@ -117,7 +158,7 @@ struct AgentHookTests {
         defer { other.terminate() }
         try "\(other.processIdentifier)".write(to: old.pid, atomically: true, encoding: .utf8)
         let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
-        #expect(!HubPaths.moveFromOldName(to: paths))
+        #expect(HubPaths.moveFromOldName(to: paths) == .done)
         #expect(other.isRunning)
         #expect(FileManager.default.fileExists(atPath: paths.hub.path))
     }
