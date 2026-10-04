@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" width="1200" height="620" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="t">Redline: a note on the phone arrives in the chat</title>
+  <desc id="d">An iPhone running a notes app in Redline&#39;s annotate mode, with the Save button outlined in red and numbered 1 and the Title field numbered 2. An arrow runs through the Redline menu bar app on the Mac to a Claude Code or Codex chat, which shows the report it received: the screenshot with the same two red outlines (attached in Codex, read from its inbox path in Claude Code), then note 1, Save (Button, editor.save): The button sits under the keyboard on small phones, and note 2, Title (Text field, editor.title): Placeholder is hard to read in dark mode.</desc>
+  <rect x="0" y="0" width="1200" height="620" rx="24" fill="#F2F2F7"/>
+  <!-- Phone in annotate mode -->
+  <rect x="45" y="45" width="270" height="530" rx="51" fill="#FFFFFF"/>
+  <rect x="40" y="40" width="280" height="540" rx="56" fill="none" stroke="#000000" stroke-width="10"/>
+  <rect x="53" y="53" width="254" height="514" rx="44" fill="none" stroke="#FF6B6B" stroke-width="4"/>
+  <!-- Annotate bar -->
+  <rect x="60" y="60" width="240" height="52" rx="26" fill="#000000" stroke="rgba(255,255,255,0.16)" stroke-width="1"/>
+  <circle cx="88" cy="86" r="16" fill="rgba(255,255,255,0.12)"/>
+  <path d="M83 81 L93 91 M93 81 L83 91" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round"/>
+  <text x="114" y="82" font-size="18" font-weight="600" fill="#FFFFFF">New Note</text>
+  <text x="114" y="102" font-size="16" fill="rgba(255,255,255,0.6)">2 notes</text>
+  <rect x="226" y="68" width="64" height="36" rx="18" fill="#FFFFFF"/>
+  <text x="258" y="92" font-size="18" font-weight="600" fill="#000000" text-anchor="middle">Send</text>
+  <!-- Note editor -->
+  <rect x="76" y="148" width="208" height="52" rx="12" fill="#E5E5EA"/>
+  <text x="92" y="181" font-size="20" fill="#8E8E93">Title</text>
+  <rect x="76" y="230" width="208" height="12" rx="6" fill="#E5E5EA"/>
+  <rect x="76" y="260" width="208" height="12" rx="6" fill="#E5E5EA"/>
+  <rect x="76" y="290" width="136" height="12" rx="6" fill="#E5E5EA"/>
+  <rect x="76" y="470" width="208" height="52" rx="14" fill="#000000"/>
+  <text x="180" y="503" font-size="20" font-weight="600" fill="#FFFFFF" text-anchor="middle">Save</text>
+  <!-- Marks -->
+  <rect x="70" y="142" width="220" height="64" rx="16" fill="none" stroke="#FFFFFF" stroke-width="7"/>
+  <rect x="70" y="142" width="220" height="64" rx="16" fill="none" stroke="#FF3B30" stroke-width="4"/>
+  <rect x="70" y="464" width="220" height="64" rx="18" fill="none" stroke="#FFFFFF" stroke-width="7"/>
+  <rect x="70" y="464" width="220" height="64" rx="18" fill="none" stroke="#FF3B30" stroke-width="4"/>
+  <circle cx="70" cy="142" r="14" fill="#FF3B30" stroke="#FFFFFF" stroke-width="2.5"/>
+  <text x="70" y="147.6" font-size="16" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <circle cx="70" cy="464" r="14" fill="#FF3B30" stroke="#FFFFFF" stroke-width="2.5"/>
+  <text x="70" y="469.6" font-size="16" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+  <!-- Redline on the Mac -->
+  <line x1="332" y1="300" x2="377" y2="300" stroke="#000000" stroke-width="3" stroke-linecap="round"/>
+  <path d="M377 294 L391 300 L377 306 Z" fill="#000000"/>
+  <rect x="403" y="248" width="104" height="104" rx="24" fill="#111111" stroke="rgba(255,255,255,0.14)" stroke-width="1.5"/>
+  <rect x="431" y="260.1" width="48" height="79.8" rx="12.1" fill="none" stroke="#FFFFFF" stroke-width="5.8"/>
+  <rect x="439.9" y="291.9" width="30.3" height="14.1" rx="3" fill="#FFFFFF"/>
+  <rect x="436.3" y="288.4" width="37.4" height="21.2" rx="5" fill="none" stroke="#FF3B30" stroke-width="3.8"/>
+  <circle cx="473.7" cy="288.4" r="12.1" fill="#1A1A1A"/>
+  <circle cx="473.7" cy="288.4" r="9.6" fill="#FF3B30"/>
+  <line x1="519" y1="300" x2="564" y2="300" stroke="#000000" stroke-width="3" stroke-linecap="round"/>
+  <path d="M564 294 L578 300 L564 306 Z" fill="#000000"/>
+  <text x="455" y="388" font-size="22" font-weight="600" fill="#000000" text-anchor="middle">Redline hub</text>
+  <text x="455" y="414" font-size="20" fill="#6E6E73" text-anchor="middle">on your Mac</text>
+  <!-- Chat window -->
+  <rect x="590" y="40" width="590" height="540" rx="20" fill="#FFFFFF" stroke="#D1D1D6" stroke-width="1.5"/>
+  <circle cx="614" cy="66" r="6" fill="#D1D1D6"/>
+  <circle cx="634" cy="66" r="6" fill="#D1D1D6"/>
+  <circle cx="654" cy="66" r="6" fill="#D1D1D6"/>
+  <text x="885" y="73" font-size="20" font-weight="600" fill="#6E6E73" text-anchor="middle">Claude Code or Codex chat</text>
+  <line x1="590.75" y1="92" x2="1179.25" y2="92" stroke="#D1D1D6" stroke-width="1.5"/>
+  <rect x="612" y="108" width="546" height="448" rx="18" fill="#F2F2F7"/>
+  <text x="636" y="146" font-size="21" font-weight="600" fill="#000000">UI report from Alex&#39;s iPhone · Sample Notes</text>
+  <!-- screen-1.jpg -->
+  <rect x="636" y="168" width="122" height="234" rx="12" fill="#FFFFFF" stroke="#D1D1D6" stroke-width="1"/>
+  <rect x="650" y="214.3" width="93.6" height="23.4" rx="5.4" fill="#E5E5EA"/>
+  <rect x="650" y="251.2" width="93.6" height="5.4" rx="2.7" fill="#E5E5EA"/>
+  <rect x="650" y="264.8" width="93.6" height="5.4" rx="2.7" fill="#E5E5EA"/>
+  <rect x="650" y="278.2" width="61.2" height="5.4" rx="2.7" fill="#E5E5EA"/>
+  <rect x="650" y="359.2" width="93.6" height="23.4" rx="6.3" fill="#000000"/>
+  <rect x="647.2" y="211.7" width="99" height="28.8" rx="7.2" fill="none" stroke="#FFFFFF" stroke-width="4.5"/>
+  <rect x="647.2" y="211.7" width="99" height="28.8" rx="7.2" fill="none" stroke="#FF3B30" stroke-width="2.5"/>
+  <rect x="647.2" y="356.6" width="99" height="28.8" rx="8.1" fill="none" stroke="#FFFFFF" stroke-width="4.5"/>
+  <rect x="647.2" y="356.6" width="99" height="28.8" rx="8.1" fill="none" stroke="#FF3B30" stroke-width="2.5"/>
+  <circle cx="647.2" cy="211.7" r="10" fill="#FF3B30" stroke="#FFFFFF" stroke-width="2.5"/>
+  <text x="647.2" y="216.2" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <circle cx="647.2" cy="356.6" r="10" fill="#FF3B30" stroke="#FFFFFF" stroke-width="2.5"/>
+  <text x="647.2" y="361.1" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+  <!-- Path and notes -->
+  <text x="778" y="200" font-size="20" fill="#6E6E73">…/Redline/inbox/</text>
+  <text x="778" y="228" font-size="20" fill="#6E6E73">com.example.notes/</text>
+  <text x="778" y="256" font-size="20" fill="#6E6E73">20261004-142233-0E12001C/</text>
+  <text x="778" y="284" font-size="20" font-weight="600" fill="#000000">screen-1.jpg</text>
+  <text x="636" y="436" font-size="20" font-weight="600" fill="#000000">1. Save (Button, editor.save):</text>
+  <text x="636" y="462" font-size="20" fill="#000000">The button sits under the keyboard on small phones</text>
+  <text x="636" y="500" font-size="20" font-weight="600" fill="#000000">2. Title (Text field, editor.title):</text>
+  <text x="636" y="526" font-size="20" fill="#000000">Placeholder is hard to read in dark mode</text>
+</svg>
