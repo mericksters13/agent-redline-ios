@@ -383,11 +383,14 @@ struct AgentHookTests {
             "app": ["name": "Tiny Tally", "version": "1.0.9", "build": "41"],
             "screens": [["images": [["file": "screen-1.jpg", "notes": [1]]]], ["images": [["file": "screen-2.jpg", "notes": [3]]]]],
             "items": [
-                ["number": 1, "title": "Log milestone", "note": "This is ugly", "attachments": [String](),
+                ["number": 1, "title": "Log milestone", "note": "This is ugly", "attachments": [String](), "picture": "screen-1.jpg",
                  "element": ["identifier": "today.milestones", "label": "Log milestone", "role": "Button"],
                  "ancestors": [["role": "Group"], ["identifier": "today.card", "label": "Milestones", "role": "Group"]]],
                 ["number": 2, "title": "History", "note": "The list breaks", "attachments": ["note-2.jpg"]],
                 ["number": 3, "title": "growth.card", "note": "", "attachments": [String](), "element": ["identifier": "growth.card", "role": "Group"]],
+                // An element note made before notes on one screen shared its picture keeps its own.
+                ["number": 4, "title": "Save", "note": "Too small", "attachments": [String](), "picture": "note-4.jpg",
+                 "element": ["label": "Save", "role": "Button"]],
             ],
         ]
         try JSONSerialization.data(withJSONObject: listing).write(to: report.appending(path: "report.json"))
@@ -404,7 +407,14 @@ struct AgentHookTests {
 
             \(report.path)/note-2.jpg
             2. History: The list breaks
+
+            \(report.path)/note-4.jpg
+            4. Save (Button): Too small
             """)
+        for file in ["screen-1.jpg", "screen-2.jpg", "note-2.jpg", "note-4.jpg"] {
+            FileManager.default.createFile(atPath: report.appending(path: file).path, contents: Data([0xFF]))
+        }
+        #expect(ReportContent.pictures(in: report).map(\.lastPathComponent) == ["screen-1.jpg", "screen-2.jpg", "note-2.jpg", "note-4.jpg"])
 
         // A long pasted note is cut, so the text fits in a command's arguments; report.md has the rest.
         var long = listing

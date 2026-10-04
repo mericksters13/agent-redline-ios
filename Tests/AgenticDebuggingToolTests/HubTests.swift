@@ -280,6 +280,26 @@ struct HubTests {
         #expect(ProjectHistory.all(paths)["com.example.claude"]?.agent == "claude")
     }
 
+    @Test func aClaudeChatActiveSinceAnotherAgentsIsNotedAsTheLastUsed() throws {
+        try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
+        let project = paths.root.appending(path: "claude-project", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try "targets:\n  App:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.claude\n"
+            .write(to: project.appending(path: "project.yml"), atomically: true, encoding: .utf8)
+        ProjectHistory.note(ChatRecord(id: "codex-t1", agent: "codex", folder: project.path, bundleIDs: ["com.example.claude"],
+                                       pid: getpid(), registeredAt: Date(), lastActiveAt: Date()), paths: paths)
+        // A Claude chat last active before the Codex chat registered doesn't take its place.
+        let earlier = ClaudeSessions.Session(id: "s1", folder: project.path, socket: "/tmp/none", updatedAt: Date(timeIntervalSinceNow: -60), isIdle: true)
+        Hub(paths: paths, devicectl: Devicectl(executable: URL(fileURLWithPath: "/usr/bin/true")), apps: [], claudeChats: { [earlier] })
+            .updateApps(starting: true)
+        #expect(ProjectHistory.all(paths)["com.example.claude"]?.agent == "codex")
+        // One active since does.
+        let later = ClaudeSessions.Session(id: "s1", folder: project.path, socket: "/tmp/none", updatedAt: Date(timeIntervalSinceNow: 1), isIdle: true)
+        Hub(paths: paths, devicectl: Devicectl(executable: URL(fileURLWithPath: "/usr/bin/true")), apps: [], claudeChats: { [later] })
+            .updateApps(starting: true)
+        #expect(ProjectHistory.all(paths)["com.example.claude"]?.agent == "claude")
+    }
+
     @Test func chatsNotingTheirAppsAtOnceKeepEachOthers() {
         let paths = self.paths
         // Each stands in for a chat's own process: the file lock is per open file, not per process.

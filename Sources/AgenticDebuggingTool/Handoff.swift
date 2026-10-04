@@ -349,20 +349,20 @@ final class Handoff: @unchecked Sendable {
             hub.log("Couldn't find the claude command to open the chat for report \(source.reportID); it waits in the inbox")
             return
         }
-        if AgentCommand.hasClaudeApp {
-            // claude --desktop refuses to run without a terminal; script gives it one.
-            Self.run("/usr/bin/script", ["-q", "/dev/null", claude.path, "--desktop", "--resume", id], in: folder)
-        } else {
-            Self.openTerminal(in: folder, running: claude.path, arguments: ["--resume"], with: id)
-        }
         let place = Self.folderName(folder)
         let kind: ReportDelivery.Kind = reopening ? .sent : .newChat
         let title = reopening ? place : "New chat in \(place)"
-        hub.log("Opened the Claude Code chat \(id) in \(AgentCommand.hasClaudeApp ? "the Claude app" : "a terminal"), in \(folder)")
-        // Off the handoff queue: waiting for the chat, and the claude command after it, can take
-        // minutes, and other reports go on meanwhile. `pickSettled` goes back to the queue.
+        // Off the handoff queue: opening the chat, waiting for it, and the claude command after
+        // it can take minutes, and other reports go on meanwhile. `pickSettled` goes back to the queue.
         DispatchQueue.global(qos: .utility).async { [self] in
             defer { pickSettled(pick) }
+            if AgentCommand.hasClaudeApp {
+                // claude --desktop refuses to run without a terminal; script gives it one.
+                Self.run("/usr/bin/script", ["-q", "/dev/null", claude.path, "--desktop", "--resume", id], in: folder)
+            } else {
+                Self.openTerminal(in: folder, running: claude.path, arguments: ["--resume"], with: id)
+            }
+            hub.log("Opened the Claude Code chat \(id) in \(AgentCommand.hasClaudeApp ? "the Claude app" : "a terminal"), in \(folder)")
             for _ in 0..<60 {
                 if let session = ClaudeSessions.open().first(where: { $0.id == id }), ClaudeSessions.send(text, to: session) {
                     InboxQueue.handedOver(report)
