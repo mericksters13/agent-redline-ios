@@ -31,6 +31,24 @@ enum NewWorktree {
         return path
     }
 
+    /// Copies a report's files into `.agentic-debugging/<report>` in a worktree, a folder git
+    /// ignores there, so a chat in the worktree reads them without asking. Returns the copy.
+    static func copyReport(_ report: URL, into worktree: String) -> String? {
+        let folder = URL(fileURLWithPath: worktree).appending(path: ".agentic-debugging", directoryHint: .isDirectory)
+        let copy = folder.appending(path: report.lastPathComponent, directoryHint: .isDirectory)
+        let files = FileManager.default
+        do {
+            try files.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? files.removeItem(at: copy)
+            try files.copyItem(at: report, to: copy)
+            // Ignored by git without touching the repository's own .gitignore.
+            try "*\n".write(to: folder.appending(path: ".gitignore"), atomically: true, encoding: .utf8)
+        } catch {
+            return nil
+        }
+        return copy.path
+    }
+
     /// Takes back a worktree made for a chat that didn't start, and its branch, which holds
     /// nothing but main's commit.
     static func remove(_ path: String) {

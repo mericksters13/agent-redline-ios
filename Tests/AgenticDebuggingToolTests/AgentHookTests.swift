@@ -196,6 +196,21 @@ struct AgentHookTests {
         // The same name again gets a number rather than failing.
         let again = try #require(NewWorktree.create(from: repository.path, name: "report-1", agent: .claude))
         #expect(again.hasSuffix("/report-1-2"))
+        // A report copied into the worktree is ignored by git there.
+        let report = root.appending(path: "inbox-report", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: report, withIntermediateDirectories: true)
+        try "# Report".write(to: report.appending(path: "report.md"), atomically: true, encoding: .utf8)
+        let copy = try #require(NewWorktree.copyReport(report, into: made))
+        #expect(FileManager.default.fileExists(atPath: copy + "/report.md"))
+        let status = Process()
+        status.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        status.arguments = ["-C", made, "status", "--porcelain"]
+        let statusPipe = Pipe()
+        status.standardOutput = statusPipe
+        try status.run()
+        status.waitUntilExit()
+        #expect(statusPipe.fileHandleForReading.readDataToEndOfFile().isEmpty)
+
         // A worktree for a chat that didn't start is taken back, with its branch.
         NewWorktree.remove(again)
         #expect(!FileManager.default.fileExists(atPath: again))
