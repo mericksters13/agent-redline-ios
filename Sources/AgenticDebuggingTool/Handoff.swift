@@ -216,57 +216,75 @@ final class Handoff: @unchecked Sendable {
         open.waitUntilExit()
     }
 
-    /// Opens a new Claude Code chat wherever the user uses Claude Code, in a worktree of its own
-    /// from main, with the report's files copied into the worktree so the chat reads them
-    /// without asking. In the desktop app the report is filled in and the user presses Return:
-    /// the app doesn't send for anyone. In a terminal, `claude` starts with the report as its
-    /// first message. Once the chat starts, it's remembered for the pick, and later reports go
-    /// straight into it, the same way in both.
+    /// Opens a new Claude Code chat wherever the user uses Claude Code. In the desktop app, the
+    /// app's new chat screen opens on the repository with the report filled in: the app makes the
+    /// chat, and its worktree, only when the user presses Return, and doesn't send for anyone. In
+    /// a terminal, `claude` starts at once with the report, in a worktree the hub makes from main
+    /// with the report's files copied in. Once the chat starts, it's remembered for the pick, and
+    /// later reports go straight into it, the same way in both.
     private func openClaudeChat(in folder: String, for report: InboxReport, pick: String?) {
         let source = report.source
-        guard let worktree = NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: .claude) else {
-            hub.log("Couldn't make a worktree from \(folder) for report \(source.reportID); it waits in the inbox")
-            Self.notify(title: "Report from \(source.deviceName)", message: "Couldn't make a worktree for a new chat. The report waits in the inbox.")
-            return
+        let desktop = ClaudeSessions.usesDesktopApp()
+        let workFolder: String
+        if desktop {
+            // The app ignores a worktree folder in a link and makes its own from the repository.
+            guard let repository = NewWorktree.repository(of: folder) else {
+                hub.log("\(folder) isn't in a git repository; report \(source.reportID) waits in the inbox")
+                return
+            }
+            workFolder = repository
+        } else {
+            guard let made = NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: .claude) else {
+                hub.log("Couldn't make a worktree from \(folder) for report \(source.reportID); it waits in the inbox")
+                Self.notify(title: "Report from \(source.deviceName)", message: "Couldn't make a worktree for a new chat. The report waits in the inbox.")
+                return
+            }
+            workFolder = made
         }
-        let chat = ChatRecord(id: "started-claude-\(report.folder.lastPathComponent)", agent: Agent.claude.rawValue, folder: worktree,
+        let chat = ChatRecord(id: "started-claude-\(report.folder.lastPathComponent)", agent: Agent.claude.rawValue, folder: workFolder,
                               bundleIDs: [source.bundleID], pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
         guard InboxQueue.claim(report, for: chat) else { return }
-        let copy = NewWorktree.copyReport(report.folder, into: worktree)
+        let files = desktop ? report.folder.path : (NewWorktree.copyReport(report.folder, into: workFolder) ?? report.folder.path)
         let prompt = "A UI report arrived from the user's \(source.kind == .phone ? "iPhone" : "simulator") through iOSAgenticDebuggingKit. "
-            + "It's in \(copy ?? report.folder.path): read report.md there and open the pictures it lists. "
+            + "It's in \(files): read report.md there and open the pictures it lists. "
             + "Find the code for each noted element by its identifier or label, then tell me what you found and propose a fix before changing code."
-        if ClaudeSessions.usesDesktopApp() {
+        let opened = Date()
+        if desktop {
             var link = URLComponents()
             link.scheme = "claude"
             link.host = "code"
             link.path = "/new"
-            link.queryItems = [URLQueryItem(name: "folder", value: worktree), URLQueryItem(name: "q", value: prompt)]
+            link.queryItems = [URLQueryItem(name: "folder", value: workFolder), URLQueryItem(name: "q", value: prompt)]
             guard let url = link.url?.absoluteString else { return }
             Self.open(url)
-            hub.log("Opened a new Claude Code chat in the desktop app in \(worktree) for report \(source.reportID), waiting for the user to send it")
-            Self.notify(title: "Report from \(source.deviceName)", message: "A new Claude Code chat is open with the report. Press Return to send it.")
+            hub.log("Opened the Claude app's new chat screen on \(workFolder) with report \(source.reportID); it starts when the user presses Return")
+            Self.notify(title: "Report from \(source.deviceName)", message: "The Claude app has a new chat ready with the report. Press Return there to start it.")
         } else {
-            guard let claude = AgentCommand.locate(.claude), Self.openTerminal(in: worktree, running: claude.path, with: prompt) else {
+            guard let claude = AgentCommand.locate(.claude), Self.openTerminal(in: workFolder, running: claude.path, with: prompt) else {
                 try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
                 hub.log("Couldn't open a terminal for a new Claude Code chat for report \(source.reportID); it waits in the inbox")
                 return
             }
-            hub.log("Opened a new Claude Code chat in a terminal in \(worktree) for report \(source.reportID)")
+            hub.log("Opened a new Claude Code chat in a terminal in \(workFolder) for report \(source.reportID)")
             Self.notify(title: "Report from \(source.deviceName)", message: "A new Claude Code chat is looking into it in Terminal.")
         }
-        // The chat exists once the user sends; later reports go to it.
+        // Once the chat starts, later reports with the same pick go to it: in the desktop app, the
+        // first chat started in the repository after the screen opened.
         let paths = hub.paths
         queue.async {
             for _ in 0..<300 {
-                if let session = ClaudeSessions.open().first(where: { Worktree.root(of: $0.folder) == worktree }) {
-                    if let pick { StartedChats.remember(StartedChat(chat: session.id, folder: worktree, at: Date()), for: pick, paths: paths) }
-                    self.hub.log("The new Claude Code chat \(session.id) for report \(source.reportID) started")
+                let started = ClaudeSessions.open().first { session in
+                    desktop ? session.startedAt >= opened.addingTimeInterval(-2) && NewWorktree.repository(of: session.folder) == workFolder
+                        : Worktree.root(of: session.folder) == workFolder
+                }
+                if let started {
+                    if let pick { StartedChats.remember(StartedChat(chat: started.id, folder: started.folder, at: Date()), for: pick, paths: paths) }
+                    self.hub.log("The new Claude Code chat \(started.id) for report \(source.reportID) started in \(started.folder)")
                     return
                 }
                 Thread.sleep(forTimeInterval: 2)
             }
-            self.hub.log("The new Claude Code chat for report \(source.reportID) wasn't sent within 10 minutes")
+            self.hub.log("The new Claude Code chat for report \(source.reportID) wasn't started within 10 minutes")
         }
     }
 

@@ -18,6 +18,7 @@ enum ClaudeSessions {
         var title: String? = nil
         /// Where it runs: `claude-desktop` for the desktop app, `cli` in a terminal.
         var entrypoint: String? = nil
+        var startedAt: Date = .distantPast
     }
 
     /// Where the user uses Claude Code: wherever their most recent chat runs, or the desktop app
@@ -52,7 +53,8 @@ enum ClaudeSessions {
         let updated = (object["updatedAt"] as? Double) ?? (object["startedAt"] as? Double) ?? 0
         return Session(id: id, folder: folder, socket: socket, updatedAt: Date(timeIntervalSince1970: updated / 1000),
                        isIdle: object["status"] as? String == "idle", title: object["name"] as? String,
-                       entrypoint: object["entrypoint"] as? String)
+                       entrypoint: object["entrypoint"] as? String,
+                       startedAt: Date(timeIntervalSince1970: ((object["startedAt"] as? Double) ?? 0) / 1000))
     }
 
     /// The line a chat's socket takes: one message, as if typed by another of the user's chats.

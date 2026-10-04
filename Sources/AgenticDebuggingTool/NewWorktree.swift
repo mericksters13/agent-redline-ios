@@ -49,6 +49,13 @@ enum NewWorktree {
         return copy.path
     }
 
+    /// The repository's main checkout for a folder in it or in one of its worktrees.
+    static func repository(of folder: String) -> String? {
+        guard let common = git(folder, ["rev-parse", "--path-format=absolute", "--git-common-dir"]) else { return nil }
+        let url = URL(fileURLWithPath: common)
+        return url.lastPathComponent == ".git" ? url.deletingLastPathComponent().path : git(folder, ["rev-parse", "--show-toplevel"])
+    }
+
     /// Takes back a worktree made for a chat that didn't start, and its branch, which holds
     /// nothing but main's commit.
     static func remove(_ path: String) {

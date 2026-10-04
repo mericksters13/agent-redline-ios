@@ -196,6 +196,10 @@ struct AgentHookTests {
         // The same name again gets a number rather than failing.
         let again = try #require(NewWorktree.create(from: repository.path, name: "report-1", agent: .claude))
         #expect(again.hasSuffix("/report-1-2"))
+        // Its repository is the main checkout, from the worktree too.
+        #expect(NewWorktree.repository(of: made) == NewWorktree.repository(of: repository.path))
+        #expect(NewWorktree.repository(of: made)?.hasSuffix("/repo") == true)
+
         // A report copied into the worktree is ignored by git there.
         let report = root.appending(path: "inbox-report", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: report, withIntermediateDirectories: true)
