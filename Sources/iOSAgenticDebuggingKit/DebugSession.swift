@@ -730,7 +730,11 @@ final class DebugSession {
         pickerAgent = agent
     }
 
+    /// Picking "New chat" names a fresh pick, so the next report starts a new chat even if the
+    /// last pick was a new chat too.
     func choose(_ choice: Report.Destination) {
+        var choice = choice
+        if choice.chat == nil { choice.newChat = UUID().uuidString }
         pickerChoice = choice
     }
 

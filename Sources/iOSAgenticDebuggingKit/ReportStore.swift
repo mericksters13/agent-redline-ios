@@ -119,6 +119,14 @@ struct Report: Codable, Sendable {
         var chat: String?
         /// What the phone showed, for its own messages.
         var title: String
+        /// Names a "New chat" pick: its first report starts the chat, later ones go to that chat,
+        /// until the user picks again.
+        var newChat: String? = nil
+
+        /// The same choice in the picker: the same chat, or "New chat" for the same agent.
+        func sameChoice(as other: Destination?) -> Bool {
+            other?.agent == agent && other?.chat == chat
+        }
     }
 
     struct Device: Codable, Sendable {
