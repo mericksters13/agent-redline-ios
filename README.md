@@ -173,7 +173,7 @@ Each step is safe to run again: nothing is added twice, and a run that stopped p
 6. **Runs `redline setup`:**
    - **Claude Code**, when `~/.claude` exists or the Claude app is installed. Setup checks that the `claude` command is installed, signed in, and, with the Claude app, version 2.1.285 or later. The `claude` command starts new chats for reports and has its own sign-in, separate from the Claude app's. In a terminal, setup runs `claude update` and `claude auth login` for you. With no terminal to ask in, with `--no-input`, or when an agent runs the installer, it runs neither and lists them for you instead. Either way it goes on with the rest.
    - **Codex**, when `~/.codex` exists. Setup adds one hook, on `UserPromptSubmit`, named "Report delivery", to `~/.codex/hooks.json`. Your other hooks stay as they are, and the file is backed up once as `hooks.json.before-redline`.
-   - Claude Code needs no hooks. When `~/.claude` exists, setup still rewrites `~/.claude/settings.json` in place (keys sorted, pretty-printed) and backs it up once as `settings.json.before-redline`, without adding anything.
+   - Claude Code needs no hooks, so setup leaves `~/.claude/settings.json` as it is.
    - Cursor gets no hooks. Hooks an earlier setup added to `~/.cursor/hooks.json` are removed.
    - **The earlier version**, Agentic Debugging, is replaced: its app in `~/Applications` is stopped and removed, its command `~/.local/bin/agentic-debugging` is removed once setup has moved its hooks to `redline`, and its data folder, `~/Library/Application Support/iOSAgenticDebuggingKit`, moves to `~/Library/Application Support/Redline`, so reports and paired phones carry over.
 7. **Adds the MCP server to Claude Code**, once, when the `claude` command is installed: `claude mcp add --scope user redline -- ~/.local/bin/redline mcp`. Each Claude Code chat then runs `redline mcp`, which registers the chat and the apps its project builds with the hub, and opens Redline when it is not running. In projects that build no iOS app it does nothing. It also gives the chat two tools, `check_messages` and `wait_for_message`, for taking reports that are waiting in the inbox. An entry left from Redline's earlier name, `agentic-debugging`, is removed.
@@ -369,6 +369,10 @@ The hub's log is at `~/Library/Application Support/Redline/hub/hub.log`.
 | `redline app` | The menu bar app; opening `Redline.app` does the same. |
 
 `check`, `wait` and `mcp` take `--project <folder>`, and `--app <bundle ID>` for a bundle ID that can't be read from the project.
+
+## Contributing
+
+To build, test and send a change, see [CONTRIBUTING.md](CONTRIBUTING.md). How the code is written is in [docs/CODE_STYLE.md](docs/CODE_STYLE.md).
 
 ## Acknowledgements
 

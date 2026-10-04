@@ -10,12 +10,30 @@ import UIKit
 final class DebugSession {
     static let shared = DebugSession()
 
+    /// What Redline is doing, which decides what the overlay shows and whether it takes touches.
     enum Mode {
         case idle, picking, noting, tray, viewer, attaching
         /// The reports already sent, opened with a long press on the floating button.
         case reports
-        /// Picking where reports go: an agent on the Mac, then one of its chats.
+        /// Choosing where reports go: an agent on the Mac, then one of its chats.
         case destination
+
+        /// Annotate mode in any of its states: Redline has the screen, which shows the
+        /// annotate frame and the markers of notes already made.
+        var isAnnotating: Bool {
+            switch self {
+            case .picking, .noting, .tray, .attaching: true
+            case .idle, .viewer, .reports, .destination: false
+            }
+        }
+
+        /// The island of pick-mode controls shows.
+        var showsIsland: Bool {
+            switch self {
+            case .picking, .tray, .attaching: true
+            case .idle, .noting, .viewer, .reports, .destination: false
+            }
+        }
     }
 
     /// The Mac's answer to which chats a report can go to.
@@ -30,25 +48,40 @@ final class DebugSession {
     struct PendingAttachment {
         var kind: Annotation.Kind
         /// The images, or small previews of them while the full ones load.
+        ///
+        /// Saved with the note.
         var images: [UIImage]
+        /// The note box's small pictures of the first few images, at the size they're shown.
+        var previews: [UIImage]
         var screen: ScreenInfo?
         /// True for a suggested screenshot: its note box sends the report.
         var sendsReport: Bool
         /// How many images, known before they finish loading.
         var count = 1
-        /// The full-size images, while they load. The note box opens without waiting for them.
+        /// The full-size images, while they load.
+        ///
+        /// The note box opens without waiting for them.
         var loading: Task<[UIImage], Never>?
+        /// Tells this attachment from one started later, after this one was cancelled.
+        let id = UUID()
+        /// True while Add note waits for photos that are still loading.
+        var isSaving = false
     }
 
     /// A screenshot offered at the side of the screen.
     struct Suggestion: Identifiable {
         let id = UUID()
         var image: UIImage
+        /// The card's picture, at the size it's shown.
+        ///
+        /// The full image is kept for sending.
+        var preview: UIImage
         var kind: Annotation.Kind
         var screen: ScreenInfo?
     }
 
-    struct Marker: Identifiable {
+    /// A note already made on the screen being picked on, where its element is now.
+    struct Marker: Identifiable, Equatable {
         var id: UUID
         var number: Int
         var frame: CGRect
@@ -70,8 +103,10 @@ final class DebugSession {
     private(set) var keyboardTop = CGFloat.infinity
     /// True from the moment the note card asks for the keyboard until the keyboard
     /// reports its frame, so the card can open where it will end up.
-    private(set) var awaitingKeyboard = false
-    /// Center of the floating button, in screen points. Nil until the window has a size.
+    private(set) var isAwaitingKeyboard = false
+    /// Center of the floating button, in screen points.
+    ///
+    /// Nil until the window has a size.
     private(set) var buttonCenter: CGPoint?
     /// The screen being picked on.
     private(set) var screen = ScreenInfo()
@@ -92,6 +127,27 @@ final class DebugSession {
     /// A short reminder under the island after such a tap.
     private(set) var hint: String?
 
+    /// Where reports from this build go, as the user picked.
+    ///
+    /// Kept per worktree the app was built from, so a build from another worktree starts with that
+    /// worktree's chat. Loaded when the overlay is installed, once the source file that keys it is
+    /// known.
+    private(set) var destination: Report.Destination?
+    private(set) var chatList: ChatListState = .loading
+    /// The agent whose chats the picker shows.
+    private(set) var pickerAgent: String?
+    /// What's selected in the picker: a chat, or a new chat when `chat` is nil.
+    private(set) var pickerChoice: Report.Destination?
+    /// The picker opened from Send: confirming it sends the report.
+    private(set) var sendsAfterChoosingDestination = false
+    private var modeBeforeDestinations: Mode = .picking
+
+    /// The hub's address, read from disk at set points (install, activation, opening the notes,
+    /// Send and the picker) rather than on every redraw.
+    ///
+    /// The Mac writes it once, at setup.
+    private(set) var hubAddress: HubLink.Address?
+
     var safeAreaTop: CGFloat { safeAreaInsets.top }
 
     var selected: ElementSnapshot? {
@@ -106,7 +162,15 @@ final class DebugSession {
     /// The number the note being written will get.
     var nextNumber: Int { annotations.count + 1 }
 
+    /// The hub has set this app up, so there are chats to pick from.
+    var canPickDestination: Bool { hubAddress != nil }
+
     @ObservationIgnored private var window: OverlayWindow?
+    /// The project file that attached the kit.
+    ///
+    /// It names the worktree the app was built from, and keys the destination the user picked. Set
+    /// once, when the overlay is installed.
+    @ObservationIgnored private var sourceFile: String?
     @ObservationIgnored private var elements: [ElementSnapshot] = []
     @ObservationIgnored private var screenshot: UIImage?
     /// The main scroll view's position when the screen was read.
@@ -122,23 +186,44 @@ final class DebugSession {
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var thumbnails: [UUID: UIImage] = [:]
     /// Full-size images for the viewer, kept for the few around the one showing.
-    @ObservationIgnored private var fullImages: [String: UIImage] = [:]
-    /// True while Add note waits for photos that are still loading.
-    @ObservationIgnored private var isSavingNote = false
-    /// Images still being written to the draft. Send waits for them.
+    @ObservationIgnored private let fullImages: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        // The page showing and its neighbors, with room for one more.
+        cache.countLimit = 6
+        return cache
+    }()
+    /// Images still being written to the draft.
+    ///
+    /// Send waits for them.
     @ObservationIgnored private var writes: [Task<Void, Never>] = []
+    /// The send in progress, waiting for the draft's images before it saves the report.
+    @ObservationIgnored private var sending: Task<Void, Never>?
+    /// The question to the Mac about which chats a report can go to, while it's open.
+    @ObservationIgnored private var chatsRequest: Task<Void, Never>?
+    /// Each timer is replaced when it starts again, so an older one never cuts a newer one short.
+    @ObservationIgnored private var toastTimer: Task<Void, Never>?
+    @ObservationIgnored private var hintTimer: Task<Void, Never>?
+    @ObservationIgnored private var keyboardWait: Task<Void, Never>?
+    @ObservationIgnored private var suggestionTimer: Task<Void, Never>?
     /// True while a finger is down in pick mode.
-    @ObservationIgnored private var touchIsDown = false
+    @ObservationIgnored private var isTouchDown = false
     @ObservationIgnored private let store = ReportStore.standard
     @ObservationIgnored private let selectionFeedback = UISelectionFeedbackGenerator()
-    @ObservationIgnored private let logger = Logger(subsystem: "Redline", category: "session")
+    @ObservationIgnored private let logger = Log.session
 
     private init() {}
 
     // MARK: - Install
 
-    func install(in scene: UIWindowScene) {
+    /// Installs the overlay in `scene`.
+    ///
+    /// Only the first call does anything: the overlay lives in one scene, and the first
+    /// attachment's source file is the one reports carry.
+    func install(in scene: UIWindowScene, sourceFile: String) {
         guard window == nil else { return }
+        self.sourceFile = sourceFile
+        destination = savedDestination()
+        refreshHubAddress()
         AccessibilityTree.enableAutomation()
 
         let window = OverlayWindow(windowScene: scene)
@@ -159,13 +244,14 @@ final class DebugSession {
         self.window = window
         displayCornerRadius = Self.displayCornerRadius(of: scene.screen)
 
-        annotations = store.loadDraft()
-        screens = store.loadScreens()
+        annotations = loadDraftFile(store.draftFile, named: "notes") { try store.loadDraft() }
+        screens = loadDraftFile(store.screensFile, named: "screens") { try store.loadScreens() }
         observeKeyboard()
         observeScreenshots()
         // On a cold launch the app became active before Redline was installed.
         Task {
             try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
             offerRecentScreenshot()
             offerUndeliveredReports()
         }
@@ -183,8 +269,10 @@ final class DebugSession {
         if defaults.bool(forKey: "RedlineOpenViewer") {
             Task {
                 try? await Task.sleep(for: .seconds(launchDelay))
+                guard !Task.isCancelled else { return }
                 enterPicking()
                 try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
                 toggleTray()
                 if let first = annotations.first { openViewer(first) }
             }
@@ -192,22 +280,30 @@ final class DebugSession {
         if defaults.bool(forKey: "RedlineOpenAttachments") {
             Task {
                 try? await Task.sleep(for: .seconds(launchDelay))
+                guard !Task.isCancelled else { return }
                 enterPicking()
                 try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
                 openAttachments()
             }
         }
         if defaults.bool(forKey: "RedlineSimulateScreenshot") {
             Task {
                 try? await Task.sleep(for: .seconds(launchDelay))
-                NotificationCenter.default.post(name: UIApplication.userDidTakeScreenshotNotification, object: UIApplication.shared)
+                guard !Task.isCancelled else { return }
+                NotificationCenter.default.post(
+                    name: UIApplication.userDidTakeScreenshotNotification,
+                    object: UIApplication.shared
+                )
             }
         }
         if defaults.bool(forKey: "RedlinePickOnLaunch") {
             Task {
                 try? await Task.sleep(for: .seconds(launchDelay))
+                guard !Task.isCancelled else { return }
                 enterPicking()
                 try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
                 let point: (String) -> CGPoint? = { key in
                     let parts = defaults.string(forKey: key)?.split(separator: ",").compactMap { Double($0) }
                     guard let parts, parts.count == 2 else { return nil }
@@ -225,19 +321,41 @@ final class DebugSession {
         }
     }
 
+    /// Loads one of the draft's files.
+    ///
+    /// One that can't be read is moved aside before anything can save over it, and the draft starts
+    /// without it.
+    private func loadDraftFile<Item>(_ file: URL, named name: String, load: () throws -> [Item]) -> [Item] {
+        do {
+            return try load()
+        } catch {
+            logger.error(
+                "Couldn't read the draft's \(name, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            do {
+                let aside = try store.setAsideUnreadable(file)
+                logger.notice("Kept the unreadable file at \(aside.path(percentEncoded: false), privacy: .private)")
+            } catch {
+                logger.error("Couldn't move the unreadable file aside: \(error.localizedDescription, privacy: .public)")
+            }
+            return []
+        }
+    }
+
     // MARK: - Pick mode
 
     func enterPicking() {
         guard mode == .idle, window != nil else { return }
         // A list still gliding from a scroll would keep moving after the screen is
         // read, leaving every outline behind. Stop it, let it settle, then read.
-        AccessibilityTree.stopScrolling(in: appWindows())
+        AppWindows.stopScrolling(in: appWindows())
         levels = []
         setMode(.picking)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         Task {
             try? await Task.sleep(for: .milliseconds(60))
-            if mode == .picking { readScreen() }
+            guard !Task.isCancelled, mode == .picking else { return }
+            readScreen()
         }
     }
 
@@ -252,23 +370,24 @@ final class DebugSession {
 
     func hover(at point: CGPoint) {
         guard mode == .picking else { return }
-        if !touchIsDown {
+        if !isTouchDown {
             // Each new touch reads the screen again, so positions, saved-note markers
             // and the report screenshot match what is on screen right now.
-            touchIsDown = true
+            isTouchDown = true
             readScreen()
         }
         let found = ElementSelection.levels(at: point, in: elements, screenSize: screenSize)
         if found.first != levels.first, found.first != nil {
             selectionFeedback.selectionChanged()
         }
-        levels = found
-        levelIndex = 0
+        // Called on every frame of a drag: publish only what changed.
+        if found != levels { levels = found }
+        if levelIndex != 0 { levelIndex = 0 }
     }
 
     func finishHover(at point: CGPoint) {
         hover(at: point)
-        touchIsDown = false
+        isTouchDown = false
         guard selected != nil else {
             nudge()
             return
@@ -292,19 +411,22 @@ final class DebugSession {
     func saveNote() {
         let note = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         if let pending {
-            guard !isSavingNote else { return }
+            guard !pending.isSaving else { return }
             guard let loading = pending.loading else {
                 saveAttachment(pending, note: note)
                 return
             }
             // Photos still loading: save once they're in. The note box stays until then.
-            isSavingNote = true
+            self.pending?.isSaving = true
+            let id = pending.id
             Task {
-                var ready = pending
-                ready.images = await loading.value
+                let images = await loading.value
+                // Cancelled, or another attachment started while the photos loaded.
+                guard var ready = self.pending, ready.id == id else { return }
+                // None loaded: attachPhotos's own task cancels the note.
+                guard !images.isEmpty else { return }
+                ready.images = images
                 ready.loading = nil
-                isSavingNote = false
-                guard self.pending != nil, !ready.images.isEmpty else { return }
                 saveAttachment(ready, note: note)
             }
             return
@@ -313,19 +435,21 @@ final class DebugSession {
         let id = UUID()
         let captureID = fileCapture(screenshot)
         thumbnails[id] = Self.crop(screenshot, around: element.frame, screenWidth: screenSize.width)
-        annotations.append(Annotation(
-            id: id,
-            createdAt: .now,
-            note: note,
-            kind: .element,
-            element: element,
-            ancestors: Array(levels.dropFirst(levelIndex + 1)),
-            screen: screen,
-            screenshots: [],
-            captureID: captureID
-        ))
+        annotations.append(
+            Annotation(
+                id: id,
+                createdAt: .now,
+                note: note,
+                kind: .element,
+                element: element,
+                ancestors: Array(levels.dropFirst(levelIndex + 1)),
+                screen: screen,
+                screenshots: [],
+                captureID: captureID
+            )
+        )
         pruneCaptures()
-        fullImages = [:]
+        fullImages.removeAllObjects()
         persist()
         levels = []
         refreshMarkers()
@@ -341,8 +465,9 @@ final class DebugSession {
         endNoting(returningTo: notingReturnMode)
     }
 
-    /// Saves the attachment's images and adds it to the draft. A suggested screenshot
-    /// then sends the report, with everything already in the draft.
+    /// Saves the attachment's images and adds it to the draft.
+    ///
+    /// A suggested screenshot then sends the report, with everything already in the draft.
     private func saveAttachment(_ attachment: PendingAttachment, note: String) {
         let id = UUID()
         // The app's own screens keep every pixel sharp; photos are stored smaller.
@@ -350,22 +475,26 @@ final class DebugSession {
         let files = attachment.images.indices.map { "\(id.uuidString)-\($0 + 1).\(isScreen ? "png" : "jpg")" }
         thumbnails[id] = attachment.images.first.flatMap(Self.topSquare(of:))
         writeImages(attachment.images, named: files, asPNG: isScreen)
-        annotations.append(Annotation(
-            id: id,
-            createdAt: .now,
-            note: note,
-            kind: attachment.kind,
-            element: nil,
-            ancestors: [],
-            screen: attachment.screen,
-            screenshots: files
-        ))
-        persist()
+        annotations.append(
+            Annotation(
+                id: id,
+                createdAt: .now,
+                note: note,
+                kind: attachment.kind,
+                element: nil,
+                ancestors: [],
+                screen: attachment.screen,
+                screenshots: files
+            )
+        )
+        // An attachment has no capture, so the screens are unchanged.
+        persistAnnotations()
         pending = nil
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         if attachment.sendsReport {
             noteText = ""
-            awaitingKeyboard = false
+            keyboardWait?.cancel()
+            isAwaitingKeyboard = false
             send()
         } else {
             endNoting(returningTo: notingReturnMode)
@@ -377,7 +506,7 @@ final class DebugSession {
         annotations.remove(at: index)
         thumbnails[annotation.id] = nil
         // Other notes on the same screen show this one's outline, so their pictures are redrawn.
-        fullImages = [:]
+        fullImages.removeAllObjects()
         annotation.screenshots.forEach(store.deleteScreenshot(named:))
         pruneCaptures()
         persist()
@@ -410,8 +539,32 @@ final class DebugSession {
 
     func closeViewer() {
         viewerID = nil
-        fullImages = [:]
+        fullImages.removeAllObjects()
         setMode(annotations.isEmpty ? trayReturnMode : .tray)
+    }
+
+    func updateNote(_ id: UUID, to text: String) {
+        let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else {
+            return
+        }
+        annotations[index].note = note
+        persistAnnotations()
+    }
+
+    /// One of the item's images at full size: its screen's picture with every note on it outlined
+    /// and this one standing out, or an attached image.
+    ///
+    /// Cached with the few around it; the oldest are dropped first.
+    func fullImage(for annotation: Annotation, at index: Int) -> UIImage? {
+        if let captureID = annotation.captureID { return screenPicture(for: annotation, on: captureID) }
+        guard annotation.screenshots.indices.contains(index) else { return nil }
+        let key = "\(annotation.id.uuidString)-\(index)" as NSString
+        if let cached = fullImages.object(forKey: key) { return cached }
+        let url = store.draftDirectory.appending(path: annotation.screenshots[index])
+        guard let image = UIImage(contentsOfFile: url.path(percentEncoded: false)) else { return nil }
+        fullImages.setObject(image, forKey: key)
+        return image
     }
 
     // MARK: - Sent reports
@@ -429,38 +582,29 @@ final class DebugSession {
 
     /// The reports already sent, newest first, read off the main thread.
     func sentReports() async -> [SentReport] {
-        let store = store
-        return await Task.detached(priority: .userInitiated) { store.sentReports() }.value
+        await Self.sentReports(from: store)
     }
 
-    /// The last attempt to hand reports to the Mac.
-    func lastDelivery() -> Delivery? {
+    /// Runs off the main actor.
+    ///
+    /// Add @concurrent when the tools version reaches 6.2.
+    nonisolated private static func sentReports(from store: ReportStore) async -> [SentReport] {
+        store.sentReports()
+    }
+
+    /// The last attempt to hand reports to the Mac, read off the main thread.
+    func lastDelivery() async -> Delivery? {
+        await Self.lastDelivery(from: store)
+    }
+
+    /// Runs off the main actor.
+    ///
+    /// Add @concurrent when the tools version reaches 6.2.
+    nonisolated private static func lastDelivery(from store: ReportStore) async -> Delivery? {
         store.lastDelivery()
     }
 
-    func updateNote(_ id: UUID, to text: String) {
-        let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return }
-        annotations[index].note = note
-        persist()
-    }
-
-    /// One of the item's images at full size: its screen's picture with every note on it
-    /// outlined and this one standing out, or an attached image.
-    func fullImage(for annotation: Annotation, at index: Int) -> UIImage? {
-        if let captureID = annotation.captureID { return screenPicture(for: annotation, on: captureID) }
-        guard annotation.screenshots.indices.contains(index) else { return nil }
-        let key = "\(annotation.id.uuidString)-\(index)"
-        if let cached = fullImages[key] { return cached }
-        let url = store.draftDirectory.appending(path: annotation.screenshots[index])
-        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
-        // Keep only a few; a long session can collect many full-screen images.
-        if fullImages.count >= 5 { fullImages.removeAll() }
-        fullImages[key] = image
-        return image
-    }
-
-    // MARK: - Tray and send
+    // MARK: - Tray
 
     func toggleTray() {
         switch mode {
@@ -469,6 +613,7 @@ final class DebugSession {
         case .picking, .idle:
             guard !annotations.isEmpty else { return }
             trayReturnMode = mode
+            refreshHubAddress()
             setMode(.tray)
         case .noting, .viewer, .attaching, .reports, .destination:
             break
@@ -496,7 +641,15 @@ final class DebugSession {
         let capture = captureScreen()
         UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
         captureFlight = capture.image
-        beginAttachmentNote(PendingAttachment(kind: .screen, images: [capture.image], screen: capture.screen, sendsReport: false))
+        beginAttachmentNote(
+            PendingAttachment(
+                kind: .screen,
+                images: [capture.image],
+                previews: [Self.preview(of: capture.image)],
+                screen: capture.screen,
+                sendsReport: false
+            )
+        )
     }
 
     /// The captured screen has landed in the note box.
@@ -504,11 +657,23 @@ final class DebugSession {
         captureFlight = nil
     }
 
-    /// Attaches images chosen from Photos, together, as one item with one note. The note
-    /// box opens at once with `previews`, and the full images take their place once loaded.
+    /// Attaches images chosen from Photos, together, as one item with one note.
+    ///
+    /// The note box opens at once with `previews`, and the full images take their place once
+    /// loaded.
     func attachPhotos(previews: [UIImage], count: Int, loading: Task<[UIImage], Never>) {
         guard mode == .attaching, count > 0 else { return }
-        beginAttachmentNote(PendingAttachment(kind: .photo, images: previews, screen: nil, sendsReport: false, count: count, loading: loading))
+        beginAttachmentNote(
+            PendingAttachment(
+                kind: .photo,
+                images: previews,
+                previews: previews,
+                screen: nil,
+                sendsReport: false,
+                count: count,
+                loading: loading
+            )
+        )
         Task {
             let images = await loading.value
             guard pending?.loading == loading else { return }
@@ -517,7 +682,17 @@ final class DebugSession {
                 cancelNote()
                 return
             }
+            if images.count < count { logger.error("Loaded \(images.count) of \(count) chosen photos") }
+            // The grid's thumbnails stay as the previews. The system photo picker gives none, and
+            // a photo that didn't load leaves them out of step, so then they're made from the photos.
+            var shown = pending?.previews ?? []
+            if shown.count != images.count {
+                shown = []
+                for image in images.prefix(3) { shown.append(await Self.preparedPreview(of: image)) }
+                guard pending?.loading == loading else { return }
+            }
             pending?.images = images
+            pending?.previews = shown
             pending?.count = images.count
             pending?.loading = nil
         }
@@ -528,35 +703,59 @@ final class DebugSession {
     /// Send under a suggested screenshot: write a note, then send it with the rest of the draft.
     func sendSuggestion() {
         guard let suggestion, mode == .idle || mode == .picking else { return }
+        suggestionTimer?.cancel()
         self.suggestion = nil
-        let attachment = PendingAttachment(kind: suggestion.kind, images: [suggestion.image], screen: suggestion.screen, sendsReport: true)
+        let attachment = PendingAttachment(
+            kind: suggestion.kind,
+            images: [suggestion.image],
+            previews: [suggestion.preview],
+            screen: suggestion.screen,
+            sendsReport: true
+        )
         beginAttachmentNote(attachment, returningTo: mode)
     }
 
     func dismissSuggestion() {
+        suggestionTimer?.cancel()
         withAnimation(.smooth(duration: 0.3)) { suggestion = nil }
     }
 
     private func observeScreenshots() {
         let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: UIApplication.userDidTakeScreenshotNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.offerInAppScreenshot() }
-        })
-        observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.offerRecentScreenshot()
-                self?.offerUndeliveredReports()
+        observers.append(
+            center.addObserver(forName: UIApplication.userDidTakeScreenshotNotification, object: nil, queue: .main) {
+                [weak self] _ in
+                MainActor.assumeIsolated { self?.offerInAppScreenshot() }
             }
-        })
+        )
+        observers.append(
+            center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) {
+                [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.refreshHubAddress()
+                    self?.offerRecentScreenshot()
+                    self?.offerUndeliveredReports()
+                }
+            }
+        )
     }
 
-    /// A screenshot was just taken in the app. The system's picture includes Redline,
-    /// so the app's own windows are captured instead, at the same moment, without it.
+    /// A screenshot was just taken in the app.
+    ///
+    /// The system's picture includes Redline, so the app's own windows are captured instead, at the
+    /// same moment, without it.
     private func offerInAppScreenshot() {
         guard window != nil, mode == .idle || mode == .picking else { return }
         let capture = captureScreen()
         rememberInAppCapture(at: .now)
-        offer(Suggestion(image: capture.image, kind: .screen, screen: capture.screen))
+        offer(
+            Suggestion(
+                image: capture.image,
+                preview: Self.cardPreview(of: capture.image),
+                kind: .screen,
+                screen: capture.screen
+            )
+        )
     }
 
     /// The newest screenshot taken in another app in the last 10 minutes, offered once,
@@ -567,15 +766,24 @@ final class DebugSession {
         let candidates = assets.compactMap { asset in
             asset.creationDate.map { ScreenshotSuggestion.Candidate(id: asset.localIdentifier, createdAt: $0) }
         }
-        guard let pick = ScreenshotSuggestion.pick(newest: candidates, now: .now, offered: offeredPhotoIDs, inAppCaptures: inAppCaptureDates),
-              let asset = assets.first(where: { $0.localIdentifier == pick.id })
+        guard
+            let pick = ScreenshotSuggestion.candidateToOffer(
+                among: candidates,
+                now: .now,
+                offered: offeredPhotoIDs,
+                inAppCaptures: inAppCaptureDates
+            ),
+            let asset = assets.first(where: { $0.localIdentifier == pick.id })
         else { return }
         markOffered(pick.id)
         Task {
+            // Another screenshot may have been offered while this one loaded; it stays.
             guard let image = await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels),
-                  mode == .idle || mode == .picking
+                mode == .idle || mode == .picking, suggestion == nil
             else { return }
-            offer(Suggestion(image: image, kind: .photo, screen: nil))
+            let preview = await image.byPreparingThumbnail(ofSize: Self.cardPreviewSize(of: image)) ?? image
+            guard mode == .idle || mode == .picking, suggestion == nil else { return }
+            offer(Suggestion(image: image, preview: preview, kind: .photo, screen: nil))
         }
     }
 
@@ -584,60 +792,25 @@ final class DebugSession {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let id = suggestion.id
         // A screenshot nobody acts on steps aside on its own.
-        Task {
+        suggestionTimer?.cancel()
+        suggestionTimer = Task {
             try? await Task.sleep(for: .seconds(20))
-            if self.suggestion?.id == id { dismissSuggestion() }
+            guard !Task.isCancelled, self.suggestion?.id == id else { return }
+            dismissSuggestion()
         }
     }
 
     // MARK: - Handing reports to the Mac
 
-    /// Set once a report has reached the Mac's hub, and so iOS has allowed local network access.
-    nonisolated static let hubReachedKey = "RedlineHubReached"
-
-    /// Sends every report the Mac hasn't confirmed to its hub, notes the ones it now has, and
-    /// records how it went. Nil when there's nothing to send.
-    nonisolated static func deliverReports(from store: ReportStore, patience: TimeInterval) async -> HubLink.Outcome? {
-        guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
-        let reports = store.undeliveredReports()
-        guard !reports.isEmpty else { return nil }
-        guard let address = store.hubAddress() else {
-            store.recordDelivery(.noHub)
-            return .noHub
-        }
-        // In a simulator the hub takes reports from the app's folder as they're saved.
-        if address.uploads == false {
-            store.markDelivered(reports.map(\.id))
-            store.recordDelivery(.delivered)
-            return .delivered
-        }
-        let result = await HubLink.deliver(reports, bundleID: bundleID, address: address, files: { store.reportFiles($0) }, patience: patience)
-        store.markDelivered(result.delivered)
-        store.recordDelivery(result.outcome)
-        // The hub answered, so iOS has allowed local network access.
-        if result.outcome != .unreachable { UserDefaults.standard.set(true, forKey: hubReachedKey) }
-        return result.outcome
-    }
-
-    /// What the toast after Send says, so a report that didn't reach the Mac says why.
-    nonisolated static func toast(for outcome: HubLink.Outcome?, notes: String, to destination: String? = nil) -> String {
-        switch outcome {
-        case .delivered: "Sent \(notes) to \(destination ?? "the Mac")"
-        case .noHub, nil: "Saved \(notes) on this iPhone"
-        case .unreachable: "Saved on this iPhone. Couldn't reach the Mac"
-        case .refused: "Saved on this iPhone. The Mac didn't accept it"
-        case .interrupted: "Saved on this iPhone. Sending to the Mac stopped"
-        }
-    }
-
     /// When the app comes back, offers what the Mac hasn't confirmed, such as a report sent from
-    /// another network. Only after a report has reached the hub once, so iOS's local network
-    /// question is never asked at launch.
+    /// another network.
+    ///
+    /// Only after a report has reached the hub once, so iOS's local network question is never asked
+    /// at launch.
     private func offerUndeliveredReports() {
-        guard UserDefaults.standard.bool(forKey: Self.hubReachedKey) else { return }
-        let store = store
-        Task.detached(priority: .utility) {
-            _ = await DebugSession.deliverReports(from: store, patience: 8)
+        guard UserDefaults.standard.bool(forKey: ReportDelivery.hubReachedKey) else { return }
+        Task(priority: .utility) { [store] in
+            _ = await ReportDelivery.deliver(from: store, bundleID: Bundle.main.bundleIdentifier, patience: 8)
         }
     }
 
@@ -656,68 +829,89 @@ final class DebugSession {
     /// When screenshots were taken in the app, so the same screenshot isn't offered
     /// again once it shows up in Photos.
     private var inAppCaptureDates: [Date] {
-        (UserDefaults.standard.array(forKey: Self.inAppCapturesKey) as? [Double] ?? []).map(Date.init(timeIntervalSince1970:))
+        (UserDefaults.standard.array(forKey: Self.inAppCapturesKey) as? [Double] ?? []).map(
+            Date.init(timeIntervalSince1970:)
+        )
     }
 
     private func rememberInAppCapture(at date: Date) {
-        let dates = (UserDefaults.standard.array(forKey: Self.inAppCapturesKey) as? [Double] ?? []) + [date.timeIntervalSince1970]
+        let dates =
+            (UserDefaults.standard.array(forKey: Self.inAppCapturesKey) as? [Double] ?? []) + [
+                date.timeIntervalSince1970
+            ]
         UserDefaults.standard.set(Array(dates.suffix(10)), forKey: Self.inAppCapturesKey)
     }
 
     // MARK: - Where reports go
 
-    /// Where reports from this build go, as the user picked. Kept per worktree the app was built
-    /// from, so a build from another worktree starts with that worktree's chat.
-    private(set) var destination: Report.Destination? = DebugSession.savedDestination()
-    private(set) var chatList: ChatListState = .loading
-    /// The agent whose chats the picker shows.
-    var pickerAgent: String?
-    /// What's selected in the picker: a chat, or a new chat when `chat` is nil.
-    var pickerChoice: Report.Destination?
-    /// The picker opened from Send: confirming it sends the report.
-    private(set) var sendsAfterPicking = false
-    private var modeBeforePicking: Mode = .picking
-
-    /// The hub has set this app up, so there are chats to pick from.
-    var canPickDestination: Bool { store.hubAddress() != nil }
-
-    private static var destinationKey: String {
-        "RedlineDestination|" + (BuildIdentity.sourceFile ?? Bundle.main.bundleIdentifier ?? "")
+    private func refreshHubAddress() {
+        let address = store.hubAddress()
+        if address != hubAddress { hubAddress = address }
     }
 
-    private static func savedDestination() -> Report.Destination? {
-        UserDefaults.standard.data(forKey: destinationKey).flatMap { try? JSONDecoder().decode(Report.Destination.self, from: $0) }
+    private var destinationKey: String {
+        "RedlineDestination|" + (sourceFile ?? Bundle.main.bundleIdentifier ?? "")
+    }
+
+    private static let destinationEncoder = JSONEncoder()
+    private static let destinationDecoder = JSONDecoder()
+
+    /// The pick saved for this build.
+    ///
+    /// One that can't be read is forgotten, so the picker opens again.
+    private func savedDestination() -> Report.Destination? {
+        guard let data = UserDefaults.standard.data(forKey: destinationKey) else { return nil }
+        do {
+            return try Self.destinationDecoder.decode(Report.Destination.self, from: data)
+        } catch {
+            logger.error("Couldn't read the saved destination: \(error.localizedDescription, privacy: .public)")
+            UserDefaults.standard.removeObject(forKey: destinationKey)
+            return nil
+        }
     }
 
     /// Opens the picker and asks the Mac for its chats. `thenSend` when opened from Send.
     func openDestinations(thenSend: Bool = false) {
-        sendsAfterPicking = thenSend
-        modeBeforePicking = mode == .noting || mode == .destination ? .picking : mode
+        // An answer to an earlier opening of the picker must not replace this one's.
+        chatsRequest?.cancel()
+        chatsRequest = nil
+        sendsAfterChoosingDestination = thenSend
+        // From the note box only a suggested screenshot's Send opens the picker, and its note is
+        // already in the draft: Cancel goes to pick mode, which shows that draft and its Send.
+        modeBeforeDestinations = mode == .noting || mode == .destination ? .picking : mode
         pickerChoice = destination
         pickerAgent = destination?.agent
         chatList = .loading
         setMode(.destination)
-        guard let address = store.hubAddress(), let bundleID = Bundle.main.bundleIdentifier else {
+        refreshHubAddress()
+        guard let address = hubAddress, let bundleID = Bundle.main.bundleIdentifier else {
             chatList = .unavailable
             return
         }
-        // The first time, iOS asks about local network access before the hub can answer.
-        let patience: TimeInterval = UserDefaults.standard.bool(forKey: Self.hubReachedKey) ? 8 : 60
-        let sourceFile = BuildIdentity.sourceFile
-        Task {
-            let list = await HubLink.chats(bundleID: bundleID, address: address, sourceFile: sourceFile, patience: patience)
-            guard mode == .destination else { return }
+        let patience = ReportDelivery.patience
+        let sourceFile = sourceFile
+        chatsRequest = Task {
+            let list = await HubLink.requestChats(
+                bundleID: bundleID,
+                address: address,
+                sourceFile: sourceFile,
+                patience: patience
+            )
+            // The hub answered, so iOS has allowed local network access, even if this picker is gone.
+            if list != nil { UserDefaults.standard.set(true, forKey: ReportDelivery.hubReachedKey) }
+            guard !Task.isCancelled, mode == .destination else { return }
             guard let list else {
                 chatList = .unavailable
                 return
             }
-            UserDefaults.standard.set(true, forKey: Self.hubReachedKey)
             chatList = .loaded(list)
             // A saved chat that closed isn't offered; the chat in the build's worktree is.
-            if let choice = pickerChoice, let chat = choice.chat, !list.chats.contains(where: { $0.id == chat && $0.agent == choice.agent }) {
+            if let choice = pickerChoice, let chat = choice.chat,
+                !list.chats.contains(where: { $0.id == chat && $0.agent == choice.agent })
+            {
                 pickerChoice = nil
             }
-            if pickerChoice == nil, let here = list.chats.first(where: \.sameWorktree) {
+            if pickerChoice == nil, let here = list.chats.first(where: \.isSameWorktree) {
                 pickerChoice = Report.Destination(agent: here.agent, chat: here.id, title: here.title)
             }
             if pickerAgent == nil || !list.agents.contains(pickerAgent ?? "") {
@@ -740,34 +934,52 @@ final class DebugSession {
 
     /// Keeps the pick and, when the picker opened from Send, sends.
     func confirmDestination() {
+        chatsRequest?.cancel()
+        chatsRequest = nil
         if let choice = pickerChoice {
             destination = choice
-            if let data = try? JSONEncoder().encode(choice) { UserDefaults.standard.set(data, forKey: Self.destinationKey) }
+            do {
+                UserDefaults.standard.set(try Self.destinationEncoder.encode(choice), forKey: destinationKey)
+            } catch {
+                logger.error("Couldn't save the destination: \(error.localizedDescription, privacy: .public)")
+            }
         }
-        let thenSend = sendsAfterPicking
-        sendsAfterPicking = false
-        setMode(modeBeforePicking)
+        let thenSend = sendsAfterChoosingDestination
+        sendsAfterChoosingDestination = false
+        setMode(modeBeforeDestinations)
         if thenSend { send(pickingFirst: false) }
     }
 
     func cancelDestinations() {
-        sendsAfterPicking = false
-        setMode(modeBeforePicking)
+        chatsRequest?.cancel()
+        chatsRequest = nil
+        sendsAfterChoosingDestination = false
+        setMode(modeBeforeDestinations)
     }
 
-    /// Sends the draft. The first time, the user picks where reports go; after that they go
-    /// there at once.
+    // MARK: - Send
+
+    /// Sends the draft.
+    ///
+    /// The first time, the user picks where reports go; after that they go there at once.
     func send(pickingFirst: Bool = true) {
-        guard !annotations.isEmpty else { return }
+        // One send at a time: a second tap while the first waits is ignored.
+        guard !annotations.isEmpty, sending == nil else { return }
+        refreshHubAddress()
         if pickingFirst, destination == nil, canPickDestination {
             openDestinations(thenSend: true)
             return
         }
         // The report takes the draft's files with it, so every image must be on disk first.
-        let pending = writes
-        writes = []
-        Task {
-            for write in pending { await write.value }
+        // Notes added while waiting add writes of their own; wait for those too.
+        sending = Task {
+            while !writes.isEmpty {
+                let pending = writes
+                writes = []
+                for write in pending { await write.value }
+            }
+            sending = nil
+            // Synchronous: nothing changes between the last check and the report's snapshot.
             saveReport()
         }
     }
@@ -787,15 +999,21 @@ final class DebugSession {
         }
         let destination = destination
         let input = ReportBuilder.Input(
-            id: started.id, date: date, app: .current, device: .current,
-            annotations: annotations, screens: screens, draft: started.draft, folder: started.folder,
+            id: started.id,
+            date: date,
+            app: .current(sourceFile: sourceFile),
+            device: .current,
+            annotations: annotations,
+            screens: screens,
+            draft: started.draft,
+            folder: started.folder,
             destination: destination
         )
         let count = annotations.count
         annotations = []
         screens = []
         thumbnails = [:]
-        fullImages = [:]
+        fullImages.removeAllObjects()
         captureImages = [:]
         levels = []
         markers = []
@@ -805,58 +1023,86 @@ final class DebugSession {
 
         let store = store
         let logger = logger
-        Task.detached(priority: .userInitiated) { [weak self] in
+        let notes = countPhrase(count, singular: "note", plural: "notes")
+        Task(priority: .userInitiated) {
             do {
-                let report = try ReportBuilder.build(input)
-                try store.finishReport(report, in: started.folder)
-                logger.notice("Report saved at \(started.folder.path, privacy: .public)")
-                // The first time, iOS asks about local network access before the hub can answer.
-                let patience: TimeInterval = UserDefaults.standard.bool(forKey: DebugSession.hubReachedKey) ? 8 : 60
-                let outcome = await DebugSession.deliverReports(from: store, patience: patience)
-                let notes = count == 1 ? "1 note" : "\(count) notes"
-                await self?.show(toast: DebugSession.toast(for: outcome, notes: notes, to: destination?.title))
+                let outcome = try await Self.finishAndDeliver(
+                    input,
+                    folder: started.folder,
+                    store: store,
+                    logger: logger
+                )
+                show(toast: ReportDelivery.toast(for: outcome, notes: notes, to: destination?.title))
             } catch {
                 logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
-                await self?.show(toast: "Couldn't save the report")
+                show(toast: "Couldn't save the report")
             }
         }
     }
 
+    /// Draws the report's pictures, writes it, then hands every report the Mac hasn't confirmed to
+    /// its hub.
+    ///
+    /// Returns how that went. Runs off the main actor. Add @concurrent when the tools version
+    /// reaches 6.2.
+    nonisolated private static func finishAndDeliver(
+        _ input: ReportBuilder.Input,
+        folder: URL,
+        store: ReportStore,
+        logger: Logger
+    ) async throws -> HubLink.Outcome? {
+        let report = try ReportBuilder.build(input)
+        try store.finishReport(report, in: folder)
+        logger.notice("Report saved at \(folder.path(percentEncoded: false), privacy: .public)")
+        return await ReportDelivery.deliver(
+            from: store,
+            bundleID: Bundle.main.bundleIdentifier,
+            patience: ReportDelivery.patience
+        )
+    }
+
     // MARK: - One picture per screen
 
-    /// Files the screen as just read under its screen, so every screen has one picture:
-    /// reuses the screen's picture when nothing changed, stitches the new capture in when
-    /// the screen scrolled, and otherwise makes the new capture the screen's picture and
-    /// moves the earlier notes onto it wherever their elements can be found again.
+    /// Files the screen as just read under its screen, so every screen has one picture: reuses the
+    /// screen's picture when nothing changed, stitches the new capture in when the screen scrolled,
+    /// and otherwise makes the new capture the screen's picture and moves the earlier notes onto it
+    /// wherever their elements can be found again.
+    ///
     /// Returns the capture the new note belongs to.
     private func fileCapture(_ image: UIImage) -> UUID {
         var capture = Capture(
-            id: UUID(), file: "capture-\(UUID().uuidString).png", size: screenSize,
-            scroll: scrollState, elements: elements, group: 0
+            id: UUID(),
+            file: "capture-\(UUID().uuidString).png",
+            size: screenSize,
+            scroll: scrollState,
+            elements: elements,
+            group: 0
         )
-        guard let index = screens.firstIndex(where: { $0.info == screen }), let previous = screens[index].captures.last else {
+        guard let index = screens.firstIndex(where: { $0.info == screen }), let previous = screens[index].captures.last
+        else {
             screens.append(ScreenRecord(id: UUID(), info: screen, captures: [capture]))
-            keep(capture, image)
+            keep(image, for: capture)
             return capture.id
         }
         let before = captureImage(previous)
-        let picturesMatch = before?.cgImage.flatMap { old in
-            image.cgImage.map { PictureComparison.difference(old, $0) < PictureComparison.samePicture }
-        } ?? false
-        let overlap = overlapMatches(previous: previous, before: before, new: capture, after: image)
+        let picturesMatch =
+            before?.cgImage.flatMap { old in
+                image.cgImage.map { PictureComparison.difference(old, $0) < PictureComparison.samePicture }
+            } ?? false
+        let overlap = overlapCheck(previous: previous, before: before, new: capture, after: image)
 
-        switch CaptureMerge.decide(previous: previous, new: capture, picturesMatch: picturesMatch, overlapMatches: overlap) {
+        switch CaptureMerge.decision(previous: previous, new: capture, picturesMatch: picturesMatch, overlap: overlap) {
         case .reuse(let existing):
             return existing
         case .stitch:
             capture.group = previous.group
             screens[index].captures.append(capture)
-            keep(capture, image)
+            keep(image, for: capture)
             return capture.id
         case .replace:
             capture.group = previous.group + 1
             screens[index].captures.append(capture)
-            keep(capture, image)
+            keep(image, for: capture)
             let screenCaptures = screens[index].captures
             let onScreen = CGRect(origin: .zero, size: screenSize)
             for i in annotations.indices {
@@ -864,11 +1110,11 @@ final class DebugSession {
                 // there and still looks the same. Under a popup or a dimmed backdrop it doesn't,
                 // and the note keeps the picture it was made on, as an earlier state.
                 guard let old = annotations[i].captureID, old != capture.id,
-                      let oldCapture = screenCaptures.first(where: { $0.id == old }),
-                      let element = annotations[i].element,
-                      let match = ElementSelection.match(element, in: capture.elements),
-                      onScreen.contains(match.frame.insetBy(dx: 1, dy: 1)),
-                      looksTheSame(element.frame, in: oldCapture, as: match.frame, in: image)
+                    let oldCapture = screenCaptures.first(where: { $0.id == old }),
+                    let element = annotations[i].element,
+                    let match = ElementSelection.match(element, in: capture.elements),
+                    onScreen.contains(match.frame.insetBy(dx: 1, dy: 1)),
+                    looksTheSame(element.frame, in: oldCapture, as: match.frame, in: image)
                 else { continue }
                 annotations[i].captureID = capture.id
                 annotations[i].element?.frame = match.frame
@@ -878,21 +1124,30 @@ final class DebugSession {
         }
     }
 
-    /// Whether the content two captures of a scrolled screen share looks the same; nil when
-    /// they share too little to tell.
-    private func overlapMatches(previous: Capture, before: UIImage?, new: Capture, after: UIImage) -> Bool? {
+    /// Whether the content two captures of a scrolled screen share looks the same.
+    private func overlapCheck(previous: Capture, before: UIImage?, new: Capture, after: UIImage)
+        -> CaptureMerge.OverlapCheck
+    {
         guard let from = previous.scroll, let to = new.scroll, from.isSameView(as: to),
-              let band = ScreenComposition.band(for: [previous, new]),
-              let old = before?.cgImage, let current = after.cgImage else { return nil }
+            let band = ScreenComposition.band(for: [previous, new]),
+            let old = before?.cgImage, let current = after.cgImage
+        else { return .tooSmallToTell }
         let low = max(from.contentY(ofScreenY: band.lowerBound), to.contentY(ofScreenY: band.lowerBound))
         let high = min(from.contentY(ofScreenY: band.upperBound), to.contentY(ofScreenY: band.upperBound))
-        guard high - low >= 40 else { return nil }
+        guard high - low >= 40 else { return .tooSmallToTell }
         func pixelRows(_ scroll: ScrollState, in image: CGImage) -> Range<Int> {
             let ratio = CGFloat(image.width) / screenSize.width
-            return Int((scroll.screenY(ofContentY: low) * ratio).rounded())..<Int((scroll.screenY(ofContentY: high) * ratio).rounded())
+            return Int(
+                (scroll.screenY(ofContentY: low) * ratio).rounded()
+            )..<Int((scroll.screenY(ofContentY: high) * ratio).rounded())
         }
-        return PictureComparison.difference(old, rows: pixelRows(from, in: old), current, rows: pixelRows(to, in: current))
-            < PictureComparison.sameOverlap
+        let difference = PictureComparison.difference(
+            old,
+            rows: pixelRows(from, in: old),
+            current,
+            rows: pixelRows(to, in: current)
+        )
+        return difference < PictureComparison.sameOverlap ? .matches : .differs
     }
 
     /// Whether an element looks the same in an earlier capture and in the new screen.
@@ -900,22 +1155,34 @@ final class DebugSession {
         guard let old = captureImage(capture)?.cgImage, let new = image.cgImage else { return false }
         func pixels(_ rect: CGRect, of picture: CGImage, width: CGFloat) -> CGRect {
             let ratio = CGFloat(picture.width) / width
-            return CGRect(x: rect.minX * ratio, y: rect.minY * ratio, width: rect.width * ratio, height: rect.height * ratio)
+            return CGRect(
+                x: rect.minX * ratio,
+                y: rect.minY * ratio,
+                width: rect.width * ratio,
+                height: rect.height * ratio
+            )
         }
         return PictureComparison.difference(
-            old, in: pixels(frame, of: old, width: capture.size.width),
-            new, in: pixels(newFrame, of: new, width: screenSize.width)
+            old,
+            in: pixels(frame, of: old, width: capture.size.width),
+            new,
+            in: pixels(newFrame, of: new, width: screenSize.width)
         ) < PictureComparison.sameElement
     }
 
-    private func keep(_ capture: Capture, _ image: UIImage) {
+    private func keep(_ image: UIImage, for capture: Capture) {
         captureImages[capture.id] = image
         writeImages([image], named: [capture.file], asPNG: true)
     }
 
+    /// A capture's picture, loaded from the draft the first time and kept while it's in use.
     private func captureImage(_ capture: Capture) -> UIImage? {
         if let cached = captureImages[capture.id] { return cached }
-        guard let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: capture.file).path) else { return nil }
+        guard
+            let image = UIImage(
+                contentsOfFile: store.draftDirectory.appending(path: capture.file).path(percentEncoded: false)
+            )
+        else { return nil }
         captureImages[capture.id] = image
         return image
     }
@@ -940,25 +1207,31 @@ final class DebugSession {
         }
     }
 
-    /// The capture a note was made on, with every note of its screen that's in view
-    /// outlined and numbered, the note itself standing out.
+    /// The capture a note was made on, with every note of its screen that's in view outlined and
+    /// numbered, the note itself standing out.
+    ///
+    /// Cached like `fullImage(for:at:)`.
     private func screenPicture(for annotation: Annotation, on captureID: UUID) -> UIImage? {
-        let key = "\(annotation.id.uuidString)-screen"
-        if let cached = fullImages[key] { return cached }
+        let key = "\(annotation.id.uuidString)-screen" as NSString
+        if let cached = fullImages.object(forKey: key) { return cached }
         guard let (record, capture) = capture(withID: captureID), let image = captureImage(capture),
-              let plan = ScreenComposition.plan(for: [capture]) else { return nil }
+            let plan = ScreenComposition.plan(for: [capture])
+        else { return nil }
         let group = record.captures.filter { $0.group == capture.group }
         let band = ScreenComposition.band(for: group)
         let outlines = annotations.enumerated().compactMap { index, other -> ReportRenderer.Outline? in
             guard let otherCapture = other.captureID.flatMap({ id in group.first { $0.id == id } }),
-                  let frame = other.element?.frame,
-                  let rect = ScreenComposition.position(of: frame, from: otherCapture, on: capture, band: band)
+                let frame = other.element?.frame,
+                let rect = ScreenComposition.position(of: frame, from: otherCapture, on: capture, band: band)
             else { return nil }
-            return ReportRenderer.Outline(number: index + 1, rect: rect, style: other.id == annotation.id ? .current : .quiet)
+            return ReportRenderer.Outline(
+                number: index + 1,
+                rect: rect,
+                style: other.id == annotation.id ? .current : .quiet
+            )
         }
         let picture = ReportRenderer.render(plan, pictures: [capture.id: image], outlines: outlines, scale: 2)
-        if fullImages.count >= 5 { fullImages.removeAll() }
-        fullImages[key] = picture
+        fullImages.setObject(picture, forKey: key)
         return picture
     }
 
@@ -969,53 +1242,117 @@ final class DebugSession {
         return Self.crop(image, around: frame, screenWidth: screenSize.width)
     }
 
-    /// A square crop for a thumbnail. A wide element keeps its leading end and a tall one its
-    /// top, where the icon and title usually are; the middle of a row is often empty.
+    // MARK: - Thumbnails and previews
+
+    /// The suggestion card's width in pixels: 96 points at 3x.
+    private static let cardPreviewWidth: CGFloat = 288
+    /// The note box's image slot's height in pixels: 56 points at 3x.
+    private static let notePreviewHeight: CGFloat = 168
+    /// The largest a thumbnail is shown, in pixels: 52 points at 3x.
+    private static let thumbnailSide: CGFloat = 156
+
+    private static func cardPreviewSize(of image: UIImage) -> CGSize {
+        CGSize(
+            width: cardPreviewWidth,
+            height: (cardPreviewWidth * image.size.height / max(image.size.width, 1)).rounded()
+        )
+    }
+
+    private static func notePreviewSize(of image: UIImage) -> CGSize {
+        CGSize(
+            width: (notePreviewHeight * image.size.width / max(image.size.height, 1)).rounded(),
+            height: notePreviewHeight
+        )
+    }
+
+    /// The suggestion card's picture of an image.
+    private static func cardPreview(of image: UIImage) -> UIImage {
+        image.preparingThumbnail(of: cardPreviewSize(of: image)) ?? image
+    }
+
+    /// The note box's picture of an image.
+    private static func preview(of image: UIImage) -> UIImage {
+        image.preparingThumbnail(of: notePreviewSize(of: image)) ?? image
+    }
+
+    /// The note box's picture of an image, made off the main thread.
+    private static func preparedPreview(of image: UIImage) async -> UIImage {
+        await image.byPreparingThumbnail(ofSize: notePreviewSize(of: image)) ?? image
+    }
+
+    /// A bitmap of its own, no bigger than a thumbnail is shown.
+    ///
+    /// A cropped image keeps the whole picture it was cut from alive; this one doesn't.
+    private static func thumbnailBitmap(_ image: CGImage) -> UIImage? {
+        let scale = min(thumbnailSide / CGFloat(max(image.width, 1)), thumbnailSide / CGFloat(max(image.height, 1)), 1)
+        let size = CGSize(
+            width: (CGFloat(image.width) * scale).rounded(),
+            height: (CGFloat(image.height) * scale).rounded()
+        )
+        return UIImage(cgImage: image).preparingThumbnail(of: size)
+    }
+
+    /// A square crop for a thumbnail.
+    ///
+    /// A wide element keeps its leading end and a tall one its top, where the icon and title
+    /// usually are; the middle of a row is often empty.
     private static func crop(_ image: UIImage, around frame: CGRect, screenWidth: CGFloat) -> UIImage? {
         guard let cgImage = image.cgImage, screenWidth > 0 else { return nil }
         let scale = CGFloat(cgImage.width) / screenWidth
         var area = frame.insetBy(dx: -12, dy: -12)
         let side = min(area.width, area.height)
         area.size = CGSize(width: side, height: side)
-        let crop = CGRect(x: area.minX * scale, y: area.minY * scale, width: area.width * scale, height: area.height * scale)
-            .intersection(CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        let crop = CGRect(
+            x: area.minX * scale,
+            y: area.minY * scale,
+            width: area.width * scale,
+            height: area.height * scale
+        )
+        .intersection(CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
         guard !crop.isEmpty, let cropped = cgImage.cropping(to: crop) else { return nil }
-        return UIImage(cgImage: cropped)
+        return thumbnailBitmap(cropped)
     }
 
     /// The top of an attached image, square, where a screen's title usually is.
-    static func topSquare(of image: UIImage) -> UIImage? {
+    private static func topSquare(of image: UIImage) -> UIImage? {
         guard let cgImage = image.cgImage else { return nil }
         let side = min(cgImage.width, cgImage.height)
         let crop = CGRect(x: (cgImage.width - side) / 2, y: 0, width: side, height: side)
-        return cgImage.cropping(to: crop).map { UIImage(cgImage: $0) }
+        return cgImage.cropping(to: crop).flatMap(thumbnailBitmap)
     }
 
-    /// A small picture of the item for the notes list: a close crop around its element,
-    /// or the top of its first image.
+    /// A small picture of the item for the notes list: a close crop around its element, or the top
+    /// of its first image.
+    ///
+    /// Cached for the life of the draft.
     func thumbnail(for annotation: Annotation) -> UIImage? {
         if let cached = thumbnails[annotation.id] { return cached }
         if let captureID = annotation.captureID, let element = annotation.element {
             guard let (_, capture) = capture(withID: captureID), let image = captureImage(capture),
-                  let thumbnail = Self.crop(image, around: element.frame, screenWidth: capture.size.width)
+                let thumbnail = Self.crop(image, around: element.frame, screenWidth: capture.size.width)
             else { return nil }
             thumbnails[annotation.id] = thumbnail
             return thumbnail
         }
         guard let first = annotation.screenshots.first,
-              let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: first).path)
+            let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: first).path(percentEncoded: false))
         else { return nil }
-        let thumbnail = annotation.element.map { Self.crop(image, around: $0.frame, screenWidth: screenSize.width) } ?? Self.topSquare(of: image)
+        let thumbnail =
+            annotation.element.map { Self.crop(image, around: $0.frame, screenWidth: screenSize.width) }
+            ?? Self.topSquare(of: image)
         guard let thumbnail else { return nil }
         thumbnails[annotation.id] = thumbnail
         return thumbnail
     }
 
-    /// The keyboard's top edge for placing the note card. Until the keyboard reports its
-    /// frame, the last keyboard height stands in for it, so the card opens where it will
-    /// end up instead of jumping when the keyboard arrives.
+    // MARK: - Note card placement
+
+    /// The keyboard's top edge for placing the note card.
+    ///
+    /// Until the keyboard reports its frame, the last keyboard height stands in for it, so the card
+    /// opens where it will end up instead of jumping when the keyboard arrives.
     var noteKeyboardTop: CGFloat {
-        awaitingKeyboard ? screenSize.height - expectedKeyboardHeight : keyboardTop
+        isAwaitingKeyboard ? screenSize.height - expectedKeyboardHeight : keyboardTop
     }
 
     /// The note card's top edge.
@@ -1041,7 +1378,9 @@ final class DebugSession {
 
     // MARK: - Floating button
 
-    /// Follows the finger during a drag, kept on screen. No snapping yet.
+    /// Follows the finger during a drag, kept on screen.
+    ///
+    /// No snapping yet.
     func dragButton(to point: CGPoint) {
         buttonCenter = CGPoint(
             x: min(max(point.x, 0), screenSize.width),
@@ -1061,8 +1400,11 @@ final class DebugSession {
 
     /// While Redline is idle only the floating button and a suggested screenshot
     /// take touches; the rest go to the app.
-    func setTouchableFrame(_ frame: CGRect?, for name: String) {
-        window?.touchableRects[name] = frame
+    ///
+    /// Frames come from SwiftUI's global space, which equals this window's coordinates only
+    /// because the overlay window fills the screen and the hosting controller ignores safe areas.
+    func setTouchableFrame(_ frame: CGRect?, for area: TouchableArea) {
+        window?.touchableRects[area] = frame
     }
 
     private static let buttonPositionKey = "RedlineButtonPosition"
@@ -1087,36 +1429,59 @@ final class DebugSession {
         if let previousCenter, previousArea.width > 0 {
             let fraction = FloatingButtonPlacement.fraction(of: previousCenter, within: previousArea)
             buttonCenter = FloatingButtonPlacement.center(fromFraction: fraction, within: buttonArea)
-        } else if let saved = UserDefaults.standard.array(forKey: Self.buttonPositionKey) as? [Double], saved.count == 2 {
-            buttonCenter = FloatingButtonPlacement.center(fromFraction: CGPoint(x: saved[0], y: saved[1]), within: buttonArea)
+        } else if let saved = UserDefaults.standard.array(forKey: Self.buttonPositionKey) as? [Double], saved.count == 2
+        {
+            buttonCenter = FloatingButtonPlacement.center(
+                fromFraction: CGPoint(x: saved[0], y: saved[1]),
+                within: buttonArea
+            )
         } else {
             buttonCenter = FloatingButtonPlacement.defaultCenter(within: buttonArea)
         }
     }
 
-    // MARK: - Private
+    // MARK: - Feedback
 
-    /// A tap in pick mode that found nothing: the app didn't respond because Redline has
-    /// the screen. Says so, rather than leaving the tester to think the app is broken.
+    /// A tap in pick mode that found nothing: the app didn't respond because Redline has the
+    /// screen.
+    ///
+    /// Says so, rather than leaving the tester to think the app is broken.
     private func nudge() {
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
         withAnimation(.linear(duration: 0.4)) { nudges += 1 }
         withAnimation(.smooth(duration: 0.25)) { hint = "Annotate mode" }
         UIAccessibility.post(notification: .announcement, argument: "Annotate mode. Close it to use the app.")
-        let count = nudges
-        Task {
+        hintTimer?.cancel()
+        hintTimer = Task {
             try? await Task.sleep(for: .seconds(2.5))
-            if nudges == count { withAnimation(.smooth(duration: 0.3)) { hint = nil } }
+            guard !Task.isCancelled else { return }
+            withAnimation(.smooth(duration: 0.3)) { hint = nil }
         }
     }
 
-    /// The display's corner radius, read through a private key; square corners when it
-    /// can't be read. Debug builds only, like the rest of the kit.
+    private func show(toast message: String) {
+        toast = message
+        toastTimer?.cancel()
+        toastTimer = Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            toast = nil
+        }
+    }
+
+    // MARK: - Display
+
+    /// The display's corner radius, read through a private key; square corners when it can't be
+    /// read.
+    ///
+    /// Debug builds only, like the rest of the kit.
     private static func displayCornerRadius(of screen: UIScreen) -> CGFloat {
         let key = "_displayCornerRadius"
         guard screen.responds(to: NSSelectorFromString(key)) else { return 0 }
         return (screen.value(forKey: key) as? CGFloat) ?? 0
     }
+
+    // MARK: - Mode
 
     /// Keyboard focus moves to Redline when it leaves idle and back to the app when
     /// it returns to idle, never in between: the first tap after each handoff gets lost,
@@ -1135,39 +1500,26 @@ final class DebugSession {
         }
     }
 
+    // MARK: - Noting
+
     private func beginNoting() {
-        awaitingKeyboard = keyboardTop == .infinity
+        isAwaitingKeyboard = keyboardTop == .infinity
         setMode(.noting)
         // A hardware keyboard never shows the on-screen one; stop waiting for it.
-        Task {
+        keyboardWait?.cancel()
+        keyboardWait = Task {
             try? await Task.sleep(for: .seconds(0.8))
-            if awaitingKeyboard {
-                withAnimation(.smooth(duration: 0.25)) { awaitingKeyboard = false }
-            }
+            guard !Task.isCancelled, isAwaitingKeyboard else { return }
+            withAnimation(.smooth(duration: 0.25)) { isAwaitingKeyboard = false }
         }
     }
 
     private func endNoting(returningTo next: Mode) {
         noteText = ""
-        awaitingKeyboard = false
+        keyboardWait?.cancel()
+        keyboardWait = nil
+        isAwaitingKeyboard = false
         setMode(next)
-    }
-
-    /// Encodes and writes images off the main thread, so closing the note box never waits
-    /// on a large PNG or JPEG. The list and viewer read them back only after this finishes.
-    private func writeImages(_ images: [UIImage], named names: [String], asPNG: Bool) {
-        let store = store
-        let logger = logger
-        writes.append(Task.detached(priority: .userInitiated) {
-            for (image, name) in zip(images, names) {
-                do {
-                    let data = asPNG ? image.pngData() : image.jpegData(compressionQuality: 0.85)
-                    try store.saveScreenshot(data ?? Data(), named: name)
-                } catch {
-                    logger.error("Couldn't save an image: \(error.localizedDescription, privacy: .public)")
-                }
-            }
-        })
     }
 
     private func beginAttachmentNote(_ attachment: PendingAttachment, returningTo next: Mode = .picking) {
@@ -1178,109 +1530,153 @@ final class DebugSession {
         beginNoting()
     }
 
+    // MARK: - Saving the draft
+
+    /// Encodes and writes images off the main thread, so closing the note box never waits on a
+    /// large PNG or JPEG.
+    ///
+    /// The list and viewer read them back only after this finishes.
+    private func writeImages(_ images: [UIImage], named names: [String], asPNG: Bool) {
+        let store = store
+        let logger = logger
+        writes.append(
+            Task(priority: .userInitiated) {
+                await Self.write(images, named: names, asPNG: asPNG, store: store, logger: logger)
+            }
+        )
+    }
+
+    /// Runs off the main actor.
+    ///
+    /// Add @concurrent when the tools version reaches 6.2.
+    nonisolated private static func write(
+        _ images: [UIImage],
+        named names: [String],
+        asPNG: Bool,
+        store: ReportStore,
+        logger: Logger
+    ) async {
+        for (image, name) in zip(images, names) {
+            guard let data = asPNG ? image.pngData() : image.jpegData(compressionQuality: 0.85) else {
+                logger.error("Couldn't encode image \(name, privacy: .public)")
+                continue
+            }
+            do {
+                try store.saveScreenshot(data, named: name)
+            } catch {
+                logger.error("Couldn't save an image: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    /// Saves the draft's notes and its screens.
+    ///
+    /// Saving a note or deleting one can change both.
+    private func persist() {
+        persistAnnotations()
+        persistScreens()
+    }
+
+    private func persistAnnotations() {
+        do {
+            try store.saveDraft(annotations)
+        } catch {
+            logger.error("Couldn't save the draft's notes: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// The screens hold every capture's elements, so they're written only when they change.
+    private func persistScreens() {
+        do {
+            try store.saveScreens(screens)
+        } catch {
+            logger.error("Couldn't save the draft's screens: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    // MARK: - Reading the screen
+
     /// The app's screen as it is now, without Redline, and the screen's name.
     private func captureScreen() -> (image: UIImage, screen: ScreenInfo) {
         let windows = appWindows()
         let bounds = window?.bounds ?? .zero
-        let elements = AccessibilityTree.elements(in: windows, screenBounds: bounds)
-        let screen = AccessibilityTree.screen(of: windows.first(where: \.isKeyWindow) ?? windows.last, elements: elements)
-        return (AccessibilityTree.screenshot(of: windows, bounds: bounds), screen)
+        let roots = AccessibilityTree.visibleRoots(in: windows)
+        let elements = AccessibilityTree.elements(under: roots, screenBounds: bounds)
+        let screen = AccessibilityTree.screen(
+            of: windows.first(where: \.isKeyWindow) ?? windows.last,
+            elements: elements
+        )
+        return (AppWindows.screenshot(of: windows, bounds: bounds), screen)
     }
 
     /// Reads every element's position, the screen's name and a screenshot, all at the same moment.
     private func readScreen() {
         guard let window else { return }
         let appWindows = self.appWindows()
-        elements = AccessibilityTree.elements(in: appWindows, screenBounds: window.bounds)
-        screen = AccessibilityTree.screen(of: appWindows.first(where: \.isKeyWindow) ?? appWindows.last, elements: elements)
-        screenshot = AccessibilityTree.screenshot(of: appWindows, bounds: window.bounds)
-        scrollState = AccessibilityTree.mainScrollState(in: appWindows, screenBounds: window.bounds)
+        // Found once and shared: finding them walks a presented sheet's tree.
+        let roots = AccessibilityTree.visibleRoots(in: appWindows)
+        elements = AccessibilityTree.elements(under: roots, screenBounds: window.bounds)
+        screen = AccessibilityTree.screen(
+            of: appWindows.first(where: \.isKeyWindow) ?? appWindows.last,
+            elements: elements
+        )
+        screenshot = AppWindows.screenshot(of: appWindows, bounds: window.bounds)
+        scrollState = AppWindows.mainScrollState(under: roots, screenBounds: window.bounds)
         refreshMarkers()
     }
 
-    private func persist() {
-        do {
-            try store.saveDraft(annotations)
-            try store.saveScreens(screens)
-        } catch {
-            logger.error("Couldn't save the draft: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
     private func refreshMarkers() {
-        markers = annotations.enumerated().compactMap { index, annotation in
+        let found = annotations.enumerated().compactMap { index, annotation -> Marker? in
             guard let element = annotation.element, annotation.screen == screen,
-                  let match = ElementSelection.match(element, in: elements)
+                let match = ElementSelection.match(element, in: elements)
             else { return nil }
             return Marker(id: annotation.id, number: index + 1, frame: match.frame)
         }
-    }
-
-    private func show(toast message: String) {
-        toast = message
-        Task {
-            try? await Task.sleep(for: .seconds(2.5))
-            if toast == message { toast = nil }
-        }
+        if found != markers { markers = found }
     }
 
     /// The app's own visible windows, bottom to top, without Redline's.
     private func appWindows() -> [UIWindow] {
-        guard let scene = window?.windowScene else { return [] }
-        return scene.windows
-            .filter { !($0 is OverlayWindow) && !$0.isHidden && !String(describing: type(of: $0)).contains("TextEffects") }
-            .sorted { $0.windowLevel < $1.windowLevel }
+        AppWindows.all(in: window?.windowScene)
     }
+
+    // MARK: - Keyboard
 
     private func observeKeyboard() {
         let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] note in
-            let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
-            let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
-            MainActor.assumeIsolated { self?.updateKeyboard(frame, duration: duration) }
-        })
-        observers.append(center.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { [weak self] note in
-            let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
-            MainActor.assumeIsolated { self?.updateKeyboard(nil, duration: duration) }
-        })
+        observers.append(
+            center.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) {
+                [weak self] note in
+                let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+                let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+                MainActor.assumeIsolated { self?.updateKeyboard(frame, duration: duration) }
+            }
+        )
+        observers.append(
+            center.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) {
+                [weak self] note in
+                let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+                MainActor.assumeIsolated { self?.updateKeyboard(nil, duration: duration) }
+            }
+        )
     }
 
     /// Moves the note card with the keyboard, on the keyboard's own timing curve.
     private func updateKeyboard(_ frame: CGRect?, duration: Double) {
         let visible = frame.map { $0.minY < screenSize.height && $0.height > 0 } ?? false
+        // The keyboard reports the same frame again and again; publish and save only changes.
         withAnimation(.timingCurve(0.38, 0.7, 0.125, 1, duration: max(duration, 0.2))) {
             if visible, let frame {
-                keyboardTop = frame.minY
-                awaitingKeyboard = false
-                UserDefaults.standard.set(Double(screenSize.height - frame.minY), forKey: Self.keyboardHeightKey)
-            } else {
+                if keyboardTop != frame.minY { keyboardTop = frame.minY }
+                if isAwaitingKeyboard { isAwaitingKeyboard = false }
+                let height = Double(screenSize.height - frame.minY)
+                if UserDefaults.standard.double(forKey: Self.keyboardHeightKey) != height {
+                    UserDefaults.standard.set(height, forKey: Self.keyboardHeightKey)
+                }
+            } else if keyboardTop != .infinity {
                 keyboardTop = .infinity
             }
         }
-    }
-}
-
-extension Report.App {
-    static var current: Report.App {
-        let info = Bundle.main.infoDictionary ?? [:]
-        return Report.App(
-            bundleIdentifier: Bundle.main.bundleIdentifier,
-            name: (info["CFBundleDisplayName"] ?? info["CFBundleName"]) as? String,
-            version: info["CFBundleShortVersionString"] as? String,
-            build: info["CFBundleVersion"] as? String,
-            sourceFile: BuildIdentity.sourceFile
-        )
-    }
-}
-
-extension Report.Device {
-    @MainActor static var current: Report.Device {
-        var system = utsname()
-        uname(&system)
-        let model = withUnsafeBytes(of: &system.machine) { bytes in
-            String(decoding: bytes.prefix(while: { $0 != 0 }), as: UTF8.self)
-        }
-        return Report.Device(model: model, systemName: UIDevice.current.systemName, systemVersion: UIDevice.current.systemVersion)
     }
 }
 #endif

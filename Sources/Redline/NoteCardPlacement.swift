@@ -16,7 +16,10 @@ enum NoteCardPlacement {
     ///   - top: the highest the card may go, usually the bottom of the status bar.
     ///   - bottom: the lowest the card's bottom may go: the top of the keyboard, or the
     ///     home indicator when no keyboard is up.
-    static func top(element: CGRect?, height: CGFloat, reservedHeight: CGFloat, top: CGFloat, bottom: CGFloat) -> CGFloat {
+    /// - Returns: The card's top edge, in screen points.
+    static func top(element: CGRect?, height: CGFloat, reservedHeight: CGFloat, top: CGFloat, bottom: CGFloat)
+        -> CGFloat
+    {
         let reserved = max(height, reservedHeight)
         let minTop = top + margin
         let maxBottom = bottom - margin

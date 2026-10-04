@@ -7,7 +7,13 @@ struct FloatingButtonPlacementTests {
     private let area = CGRect(x: 34, y: 96, width: 334, height: 700)
 
     @Test func restingAreaKeepsTheWholeButtonInsideTheSafeArea() {
-        let rect = FloatingButtonPlacement.restingArea(screen: CGSize(width: 402, height: 874), top: 62, left: 0, bottom: 34, right: 0)
+        let rect = FloatingButtonPlacement.restingArea(
+            screen: CGSize(width: 402, height: 874),
+            top: 62,
+            left: 0,
+            bottom: 34,
+            right: 0
+        )
         #expect(rect == CGRect(x: 34, y: 96, width: 334, height: 710))
     }
 

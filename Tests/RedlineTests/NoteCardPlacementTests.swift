@@ -76,7 +76,10 @@ struct NoteCardPlacementTests {
                     for cardHeight in [150.0, 200.0, 266.0] {
                         let top = place(element(y: y, height: elementHeight), height: cardHeight, bottom: keyboard)
                         #expect(top >= statusBar + 8, "top \(top) for element at \(y)")
-                        #expect(top + cardHeight <= keyboard - 8 + 0.001, "bottom \(top + cardHeight) for element at \(y)")
+                        #expect(
+                            top + cardHeight <= keyboard - 8 + 0.001,
+                            "bottom \(top + cardHeight) for element at \(y)"
+                        )
                     }
                 }
             }

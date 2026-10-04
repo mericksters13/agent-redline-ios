@@ -1,9 +1,10 @@
 #if REDLINE
 import Foundation
 
-/// Where the photo panel sits. It grows out of the attachment button: it starts at the
-/// button's edge and opens toward the middle of the screen, so it follows the button
-/// wherever it is.
+/// Where the photo panel sits.
+///
+/// It grows out of the attachment button: it starts at the button's edge and opens toward the
+/// middle of the screen, so it follows the button wherever it is.
 enum AttachmentPlacement {
     static let margin: CGFloat = 12
 
@@ -34,7 +35,7 @@ enum AttachmentPlacement {
 
     /// The opened photo grid at its largest: the full width of `bounds` less the
     /// margins, starting at the button's edge and stopping a margin short of the far edge.
-    static func expanded(anchor: CGRect, in bounds: CGRect) -> CGRect {
+    static func expandedFrame(anchor: CGRect, in bounds: CGRect) -> CGRect {
         let width = bounds.width - 2 * margin
         let corner = corner(for: anchor, in: bounds)
         let start = corner.isTop ? max(anchor.minY, bounds.minY) : min(anchor.maxY, bounds.maxY)
@@ -44,8 +45,8 @@ enum AttachmentPlacement {
     }
 
     /// The opened photo grid, no taller than its content, still anchored at the button's edge.
-    static func expanded(anchor: CGRect, in bounds: CGRect, contentHeight: CGFloat) -> CGRect {
-        let largest = expanded(anchor: anchor, in: bounds)
+    static func expandedFrame(anchor: CGRect, in bounds: CGRect, contentHeight: CGFloat) -> CGRect {
+        let largest = expandedFrame(anchor: anchor, in: bounds)
         let height = min(largest.height, max(contentHeight, 0))
         let y = corner(for: anchor, in: bounds).isTop ? largest.minY : largest.maxY - height
         return CGRect(x: largest.minX, y: y, width: largest.width, height: height)

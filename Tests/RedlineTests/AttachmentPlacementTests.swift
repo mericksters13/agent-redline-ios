@@ -16,21 +16,24 @@ struct AttachmentPlacementTests {
     @Test func aButtonNearTheBottomLeftGrowsUpward() {
         let button = CGRect(x: 20, y: 780, width: 44, height: 44)
         #expect(AttachmentPlacement.corner(for: button, in: bounds) == .bottomLeading)
-        let grid = AttachmentPlacement.expanded(anchor: button, in: bounds)
+        let grid = AttachmentPlacement.expandedFrame(anchor: button, in: bounds)
         #expect(grid.maxY == button.maxY)
     }
 
     @Test func theGridStaysInsideTheSpace() {
         for x in stride(from: 0.0, through: 380, by: 20) {
             for y in stride(from: 62.0, through: 820, by: 40) {
-                let grid = AttachmentPlacement.expanded(anchor: CGRect(x: x, y: y, width: 44, height: 44), in: bounds)
+                let grid = AttachmentPlacement.expandedFrame(
+                    anchor: CGRect(x: x, y: y, width: 44, height: 44),
+                    in: bounds
+                )
                 #expect(bounds.insetBy(dx: AttachmentPlacement.margin - 0.001, dy: -0.001).contains(grid))
             }
         }
     }
 
     @Test func theGridOpensFullWidthFromTheButtonsEdge() {
-        let grid = AttachmentPlacement.expanded(anchor: islandButton, in: bounds)
+        let grid = AttachmentPlacement.expandedFrame(anchor: islandButton, in: bounds)
         #expect(grid.minX == 12)
         #expect(grid.width == 378)
         #expect(grid.minY == islandButton.minY)
@@ -38,23 +41,23 @@ struct AttachmentPlacementTests {
     }
 
     @Test func aGridWithFewPhotosIsOnlyAsTallAsItsContent() {
-        let short = AttachmentPlacement.expanded(anchor: islandButton, in: bounds, contentHeight: 400)
+        let short = AttachmentPlacement.expandedFrame(anchor: islandButton, in: bounds, contentHeight: 400)
         #expect(short.minY == islandButton.minY)
         #expect(short.height == 400)
-        let full = AttachmentPlacement.expanded(anchor: islandButton, in: bounds, contentHeight: 5000)
-        #expect(full == AttachmentPlacement.expanded(anchor: islandButton, in: bounds))
+        let full = AttachmentPlacement.expandedFrame(anchor: islandButton, in: bounds, contentHeight: 5000)
+        #expect(full == AttachmentPlacement.expandedFrame(anchor: islandButton, in: bounds))
     }
 
     @Test func aShortGridOpeningUpwardKeepsItsBottomAtTheButton() {
         let button = CGRect(x: 268, y: 760, width: 44, height: 44)
-        let grid = AttachmentPlacement.expanded(anchor: button, in: bounds, contentHeight: 300)
+        let grid = AttachmentPlacement.expandedFrame(anchor: button, in: bounds, contentHeight: 300)
         #expect(grid.maxY == button.maxY)
         #expect(grid.height == 300)
     }
 
     @Test func theGridIsShortenedWhenThereIsNoRoom() {
         let button = CGRect(x: 268, y: 380, width: 44, height: 44)
-        let grid = AttachmentPlacement.expanded(anchor: button, in: bounds)
+        let grid = AttachmentPlacement.expandedFrame(anchor: button, in: bounds)
         #expect(grid.minY == 380)
         #expect(grid.maxY == bounds.maxY - AttachmentPlacement.margin)
     }

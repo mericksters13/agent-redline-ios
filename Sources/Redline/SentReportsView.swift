@@ -3,24 +3,28 @@ import ImageIO
 import SwiftUI
 import UIKit
 
-/// The reports already sent from this phone, opened with a long press on the floating
-/// button: a list, newest first, and each report the way the agent gets it, with every
-/// screen's pictures and their numbered outlines, then the notes. Tap a note to jump to
-/// its outline.
+/// The reports already sent from this phone, opened with a long press on the floating button: a
+/// list, newest first, and each report the way the agent gets it, with every screen's pictures and
+/// their numbered outlines, then the notes.
+///
+/// Tap a note to jump to its outline.
 struct SentReportsView: View {
-    @Bindable var session: DebugSession
+    let session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Nil while the list loads.
     @State private var reports: [SentReport]?
-    @State private var open: SentReport?
+    /// The last attempt to hand reports to the Mac, read with the list.
+    @State private var lastDelivery: Delivery?
+    /// The report opened from the list, if any.
+    @State private var shownReport: SentReport?
 
     private var size: CGSize { session.screenSize }
 
     var body: some View {
         ZStack(alignment: .top) {
             Color.black
-            if let open {
-                ReportDetail(sent: open, session: session) { show(nil) }
+            if let shownReport {
+                ReportDetail(sent: shownReport, session: session, lastDelivery: lastDelivery) { show(nil) }
                     .transition(reduceMotion ? .opacity : .move(edge: .trailing))
             } else {
                 list
@@ -29,11 +33,17 @@ struct SentReportsView: View {
         }
         .frame(width: size.width, height: size.height)
         .ignoresSafeArea()
-        .task { reports = await session.sentReports() }
+        .task {
+            let loaded = await session.sentReports()
+            let last = await session.lastDelivery()
+            guard !Task.isCancelled else { return }
+            lastDelivery = last
+            reports = loaded
+        }
     }
 
     private func show(_ report: SentReport?) {
-        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.3)) { open = report }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.3)) { shownReport = report }
     }
 
     // MARK: - List
@@ -58,7 +68,12 @@ struct SentReportsView: View {
                         }
                         .padding(.vertical, 6)
                         .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(
+                                Mono.hairline,
+                                lineWidth: 1
+                            )
+                        )
                         .padding(.horizontal, 12)
                         .padding(.top, 8)
                         .padding(.bottom, session.safeAreaInsets.bottom + 16)
@@ -69,17 +84,21 @@ struct SentReportsView: View {
     }
 
     private func row(_ sent: SentReport) -> some View {
-        Button { show(sent) } label: {
+        Button {
+            show(sent)
+        } label: {
             HStack(spacing: 12) {
                 ReportPicture(url: sent.cover, pointWidth: 52, alignment: .top)
                     .frame(width: 52, height: 52)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1)
+                    )
                 VStack(alignment: .leading, spacing: 2) {
                     Text(sent.report.screenNames)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Mono.text)
-                    Text(sent.delivered ? sent.report.contents : "\(sent.report.contents) · Not on the Mac yet")
+                    Text(sent.isDelivered ? sent.report.contents : "\(sent.report.contents) · Not on the Mac yet")
                         .font(.caption)
                         .foregroundStyle(Mono.secondary)
                 }
@@ -127,22 +146,31 @@ struct SentReportsView: View {
     }
 }
 
-/// One sent report: each screen's pictures as the agent got them, then the notes made on
-/// it. A note scrolls to its outline when tapped.
+/// One sent report: each screen's pictures as the agent got them, then the notes made on it.
+///
+/// A note scrolls to its outline when tapped.
 private struct ReportDetail: View {
     let sent: SentReport
     let session: DebugSession
-    let back: () -> Void
+    let lastDelivery: Delivery?
+    let onBack: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var report: Report { sent.report }
     private var width: CGFloat { session.screenSize.width - 32 }
-    private var items: [Int: Report.Item] { Dictionary(report.items.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first }) }
-    private var attachments: [Report.Item] { report.items.filter { $0.screen == nil } }
 
     var body: some View {
+        // Built once per pass and handed to each section, not once per note.
+        let items = Dictionary(report.items.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+        let attachments = report.items.filter { $0.screen == nil }
         VStack(spacing: 0) {
-            ViewerBar(title: SentReportsView.time(report.createdAt), icon: "chevron.left", label: "Back", top: session.safeAreaTop, action: back)
+            ViewerBar(
+                title: SentReportsView.time(report.createdAt),
+                icon: "chevron.left",
+                label: "Back",
+                top: session.safeAreaTop,
+                action: onBack
+            )
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 32) {
@@ -153,9 +181,9 @@ private struct ReportDetail: View {
                         .font(.caption)
                         .foregroundStyle(Mono.secondary)
                         ForEach(report.screens, id: \.id) { screen in
-                            section(screen, proxy: proxy)
+                            section(screen, items: items, proxy: proxy)
                         }
-                        if !attachments.isEmpty { attachmentSection }
+                        if !attachments.isEmpty { attachmentSection(attachments) }
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
@@ -165,12 +193,11 @@ private struct ReportDetail: View {
         }
     }
 
-    /// What was reported from where: "3 notes, 1 screen · Tiny Tally 1.0.9 (41)".
     /// Whether the Mac has it, and if not, why, from the last attempt to send.
     private var delivery: String {
-        guard !sent.delivered else { return "On the Mac" }
-        guard let last = session.lastDelivery() else { return "Not on the Mac yet" }
-        let when = SentReportsView.time(last.at)
+        guard !sent.isDelivered else { return "On the Mac" }
+        guard let last = lastDelivery else { return "Not on the Mac yet" }
+        let when = SentReportsView.time(last.attemptedAt)
         return switch last.outcome {
         case .noHub: "Not on the Mac yet: no Mac has set up this app"
         case .unreachable: "Not on the Mac yet: couldn't reach it at \(when)"
@@ -180,17 +207,18 @@ private struct ReportDetail: View {
         }
     }
 
+    /// What was reported from where, such as "3 notes, 1 screen · Example 1.0 (1)".
     private var about: String {
-        let app = [report.app.name ?? report.app.bundleIdentifier, report.app.version, report.app.build.map { "(\($0))" }]
+        let app = [report.app.name ?? report.app.bundleID, report.app.version, report.app.build.map { "(\($0))" }]
             .compactMap { $0 }.joined(separator: " ")
         return app.isEmpty ? report.contents : "\(report.contents) · \(app)"
     }
 
     // MARK: - Screens
 
-    private func section(_ screen: Report.Screen, proxy: ScrollViewProxy) -> some View {
+    private func section(_ screen: Report.Screen, items: [Int: Report.Item], proxy: ScrollViewProxy) -> some View {
         // The screen as it was last, then any earlier state kept for notes it no longer showed.
-        let pictures = screen.images.filter { !$0.earlierState } + screen.images.filter(\.earlierState)
+        let pictures = screen.images.filter { !$0.isEarlierState } + screen.images.filter(\.isEarlierState)
         return VStack(alignment: .leading, spacing: 12) {
             Text(screen.title ?? screen.viewController ?? "Untitled")
                 .font(.title3.weight(.semibold))
@@ -213,8 +241,10 @@ private struct ReportDetail: View {
 
     private func caption(for picture: Report.Picture) -> String? {
         var parts: [String] = []
-        if picture.earlierState { parts.append("Earlier state, before the screen changed") }
-        if picture.stitchedFrom > 1, picture.part == 1 { parts.append("Stitched from \(picture.stitchedFrom) scroll positions") }
+        if picture.isEarlierState { parts.append("Earlier state, before the screen changed") }
+        if picture.stitchedFrom > 1, picture.part == 1 {
+            parts.append("Stitched from \(picture.stitchedFrom) scroll positions")
+        }
         if picture.parts > 1 { parts.append("Part \(picture.part) of \(picture.parts)") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -222,16 +252,18 @@ private struct ReportDetail: View {
     /// A picture at full width, with an invisible mark over each outline so a note can scroll to it.
     private func pictureView(_ picture: Report.Picture) -> some View {
         let scale = width / CGFloat(max(picture.width, 1))
-        let outlined = report.items.filter { $0.picture == picture.file && $0.outline != nil }
+        let outlined = report.items.compactMap { item in
+            item.picture == picture.file ? item.outline.map { (number: item.number, box: $0) } : nil
+        }
         return ReportPicture(url: sent.folder.appending(path: picture.file), pointWidth: width, alignment: .top)
             .frame(width: width, height: CGFloat(picture.height) * scale)
             .overlay(alignment: .topLeading) {
                 ZStack(alignment: .topLeading) {
-                    ForEach(outlined, id: \.number) { item in
-                        let box = item.outline!
+                    ForEach(outlined, id: \.number) { entry in
+                        let box = entry.box
                         Color.clear
                             .frame(width: CGFloat(box.width) * scale, height: CGFloat(box.height) * scale)
-                            .id(item.number)
+                            .id(entry.number)
                             .padding(.leading, CGFloat(box.x) * scale)
                             .padding(.top, CGFloat(box.y) * scale)
                     }
@@ -241,23 +273,31 @@ private struct ReportDetail: View {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
             .accessibilityElement()
-            .accessibilityLabel(picture.notes.isEmpty ? "Screenshot" : "Screenshot with notes \(picture.notes.map(String.init).joined(separator: ", ")) outlined")
+            .accessibilityLabel(
+                picture.notes.isEmpty
+                    ? "Screenshot"
+                    : "Screenshot with notes \(picture.notes.map(String.init).joined(separator: ", ")) outlined"
+            )
             .accessibilityAddTraits(.isImage)
     }
 
     // MARK: - Notes
 
-    private func notes(_ list: [Report.Item], jump: ((Int) -> Void)?) -> some View {
+    private func notes(_ list: [Report.Item], jump: ((_ itemNumber: Int) -> Void)?) -> some View {
         VStack(spacing: 0) {
             ForEach(Array(list.enumerated()), id: \.element.number) { index, item in
                 if index > 0 {
                     Rectangle().fill(Mono.hairline).frame(height: 1).padding(.leading, 52)
                 }
                 if let jump, item.outline != nil {
-                    Button { jump(item.number) } label: { noteRow(item) }
-                        .buttonStyle(.plain)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityHint("Scrolls to its outline")
+                    Button {
+                        jump(item.number)
+                    } label: {
+                        noteRow(item)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityHint("Scrolls to its outline")
                 } else {
                     // Nothing to scroll to, such as images attached from Photos.
                     noteRow(item)
@@ -290,7 +330,7 @@ private struct ReportDetail: View {
 
     // MARK: - Attachments
 
-    private var attachmentSection: some View {
+    private func attachmentSection(_ attachments: [Report.Item]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Attachments")
                 .font(.title3.weight(.semibold))
@@ -299,12 +339,22 @@ private struct ReportDetail: View {
                 VStack(alignment: .leading, spacing: 10) {
                     notes([item], jump: nil)
                     ForEach(item.attachments, id: \.self) { file in
-                        ReportPicture(url: sent.folder.appending(path: file), pointWidth: width, alignment: .top, fits: true)
-                            .frame(width: width)
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
-                            .accessibilityLabel("Image for note \(item.number)")
-                            .accessibilityAddTraits(.isImage)
+                        ReportPicture(
+                            url: sent.folder.appending(path: file),
+                            pointWidth: width,
+                            alignment: .top,
+                            fits: true
+                        )
+                        .frame(width: width)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(
+                                Mono.hairline,
+                                lineWidth: 1
+                            )
+                        )
+                        .accessibilityLabel("Image for note \(item.number)")
+                        .accessibilityAddTraits(.isImage)
                     }
                 }
             }
@@ -349,8 +399,9 @@ private struct ViewerBar: View {
     }
 }
 
-/// A picture from a sent report, decoded off the main thread at the size it's shown. It
-/// fills the frame it's given, or, with `fits`, takes its own aspect ratio, for attachments
+/// A picture from a sent report, decoded off the main thread at the size it's shown.
+///
+/// It fills the frame it's given, or, with `fits`, takes its own aspect ratio, for attachments
 /// whose size the report doesn't record.
 private struct ReportPicture: View {
     let url: URL?
@@ -362,53 +413,79 @@ private struct ReportPicture: View {
 
     var body: some View {
         Group {
-            if let image, fits {
+            if let image {
+                // One image either way, so the fit and fill cases keep the same identity.
                 Image(uiImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
-            } else if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: alignment)
+                    .aspectRatio(contentMode: fits ? .fit : .fill)
+                    .frame(
+                        minWidth: 0,
+                        maxWidth: fits ? nil : .infinity,
+                        minHeight: 0,
+                        maxHeight: fits ? nil : .infinity,
+                        alignment: alignment
+                    )
                     .clipped()
-            } else if fits {
-                Mono.fill.frame(height: pointWidth)
             } else {
-                Mono.fill
+                Mono.fill.frame(height: fits ? pointWidth : nil)
             }
         }
         .task(id: url) {
             guard let url else { return }
-            image = await Self.load(url, pixelWidth: pointWidth * displayScale)
+            let pixelWidth = pointWidth * displayScale
+            let key = "\(url.path(percentEncoded: false))|\(Int(pixelWidth))" as NSString
+            if let cached = Self.cache.object(forKey: key) {
+                image = cached
+                return
+            }
+            let loaded = await Self.load(url, pixelWidth: pixelWidth)
+            // A row scrolled away, or a newer picture asked for: an older load mustn't replace it.
+            guard !Task.isCancelled else { return }
+            if let loaded { Self.cache.setObject(loaded, forKey: key) }
+            image = loaded
         }
     }
 
-    private static func load(_ url: URL, pixelWidth: CGFloat) async -> UIImage? {
-        await Task.detached(priority: .userInitiated) {
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-                  let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
-                  let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
-                  width > 0
-            else { return nil }
-            // The longest side, at no more than the width it's shown at.
-            let longest = max(width, height) * min(pixelWidth / width, 1)
-            let options = [
+    /// Decoded pictures, so reopening the list doesn't decode every cover again.
+    ///
+    /// Touched only from the main actor, in `.task`.
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 60
+        return cache
+    }()
+
+    /// Runs off the main actor.
+    ///
+    /// Add @concurrent when the tools version reaches 6.2.
+    nonisolated private static func load(_ url: URL, pixelWidth: CGFloat) async -> UIImage? {
+        // Only the thumbnail is kept; the full image is never cached.
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+            let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
+            width > 0
+        else { return nil }
+        // The longest side, at no more than the width it's shown at.
+        let longest = max(width, height) * min(pixelWidth / width, 1)
+        guard !Task.isCancelled else { return nil }
+        let options =
+            [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceShouldCacheImmediately: true,
                 kCGImageSourceThumbnailMaxPixelSize: longest.rounded(.up),
             ] as CFDictionary
-            return CGImageSourceCreateThumbnailAtIndex(source, 0, options).map { UIImage(cgImage: $0) }
-        }.value
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options).map { UIImage(cgImage: $0) }
     }
 }
 
-private extension SentReport {
+extension SentReport {
     /// The picture shown in the list: the first screen as it was last, or the first attachment.
-    var cover: URL? {
-        let picture = report.screens.first.flatMap { screen in screen.images.first { !$0.earlierState } ?? screen.images.first }
+    fileprivate var cover: URL? {
+        let picture = report.screens.first.flatMap { screen in
+            screen.images.first { !$0.isEarlierState } ?? screen.images.first
+        }
         let file = picture?.file ?? report.items.lazy.flatMap(\.attachments).first
         return file.map { folder.appending(path: $0) }
     }
