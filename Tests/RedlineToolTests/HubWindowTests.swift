@@ -218,6 +218,21 @@ struct HubWindowTests {
         #expect(HubWindowModel.picture(showing: 3, in: pictures) == nil)
     }
 
+    @Test func aNoteOnASplitScreenScrollsToThePartThatShowsMostOfIt() throws {
+        let folder = try report("20261004-130050", at: Date())
+        let listing: [String: Any] = [
+            "screens": [["title": "Today", "images": [["file": "screen-1-1.jpg", "notes": [1]], ["file": "screen-1-2.jpg", "notes": [1]]]]],
+            "items": [["number": 1, "title": "List", "picture": "screen-1-2.jpg", "attachments": [String]()]],
+        ]
+        try JSONSerialization.data(withJSONObject: listing).write(to: folder.appending(path: "report.json"))
+        for file in ["screen-1-1.jpg", "screen-1-2.jpg"] {
+            try Data([0xFF, 0xD8]).write(to: folder.appending(path: file))
+        }
+        let pictures = HubWindowModel.pictures(in: folder)
+        #expect(pictures.map(\.mainFor) == [[], [1]])
+        #expect(HubWindowModel.picture(showing: 1, in: pictures) == folder.appending(path: "screen-1-2.jpg"))
+    }
+
     @Test func theViewerShowsOnlyPicturesInTheReportsOwnFolder() throws {
         let folder = try report("20261004-130100", at: Date())
         let secret = paths.inbox.appending(path: "secret.jpg")
