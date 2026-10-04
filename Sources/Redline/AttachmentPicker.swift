@@ -286,8 +286,16 @@ struct AttachmentPicker: View {
         await withTaskGroup(of: (Int, UIImage?).self) { group in
             for (index, item) in items.enumerated() {
                 group.addTask {
-                    guard let data = try? await item.loadTransferable(type: Data.self) else { return (index, nil) }
-                    return (index, PhotoLibrary.downscaled(data))
+                    do {
+                        guard let data = try await item.loadTransferable(type: Data.self) else {
+                            Log.photos.error("Chosen photo \(index + 1) has no image data")
+                            return (index, nil)
+                        }
+                        return (index, PhotoLibrary.downscaled(data))
+                    } catch {
+                        Log.photos.error("Couldn't load chosen photo \(index + 1): \(error.localizedDescription, privacy: .public)")
+                        return (index, nil)
+                    }
                 }
             }
             var loaded = [UIImage?](repeating: nil, count: items.count)

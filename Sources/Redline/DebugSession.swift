@@ -145,7 +145,7 @@ final class DebugSession {
     @ObservationIgnored private var touchIsDown = false
     @ObservationIgnored private let store = ReportStore.standard
     @ObservationIgnored private let selectionFeedback = UISelectionFeedbackGenerator()
-    @ObservationIgnored private let logger = Logger(subsystem: "Redline", category: "session")
+    @ObservationIgnored private let logger = Log.session
 
     private init() {}
 
@@ -177,8 +177,8 @@ final class DebugSession {
         self.window = window
         displayCornerRadius = Self.displayCornerRadius(of: scene.screen)
 
-        annotations = store.loadDraft()
-        screens = store.loadScreens()
+        annotations = loadDraftFile(store.draftFile, named: "notes") { try store.loadDraft() }
+        screens = loadDraftFile(store.screensFile, named: "screens") { try store.loadScreens() }
         observeKeyboard()
         observeScreenshots()
         // On a cold launch the app became active before Redline was installed.
@@ -248,6 +248,23 @@ final class DebugSession {
                 finishHover(at: pick)
                 if let text = defaults.string(forKey: "RedlineNoteText") { noteText = text }
             }
+        }
+    }
+
+    /// Loads one of the draft's files. One that can't be read is moved aside before anything
+    /// can save over it, and the draft starts without it.
+    private func loadDraftFile<Item>(_ file: URL, named name: String, load: () throws -> [Item]) -> [Item] {
+        do {
+            return try load()
+        } catch {
+            logger.error("Couldn't read the draft's \(name, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            do {
+                let aside = try store.setAsideUnreadable(file)
+                logger.notice("Kept the unreadable file at \(aside.path(percentEncoded: false), privacy: .private)")
+            } catch {
+                logger.error("Couldn't move the unreadable file aside: \(error.localizedDescription, privacy: .public)")
+            }
+            return []
         }
     }
 
@@ -552,6 +569,7 @@ final class DebugSession {
                 cancelNote()
                 return
             }
+            if images.count < count { logger.error("Loaded \(images.count) of \(count) chosen photos") }
             pending?.images = images
             pending?.count = images.count
             pending?.loading = nil
@@ -726,8 +744,19 @@ final class DebugSession {
         "RedlineDestination|" + (sourceFile ?? Bundle.main.bundleIdentifier ?? "")
     }
 
+    private static let destinationEncoder = JSONEncoder()
+    private static let destinationDecoder = JSONDecoder()
+
+    /// The pick saved for this build. One that can't be read is forgotten, so the picker opens again.
     private func savedDestination() -> Report.Destination? {
-        UserDefaults.standard.data(forKey: destinationKey).flatMap { try? JSONDecoder().decode(Report.Destination.self, from: $0) }
+        guard let data = UserDefaults.standard.data(forKey: destinationKey) else { return nil }
+        do {
+            return try Self.destinationDecoder.decode(Report.Destination.self, from: data)
+        } catch {
+            logger.error("Couldn't read the saved destination: \(error.localizedDescription, privacy: .public)")
+            UserDefaults.standard.removeObject(forKey: destinationKey)
+            return nil
+        }
     }
 
     /// Opens the picker and asks the Mac for its chats. `thenSend` when opened from Send.
@@ -789,7 +818,11 @@ final class DebugSession {
         chatsRequest = nil
         if let choice = pickerChoice {
             destination = choice
-            if let data = try? JSONEncoder().encode(choice) { UserDefaults.standard.set(data, forKey: destinationKey) }
+            do {
+                UserDefaults.standard.set(try Self.destinationEncoder.encode(choice), forKey: destinationKey)
+            } catch {
+                logger.error("Couldn't save the destination: \(error.localizedDescription, privacy: .public)")
+            }
         }
         let thenSend = sendsAfterPicking
         sendsAfterPicking = false
@@ -1235,9 +1268,12 @@ final class DebugSession {
         _ images: [UIImage], named names: [String], asPNG: Bool, store: ReportStore, logger: Logger
     ) async {
         for (image, name) in zip(images, names) {
+            guard let data = asPNG ? image.pngData() : image.jpegData(compressionQuality: 0.85) else {
+                logger.error("Couldn't encode image \(name, privacy: .public)")
+                continue
+            }
             do {
-                let data = asPNG ? image.pngData() : image.jpegData(compressionQuality: 0.85)
-                try store.saveScreenshot(data ?? Data(), named: name)
+                try store.saveScreenshot(data, named: name)
             } catch {
                 logger.error("Couldn't save an image: \(error.localizedDescription, privacy: .public)")
             }

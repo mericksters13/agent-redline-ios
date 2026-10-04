@@ -36,13 +36,13 @@ struct ReportStoreTests {
     @Test func draftSurvivesAReload() throws {
         let annotations = [annotation("Cut off"), annotation("Wrong color")]
         try store.saveDraft(annotations)
-        #expect(store.loadDraft() == annotations)
+        #expect(try store.loadDraft() == annotations)
     }
 
     @Test func notesAndAttachmentsMixInOneDraft() throws {
         let items = [annotation("Cut off"), photos("Flickers between these", count: 3), annotation("Wrong color")]
         try store.saveDraft(items)
-        let loaded = store.loadDraft()
+        let loaded = try store.loadDraft()
         #expect(loaded == items)
         #expect(loaded.map(\.kind) == [.element, .photo, .element])
         #expect(loaded[1].element == nil)
@@ -58,7 +58,7 @@ struct ReportStoreTests {
         """
         try FileManager.default.createDirectory(at: store.draftDirectory, withIntermediateDirectories: true)
         try Data(legacy.utf8).write(to: store.draftDirectory.appending(path: "annotations.json"))
-        let loaded = store.loadDraft()
+        let loaded = try store.loadDraft()
         #expect(loaded.count == 1)
         #expect(loaded.first?.kind == .element)
         #expect(loaded.first?.element?.identifier == "milk.home.urgency")
@@ -66,8 +66,36 @@ struct ReportStoreTests {
         #expect(loaded.first?.screenshots == ["8FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC.png"])
     }
 
-    @Test func missingDraftIsEmpty() {
-        #expect(store.loadDraft().isEmpty)
+    @Test func missingDraftIsEmpty() throws {
+        #expect(try store.loadDraft().isEmpty)
+        #expect(try store.loadScreens().isEmpty)
+    }
+
+    @Test func anUnreadableDraftIsSetAsideInsteadOfOverwritten() throws {
+        let garbage = Data("not json".utf8)
+        try FileManager.default.createDirectory(at: store.draftDirectory, withIntermediateDirectories: true)
+        try garbage.write(to: store.draftFile)
+        #expect(throws: (any Error).self) { try store.loadDraft() }
+
+        let aside = try store.setAsideUnreadable(store.draftFile, at: Date(timeIntervalSince1970: 1_790_000_000))
+        try store.saveDraft([])
+        #expect(try Data(contentsOf: aside) == garbage)
+        #expect(aside.lastPathComponent.hasPrefix("annotations-unreadable-"))
+        #expect(aside.pathExtension == "json")
+        #expect(try store.loadDraft().isEmpty)
+    }
+
+    @Test func aKindFromANewerKitStillLoads() throws {
+        let draft = """
+        [{"id":"8FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC","createdAt":"2026-10-02T23:59:39Z","note":"Shaky",
+          "kind":"recording","ancestors":[],"screenshots":["a.mov"]},
+         {"id":"9FAD57B3-BD1A-4853-B238-DB8A7A6ED1AC","createdAt":"2026-10-02T23:59:40Z","note":"Cut off",
+          "kind":"futureKind","element":{"role":"Button","label":"Save","isContainer":false,"frame":[[1,2],[3,4]]},
+          "ancestors":[],"screenshots":[]}]
+        """
+        try FileManager.default.createDirectory(at: store.draftDirectory, withIntermediateDirectories: true)
+        try Data(draft.utf8).write(to: store.draftFile)
+        #expect(try store.loadDraft().map(\.kind) == [.screen, .element])
     }
 
     @Test func aReportTakesTheWholeDraftAndLeavesAFreshOne() throws {
@@ -78,7 +106,7 @@ struct ReportStoreTests {
         try store.saveDraft(items)
 
         let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
-        #expect(store.loadDraft().isEmpty)
+        #expect(try store.loadDraft().isEmpty)
         #expect(!FileManager.default.fileExists(atPath: store.draftDirectory.path))
         for name in items.flatMap(\.screenshots) {
             #expect(FileManager.default.fileExists(atPath: started.draft.appending(path: name).path))
@@ -105,7 +133,7 @@ struct ReportStoreTests {
         let capture = Capture(id: UUID(), file: "capture.png", size: CGSize(width: 402, height: 874), scroll: nil, elements: [], group: 0)
         let screens = [ScreenRecord(id: UUID(), info: ScreenInfo(title: "Today", viewController: "Home"), captures: [capture])]
         try store.saveScreens(screens)
-        #expect(store.loadScreens() == screens)
+        #expect(try store.loadScreens() == screens)
     }
 
     @Test func sentReportsAreListedNewestFirst() throws {
@@ -146,6 +174,12 @@ struct ReportStoreTests {
         #expect(store.undeliveredReports().map(\.id) == [ids[1]])
     }
 
+    @Test func anUnreadableHubAddressIsNoHub() throws {
+        try FileManager.default.createDirectory(at: store.root, withIntermediateDirectories: true)
+        try Data(#"{"hosts":"not a list"}"#.utf8).write(to: store.hubAddressFile)
+        #expect(store.hubAddress() == nil)
+    }
+
     @Test func theHubsAddressAndMessagesRoundTrip() throws {
         #expect(store.hubAddress() == nil)
         let address = HubLink.Address(device: "00008150-00123C360CF3C01C", hosts: ["192.168.1.2", "mac.local"], port: 47361, token: "secret")
@@ -158,17 +192,17 @@ struct ReportStoreTests {
         // The hub reads exactly these lines; see the Mac tool's ReportSourcesTests.
         let offer = HubLink.Offer(device: address.device, bundleID: "com.example.app", token: "secret",
                                   reports: [.init(id: "20261003-215826", finishedAt: Date(timeIntervalSince1970: 1_791_000_000))])
-        let line = String(decoding: HubLink.encode(offer), as: UTF8.self)
+        let line = String(decoding: try HubLink.encode(offer), as: UTF8.self)
         #expect(line == #"{"bundleID":"com.example.app","device":"00008150-00123C360CF3C01C","reports":[{"finishedAt":"2026-10-03T04:00:00Z","id":"20261003-215826"}],"token":"secret"}"# + "\n")
-        #expect(HubLink.decode(HubLink.Answer.self, from: Data(#"{"delivered":[],"want":["20261003-215826"]}"#.utf8))
+        #expect(try HubLink.decode(HubLink.Answer.self, from: Data(#"{"delivered":[],"want":["20261003-215826"]}"#.utf8))
                 == HubLink.Answer(want: ["20261003-215826"], delivered: []))
-        let upload = String(decoding: HubLink.encode(HubLink.Upload(id: "r", files: ["report.md": Data("# Hi".utf8)])), as: UTF8.self)
+        let upload = String(decoding: try HubLink.encode(HubLink.Upload(id: "r", files: ["report.md": Data("# Hi".utf8)])), as: UTF8.self)
         #expect(upload == #"{"files":{"report.md":"IyBIaQ=="},"id":"r"}"# + "\n")
         // Asking which chats a report can go to, and the answer.
-        let ask = String(decoding: HubLink.encode(HubLink.ChatsRequest(device: "D", bundleID: "com.example.app", token: "secret", sourceFile: "/w/App.swift")), as: UTF8.self)
+        let ask = String(decoding: try HubLink.encode(HubLink.ChatsRequest(device: "D", bundleID: "com.example.app", token: "secret", sourceFile: "/w/App.swift")), as: UTF8.self)
         #expect(ask == #"{"bundleID":"com.example.app","device":"D","kind":"chats","sourceFile":"/w/App.swift","token":"secret"}"# + "\n")
         let list = #"{"agents":["claude"],"chats":[{"agent":"claude","folder":"wt","id":"s1","lastActive":"2026-10-03T04:00:00Z","sameWorktree":true,"title":"Let"}],"worktree":"wt"}"#
-        #expect(HubLink.decode(HubLink.ChatList.self, from: Data(list.utf8)) == HubLink.ChatList(
+        #expect(try HubLink.decode(HubLink.ChatList.self, from: Data(list.utf8)) == HubLink.ChatList(
             agents: ["claude"], chats: [HubLink.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt", sameWorktree: true,
                                                      lastActive: Date(timeIntervalSince1970: 1_791_000_000))], worktree: "wt"))
         // A simulator app's address says it doesn't upload.

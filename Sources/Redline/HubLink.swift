@@ -106,16 +106,33 @@ enum HubLink {
     /// reached or turns the question down.
     static func chats(bundleID: String, address: Address, sourceFile: String?, patience: TimeInterval) async -> ChatList? {
         guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return nil }
-        let request = ChatsRequest(device: address.device, bundleID: bundleID, token: token, sourceFile: sourceFile)
+        let request: Data
+        do {
+            request = try encode(ChatsRequest(device: address.device, bundleID: bundleID, token: token, sourceFile: sourceFile))
+        } catch {
+            Log.hubLink.error("Couldn't write the chats request: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
         for host in address.hosts {
             let line = Line(host: host, port: port)
             // Runs at the end of each pass, `continue` included, so a line that never opened is closed too.
             defer { line.close() }
-            guard await line.open(patience: patience) else { continue }
-            guard await line.send(encode(request)), let data = await line.read(), let list = decode(ChatList.self, from: data),
-                  list.refused == nil
-            else { return nil }
-            return list
+            guard await line.open(patience: patience) else {
+                Log.hubLink.info("Couldn't reach the hub at \(host, privacy: .private)")
+                continue
+            }
+            guard await line.send(request), let data = await line.read() else { return nil }
+            do {
+                let list = try decode(ChatList.self, from: data)
+                if let refused = list.refused {
+                    Log.hubLink.notice("The hub turned down the chats request: \(refused, privacy: .public)")
+                    return nil
+                }
+                return list
+            } catch {
+                Log.hubLink.error("Couldn't read the hub's chat list: \(error.localizedDescription, privacy: .public)")
+                return nil
+            }
         }
         return nil
     }
@@ -134,19 +151,29 @@ enum HubLink {
         case interrupted
     }
 
-    /// One line of JSON.
-    static func encode<T: Encodable>(_ value: T) -> Data {
+    /// One line of JSON, ending in a newline.
+    static func encode<T: Encodable>(_ value: T) throws -> Data {
+        var data = try encoder.encode(value)
+        data.append(UInt8(ascii: "\n"))
+        return data
+    }
+
+    static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        try decoder.decode(type, from: data)
+    }
+
+    private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        return ((try? encoder.encode(value)) ?? Data()) + Data("\n".utf8)
-    }
+        return encoder
+    }()
 
-    static func decode<T: Decodable>(_ type: T.Type, from data: Data) -> T? {
+    private static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(type, from: data)
-    }
+        return decoder
+    }()
 
     /// Delivers the reports the Mac hasn't confirmed. `patience` is how long to wait for the
     /// connection, which includes iOS asking about local network access the first time.
@@ -155,22 +182,53 @@ enum HubLink {
     static func deliver(_ reports: [Offer.Report], bundleID: String, address: Address,
                         files: @Sendable (String) -> [String: Data], patience: TimeInterval) async -> (outcome: Outcome, delivered: [String]) {
         guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return (.refused, []) }
-        let offer = Offer(device: address.device, bundleID: bundleID, token: token, reports: reports)
+        let offer: Data
+        do {
+            offer = try encode(Offer(device: address.device, bundleID: bundleID, token: token, reports: reports))
+        } catch {
+            Log.hubLink.error("Couldn't write the offer: \(error.localizedDescription, privacy: .public)")
+            return (.interrupted, [])
+        }
         for host in address.hosts {
             let line = Line(host: host, port: port)
             // Runs at the end of each pass, `continue` included, so a line that never opened is closed too.
             defer { line.close() }
-            guard await line.open(patience: patience) else { continue }
-            guard await line.send(encode(offer)), let answerData = await line.read(), let answer = decode(Answer.self, from: answerData) else {
+            guard await line.open(patience: patience) else {
+                Log.hubLink.info("Couldn't reach the hub at \(host, privacy: .private)")
+                continue
+            }
+            guard await line.send(offer), let answerData = await line.read() else { return (.interrupted, []) }
+            let answer: Answer
+            do {
+                answer = try decode(Answer.self, from: answerData)
+            } catch {
+                Log.hubLink.error("Couldn't read the hub's answer: \(error.localizedDescription, privacy: .public)")
                 return (.interrupted, [])
             }
-            if answer.refused != nil { return (.refused, answer.delivered) }
+            if let refused = answer.refused {
+                Log.hubLink.notice("The hub turned down the reports: \(refused, privacy: .public)")
+                return (.refused, answer.delivered)
+            }
             var delivered = answer.delivered
             guard !answer.want.isEmpty else { return (.delivered, delivered) }
             for id in answer.want {
-                guard await line.send(encode(Upload(id: id, files: files(id)))) else { return (.interrupted, delivered) }
+                let upload: Data
+                do {
+                    upload = try encode(Upload(id: id, files: files(id)))
+                } catch {
+                    Log.hubLink.error("Couldn't write report \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    return (.interrupted, delivered)
+                }
+                guard await line.send(upload) else { return (.interrupted, delivered) }
             }
-            guard let replyData = await line.read(), let reply = decode(Reply.self, from: replyData) else { return (.interrupted, delivered) }
+            guard let replyData = await line.read() else { return (.interrupted, delivered) }
+            let reply: Reply
+            do {
+                reply = try decode(Reply.self, from: replyData)
+            } catch {
+                Log.hubLink.error("Couldn't read the hub's reply: \(error.localizedDescription, privacy: .public)")
+                return (.interrupted, delivered)
+            }
             delivered += reply.delivered
             let offered = Set(reports.map(\.id))
             return (offered.isSubset(of: Set(delivered)) ? .delivered : .interrupted, delivered)

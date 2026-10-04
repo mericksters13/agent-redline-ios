@@ -52,7 +52,10 @@ extension Annotation {
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         note = try container.decode(String.self, forKey: .note)
         element = try container.decodeIfPresent(ElementSnapshot.self, forKey: .element)
-        kind = try container.decodeIfPresent(Kind.self, forKey: .kind) ?? (element == nil ? .screen : .element)
+        // A kind this kit doesn't know, written by a newer one, falls back the way drafts saved
+        // before kinds existed do: a whole-screen item, or an element note when it has an element.
+        let kindName = try container.decodeIfPresent(String.self, forKey: .kind)
+        kind = kindName.flatMap(Kind.init(rawValue:)) ?? (element == nil ? .screen : .element)
         ancestors = try container.decodeIfPresent([ElementSnapshot].self, forKey: .ancestors) ?? []
         screen = try container.decodeIfPresent(ScreenInfo.self, forKey: .screen)
         if let files = try container.decodeIfPresent([String].self, forKey: .screenshots) {
@@ -333,12 +336,14 @@ struct ReportStore: Sendable {
 
     var draftDirectory: URL { root.appending(path: "draft", directoryHint: .isDirectory) }
     var reportsDirectory: URL { root.appending(path: "reports", directoryHint: .isDirectory) }
-    private var draftFile: URL { draftDirectory.appending(path: "annotations.json") }
-    private var screensFile: URL { draftDirectory.appending(path: "screens.json") }
+    var draftFile: URL { draftDirectory.appending(path: "annotations.json") }
+    var screensFile: URL { draftDirectory.appending(path: "screens.json") }
 
-    func loadDraft() -> [Annotation] {
-        guard let data = try? Data(contentsOf: draftFile) else { return [] }
-        return (try? Self.decoder.decode([Annotation].self, from: data)) ?? []
+    /// The draft's notes; empty when there is no draft. Throws when the file is there but can't
+    /// be read, so a caller never mistakes it for an empty draft and saves over it.
+    func loadDraft() throws -> [Annotation] {
+        guard let data = try Self.contents(of: draftFile) else { return [] }
+        return try Self.decoder.decode([Annotation].self, from: data)
     }
 
     func saveDraft(_ annotations: [Annotation]) throws {
@@ -346,9 +351,29 @@ struct ReportStore: Sendable {
         try Self.encoder.encode(annotations).write(to: draftFile, options: .atomic)
     }
 
-    func loadScreens() -> [ScreenRecord] {
-        guard let data = try? Data(contentsOf: screensFile) else { return [] }
-        return (try? Self.decoder.decode([ScreenRecord].self, from: data)) ?? []
+    /// The draft's screens and captures; empty when there is no draft. Throws like `loadDraft()`.
+    func loadScreens() throws -> [ScreenRecord] {
+        guard let data = try Self.contents(of: screensFile) else { return [] }
+        return try Self.decoder.decode([ScreenRecord].self, from: data)
+    }
+
+    /// Moves a draft file that can't be read out of the way, next to where it was, so the next
+    /// save starts fresh without destroying it. Returns where it went.
+    @discardableResult
+    func setAsideUnreadable(_ file: URL, at date: Date = .now) throws -> URL {
+        let name = "\(file.deletingPathExtension().lastPathComponent)-unreadable-\(Self.timestampFormatter.string(from: date))"
+        let destination = file.deletingLastPathComponent().appending(path: name).appendingPathExtension(file.pathExtension)
+        try FileManager.default.moveItem(at: file, to: destination)
+        return destination
+    }
+
+    /// A file's contents, or nil when there is no such file. Any other failure throws.
+    private static func contents(of file: URL) throws -> Data? {
+        do {
+            return try Data(contentsOf: file)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return nil
+        }
     }
 
     func saveScreens(_ screens: [ScreenRecord]) throws {
@@ -369,14 +394,12 @@ struct ReportStore: Sendable {
     /// a fresh draft while the report's pictures are drawn from the old one.
     /// Returns the report's id, its folder and where the draft now is.
     func beginReport(date: Date) throws -> (id: String, folder: URL, draft: URL) {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
         let files = FileManager.default
-        var id = formatter.string(from: date)
+        let stamp = Self.timestampFormatter.string(from: date)
+        var id = stamp
         var suffix = 2
         while files.fileExists(atPath: reportsDirectory.appending(path: id).path) {
-            id = formatter.string(from: date) + "-\(suffix)"
+            id = stamp + "-\(suffix)"
             suffix += 1
         }
         let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
@@ -390,14 +413,26 @@ struct ReportStore: Sendable {
     func finishReport(_ report: Report, in folder: URL) throws {
         try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)
         try Data(ReportSummary.markdown(report).utf8).write(to: folder.appending(path: "report.md"), options: .atomic)
-        try? FileManager.default.removeItem(at: folder.appending(path: "draft"))
+        do {
+            try FileManager.default.removeItem(at: folder.appending(path: "draft"))
+        } catch {
+            // The report stays unfinished for the hub until its draft is gone.
+            Log.store.error("Couldn't remove the draft of \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Where the Mac's hub leaves its address, over Xcode's device link.
     var hubAddressFile: URL { root.appending(path: "hub.json") }
 
+    /// The hub's address; nil when no hub has set this app up, or when the file can't be read.
     func hubAddress() -> HubLink.Address? {
-        (try? Data(contentsOf: hubAddressFile)).flatMap { HubLink.decode(HubLink.Address.self, from: $0) }
+        do {
+            guard let data = try Self.contents(of: hubAddressFile) else { return nil }
+            return try HubLink.decode(HubLink.Address.self, from: data)
+        } catch {
+            Log.store.error("hub.json could not be read; the hub may be newer: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
     }
 
     /// Sent reports the Mac hasn't confirmed yet, oldest first.
@@ -424,13 +459,24 @@ struct ReportStore: Sendable {
 
     var deliveryFile: URL { root.appending(path: "delivery.json") }
 
+    /// The last attempt to hand reports to the Mac; nil before the first, or when it can't be read.
     func lastDelivery() -> Delivery? {
-        (try? Data(contentsOf: deliveryFile)).flatMap { try? Self.decoder.decode(Delivery.self, from: $0) }
+        do {
+            guard let data = try Self.contents(of: deliveryFile) else { return nil }
+            return try Self.decoder.decode(Delivery.self, from: data)
+        } catch {
+            Log.store.error("Couldn't read the last delivery: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
     }
 
     func recordDelivery(_ outcome: HubLink.Outcome, at date: Date = .now) {
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try? Self.encoder.encode(Delivery(at: date, outcome: outcome)).write(to: deliveryFile, options: .atomic)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try Self.encoder.encode(Delivery(at: date, outcome: outcome)).write(to: deliveryFile, options: .atomic)
+        } catch {
+            Log.store.error("Couldn't record the delivery: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Notes that the Mac has these reports, so they aren't offered again.
@@ -438,7 +484,12 @@ struct ReportStore: Sendable {
         for id in ids {
             let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
             guard FileManager.default.fileExists(atPath: folder.path) else { continue }
-            FileManager.default.createFile(atPath: folder.appending(path: "delivered").path, contents: nil)
+            do {
+                try Data().write(to: folder.appending(path: "delivered"))
+            } catch {
+                // The report is offered again next time, and the hub says it already has it.
+                Log.store.error("Couldn't mark \(id, privacy: .public) delivered: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 
@@ -447,9 +498,15 @@ struct ReportStore: Sendable {
     func sentReports() -> [SentReport] {
         let folders = (try? FileManager.default.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: nil)) ?? []
         return folders.compactMap { folder in
-            guard let data = try? Data(contentsOf: folder.appending(path: "report.json")),
-                  let report = try? Self.decoder.decode(Report.self, from: data)
-            else { return nil }
+            let report: Report
+            do {
+                // No report.json yet: still being drawn.
+                guard let data = try Self.contents(of: folder.appending(path: "report.json")) else { return nil }
+                report = try Self.decoder.decode(Report.self, from: data)
+            } catch {
+                Log.store.notice("Skipped report \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                return nil
+            }
             let delivered = FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path)
             return SentReport(report: report, folder: folder, delivered: delivered)
         }
@@ -461,6 +518,14 @@ struct ReportStore: Sendable {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
+    }()
+
+    /// Names reports and set-aside files by when they were made, such as 20261003-215826.
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter
     }()
 
     private static let decoder: JSONDecoder = {

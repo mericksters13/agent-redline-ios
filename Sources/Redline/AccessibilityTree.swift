@@ -17,9 +17,14 @@ enum AccessibilityTree {
     static func enableAutomation() {
         guard !automationEnabled else { return }
         automationEnabled = true
-        guard let handle = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW),
-              let symbol = dlsym(handle, "AXSSetAutomationEnabled") ?? dlsym(handle, "_AXSSetAutomationEnabled")
-        else { return }
+        guard let handle = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW) else {
+            Log.accessibility.error("Couldn't open libAccessibility; SwiftUI screens may show no elements")
+            return
+        }
+        guard let symbol = dlsym(handle, "AXSSetAutomationEnabled") ?? dlsym(handle, "_AXSSetAutomationEnabled") else {
+            Log.accessibility.error("AXSSetAutomationEnabled is missing; SwiftUI screens may show no elements")
+            return
+        }
         typealias Setter = @convention(c) (Int32) -> Void
         unsafeBitCast(symbol, to: Setter.self)(1)
     }
