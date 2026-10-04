@@ -20,6 +20,7 @@ PATH="/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"
 export PATH
 
 DEFAULT_REPO="https://github.com/mericksters13/agent-redline-ios"
+# The login item's label, which is also Redline.app's bundle identifier.
 LABEL="com.agentredline.hub"
 # Added to ~/.zprofile when ~/.local/bin isn't on PATH. Removed on uninstall by this exact text.
 # shellcheck disable=SC2016 # $HOME and $PATH are for the login shell to expand.
@@ -196,6 +197,35 @@ stop_app() {
     done
     pgrep -f "$pattern" >/dev/null && return 2
     return 0
+}
+
+# The bundle identifier of the app at $APP, or nothing.
+app_identifier() {
+    /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist" 2>/dev/null
+}
+
+# Whether the app at $APP is Redline, by its bundle identifier. Another app with the same name is
+# never stopped, replaced or deleted.
+app_is_ours() {
+    [ "$(app_identifier)" = "$LABEL" ]
+}
+
+# Whether the file at $COMMAND is the redline command, which holds Redline.app's bundle
+# identifier. Read, never run: another tool's command with the same name is never run, replaced
+# or deleted.
+command_is_ours() {
+    [ -f "$COMMAND" ] && LC_ALL=C grep -qaF "$LABEL" "$COMMAND" 2>/dev/null
+}
+
+# Stops before the build when Redline's app or command path holds another app or command.
+check_paths() {
+    if [ -e "$APP" ] && ! app_is_ours; then
+        stop "$APP is another app (bundle identifier: $(app_identifier || true)), not Redline." \
+            "Move or rename that app."
+    fi
+    if [ -e "$COMMAND" ] && ! command_is_ours; then
+        stop "$COMMAND is another command, not Redline's." "Move or rename that command."
+    fi
 }
 
 # The settings file that the output ($1) of redline setup or remove says it couldn't update.
@@ -686,9 +716,11 @@ register_mcp() {
 # opens in the background as a menu bar app, so System Settings > General > Login Items names it
 # after Redline, not after open. The executable is signed with the app, which
 # AssociatedBundleIdentifiers needs to show the item as the app. launchd gives it the account's home
-# folder, so HOME is passed on: Redline keeps its data under the HOME the installer used. launchd
-# gives it only the system's folders on PATH, so the folder of the claude command found here goes
-# first: installed under a Node version manager, claude (and the node it runs) is only there.
+# folder, so HOME is passed on: Redline keeps its data under the HOME the installer used. So is
+# CLAUDE_CONFIG_DIR when it is set, so claude runs with the settings and sign-in checked here.
+# launchd gives it only the system's folders on PATH, so the folder of the claude command found
+# here goes first: installed under a Node version manager, claude (and the node it runs) is only
+# there.
 write_launch_agent_plist() {
     rm -f "$1"
     plutil -create xml1 "$1" &&
@@ -699,6 +731,9 @@ write_launch_agent_plist() {
         plutil -insert RunAtLoad -bool true "$1" &&
         plutil -insert EnvironmentVariables -dictionary "$1" &&
         plutil -insert EnvironmentVariables.HOME -string "$HOME" "$1" || return 1
+    if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+        plutil -insert EnvironmentVariables.CLAUDE_CONFIG_DIR -string "$CLAUDE_CONFIG_DIR" "$1" || return 1
+    fi
     [ -n "$CLAUDE" ] || return 0
     plutil -insert EnvironmentVariables.PATH -string "$(dirname "$CLAUDE"):/usr/bin:/bin:/usr/sbin:/sbin" "$1"
 }
@@ -779,6 +814,7 @@ install() {
     fi
     start_log
     preflight
+    check_paths
     find_source
     build_command
     install_command
@@ -808,7 +844,7 @@ Next: add Redline to your iOS app. Add the package https://github.com/merickster
 # left, because the uninstall deletes the command they run.
 remove_hooks() {
     local output status file result rc failed="" delegated=false unexplained=false found=false kept=false
-    if [ -x "$COMMAND" ]; then
+    if [ -x "$COMMAND" ] && command_is_ours; then
         delegated=true
         output="$("$COMMAND" remove 2>&1)"
         status=$?
@@ -929,18 +965,28 @@ uninstall() {
         item "Done" "Login item: removed the $LABEL launchd service"
     fi
 
-    stop_app "$APP"
-    case $? in
-        0) item "Done" "Stopped Redline" ;;
-        2)
-            left="${left:+$left and }a running Redline"
-            item "Needs you" "Redline is still running and didn't stop when asked." "Quit it from its menu bar icon."
-            ;;
-    esac
+    if app_is_ours; then
+        stop_app "$APP"
+        case $? in
+            0) item "Done" "Stopped Redline" ;;
+            2)
+                left="${left:+$left and }a running Redline"
+                item "Needs you" "Redline is still running and didn't stop when asked." "Quit it from its menu bar icon."
+                ;;
+        esac
+    fi
 
     for artifact in "$APP" "$COMMAND"; do
         if [ ! -e "$artifact" ] && [ ! -L "$artifact" ]; then
             item "Skipped" "$artifact was already removed"
+            continue
+        fi
+        if [ "$artifact" = "$APP" ] && [ -e "$APP" ] && ! app_is_ours; then
+            item "Skipped" "Kept $APP: it is another app (bundle identifier: $(app_identifier || true)), not Redline"
+            continue
+        fi
+        if [ "$artifact" = "$COMMAND" ] && [ -e "$COMMAND" ] && ! command_is_ours; then
+            item "Skipped" "Kept $COMMAND: it is another command, not Redline's"
             continue
         fi
         rm -rf "$artifact" >>"$LOG" 2>&1
@@ -963,6 +1009,7 @@ uninstall() {
         if [ "$rc" -le 1 ] && cat "$tmp" >"$ZPROFILE"; then
             item "Done" "PATH: removed the installer's line from $ZPROFILE"
         else
+            left="${left:+$left and }the installer's line in $ZPROFILE"
             item "Needs you" "PATH: couldn't edit $ZPROFILE." "Delete the line ending in \"# Added by the Redline installer\"."
         fi
         rm -f "$tmp"
