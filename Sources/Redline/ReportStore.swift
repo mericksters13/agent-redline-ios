@@ -327,6 +327,12 @@ enum ReportSummary {
 /// - `draft/annotations.json`, `draft/screens.json`, the screen captures and attached images
 /// - `reports/<id>/report.json`, `reports/<id>/report.md` and the pictures they refer to
 struct ReportStore: Sendable {
+    /// A draft note whose screenshot file is gone. Sending stops so the draft stays
+    /// for recovery instead of producing a report that points at a missing file.
+    struct MissingScreenshot: Error, Equatable {
+        var annotationID: UUID
+    }
+
     let root: URL
 
     static let standard: ReportStore = {
@@ -408,16 +414,34 @@ struct ReportStore: Sendable {
         try? FileManager.default.removeItem(at: draftDirectory.appending(path: name))
     }
 
+    /// Throws `MissingScreenshot` for the first note whose picture isn't on disk: a capture
+    /// that's gone or no longer listed, or an attached image. Checked before a report takes
+    /// the draft, so the draft stays for the note to be deleted and the rest sent.
+    func checkScreenshots(of annotations: [Annotation], screens: [ScreenRecord]) throws {
+        let files = FileManager.default
+        let captures = Dictionary(screens.flatMap(\.captures).map { ($0.id, $0.file) }, uniquingKeysWith: { first, _ in first })
+        for annotation in annotations {
+            var needed = annotation.screenshots
+            if let captureID = annotation.captureID {
+                guard let file = captures[captureID] else { throw MissingScreenshot(annotationID: annotation.id) }
+                needed.append(file)
+            }
+            if needed.contains(where: { !files.fileExists(atPath: draftDirectory.appending(path: $0).path) }) {
+                throw MissingScreenshot(annotationID: annotation.id)
+            }
+        }
+    }
+
     /// Starts a report: moves the whole draft into a new report folder, so new notes go into
     /// a fresh draft while the report's pictures are drawn from the old one. If the move
     /// fails, the draft stays as it was and no report folder is left behind.
     /// Returns the report's id, its folder and where the draft now is.
     func beginReport(date: Date) throws -> (id: String, folder: URL, draft: URL) {
+        let files = FileManager.default
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let stamp = formatter.string(from: date)
-        let files = FileManager.default
         try files.createDirectory(at: reportsDirectory, withIntermediateDirectories: true)
 
         // Creating the folder itself fails when it exists, so two reports in the same
