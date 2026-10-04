@@ -101,6 +101,15 @@ struct ElementSelectionTests {
         #expect(ElementSelection.match(scrolled, in: rows) == nil)
     }
 
+    @Test func survivingIdentifierHitsStopTheLabelFallback() {
+        let saved = element("Button", "Delete", CGRect(x: 0, y: 100, width: 300, height: 44), identifier: "row.delete")
+        let rows = (0..<2).map { element("Button", "Remove", CGRect(x: 0, y: 100 + CGFloat($0) * 60, width: 300, height: 44), identifier: "row.delete") }
+        let lookAlike = element("Button", "Delete", CGRect(x: 0, y: 600, width: 300, height: 44), identifier: "footer.delete")
+        #expect(ElementSelection.match(saved, in: rows + [lookAlike]) == nil)
+        // With the identifier gone from the screen, the label still finds it.
+        #expect(ElementSelection.match(saved, in: [lookAlike]) == lookAlike)
+    }
+
     @Test func displayNameUsesRoleAndLabel() {
         #expect(element("Button", "Save", .zero).displayName == "Button · Save")
         #expect(element("Image", nil, .zero, identifier: "logo").displayName == "Image · logo")
