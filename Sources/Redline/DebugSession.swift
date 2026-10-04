@@ -140,6 +140,11 @@ final class DebugSession {
     /// Notes added since pick mode opened. The app can't move while the debugger takes
     /// every touch, so these are on the current screen even when it has no title.
     @ObservationIgnored private var notesThisVisit: Set<UUID> = []
+    /// The view controller showing the screen that was last read.
+    @ObservationIgnored private weak var screenController: UIViewController?
+    /// The view controller each note made since launch was taken on. Held weakly, so once
+    /// that screen closes its notes match no other screen, even one with the same title.
+    @ObservationIgnored private let noteControllers = NSMapTable<NSUUID, UIViewController>.strongToWeakObjects()
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var thumbnails: [UUID: UIImage] = [:]
     /// Full-size images for the viewer, kept for the few around the one showing.
@@ -262,15 +267,25 @@ final class DebugSession {
 
     func enterPicking() {
         guard mode == .idle, window != nil else { return }
-        // A list still gliding from a scroll would keep moving after the screen is
-        // read, leaving every outline behind. Stop it, let it settle, then read.
-        AccessibilityTree.stopScrolling(in: appWindows())
+        // A list still moving would leave every outline behind once the screen is read.
+        // A fling the user started is stopped where it is. A scroll the app animates
+        // itself is left to reach the place the app sent it, so wait, up to half a
+        // second, until no scroll view moves from one frame to the next.
+        let scrollViews = AccessibilityTree.scrollViews(in: appWindows())
+        AccessibilityTree.stopScrolling(scrollViews)
         levels = []
         notesThisVisit = []
         setMode(.picking)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         Task {
             try? await Task.sleep(for: .milliseconds(60))
+            var positions = AccessibilityTree.scrollPositions(of: scrollViews)
+            for _ in 0..<27 where mode == .picking {
+                try? await Task.sleep(for: .milliseconds(16))
+                let next = AccessibilityTree.scrollPositions(of: scrollViews)
+                if next == positions { break }
+                positions = next
+            }
             if mode == .picking { readScreen() }
         }
     }
@@ -378,6 +393,7 @@ final class DebugSession {
         }
         thumbnails[id] = Self.crop(screenshot, around: element.frame)
         notesThisVisit.insert(id)
+        if let screenController { noteControllers.setObject(screenController, forKey: id as NSUUID) }
         annotations.append(annotation)
         pruneCaptures()
         fullImages = [:]
@@ -650,13 +666,18 @@ final class DebugSession {
             asset.creationDate.map { ScreenshotSuggestion.Candidate(id: asset.localIdentifier, createdAt: $0) }
         }
         guard let pick = ScreenshotSuggestion.pick(newest: candidates, now: .now, offered: offeredPhotoIDs, inAppCaptures: inAppCaptureDates),
+              pick.id != loadingPhotoID,
               let asset = assets.first(where: { $0.localIdentifier == pick.id })
         else { return }
-        markOffered(pick.id)
+        // Noted as offered only once it's shown: one still in iCloud, that doesn't load, or that
+        // loads while the debugger is busy is offered again on a later activation.
+        loadingPhotoID = pick.id
         Task {
+            defer { if loadingPhotoID == pick.id { loadingPhotoID = nil } }
             guard let image = await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels),
                   mode == .idle || mode == .picking
             else { return }
+            markOffered(pick.id)
             offer(Suggestion(image: image, kind: .photo, screen: nil))
         }
     }
@@ -735,6 +756,8 @@ final class DebugSession {
     }
 
     private static let offeredPhotosKey = "RedlineOfferedScreenshots"
+    /// The screenshot being loaded to offer, so a second activation meanwhile doesn't load it too.
+    @ObservationIgnored private var loadingPhotoID: String?
     private static let inAppCapturesKey = "RedlineInAppScreenshots"
 
     private var offeredPhotoIDs: Set<String> {
@@ -1382,8 +1405,10 @@ final class DebugSession {
     private func readScreen() {
         guard let window else { return }
         let appWindows = self.appWindows()
+        let screenWindow = appWindows.first(where: \.isKeyWindow) ?? appWindows.last
         elements = AccessibilityTree.elements(in: appWindows, screenBounds: window.bounds)
-        screen = AccessibilityTree.screen(of: appWindows.first(where: \.isKeyWindow) ?? appWindows.last, elements: elements)
+        screen = AccessibilityTree.screen(of: screenWindow, elements: elements)
+        screenController = AccessibilityTree.topController(of: screenWindow)
         screenshot = AccessibilityTree.screenshot(of: appWindows, bounds: window.bounds)
         scrollState = AccessibilityTree.mainScrollState(in: appWindows, screenBounds: window.bounds)
         readSize = window.bounds.size
@@ -1405,13 +1430,17 @@ final class DebugSession {
         }
     }
 
-    /// Markers go on notes made on this screen. Without a title, two screens of the same
-    /// kind look alike (SwiftUI routes share one hosting controller type), so only notes
-    /// added since pick mode opened count as this screen's.
+    /// Markers go on notes made on this screen. Notes added since pick mode opened always
+    /// count, since the app can't move while the debugger takes every touch. An earlier
+    /// note counts only when it was taken on the very view controller showing now, with
+    /// the same title: two SwiftUI destinations can share a title and a hosting controller
+    /// type, and one untitled controller can show several screens in turn. Notes from an
+    /// earlier launch get no marker, since nothing ties them to a screen open now.
     private func refreshMarkers() {
         markers = annotations.enumerated().compactMap { index, annotation in
+            let sameController = screenController.map { noteControllers.object(forKey: annotation.id as NSUUID) === $0 } ?? false
             let sameScreen = notesThisVisit.contains(annotation.id)
-                || (screen.title != nil && annotation.screen == screen)
+                || (sameController && screen.title != nil && annotation.screen == screen)
             guard let element = annotation.element, sameScreen,
                   let match = ElementSelection.match(element, in: elements)
             else { return nil }

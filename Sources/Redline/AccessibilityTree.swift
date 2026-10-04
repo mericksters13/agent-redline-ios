@@ -88,33 +88,49 @@ enum AccessibilityTree {
         return result
     }
 
-    /// Stops any scroll view that is still moving, at a valid resting offset.
-    static func stopScrolling(in windows: [UIWindow]) {
+    /// Every scroll view in `windows`.
+    static func scrollViews(in windows: [UIWindow]) -> [UIScrollView] {
+        var result: [UIScrollView] = []
         func visit(_ view: UIView) {
-            if let scrollView = view as? UIScrollView, scrollView.isDecelerating || scrollView.isDragging {
-                let inset = scrollView.adjustedContentInset
-                let offset = scrollView.contentOffset
-                let maxX = max(-inset.left, scrollView.contentSize.width - scrollView.bounds.width + inset.right)
-                let maxY = max(-inset.top, scrollView.contentSize.height - scrollView.bounds.height + inset.bottom)
-                scrollView.setContentOffset(CGPoint(
-                    x: min(max(offset.x, -inset.left), maxX),
-                    y: min(max(offset.y, -inset.top), maxY)
-                ), animated: false)
-            }
+            if let scrollView = view as? UIScrollView { result.append(scrollView) }
             for subview in view.subviews { visit(subview) }
         }
         for window in windows { visit(window) }
+        return result
+    }
+
+    /// Stops a scroll the user started that is still moving, at a valid resting offset.
+    static func stopScrolling(_ scrollViews: [UIScrollView]) {
+        for scrollView in scrollViews where scrollView.isDecelerating || scrollView.isDragging {
+            let inset = scrollView.adjustedContentInset
+            let offset = scrollView.contentOffset
+            let maxX = max(-inset.left, scrollView.contentSize.width - scrollView.bounds.width + inset.right)
+            let maxY = max(-inset.top, scrollView.contentSize.height - scrollView.bounds.height + inset.bottom)
+            scrollView.setContentOffset(CGPoint(
+                x: min(max(offset.x, -inset.left), maxX),
+                y: min(max(offset.y, -inset.top), maxY)
+            ), animated: false)
+        }
+    }
+
+    /// Where each scroll view's content is drawn right now. A scroll the app animates
+    /// itself, through `setContentOffset(_:animated:)`, `scrollRectToVisible(_:animated:)`
+    /// or an animation block, is neither dragging nor decelerating, so motion shows only
+    /// as this changing from one frame to the next.
+    static func scrollPositions(of scrollViews: [UIScrollView]) -> [CGPoint] {
+        scrollViews.map { $0.layer.presentation()?.bounds.origin ?? $0.contentOffset }
     }
 
     /// The screen the user is looking at: the navigation bar title, else the
     /// topmost header on screen (custom headers such as a large "Today"), else the
-    /// selected tab, plus the view controller type. Only a presented sheet is read
-    /// while one is up, so it never takes the title of the screen it covers.
+    /// selected tab, plus the view controller type. A sheet or full-screen cover is
+    /// read alone, so it never takes the title of the screen it covers; a translucent
+    /// presentation takes the title of the screen still showing under it, front first.
     static func screen(of window: UIWindow?, elements: [ElementSnapshot]) -> ScreenInfo {
         guard let window else { return ScreenInfo() }
-        let controller = topController(from: window.rootViewController)
+        let controller = topController(of: window)
         let cover = coveringController(in: window)
-        let title = navigationBarTitle(in: cover?.viewIfLoaded ?? window)
+        let title = visibleRoots(of: window).reversed().lazy.compactMap(navigationBarTitle(in:)).first
             ?? ElementSelection.headerTitle(in: elements)
             ?? selectedTabTitle(from: cover ?? window.rootViewController)
             ?? controller?.navigationItem.title?.nonEmpty
@@ -137,6 +153,12 @@ enum AccessibilityTree {
                 window.drawHierarchy(in: window.frame, afterScreenUpdates: false)
             }
         }
+    }
+
+    /// The view controller showing the screen in `window`: the topmost presented one, or
+    /// the visible one inside navigation and tab controllers.
+    static func topController(of window: UIWindow?) -> UIViewController? {
+        topController(from: window?.rootViewController)
     }
 
     /// The screen's main vertical scroll view, and how far it's scrolled: the largest one
@@ -166,14 +188,43 @@ enum AccessibilityTree {
 
     // MARK: - Helpers
 
-    /// A presented sheet or full-screen cover hides what's under it, so only its view is
-    /// read when one is up, along with anything drawn above it, such as a menu opened from it.
+    /// The views that make up what is on screen in `window`, back to front. A sheet or a
+    /// full-screen cover hides what's under it, so reading starts again at its view, along
+    /// with anything drawn in the window above it, such as a menu opened from it. An
+    /// over-context, over-full-screen or custom presentation that keeps the presenting
+    /// view leaves that view showing unless its own view is opaque and covers the window,
+    /// so both are read. An open menu's empty presented controller hides nothing.
     private static func visibleRoots(of window: UIWindow) -> [UIView] {
-        guard let cover = coveringController(in: window)?.viewIfLoaded else { return [window] }
-        var top: UIView = cover
-        while let parent = top.superview, parent !== window { top = parent }
-        guard let index = window.subviews.firstIndex(of: top) else { return [cover] }
-        return [cover] + window.subviews[(index + 1)...]
+        var roots: [UIView] = [window]
+        var controller = window.rootViewController
+        while let presented = controller?.presentedViewController, !presented.isBeingDismissed {
+            controller = presented
+            guard let view = presented.viewIfLoaded, showsContent(presented) else { continue }
+            if hidesPresenter(presented, in: window) {
+                var top: UIView = view
+                while let parent = top.superview, parent !== window { top = parent }
+                let above = window.subviews.firstIndex(of: top).map { window.subviews[($0 + 1)...] } ?? []
+                roots = [view] + above
+            } else {
+                roots.append(view)
+            }
+        }
+        return roots
+    }
+
+    private static func hidesPresenter(_ controller: UIViewController, in window: UIWindow) -> Bool {
+        switch controller.modalPresentationStyle {
+        case .overFullScreen, .overCurrentContext:
+            break
+        case .custom where controller.presentationController?.shouldRemovePresentersView == false:
+            break
+        default:
+            return true
+        }
+        guard let view = controller.viewIfLoaded else { return false }
+        let backgroundAlpha = view.backgroundColor?.resolvedColor(with: view.traitCollection).cgColor.alpha ?? 0
+        return backgroundAlpha > 0.99 && view.alpha > 0.99
+            && view.convert(view.bounds, to: window).contains(window.bounds)
     }
 
     /// The topmost presented controller that shows something of its own.
