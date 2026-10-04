@@ -4,7 +4,7 @@
 
 # Redline
 
-Redline lets you point at UI in a Debug build of your iOS app, on an iPhone or in a simulator, write a note, and send it straight into the Claude Code or Codex chat working on that app. The agent gets a screenshot of each screen with every element you noted outlined in red and numbered, plus each element's name, role and identifier from the accessibility tree, so it can find the view in the code without guessing. It is the way a designer redlines a screen, done on the running app.
+Redline lets you point at UI in a Debug build of your iOS app, on an iPhone or in a simulator, write a note, and send it straight into the Claude Code or Codex chat working on that app. The agent gets a snapshot of each screen with every element you noted outlined in red and numbered, plus each element's name, role and identifier from the accessibility tree, so it can find the view in the code without guessing. It is the way a designer redlines a screen, done on the running app.
 
 It replaces the loop of taking a screenshot, moving it to the Mac, pasting it into a chat and describing which button you mean.
 
@@ -12,7 +12,7 @@ It replaces the loop of taking a screenshot, moving it to the Mac, pasting it in
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/redline-hero-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/redline-hero-light.svg">
-    <img src="docs/images/redline-hero-light.svg" width="880" alt="An iPhone running a notes app in Redline's annotate mode, with the Save button outlined in red and numbered 1 and the Title field numbered 2. An arrow runs through the Redline menu bar app on the Mac to a Claude Code or Codex chat, which shows the report it received: the screenshot with the same two red outlines (attached in Codex, read from its inbox path in Claude Code), then note 1, Save (Button, editor.save): The button sits under the keyboard on small phones, and note 2, Title (Text field, editor.title): Placeholder is hard to read in dark mode.">
+    <img src="docs/images/redline-hero-light.svg" width="880" alt="An iPhone running a notes app in Redline's annotate mode, with the Save button outlined in red and numbered 1 and the Title field numbered 2. An arrow runs through the Redline menu bar app on the Mac to a Claude Code or Codex chat, which shows the report it received: the snapshot with the same two red outlines (attached in Codex, read from its inbox path in Claude Code), then note 1, Save (Button, editor.save): The button sits under the keyboard on small phones, and note 2, Title (Text field, editor.title): Placeholder is hard to read in dark mode.">
   </picture>
 </p>
 
@@ -41,14 +41,14 @@ The dashed arrows are setup and happen before the first report. The solid ones c
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/redline-how-it-works-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/redline-how-it-works-light.svg">
-    <img src="docs/images/redline-how-it-works-light.svg" width="880" alt="Two dashed zones, iPhone or simulator on the left and Mac on the right. On the left, your app's Debug build with the Redline kit inside. On the Mac, the Redline hub, a menu bar app with an inbox folder, and a Claude Code or Codex chat in your project. Four numbered arrows: 1, the chat registers its app with the hub; 2, the hub gives the app the Mac's address and a token; 3, the app sends a report to the hub; 4, the hub hands the report and its pictures to the chat.">
+    <img src="docs/images/redline-how-it-works-light.svg" width="880" alt="Two dashed zones, iPhone or simulator on the left and Mac on the right. On the left, your app's Debug build with the Redline kit inside. On the Mac, the Redline hub, a menu bar app with an inbox folder, and a Claude Code or Codex chat in your project. Four numbered arrows: 1, the chat registers its app with the hub; 2, the hub gives the app the Mac's address and a token; 3, the app sends a report to the hub; 4, the hub hands the report and its snapshots to the chat.">
   </picture>
 </p>
 
 1. **Registers its app.** A Claude Code or Codex chat open in your app's project tells the hub which apps the project builds: Claude Code through `redline mcp`, when the chat starts, and Codex through the hook `redline setup` installs, the next time you send the chat a message.
 2. **Address and token.** The hub leaves `hub.json` in the app's data container: the Mac's addresses, port 47361 and a token for that phone and app.
-3. **Report.** You tap the floating button, tap elements, write notes and tap Send. The first time you send from a build, the app asks the hub which open chats work on this app, with the one in this build's worktree first, and you pick one in Send to. The kit saves the report on the device (`report.json`, `report.md` and the pictures). An iPhone offers it to the hub with the token and uploads the files the hub asks for; from a simulator, the hub copies the finished report out of the app's folder itself.
-4. **Report and pictures.** The hub files the report in its inbox, chooses the chat, and hands it over with the path of each picture. A Mac notification says where it went.
+3. **Report.** You tap the floating button, tap elements, write notes and tap Send. The first time you send from a build, the app asks the hub which open chats work on this app, with the one in this build's worktree first, and you pick one in Send to. The kit saves the report on the device (`report.json`, `report.md` and the snapshots). An iPhone offers it to the hub with the token and uploads the files the hub asks for; from a simulator, the hub copies the finished report out of the app's folder itself.
+4. **Report and snapshots.** The hub files the report in its inbox, chooses the chat, and hands it over with the path of each snapshot. A Mac notification says where it went.
 
 ### The parts
 
@@ -99,11 +99,11 @@ flowchart TD
 ### How the chat receives it
 
 - **Claude Code.** The report goes in through the chat's own message socket and starts a turn, even when the chat is idle. If the chat has closed, the hub resumes it with `claude --resume`, in the Claude app when it is installed or else in Terminal, then sends the report.
-- **Codex.** The report starts a turn through the Codex app, with its pictures attached the way the app attaches a screenshot you add. If no Codex window has the chat open, the hub opens it first. If the app can't take it, the report goes in with your next message in that chat, through the hook `redline setup` adds. The Codex app's socket is the app's own, not a published interface, so a Codex update can change it; the hook is the fallback.
+- **Codex.** The report starts a turn through the Codex app, with its snapshots attached the way the app attaches a screenshot you add. If no Codex window has the chat open, the hub opens it first. If the app can't take it, the report goes in with your next message in that chat, through the hook `redline setup` adds. The Codex app's socket is the app's own, not a published interface, so a Codex update can change it; the hook is the fallback.
 
 ## What the agent receives
 
-The picture at the top shows the first screen of this report. Each picture is named by its full path, followed by the notes on it. The numbers match the red outlines in the picture. Each note names the element by its accessibility label (or identifier), then its role and identifier:
+The snapshot at the top shows the first screen of this report. Each snapshot is named by its full path, followed by the notes on it. The numbers match the red outlines in the snapshot. Each note names the element by its accessibility label (or identifier), then its role and identifier:
 
 ```text
 UI report from Alex's iPhone · Sample Notes
@@ -118,11 +118,11 @@ UI report from Alex's iPhone · Sample Notes
 
 The report folder also holds:
 
-- `report.md`: a summary for the agent: the app and version, the device and iOS version, each screen's notes, and which picture shows each note.
-- `report.json`: the same in full: each element's frame, role, label, value, identifier and class, the bigger elements that hold it, and where its outline sits in its picture.
-- The pictures: `screen-1.jpg` and so on, one per screen with every note on it outlined. A screen you scrolled while noting is stitched into one tall picture; one taller than about two screens is cut between rows into `screen-1-part-2.jpg` and so on. Attachments are `note-<number>.jpg`.
+- `report.md`: a summary for the agent: the app and version, the device and iOS version, each screen's notes, and which snapshot shows each note.
+- `report.json`: the same in full: each element's frame, role, label, value, identifier and class, the bigger elements that hold it, and where its outline sits in its snapshot.
+- The snapshots: `screen-1.jpg` and so on, one per screen with every note on it outlined. A screen you scrolled while noting is stitched into one tall snapshot; one taller than about two screens is cut between rows into `screen-1-part-2.jpg` and so on. Attachments are `note-<number>.jpg`.
 
-A chat that calls the MCP tool `check_messages` gets `report.md` with the pictures attached instead.
+A chat that calls the MCP tool `check_messages` gets `report.md` with the snapshots attached instead.
 
 ## Requirements
 
@@ -258,9 +258,9 @@ On a physical iPhone, iOS asks once whether the app may find devices on the loca
 
 - **The floating button.** Tap it to start marking up the screen. Drag it anywhere; it snaps to the nearest screen edge. Press and hold it to see the reports sent from this device.
 - **Annotate mode.** A light red line runs around the screen while Redline has it, and the controls sit in a black bar at the top. Tap any element to select it; Smaller and Larger step to a part of it or to the bigger element around it. Write a note and tap Add note. Keep going across screens: notes collect until you send them. Tap the close button in the bar to use the app again; the notes stay.
-- **Notes tray.** Tap the screen name in the bar to see the waiting notes. Tap one to see its screenshot and note full screen, or delete it. The draft is saved on the device, so it survives the app being killed or reinstalled by a rebuild.
+- **Notes tray.** Tap the screen name in the bar to see the waiting notes. Tap one to see its snapshot and note full screen, or delete it. The draft is saved on the device, so it survives the app being killed or reinstalled by a rebuild.
 - **Screenshots and attachments.**
-  - Take a screenshot as usual. A thumbnail appears beside the floating button; tap it to write a note and send. Redline captures the app's own windows at that moment, so Redline itself is never in the picture.
+  - Take a screenshot as usual. A thumbnail appears beside the floating button; tap it to write a note and send. Redline captures the app's own windows at that moment, so Redline itself is never in the snapshot.
   - In annotate mode, the capture button attaches the whole screen as it is, and the paperclip attaches images from Photos.
   - Apps that already declare Photos access in their Info.plist show a grid of recent photos, and ask for access only when you tap Show recent photos. With that access, Redline also offers screenshots taken in other apps when you come back to yours. Other apps get the system photo picker, which needs no access.
   - Notes on elements and attachments go together in one report.
@@ -273,7 +273,7 @@ Click the Redline icon in the menu bar to open the panel:
 
 - **Header:** the address and port apps reach the Mac at.
 - **Devices:** paired iPhones that are ready and running simulators with a watched app, with the time of each one's last report. Paired phones that can't take reports right now are dimmed, with the reason, such as Not reachable or No watched app installed.
-- **Reports:** the 30 newest, each with its first screenshot, the device, when it arrived, the agent and chat it went to (or why it is waiting), and its first notes. Click a report to open its folder. A report viewer window, with "Open in" to jump to the chat, is being added to the panel.
+- **Reports:** the 30 newest, each with its first snapshot, the device, when it arrived, the agent and chat it went to (or why it is waiting), and its first notes. Click a report to open its folder. A report viewer window, with "Open in" to jump to the chat, is being added to the panel.
 - **Open inbox** opens the inbox folder in Finder. **Quit** stops the hub.
 
 Each report also posts a Mac notification saying where it went.
@@ -289,7 +289,7 @@ Each report also posts a Mac notification saying where it went.
 - **Local network only.** Redline has no server and no account. Reports go from the phone to your Mac over your local network (TCP port 47361), or from a simulator's folder on the same Mac. The connection is plain TCP, not encrypted; what guards it is the token below. The hub's one use of the internet is `git fetch` of the main branch when it makes a worktree for a new chat.
 - **A token per phone and app.** The hub makes a random token for each app on each phone and leaves it, with the address, in the app's folder over Xcode's device link, which only a Mac paired with that phone can do. The hub turns down reports and chat questions that don't carry the right token. Tokens are stored in `~/Library/Application Support/Redline/hub/tokens.json`, readable only by you.
 - **Where reports are kept.** On the device: `Library/Application Support/Redline` in the app's own container. On the Mac: `~/Library/Application Support/Redline/inbox`. Nothing is deleted automatically.
-- **What the agent sees.** Once a report is in a chat, it is part of that chat like anything you paste in. The screenshots show whatever was on screen, so avoid noting screens with personal data you don't want in a chat.
+- **What the agent sees.** Once a report is in a chat, it is part of that chat like anything you paste in. The snapshots show whatever was on screen, so avoid noting screens with personal data you don't want in a chat.
 
 ## Troubleshooting
 

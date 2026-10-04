@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" width="960" height="560" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title id="t">How Redline works</title>
-  <desc id="d">Two dashed zones, iPhone or simulator on the left and Mac on the right. On the left, your app&#39;s Debug build with the Redline kit inside. On the Mac, the Redline hub, a menu bar app with an inbox folder, and a Claude Code or Codex chat in your project. Four numbered arrows: 1, the chat registers its app with the hub; 2, the hub gives the app the Mac&#39;s address and a token; 3, the app sends a report to the hub; 4, the hub hands the report and its pictures to the chat.</desc>
+  <desc id="d">Two dashed zones, iPhone or simulator on the left and Mac on the right. On the left, your app&#39;s Debug build with the Redline kit inside. On the Mac, the Redline hub, a menu bar app with an inbox folder, and a Claude Code or Codex chat in your project. Four numbered arrows: 1, the chat registers its app with the hub; 2, the hub gives the app the Mac&#39;s address and a token; 3, the app sends a report to the hub; 4, the hub hands the report and its snapshots to the chat.</desc>
   <rect x="0" y="0" width="960" height="560" rx="24" fill="#1C1C1E"/>
   <!-- Zones -->
   <rect x="24" y="24" width="240" height="512" rx="20" fill="none" stroke="#8E8E93" stroke-width="1.5" stroke-dasharray="6 6"/>
@@ -66,7 +66,7 @@
   <text x="334" y="192" font-size="20" font-weight="600" fill="#FFFFFF" text-anchor="middle" stroke="#1C1C1E" stroke-width="6" stroke-linejoin="round" paint-order="stroke">and token</text>
   <text x="334" y="372" font-size="20" font-weight="600" fill="#FFFFFF" text-anchor="middle" stroke="#1C1C1E" stroke-width="6" stroke-linejoin="round" paint-order="stroke">Report</text>
   <text x="670" y="348" font-size="20" font-weight="600" fill="#FFFFFF" text-anchor="middle">Report and</text>
-  <text x="670" y="372" font-size="20" font-weight="600" fill="#FFFFFF" text-anchor="middle">pictures</text>
+  <text x="670" y="372" font-size="20" font-weight="600" fill="#FFFFFF" text-anchor="middle">snapshots</text>
   <circle cx="670" cy="220" r="20" fill="#1C1C1E"/>
   <circle cx="670" cy="220" r="16" fill="#FFFFFF"/>
   <text x="670" y="227" font-size="20" font-weight="700" fill="#000000" text-anchor="middle">1</text>
