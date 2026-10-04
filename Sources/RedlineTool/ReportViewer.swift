@@ -69,7 +69,8 @@ extension HubWindowModel {
     /// The chat a report went to, to open it again: the same chat `destination(of:)` names in the
     /// report's row. That is what the hub saved when it delivered the report, or else the chat
     /// that took it, including one that took a report the hub left waiting or set to go with a
-    /// chat's next message. A claim whose hand-over was interrupted doesn't count, since that
+    /// chat's next message. As there, no dates are compared: any claim next to a waiting
+    /// delivery came after it. A claim whose hand-over was interrupted doesn't count, since that
     /// chat never got the report. `folder` is where the chat works, when known. Nil when the
     /// report went to no chat, or to an agent other than Claude Code and Codex.
     nonisolated static func chat(of report: URL) -> (agent: Agent, id: String, folder: String?)? {
@@ -77,7 +78,7 @@ extension HubWindowModel {
             .flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
             .flatMap { $0.isInterrupted ? nil : $0 }
         let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
-        if let delivery = ReportDelivery.load(from: report), !(delivery.pending && claim.map { $0.claimedAt > delivery.at } == true) {
+        if let delivery = ReportDelivery.load(from: report), !(delivery.pending && claim != nil) {
             guard delivery.kind != .waiting, let agent = delivery.agent.flatMap(Agent.init(rawValue:)), agent != .cursor,
                   let id = delivery.chat
             else { return nil }

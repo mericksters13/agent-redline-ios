@@ -334,6 +334,13 @@ struct HubWindowTests {
         #expect(!HubWindowModel.destination(of: taken).waiting)
         let chat = try #require(HubWindowModel.chat(of: taken))
         #expect(chat.agent == .codex && chat.id == "t-3" && chat.folder == "/repo")
+        // In the same millisecond, or dated a moment before the wait it came after, the claim still wins.
+        for offset in [0.0002, -0.01] {
+            try Chats.coder.encode(Claim(chat: "codex-t-3", agent: "codex", folder: "/repo", claimedAt: delivered.addingTimeInterval(offset)))
+                .write(to: taken.appending(path: InboxQueue.claimFile))
+            #expect(!HubWindowModel.destination(of: taken).waiting)
+            #expect(HubWindowModel.chat(of: taken)?.id == "t-3")
+        }
     }
 
     @Test func chatsOpenInTheirAgentsAppWhenItIsInstalled() {
