@@ -110,6 +110,7 @@ enum ReportWindows {
         if let window = open[report.folder]?.window {
             window.title = ReportViewer.title(of: report)
             (window.contentViewController as? NSHostingController<ReportViewer>)?.rootView = ReportViewer(report: report)
+            if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
             return
         }
@@ -244,8 +245,14 @@ struct ReportViewer: View {
                     Button("Open in \(chat.agent.name)") {
                         Task.detached {
                             // A report sent to an existing Codex chat records no folder; Codex
-                            // keeps the chat's own, and `codex resume` reopens it there.
-                            let folder = chat.folder ?? (chat.agent == .codex ? CodexThreads.folder(of: chat.id) : nil) ?? NSHomeDirectory()
+                            // keeps the chat's own, and `codex resume` reopens it there. A folder
+                            // that is gone, such as a removed worktree, is skipped: opening a
+                            // terminal there would make it again, empty.
+                            let known = [chat.folder, chat.agent == .codex ? CodexThreads.folder(of: chat.id) : nil]
+                            let folder = known.compactMap { $0 }.first { path in
+                                var isFolder: ObjCBool = false
+                                return FileManager.default.fileExists(atPath: path, isDirectory: &isFolder) && isFolder.boolValue
+                            } ?? NSHomeDirectory()
                             Handoff.openChat(chat.agent, id: chat.id, in: folder)
                         }
                     }
