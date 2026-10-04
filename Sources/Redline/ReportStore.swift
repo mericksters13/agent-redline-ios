@@ -204,6 +204,9 @@ struct Report: Codable, Sendable {
     var items: [Item]
     /// Nil when the user didn't pick: the Mac sends it to the chat working in the worktree.
     var destination: Destination? = nil
+    /// The version of this format, raised when a field changes meaning or is removed. Nil in
+    /// reports written before the format had a version, which read as version 1.
+    var version: Int? = 1
 }
 
 extension Report {
@@ -326,9 +329,23 @@ enum ReportSummary {
 /// Keeps the unsent draft and sent reports on disk, so a draft survives the app
 /// being killed or reinstalled by a rebuild.
 ///
-/// Layout under `root`:
-/// - `draft/annotations.json`, `draft/screens.json`, the screen captures and attached images
-/// - `reports/<id>/report.json`, `reports/<id>/report.md` and the pictures they refer to
+/// The layout under `root` is a contract with the Mac, which reads it over Xcode's device
+/// link or from a simulator's folder (`ReportFolder` and `HubAddress` in the Mac tool):
+/// - `draft/`: `annotations.json`, `screens.json`, the screen captures and attached images.
+///   Only the phone reads it.
+/// - `reports/<id>/`: one sent report, named by when it was sent, such as `20261003-215826`.
+///   It is written in this order, and the order is load-bearing:
+///   1. `beginReport` moves the draft into `reports/<id>/draft`.
+///   2. The report's pictures are written beside it.
+///   3. `report.json`, then `report.md`, are written.
+///   4. `reports/<id>/draft` is removed.
+///
+///   A report is finished once `report.json` exists and `draft/` is gone; the Mac takes only
+///   finished reports.
+/// - `reports/<id>/delivered`: an empty file the phone writes once the Mac confirms it has
+///   the report, so it isn't offered again.
+/// - `hub.json`: written by the Mac's hub, once, with its addresses and a token.
+/// - `delivery.json`: written by the phone after each attempt to hand reports to the Mac.
 struct ReportStore: Sendable {
     let root: URL
 

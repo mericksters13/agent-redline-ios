@@ -180,7 +180,7 @@ struct ReportStoreTests {
         #expect(store.hubAddress() == nil)
     }
 
-    @Test func theHubsAddressAndMessagesRoundTrip() throws {
+    @Test func theHubsAddressIsReadFromTheAppsFolder() throws {
         #expect(store.hubAddress() == nil)
         let address = HubLink.Address(device: "00008150-00123C360CF3C01C", hosts: ["192.168.1.2", "mac.local"], port: 47361, token: "secret")
         try FileManager.default.createDirectory(at: store.root, withIntermediateDirectories: true)
@@ -189,25 +189,33 @@ struct ReportStoreTests {
         // An address left by an older hub has no token.
         try Data(#"{"device":"x","hosts":["mac.local"],"port":47361}"#.utf8).write(to: store.hubAddressFile)
         #expect(store.hubAddress()?.token == nil)
-        // The hub reads exactly these lines; see the Mac tool's ReportSourcesTests.
-        let offer = HubLink.Offer(device: address.device, bundleID: "com.example.app", token: "secret",
-                                  reports: [.init(id: "20261003-215826", finishedAt: Date(timeIntervalSince1970: 1_791_000_000))])
-        let line = String(decoding: try HubLink.encode(offer), as: UTF8.self)
-        #expect(line == #"{"bundleID":"com.example.app","device":"00008150-00123C360CF3C01C","reports":[{"finishedAt":"2026-10-03T04:00:00Z","id":"20261003-215826"}],"token":"secret"}"# + "\n")
-        #expect(try HubLink.decode(HubLink.Answer.self, from: Data(#"{"delivered":[],"want":["20261003-215826"]}"#.utf8))
-                == HubLink.Answer(want: ["20261003-215826"], delivered: []))
-        let upload = String(decoding: try HubLink.encode(HubLink.Upload(id: "r", files: ["report.md": Data("# Hi".utf8)])), as: UTF8.self)
-        #expect(upload == #"{"files":{"report.md":"IyBIaQ=="},"id":"r"}"# + "\n")
-        // Asking which chats a report can go to, and the answer.
-        let ask = String(decoding: try HubLink.encode(HubLink.ChatsRequest(device: "D", bundleID: "com.example.app", token: "secret", sourceFile: "/w/App.swift")), as: UTF8.self)
-        #expect(ask == #"{"bundleID":"com.example.app","device":"D","kind":"chats","sourceFile":"/w/App.swift","token":"secret"}"# + "\n")
-        let list = #"{"agents":["claude"],"chats":[{"agent":"claude","folder":"wt","id":"s1","lastActive":"2026-10-03T04:00:00Z","sameWorktree":true,"title":"Let"}],"worktree":"wt"}"#
-        #expect(try HubLink.decode(HubLink.ChatList.self, from: Data(list.utf8)) == HubLink.ChatList(
-            agents: ["claude"], chats: [HubLink.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt", sameWorktree: true,
-                                                     lastActive: Date(timeIntervalSince1970: 1_791_000_000))], worktree: "wt"))
         // A simulator app's address says it doesn't upload.
         try Data(#"{"device":"S","hosts":["127.0.0.1"],"port":47361,"token":"t","uploads":false}"#.utf8).write(to: store.hubAddressFile)
         #expect(store.hubAddress()?.uploads == false)
+    }
+
+    @Test func theFolderIsWhereTheMacLooks() {
+        // Must match the Mac tool's ReportFolder.path and HubAddress.addressPath.
+        let reports = ReportStore.standard.reportsDirectory.path(percentEncoded: false)
+        #expect(reports.trimmingCharacters(in: CharacterSet(charactersIn: "/")).hasSuffix("Library/Application Support/Redline/reports"))
+        #expect(ReportStore.standard.hubAddressFile.path(percentEncoded: false).hasSuffix("Library/Application Support/Redline/hub.json"))
+    }
+
+    @Test func aReportSaysWhichVersionOfTheFormatItIs() throws {
+        try store.saveDraft([])
+        let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        try store.finishReport(sampleReport(id: started.id), in: started.folder)
+        let json = try String(decoding: Data(contentsOf: started.folder.appending(path: "report.json")), as: UTF8.self)
+        #expect(json.contains(#""version" : 1"#))
+        // Reports written before the format had a version still list.
+        let old = store.reportsDirectory.appending(path: "20261001-120000")
+        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
+        var unversioned = try JSONSerialization.jsonObject(with: Data(contentsOf: started.folder.appending(path: "report.json"))) as? [String: Any] ?? [:]
+        unversioned["version"] = nil
+        unversioned["id"] = "20261001-120000"
+        try JSONSerialization.data(withJSONObject: unversioned).write(to: old.appending(path: "report.json"))
+        #expect(Set(store.sentReports().map(\.id)) == [started.id, "20261001-120000"])
+        #expect(store.sentReports().first { $0.id == "20261001-120000" }?.report.version == nil)
     }
 
     @Test func thePickedChatIsSavedWithTheReport() throws {
