@@ -1,7 +1,7 @@
 #if os(macOS)
 import Foundation
 import Network
-import Security
+import Synchronization
 
 /// Where the tool keeps things on the Mac.
 ///
@@ -38,7 +38,7 @@ struct ReportSource: Codable, Sendable {
 
 /// What the hub tells `redline status`.
 struct HubStatus: Codable, Sendable {
-    struct Phone: Codable, Sendable {
+    struct Phone: Codable, Equatable, Sendable {
         var name: String
         var udid: String
         var state: String
@@ -59,28 +59,48 @@ struct HubStatus: Codable, Sendable {
 /// Takes reports off paired phones and simulators and files them in the inbox. An app on a
 /// phone offers its reports over the local network and the hub copies them over Xcode's device
 /// link; simulator apps' folders are on the Mac, so the hub sees their reports as they're saved.
+///
+/// Thread safety: everything that changes while the hub runs is in `state`, a `Mutex`.
+/// `simulators`, `listener`, `handoff`, `chatsWatcher`, `discovery` and `pidLock` are written once
+/// in `start()`, before any source, queue or listener that reads them starts, and only read
+/// afterwards; `stop()` runs after `start()`. `logDescriptor` is used only on `writer`.
+///
+/// Lives for the whole process: PhoneLink, HubListener, SimulatorWatcher and Handoff hold it
+/// unowned.
 final class Hub: @unchecked Sendable {
     let paths: HubPaths
     let devicectl: Devicectl
     /// Apps given on the command line, watched whether or not a chat is open for them.
     private let fixedApps: [String]
-    private var currentApps: [String] = []
-    private var chatsWatcher: DispatchSourceFileSystemObject?
     private let startedAt = Date()
-    private let lock = NSLock()
-    private var state: [String: SourceState] = [:]
-    private var tokens: [String: String] = [:]
-    private var links: [String: PhoneLink] = [:]
-    private var phoneStates: [String: HubStatus.Phone] = [:]
-    private var hosts: [String] = []
+    private let state: Mutex<State>
+    private var chatsWatcher: DispatchSourceFileSystemObject?
     private var simulators: SimulatorWatcher?
     private var listener: HubListener?
     private var handoff: Handoff?
-    private let queue = DispatchQueue(label: "hub")
     private var discovery: DispatchSourceTimer?
     /// The descriptor that holds the lock on `hub.pid` while the hub runs.
     private var pidLock: Int32 = -1
+    /// hub.log, open for appending; only touched on `writer`.
+    private var logDescriptor: Int32 = -1
+    private let queue = DispatchQueue(label: "Redline.hub", qos: .utility)
+    /// Writes the hub's files, in order, outside the lock: state.json, tokens.json, status.json
+    /// and the log.
+    private let writer = DispatchQueue(label: "Redline.hub.writer", qos: .utility)
     private let network = NWPathMonitor()
+
+    private struct State {
+        var currentApps: [String] = []
+        var sources: [String: SourceState] = [:]
+        var tokens: [String: String] = [:]
+        var links: [String: PhoneLink] = [:]
+        var phoneStates: [String: HubStatus.Phone] = [:]
+        var hosts: [String] = []
+        /// Files with a write already queued on `writer`, which takes the newest state when it runs.
+        var queuedWrites: Set<SavedFile> = []
+    }
+
+    private enum SavedFile { case state, tokens, status }
 
     /// A report finished up to this long before the hub first looked at its app still counts
     /// as new: the phone's clock and the Mac's can disagree by a little.
@@ -88,20 +108,24 @@ final class Hub: @unchecked Sendable {
     /// How often the hub looks for newly paired phones and newly installed apps. Changes to the
     /// Mac's network are noticed as they happen.
     static let discoveryInterval: TimeInterval = 1800
+    /// hub.log is moved to hub.log.1 once it grows past this.
+    static let largestLog = 5_000_000
 
     /// The apps the hub takes reports from: those of the open chats, and any given on the command line.
-    var apps: [String] { lock.withLock { currentApps } }
+    var apps: [String] { state.withLock { $0.currentApps } }
 
     init(paths: HubPaths, devicectl: Devicectl, apps: [String]) {
         self.paths = paths
         self.devicectl = devicectl
         fixedApps = apps
+        var initial = State()
         if let data = try? Data(contentsOf: paths.state), let saved = try? Self.decoder.decode([String: SourceState].self, from: data) {
-            state = saved
+            initial.sources = saved
         }
         if let data = try? Data(contentsOf: paths.tokens), let saved = try? Self.decoder.decode([String: String].self, from: data) {
-            tokens = saved
+            initial.tokens = saved
         }
+        state = Mutex(initial)
     }
 
     /// Starts taking reports. False when another hub holds the lock on `hub.pid`, or it can't
@@ -115,17 +139,20 @@ final class Hub: @unchecked Sendable {
             return false
         }
         self.pidLock = pidLock
+        // Everything a source or queue reads is in place before any of them starts.
+        handoff = Handoff(hub: self)
+        simulators = SimulatorWatcher(hub: self)
+        listener = HubListener(hub: self)
+        let hosts = Self.addresses()
+        state.withLock { $0.hosts = hosts }
+
         updateApps(starting: true)
         log(apps.isEmpty ? "Hub started; no chats open yet" : "Hub started for \(apps.joined(separator: ", "))")
         watchChats()
-        handoff = Handoff(hub: self)
         ChatDirectory.warm(paths: paths)
         handoff?.handOverRecent()
-        let simulators = SimulatorWatcher(hub: self)
-        self.simulators = simulators
-        let listener = HubListener(hub: self)
-        listener.start()
-        self.listener = listener
+        simulators?.rescan()
+        listener?.start()
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: Self.discoveryInterval, leeway: .seconds(60))
         timer.setEventHandler { [weak self] in self?.discover(rediscover: true) }
@@ -133,8 +160,8 @@ final class Hub: @unchecked Sendable {
         discovery = timer
         // A new Wi-Fi network or address means apps need the new address.
         network.pathUpdateHandler = { [weak self] _ in
-            guard let self, Self.addresses() != self.lock.withLock({ self.hosts }) else { return }
-            self.discover(rediscover: false)
+            guard let self, Self.addresses() != state.withLock({ $0.hosts }) else { return }
+            discover(rediscover: false)
         }
         network.start(queue: queue)
         return true
@@ -147,17 +174,24 @@ final class Hub: @unchecked Sendable {
         listener?.stop()
         simulators?.stop()
         log("Hub stopped")
+        // Queued writes land before the process exits.
+        flushWrites()
         // The file goes first, then the lock, so no other hub ever reads this pid as running.
         try? FileManager.default.removeItem(at: paths.pid)
         if pidLock >= 0 { close(pidLock) }
         pidLock = -1
     }
 
+    /// Waits until every file write queued so far has landed.
+    func flushWrites() {
+        writer.sync {}
+    }
+
     /// Gives every paired phone's watched apps the hub's current address. `rediscover` also
     /// looks again for newly paired phones' apps and simulator apps installed since the last look.
     private func discover(rediscover: Bool) {
         let hosts = Self.addresses()
-        lock.withLock { self.hosts = hosts }
+        state.withLock { $0.hosts = hosts }
         if rediscover { simulators?.rescan() }
         guard let paired = devicectl.pairedPhones() else {
             log("Couldn't list paired phones")
@@ -184,58 +218,68 @@ final class Hub: @unchecked Sendable {
 
     func updateApps(starting: Bool) {
         let apps = Array(Set(fixedApps + Chats.live(paths).flatMap(\.bundleIDs))).sorted()
-        let changed = lock.withLock {
-            defer { currentApps = apps }
-            return currentApps != apps
+        let changed = state.withLock { state in
+            defer { state.currentApps = apps }
+            return state.currentApps != apps
         }
         guard changed, !starting else { return }
         log(apps.isEmpty ? "No chats open" : "Taking reports from \(apps.joined(separator: ", "))")
-        // New apps' simulator folders to watch and phones to give the address to.
-        simulators?.rescan()
+        // New apps' simulator folders to watch and phones to give the address to; discovery
+        // rescans the simulators too.
         queue.async { self.discover(rediscover: true) }
     }
 
     private func link(for phone: Devicectl.Phone) -> PhoneLink {
-        lock.withLock {
-            if let link = links[phone.udid] { return link }
+        state.withLock { state in
+            if let link = state.links[phone.udid] { return link }
             let link = PhoneLink(phone: phone, hub: self)
-            links[phone.udid] = link
+            state.links[phone.udid] = link
             return link
         }
     }
 
     /// Some phone on the network woke up.
     func phoneWoke() {
-        lock.withLock { links.values }.forEach { $0.phoneWoke() }
+        for link in state.withLock({ Array($0.links.values) }) {
+            link.phoneWoke()
+        }
     }
 
     // MARK: - Offers from apps
 
+    /// The key of one app on one device, in state.json and tokens.json.
+    private static func key(device: String, bundleID: String) -> String {
+        "\(device)|\(bundleID)"
+    }
+
     /// The token for an app on a phone. Made once and kept, so the address the app has stays
     /// good when the hub restarts.
     func token(device: String, bundleID: String) -> String {
-        lock.withLock {
-            let key = "\(device)|\(bundleID)"
-            if let token = tokens[key] { return token }
-            var bytes = [UInt8](repeating: 0, count: 32)
-            _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-            let token = bytes.map { String(format: "%02x", $0) }.joined()
-            tokens[key] = token
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try? encoder.encode(tokens).write(to: paths.tokens, options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: paths.tokens.path)
+        state.withLock { state in
+            let key = Self.key(device: device, bundleID: bundleID)
+            if let token = state.tokens[key] { return token }
+            // The system's generator is cryptographically secure and can't fail.
+            var generator = SystemRandomNumberGenerator()
+            let token = (0..<32).map { _ in String(format: "%02x", UInt8.random(in: .min ... .max, using: &generator)) }.joined()
+            state.tokens[key] = token
+            queueWrite(.tokens, in: &state)
             return token
         }
+    }
+
+    /// True when `token` is the one this hub gave the app on the device.
+    private func hasValidToken(_ token: String, device: String, bundleID: String) -> Bool {
+        let expected = state.withLock { $0.tokens[Self.key(device: device, bundleID: bundleID)] }
+        return expected.map { Self.same($0, token) } ?? false
     }
 
     /// The hub's answer to an app's offer: the reports to send now, and the ones the app can
     /// stop offering. Only an app that was given this hub's address, and so is on a phone paired
     /// with this Mac, can deliver.
     func answer(_ offer: HubMessage.Offer) -> HubMessage.Answer {
-        let expected = lock.withLock { tokens["\(offer.device)|\(offer.bundleID)"] }
-        guard let expected, Self.same(expected, offer.token) else {
-            log("Turned down \(offer.bundleID) from \(phoneName(offer.device)): \(expected == nil ? "this hub never gave it an address" : "its token doesn't match")")
+        guard hasValidToken(offer.token, device: offer.device, bundleID: offer.bundleID) else {
+            let known = state.withLock { $0.tokens[Self.key(device: offer.device, bundleID: offer.bundleID)] != nil }
+            log("Turned down \(offer.bundleID) from \(phoneName(offer.device)): \(known ? "its token doesn't match" : "this hub never gave it an address")")
             return HubMessage.Answer(want: [], delivered: [], refused: "The app needs this Mac's address again; it gets it the next time Xcode can reach the phone.")
         }
         // Report IDs become folder names in the inbox.
@@ -251,8 +295,7 @@ final class Hub: @unchecked Sendable {
 
     /// The chats a report from this app can go to, for the phone to show before the user sends.
     func chats(_ request: HubMessage.ChatsRequest) -> HubMessage.ChatList {
-        let expected = lock.withLock { tokens["\(request.device)|\(request.bundleID)"] }
-        guard let expected, Self.same(expected, request.token) else {
+        guard hasValidToken(request.token, device: request.device, bundleID: request.bundleID) else {
             log("Turned down \(request.bundleID)'s question about chats from \(phoneName(request.device)): its token doesn't match")
             return HubMessage.ChatList(agents: [], chats: [], refused: "The app needs this Mac's address again.")
         }
@@ -286,7 +329,7 @@ final class Hub: @unchecked Sendable {
     static let largestReport = 50_000_000
 
     private func phoneName(_ udid: String) -> String {
-        lock.withLock { links[udid]?.phone.name } ?? "A phone"
+        state.withLock { $0.links[udid]?.phone.name } ?? "A phone"
     }
 
     /// File and report names: letters, digits, dots, dashes and underscores, not starting with a dot.
@@ -332,19 +375,21 @@ final class Hub: @unchecked Sendable {
     /// The reports from one app on one device still to copy. The first look at a source only
     /// takes reports finished from about then on, so old ones aren't delivered as new.
     func toCopy(device: String, bundleID: String, finished: [FinishedReport]) -> [String] {
-        lock.withLock {
-            let key = "\(device)|\(bundleID)"
-            if state[key] == nil {
-                state[key] = SourceState(since: startedAt.addingTimeInterval(-Self.firstLookMargin))
-                saveState()
+        state.withLock { state in
+            let key = Self.key(device: device, bundleID: bundleID)
+            let isNew = state.sources[key] == nil
+            let source = state.sources[key, default: SourceState(since: startedAt.addingTimeInterval(-Self.firstLookMargin))]
+            if isNew {
+                state.sources[key] = source
+                queueWrite(.state, in: &state)
             }
-            return state[key]!.toCopy(from: finished)
+            return source.toCopy(from: finished)
         }
     }
 
     /// The offered reports the app can stop offering.
     func settled(device: String, bundleID: String, finished: [FinishedReport]) -> [String] {
-        lock.withLock { state["\(device)|\(bundleID)"]?.settled(finished) ?? [] }
+        state.withLock { $0.sources[Self.key(device: device, bundleID: bundleID)]?.settled(finished) ?? [] }
     }
 
     /// Files a report in the inbox. `copy` fills a folder that doesn't exist yet; the report
@@ -375,9 +420,9 @@ final class Hub: @unchecked Sendable {
             log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
             return false
         }
-        lock.withLock {
-            state["\(source.device)|\(source.bundleID)", default: SourceState(since: startedAt)].delivered.append(source.reportID)
-            saveState()
+        state.withLock { state in
+            state.sources[Self.key(device: source.device, bundleID: source.bundleID), default: SourceState(since: startedAt)].delivered.append(source.reportID)
+            queueWrite(.state, in: &state)
         }
         log(String(format: "Received %@ from %@ (%@) in %.2f s", source.reportID, source.deviceName, source.bundleID, Date().timeIntervalSince(started)))
         handoff?.reportFiled(destination, source: source)
@@ -387,17 +432,20 @@ final class Hub: @unchecked Sendable {
     // MARK: - Status
 
     func phoneChanged(_ phone: Devicectl.Phone, state description: String) {
-        lock.withLock { phoneStates[phone.udid] = HubStatus.Phone(name: phone.name, udid: phone.udid, state: description,
-                                                                             model: phone.model.isEmpty ? nil : phone.model) }
-        writeStatus()
+        let phone = HubStatus.Phone(name: phone.name, udid: phone.udid, state: description, model: phone.model.isEmpty ? nil : phone.model)
+        state.withLock { state in
+            // A pass that changes nothing writes nothing.
+            guard state.phoneStates.updateValue(phone, forKey: phone.udid) != phone else { return }
+            queueWrite(.status, in: &state)
+        }
     }
 
-    /// What the hub is doing now, as `status` and the menu bar panel show it.
+    /// What the hub is doing now, as `status` and the menu bar panel show it. Memory only.
     func statusSnapshot() -> HubStatus {
         let containers = simulators?.containerCount ?? 0
-        return lock.withLock {
-            HubStatus(pid: getpid(), startedAt: startedAt, apps: currentApps, hosts: hosts, port: HubListener.port,
-                      phones: phoneStates.values.sorted { $0.name < $1.name }, simulatorContainers: containers)
+        return state.withLock { state in
+            HubStatus(pid: getpid(), startedAt: startedAt, apps: state.currentApps, hosts: state.hosts, port: HubListener.port,
+                      phones: state.phoneStates.values.sorted { $0.name < $1.name }, simulatorContainers: containers)
         }
     }
 
@@ -406,33 +454,69 @@ final class Hub: @unchecked Sendable {
         simulators?.simulatorIDs ?? []
     }
 
+    /// Saves the status for `redline status` and a panel in another process.
     func writeStatus() {
-        let status = statusSnapshot()
+        state.withLock { queueWrite(.status, in: &$0) }
+    }
+
+    // MARK: - Persistence
+
+    /// Queues a write of `file` while the lock is held, so writes land in the order the state
+    /// changed. At most one write per file waits; it saves the newest state when it runs.
+    private func queueWrite(_ file: SavedFile, in state: inout State) {
+        guard state.queuedWrites.insert(file).inserted else { return }
+        writer.async { self.save(file) }
+    }
+
+    /// Runs on `writer`: takes the newest state under the lock, then encodes and writes it outside.
+    private func save(_ file: SavedFile) {
+        dispatchPrecondition(condition: .onQueue(writer))
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? encoder.encode(status).write(to: paths.status, options: .atomic)
+        switch file {
+        case .state:
+            let sources = state.withLock { state in
+                state.queuedWrites.remove(.state)
+                return state.sources
+            }
+            try? encoder.encode(sources).write(to: paths.state, options: .atomic)
+        case .tokens:
+            let tokens = state.withLock { state in
+                state.queuedWrites.remove(.tokens)
+                return state.tokens
+            }
+            try? encoder.encode(tokens).write(to: paths.tokens, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: paths.tokens.path)
+        case .status:
+            state.withLock { _ = $0.queuedWrites.remove(.status) }
+            try? encoder.encode(statusSnapshot()).write(to: paths.status, options: .atomic)
+        }
     }
 
-    // MARK: - Helpers
-
-    /// Called with the lock held.
-    private func saveState() {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? encoder.encode(state).write(to: paths.state, options: .atomic)
-    }
+    // MARK: - Logging
 
     func log(_ message: String) {
-        let line = "\(Date().formatted(.iso8601)) \(message)\n"
-        FileHandle.standardOutput.write(Data(line.utf8))
-        if let handle = try? FileHandle(forWritingTo: paths.log) {
-            handle.seekToEndOfFile()
-            handle.write(Data(line.utf8))
-            try? handle.close()
-        } else {
-            try? Data(line.utf8).write(to: paths.log)
+        let line = Data("\(Date().formatted(.iso8601)) \(message)\n".utf8)
+        try? FileHandle.standardOutput.write(contentsOf: line)
+        writer.async { self.appendToLog(line) }
+    }
+
+    /// Runs on `writer`: appends one line to hub.log with a single write, moving the log to
+    /// hub.log.1 once it passes `largestLog`.
+    private func appendToLog(_ line: Data) {
+        dispatchPrecondition(condition: .onQueue(writer))
+        if logDescriptor < 0 {
+            logDescriptor = open(paths.log.path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o644)
+            guard logDescriptor >= 0 else { return }
+        }
+        _ = line.withUnsafeBytes { write(logDescriptor, $0.baseAddress, $0.count) }
+        if lseek(logDescriptor, 0, SEEK_END) > Self.largestLog {
+            close(logDescriptor)
+            logDescriptor = -1
+            let old = paths.hub.appending(path: "hub.log.1")
+            try? FileManager.default.removeItem(at: old)
+            try? FileManager.default.moveItem(at: paths.log, to: old)
         }
     }
 

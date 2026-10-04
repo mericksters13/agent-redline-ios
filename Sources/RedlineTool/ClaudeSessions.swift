@@ -1,6 +1,7 @@
 #if os(macOS)
 import Darwin
 import Foundation
+import Synchronization
 
 /// Claude Code's open chats, from the file each keeps under `~/.claude/sessions`. Every chat
 /// listens on a socket for messages from the user's other chats, and starts a turn with one
@@ -78,18 +79,23 @@ enum ClaudeSessions {
 enum ClaudeCLI {
     /// The first version with `--desktop`.
     static let desktopVersion = [2, 1, 285]
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var checked: (ready: Bool, at: Date)?
+    /// The last check, so `ready()` runs the command at most every minute.
+    private static let lastCheck = Mutex<ReadinessCheck?>(nil)
+
+    private struct ReadinessCheck {
+        var isReady: Bool
+        var checkedAt: Date
+    }
 
     /// Signed in with `claude auth login`, and, with the desktop app installed, new enough to open
     /// a chat in it. Checked at most every minute.
     static func ready() -> Bool {
-        if let checked = lock.withLock({ checked }), Date().timeIntervalSince(checked.at) < 60 { return checked.ready }
+        if let check = lastCheck.withLock({ $0 }), Date().timeIntervalSince(check.checkedAt) < 60 { return check.isReady }
         guard let claude = AgentCommand.locate(.claude) else { return false }
         let signedIn = output(claude, ["auth", "status"]) != nil
         let version = output(claude, ["--version"]).flatMap { version(in: $0) } ?? []
         let ready = signedIn && (!AgentCommand.hasClaudeApp || !version.lexicographicallyPrecedes(desktopVersion))
-        lock.withLock { checked = (ready, Date()) }
+        lastCheck.withLock { $0 = ReadinessCheck(isReady: ready, checkedAt: Date()) }
         return ready
     }
 
@@ -114,7 +120,7 @@ enum ClaudeCLI {
                 return false
             }
         }
-        lock.withLock { checked = nil }
+        lastCheck.withLock { $0 = nil }
         return ready()
     }
 

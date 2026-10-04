@@ -194,7 +194,9 @@ default:
     print(usage, terminator: "")
 }
 
-/// Runs `cleanup` and exits on Control-C or a termination request.
+/// Runs `cleanup` and exits on Control-C or a termination request. Called from the top-level
+/// code above, on the main actor.
+@MainActor
 func stopOnSignals(_ cleanup: @escaping @Sendable () -> Void) {
     for number in [SIGINT, SIGTERM, SIGHUP] {
         signal(number, SIG_IGN)
@@ -210,8 +212,9 @@ func stopOnSignals(_ cleanup: @escaping @Sendable () -> Void) {
 
 /// Kept alive for as long as the process runs. A static, not a top-level variable: those
 /// start existing only when execution reaches their line, after the commands above use this.
+@MainActor
 enum SignalSources {
-    nonisolated(unsafe) static var all: [DispatchSourceSignal] = []
+    static var all: [DispatchSourceSignal] = []
 }
 
 /// Prints the reports waiting for the session's apps and takes them. Pictures are named by

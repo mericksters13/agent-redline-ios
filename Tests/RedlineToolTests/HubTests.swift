@@ -59,7 +59,10 @@ struct HubTests {
     }
 
     @Test func aTokenOutlivesTheHub() throws {
-        let token = try hub().token(device: phone, bundleID: app)
+        let first = try hub()
+        let token = first.token(device: phone, bundleID: app)
+        // Files are written on the hub's writer queue.
+        first.flushWrites()
         #expect(token.count == 64)
         #expect(try hub().token(device: phone, bundleID: app) == token)
         let permissions = try FileManager.default.attributesOfItem(atPath: paths.tokens.path)[.posixPermissions] as? Int

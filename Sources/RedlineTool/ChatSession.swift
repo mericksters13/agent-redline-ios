@@ -1,16 +1,16 @@
 #if os(macOS)
 import Foundation
+import Synchronization
 
 /// One chat's side of the hub: its registration, which tells the hub which apps to take
 /// reports from, and taking the reports that arrive for them.
-final class ChatSession: @unchecked Sendable {
+final class ChatSession: Sendable {
     let paths: HubPaths
     /// Off in tests, which have no hub to start.
     private let startsHub: Bool
-    private let lock = NSLock()
-    private var record: ChatRecord
+    private let record: Mutex<ChatRecord>
 
-    var chat: ChatRecord { lock.withLock { record } }
+    var chat: ChatRecord { record.withLock { $0 } }
 
     /// `id` names the chat, such as an agent's session ID, so each of its hooks finds the same
     /// record. `pid` is the process the chat lives in, when that isn't this one.
@@ -18,20 +18,20 @@ final class ChatSession: @unchecked Sendable {
         self.paths = paths
         self.startsHub = startsHub
         let apps = Array(Set(ProjectApps.bundleIDs(in: folder) + extraApps)).sorted()
-        record = ChatRecord(id: id ?? UUID().uuidString, agent: agent, folder: folder.path, bundleIDs: apps,
-                            pid: pid ?? getpid(), registeredAt: Date(), lastActiveAt: Date())
+        record = Mutex(ChatRecord(id: id ?? UUID().uuidString, agent: agent, folder: folder.path, bundleIDs: apps,
+                                  pid: pid ?? getpid(), registeredAt: Date(), lastActiveAt: Date()))
     }
 
     /// Registers this process as the one waiting for the chat's reports.
     func registerWaiting() {
-        lock.withLock { record.waiter = getpid() }
+        record.withLock { $0.waiter = getpid() }
         register()
     }
 
     /// Registers the chat and starts the hub if it isn't running. A chat whose project builds
     /// no iOS app stays out of it: the server is set up for every project, and most aren't apps.
     func register(agent: String? = nil) {
-        lock.withLock { if let agent { record.agent = agent } }
+        record.withLock { if let agent { $0.agent = agent } }
         guard !chat.bundleIDs.isEmpty else { return }
         save()
         if startsHub { HubProcess.startIfNeeded(paths) }
@@ -43,7 +43,7 @@ final class ChatSession: @unchecked Sendable {
 
     /// Notes that the chat was used just now, for picking the most recent chat.
     func touch() {
-        lock.withLock { record.lastActiveAt = Date() }
+        record.withLock { $0.lastActiveAt = Date() }
         guard !chat.bundleIDs.isEmpty else { return }
         save()
     }
@@ -104,15 +104,14 @@ final class ChatSession: @unchecked Sendable {
     }
 
     /// Something to wait on that can be stopped from another thread.
-    final class Waiter: @unchecked Sendable {
+    final class Waiter: Sendable {
         fileprivate let signal = DispatchSemaphore(value: 0)
-        private let lock = NSLock()
-        private var stopped = false
+        private let stopped = Mutex(false)
 
-        var isCancelled: Bool { lock.withLock { stopped } }
+        var isCancelled: Bool { stopped.withLock { $0 } }
 
         func cancel() {
-            lock.withLock { stopped = true }
+            stopped.withLock { $0 = true }
             signal.signal()
         }
     }

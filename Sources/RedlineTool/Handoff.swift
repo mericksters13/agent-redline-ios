@@ -59,9 +59,9 @@ enum Routing {
 /// starts a turn even when the chat is idle. A Codex chat gets it through the Codex app with
 /// its pictures attached. A new chat starts in the worktree and looks into the report without
 /// changing code.
-final class Handoff: @unchecked Sendable {
+final class Handoff: Sendable {
     private unowned let hub: Hub
-    private let queue = DispatchQueue(label: "handoff")
+    private let queue = DispatchQueue(label: "Redline.hub.handoff", qos: .userInitiated)
 
     init(hub: Hub) {
         self.hub = hub

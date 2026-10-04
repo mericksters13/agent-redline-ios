@@ -4,6 +4,9 @@ import Foundation
 /// One paired phone. Leaves the hub's address and a token in each watched app's folder on it,
 /// once and again only when the address changes. The apps send their reports themselves, so
 /// nothing runs while the phone is quiet.
+///
+/// Thread safety: `address`, `given`, `missing`, `retryDelay`, `retryAt` and `lastWakeTry` are
+/// read and written only on `queue`.
 final class PhoneLink: @unchecked Sendable {
     let phone: Devicectl.Phone
     private unowned let hub: Hub
@@ -25,11 +28,13 @@ final class PhoneLink: @unchecked Sendable {
     /// that comes back into Wi-Fi range already awake.
     static let longestRetry: TimeInterval = 300
     static let wakeSpacing: TimeInterval = 10
+    /// Every phone's blocking `devicectl` calls run on queues that target this one.
+    private static let devices = DispatchQueue(label: "Redline.hub.devices", qos: .utility, attributes: .concurrent)
 
     init(phone: Devicectl.Phone, hub: Hub) {
         self.phone = phone
         self.hub = hub
-        queue = DispatchQueue(label: "phone.\(phone.udid)")
+        queue = DispatchQueue(label: "Redline.hub.phone", target: Self.devices)
     }
 
     /// Gives the address to every watched app that doesn't have it yet. `rediscover` looks
@@ -60,10 +65,13 @@ final class PhoneLink: @unchecked Sendable {
     }
 
     private func giveAddress() {
+        dispatchPrecondition(condition: .onQueue(queue))
         guard let address else { return }
         retryAt = nil
         var unreachable = false
-        let addresses = Dictionary(uniqueKeysWithValues: hub.apps.map { bundleID in
+        // Read once: an app added during this pass waits for the next one.
+        let apps = hub.apps
+        let addresses = Dictionary(uniqueKeysWithValues: apps.map { bundleID in
             var app = address
             app.token = hub.token(device: phone.udid, bundleID: bundleID)
             return (bundleID, app)
@@ -81,15 +89,15 @@ final class PhoneLink: @unchecked Sendable {
                 unreachable = true
             }
         }
-        let ready = hub.apps.filter { given[$0] == addresses[$0] }
+        let ready = apps.filter { given[$0] == addresses[$0] }
         if unreachable {
             retryAt = Date().addingTimeInterval(retryDelay)
             hub.phoneChanged(phone, state: "Not reachable, trying again in \(Int(retryDelay)) s or when a phone wakes")
             let delay = retryDelay
             retryDelay = min(retryDelay * 2, Self.longestRetry)
             queue.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self, let retryAt = self.retryAt, Date() >= retryAt.addingTimeInterval(-1) else { return }
-                self.giveAddress()
+                guard let self, let retryAt, Date() >= retryAt.addingTimeInterval(-1) else { return }
+                giveAddress()
             }
         } else if ready.isEmpty {
             hub.phoneChanged(phone, state: "None of the watched apps installed")

@@ -1,6 +1,7 @@
 #if os(macOS)
 import Foundation
 import SQLite3
+import Synchronization
 
 /// The chats a report can go to: the open chats, of the agents on this Mac, that work on the
 /// report's app. The phone shows them so the user picks where a report goes; the chat working
@@ -53,15 +54,19 @@ enum ChatDirectory {
 }
 
 /// The bundle IDs each folder's projects build, read at most every half hour per folder.
-final class FolderApps: @unchecked Sendable {
-    private let lock = NSLock()
-    private var known: [String: (ids: [String], at: Date)] = [:]
+final class FolderApps: Sendable {
+    private struct CachedApps {
+        var ids: [String]
+        var readAt: Date
+    }
+
+    private let known = Mutex<[String: CachedApps]>([:])
     static let keepFor: TimeInterval = 1800
 
     func bundleIDs(in folder: String) -> [String] {
-        if let entry = lock.withLock({ known[folder] }), Date().timeIntervalSince(entry.at) < Self.keepFor { return entry.ids }
+        if let entry = known.withLock({ $0[folder] }), Date().timeIntervalSince(entry.readAt) < Self.keepFor { return entry.ids }
         let ids = ProjectApps.bundleIDs(in: URL(fileURLWithPath: folder))
-        lock.withLock { known[folder] = (ids, Date()) }
+        known.withLock { $0[folder] = CachedApps(ids: ids, readAt: Date()) }
         return ids
     }
 }

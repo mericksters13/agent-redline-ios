@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import Synchronization
 
 /// The MCP server one agent chat runs: JSON-RPC over standard input and output, one message
 /// per line. It registers the chat with the hub and hands over the reports for its project.

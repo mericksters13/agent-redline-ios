@@ -1,14 +1,19 @@
 #if os(macOS)
 import Foundation
 import Network
+import Synchronization
 
 /// Where apps send their reports: an offer, the hub's answer, the reports it asked for, and its
 /// reply, one line of JSON each, over the local network.
+///
+/// Thread safety: `listener` and `browser` are written once in `start()` and read only in `stop()`.
 final class HubListener: @unchecked Sendable {
     static let port: UInt16 = 47361
+    /// The listener's queue, and the one every connection's queue targets.
+    static let network = DispatchQueue(label: "Redline.hub.network", qos: .utility)
 
     private unowned let hub: Hub
-    private let queue = DispatchQueue(label: "listener")
+    private let queue = HubListener.network
     private var listener: NWListener?
     private var browser: NWBrowser?
 
@@ -87,9 +92,11 @@ final class HubListener: @unchecked Sendable {
     }
 
     /// One app's connection, read and written a line at a time.
+    ///
+    /// Thread safety: `buffer` is read and written only on `queue`.
     private final class Lines: @unchecked Sendable {
         private let connection: NWConnection
-        private let queue = DispatchQueue(label: "listener.connection")
+        private let queue = DispatchQueue(label: "Redline.hub.connection", target: HubListener.network)
         private var buffer = Data()
 
         /// The longest line taken: one report, its pictures encoded in the line.
@@ -155,6 +162,7 @@ final class HubListener: @unchecked Sendable {
         }
 
         private func takeLine() -> Data? {
+            dispatchPrecondition(condition: .onQueue(queue))
             guard let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) else { return nil }
             let line = Data(buffer[..<newline])
             buffer.removeSubrange(...newline)
@@ -163,18 +171,17 @@ final class HubListener: @unchecked Sendable {
     }
 
     /// Resumes a continuation once, whichever of several callbacks comes first.
-    private final class Once<T: Sendable>: @unchecked Sendable {
-        private let lock = NSLock()
-        private var continuation: CheckedContinuation<T, Never>?
+    private final class Once<T: Sendable>: Sendable {
+        private let continuation = Mutex<CheckedContinuation<T, Never>?>(nil)
 
         func set(_ continuation: CheckedContinuation<T, Never>) {
-            lock.withLock { self.continuation = continuation }
+            self.continuation.withLock { $0 = continuation }
         }
 
         func resume(_ value: T) {
-            let continuation = lock.withLock {
-                defer { self.continuation = nil }
-                return self.continuation
+            let continuation = self.continuation.withLock { stored in
+                defer { stored = nil }
+                return stored
             }
             continuation?.resume(returning: value)
         }

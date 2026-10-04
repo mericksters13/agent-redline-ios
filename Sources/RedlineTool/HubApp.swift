@@ -56,9 +56,11 @@ final class HubAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// Hands the running hub to the app, which SwiftUI creates on its own.
+/// Hands the running hub to the app, which SwiftUI creates on its own. Set by `redline app`
+/// before the app starts, on the main actor.
+@MainActor
 enum HubAppContext {
-    nonisolated(unsafe) static var hub: Hub?
+    static var hub: Hub!
 }
 
 /// What the panel shows, read from the hub and its inbox.
@@ -98,12 +100,15 @@ final class HubWindowModel {
     private(set) var devices: [DeviceRow] = []
     private(set) var reports: [ReportRow] = []
     private(set) var address = ""
-    private let hub: Hub?
+    private let hub: Hub
     private var timer: Timer?
 
-    init(hub: Hub?) {
+    init(hub: Hub) {
         self.hub = hub
     }
+
+    /// The hub's inbox, for the panel's Open inbox button.
+    var inbox: URL { hub.paths.inbox }
 
     /// Refreshes now and every two seconds while the panel is open.
     func panelOpened() {
@@ -120,15 +125,15 @@ final class HubWindowModel {
     }
 
     func refresh() {
-        let paths = hub?.paths ?? HubPaths.standard
-        let status = hub?.statusSnapshot() ?? Self.savedStatus(paths)
-        let watchedSimulators = hub?.watchedSimulators() ?? []
+        let paths = hub.paths
+        let status = hub.statusSnapshot()
+        let watchedSimulators = hub.watchedSimulators()
         Task.detached(priority: .userInitiated) {
             let reports = HubWindowModel.readReports(paths: paths)
             let booted = HubWindowModel.bootedSimulators().filter { watchedSimulators.contains($0.udid) }
             await MainActor.run {
                 let last = Dictionary(reports.map { ($0.deviceID, $0.row.receivedAt) }, uniquingKeysWith: max)
-                let phones = (status?.phones ?? []).map {
+                let phones = status.phones.map {
                     DeviceRow(id: $0.udid, name: $0.name, kind: $0.model ?? "iPhone", state: HubWindowModel.phoneState($0.state),
                               lastReport: last[$0.udid], active: $0.state.hasPrefix("Ready"))
                 }
@@ -136,7 +141,7 @@ final class HubWindowModel {
                 // Ready phones and running simulators first, then paired phones that can't take reports now.
                 self.devices = phones.filter(\.active) + simulators + phones.filter { !$0.active }
                 self.reports = reports.map(\.row)
-                if let status { self.address = "\(status.hosts.first ?? "") · port \(status.port)" }
+                self.address = "\(status.hosts.first ?? "") · port \(status.port)"
             }
         }
     }
@@ -147,11 +152,6 @@ final class HubWindowModel {
         if state.hasPrefix("Not reachable") { return "Not reachable" }
         if state.hasPrefix("None of the watched apps") { return "No watched app installed" }
         return state
-    }
-
-    /// The status the hub last saved, when this process isn't the hub.
-    nonisolated static func savedStatus(_ paths: HubPaths) -> HubStatus? {
-        (try? Data(contentsOf: paths.status)).flatMap { try? Chats.decoder.decode(HubStatus.self, from: $0) }
     }
 
     /// The newest reports in the inbox, with where each went.
@@ -341,7 +341,7 @@ struct HubPanel: View {
 
     private var footer: some View {
         HStack {
-            Button("Open inbox") { NSWorkspace.shared.open(HubPaths.standard.inbox) }
+            Button("Open inbox") { NSWorkspace.shared.open(model.inbox) }
             Spacer()
             Button("Quit") { NSApplication.shared.terminate(nil) }
         }
