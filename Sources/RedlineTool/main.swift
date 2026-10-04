@@ -20,8 +20,9 @@ Usage:
   redline setup [--no-input]
       Checks that the claude command is installed, new enough and signed in, running claude update
       and claude auth login in this terminal when needed, and adds the Codex hook that hands
-      reports to a chat when nothing else can. Claude Code needs no hooks. Other hooks stay as
-      they are. With --no-input, or with no terminal, it only prints what you need to run.
+      reports to a chat when nothing else can. Claude Code needs no hooks, and Cursor's from an
+      earlier setup are removed. Other hooks stay as they are. With --no-input, or with no
+      terminal, it only prints what you need to run.
   redline remove
       Removes Redline's hooks from Codex, Claude Code and Cursor settings. Other hooks stay.
   redline hook <claude | codex | cursor> <start | prompt | stop | end>
@@ -64,7 +65,9 @@ struct ChatOptions {
 
 var arguments = Array(CommandLine.arguments.dropFirst())
 let paths = HubPaths.standard
-HubPaths.moveFromOldName(to: paths)
+// Not for setup and remove, which change only agent settings, found through HOME, and leave the
+// hub's folder alone, even when they run with another HOME.
+if !["setup", "remove"].contains(arguments.first) { HubPaths.moveFromOldName(to: paths) }
 // Opened as an app bundle, it's the menu bar app.
 if arguments.isEmpty, Bundle.main.bundleURL.pathExtension == "app" { arguments = ["app"] }
 
@@ -169,21 +172,24 @@ case "setup", "remove":
         print("Claude Code: the claude command is signed in and ready to start new chats.")
     }
     var failed = false
-    for agent in adding ? AgentSettings.setUp : Agent.allCases {
-        guard AgentSettings.isPresent(agent) else {
-            if adding { print("\(agent.name): not used on this Mac, skipped.") }
+    for agent in Agent.allCases {
+        // Setup adds hooks for the agents it sets up, and takes out an earlier setup's hooks for
+        // the others (Cursor), so none is left running a command that is later removed.
+        let adds = adding && AgentSettings.setUp.contains(agent)
+        guard AgentSettings.isPresent(agent), adds || !adding || AgentSettings.hasHooks(agent) else {
+            if adds { print("\(agent.name): not used on this Mac, skipped.") }
             continue
         }
         do {
             try AgentSettings.update(agent) {
-                adding ? AgentSettings.adding(agent, to: $0, executable: executable) : AgentSettings.removing(agent, from: $0)
+                adds ? AgentSettings.adding(agent, to: $0, executable: executable) : AgentSettings.removing(agent, from: $0)
             }
-            if adding, AgentSettings.hooks(agent, executable: executable).isEmpty {
+            if adds, AgentSettings.hooks(agent, executable: executable).isEmpty {
                 print("\(agent.name): no hooks needed")
             } else {
-                print("\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.file(agent).path)")
+                print("\(agent.name): \(adds ? "hooks added to" : "hooks removed from") \(AgentSettings.file(agent).path)")
             }
-            if adding, agent == .codex { print("  Codex runs a new hook only once you trust it: open /hooks in Codex and trust \"Report delivery\".") }
+            if adds, agent == .codex { print("  Codex runs a new hook only once you trust it: open /hooks in Codex and trust \"Report delivery\".") }
         } catch {
             print("\(agent.name): couldn't update \(AgentSettings.file(agent).path): \(error.localizedDescription)")
             failed = true

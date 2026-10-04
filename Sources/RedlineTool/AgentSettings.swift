@@ -9,9 +9,11 @@ enum AgentSettings {
     static let setUp: [Agent] = [.claude, .codex]
 
     /// The home folder from `HOME`, as the agents themselves find their settings, so a setup run
-    /// with another `HOME` changes the settings there.
+    /// with another `HOME` changes the settings there. Only an absolute path counts: an empty or
+    /// relative one would point at the current folder.
     static func home(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
-        environment["HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) } ?? FileManager.default.homeDirectoryForCurrentUser
+        environment["HOME"].flatMap { $0.hasPrefix("/") ? URL(fileURLWithPath: $0, isDirectory: true) : nil }
+            ?? FileManager.default.homeDirectoryForCurrentUser
     }
 
     static func file(_ agent: Agent) -> URL {
@@ -107,6 +109,18 @@ enum AgentSettings {
         }
         settings["hooks"] = events.isEmpty ? nil : events
         return settings
+    }
+
+    /// True when the settings hold one of this tool's hooks, under any of its names.
+    static func hasHooks(_ agent: Agent, in settings: [String: Any]) -> Bool {
+        !NSDictionary(dictionary: removing(agent, from: settings)).isEqual(to: settings)
+    }
+
+    /// True when the agent's settings file holds one of this tool's hooks.
+    static func hasHooks(_ agent: Agent) -> Bool {
+        guard let data = try? Data(contentsOf: file(agent)),
+              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return hasHooks(agent, in: settings)
     }
 
     /// Reads, changes and writes an agent's settings, keeping a copy of the file as it was the

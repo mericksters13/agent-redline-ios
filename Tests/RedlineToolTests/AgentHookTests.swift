@@ -104,11 +104,21 @@ struct AgentHookTests {
         // Remove still knows Cursor's hooks, so an earlier setup's come out.
         let old = AgentSettings.adding(.cursor, to: ["version": 1], executable: executable)
         #expect(json(AgentSettings.removing(.cursor, from: old)) == json(["version": 1]))
+        // Setup takes them out only where there are some.
+        #expect(AgentSettings.hasHooks(.cursor, in: old))
+        #expect(!AgentSettings.hasHooks(.cursor, in: ["version": 1]))
+        let renamed = AgentSettings.adding(.cursor, to: ["version": 1], executable: "/Users/me/.local/bin/agentic-debugging")
+        #expect(AgentSettings.hasHooks(.cursor, in: renamed))
+        let others = ["version": 1, "hooks": ["stop": [["command": "/usr/local/bin/other-tool"]]]] as [String: Any]
+        #expect(!AgentSettings.hasHooks(.cursor, in: others))
     }
 
     @Test func settingsFollowTheHomeFolderInHOME() {
         #expect(AgentSettings.home(["HOME": "/tmp/sandbox"]).path == "/tmp/sandbox")
         #expect(AgentSettings.home([:]) == FileManager.default.homeDirectoryForCurrentUser)
+        // An empty or relative HOME would mean the current folder, so it doesn't count.
+        #expect(AgentSettings.home(["HOME": ""]) == FileManager.default.homeDirectoryForCurrentUser)
+        #expect(AgentSettings.home(["HOME": "sandbox"]) == FileManager.default.homeDirectoryForCurrentUser)
     }
 
     @Test func setupListsWhatTheClaudeCommandStillNeeds() {
