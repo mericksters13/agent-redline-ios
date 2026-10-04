@@ -140,10 +140,12 @@ struct ReportViewer: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            pictureStrip
-            Divider().overlay(Color.white.opacity(0.12))
-            sidebar.frame(width: 340)
+        ScrollViewReader { proxy in
+            HStack(spacing: 0) {
+                pictureStrip
+                Divider().overlay(Color.white.opacity(0.12))
+                sidebar(scrolling: proxy).frame(width: 340)
+            }
         }
         .frame(minWidth: 820, idealWidth: 1040, minHeight: 600, idealHeight: 720)
         .background(Color.black)
@@ -153,27 +155,21 @@ struct ReportViewer: View {
     /// The pictures side by side, each as tall as the window allows.
     private var pictureStrip: some View {
         GeometryReader { size in
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal) {
-                    HStack(alignment: .top, spacing: 20) {
-                        ForEach(pictures, id: \.file) { picture in
-                            // Room for the padding and the caption below.
-                            pictureView(picture, height: max(size.size.height - 48 - 28, 120))
-                                .id(picture.file)
-                        }
-                    }
-                    .padding(24)
-                }
-                .overlay {
-                    if pictures.isEmpty {
-                        Text("This report has no pictures.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 20) {
+                    ForEach(pictures, id: \.file) { picture in
+                        // Room for the padding and the caption below.
+                        pictureView(picture, height: max(size.size.height - 48 - 28, 120))
+                            .id(picture.file)
                     }
                 }
-                .onChange(of: selected) { _, note in
-                    guard let note, let file = HubWindowModel.picture(showing: note, in: pictures) else { return }
-                    withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(file, anchor: .center) }
+                .padding(24)
+            }
+            .overlay {
+                if pictures.isEmpty {
+                    Text("This report has no pictures.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -203,7 +199,15 @@ struct ReportViewer: View {
         }
     }
 
-    private var sidebar: some View {
+    /// Selects a note and brings the picture that shows it into view, on every click: the
+    /// picture may have been scrolled away since the note was last selected.
+    private func show(_ note: Int, scrolling proxy: ScrollViewProxy) {
+        selected = note
+        guard let file = HubWindowModel.picture(showing: note, in: pictures) else { return }
+        withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(file, anchor: .center) }
+    }
+
+    private func sidebar(scrolling proxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(report.device) · \(report.receivedAt.formatted(date: .abbreviated, time: .shortened))")
@@ -245,7 +249,7 @@ struct ReportViewer: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(report.notes, id: \.number) { note in
-                        Button { selected = note.number } label: {
+                        Button { show(note.number, scrolling: proxy) } label: {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 NoteNumber(number: note.number)
                                 Text(note.text)
