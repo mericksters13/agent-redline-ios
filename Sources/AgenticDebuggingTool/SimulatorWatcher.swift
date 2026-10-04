@@ -161,7 +161,13 @@ final class SimulatorWatcher: @unchecked Sendable {
         if !hub.toCopy(device: path.device, bundleID: bundleID, finished: finished).isEmpty {
             let source = ReportSource(kind: .simulator, device: path.device, deviceName: name(of: path.device), bundleID: bundleID, reportID: reportID, receivedAt: Date())
             let copied = hub.receive(source) { destination in
-                (try? files.copyItem(at: folder, to: destination)) != nil
+                guard (try? files.copyItem(at: folder, to: destination)) != nil else { return false }
+                // The copy keeps links as links. Checked in the copy, which the app can't change.
+                guard Self.holdsOnlyFilesAndFolders(destination) else {
+                    hub.log("Report \(reportID) of \(bundleID) holds a link or another special file; not taken")
+                    return false
+                }
+                return true
             }
             guard copied else { return }
         }
@@ -169,6 +175,23 @@ final class SimulatorWatcher: @unchecked Sendable {
         let mark = folder.appending(path: ReportFolder.deliveredMark)
         if hub.settled(device: path.device, bundleID: bundleID, finished: finished).contains(reportID), !files.fileExists(atPath: mark.path) {
             files.createFile(atPath: mark.path, contents: nil)
+        }
+    }
+
+    /// True when `item` is a folder of plain files and folders, or a plain file: no symbolic
+    /// link, hard link, device or pipe. A simulator app writes its report folder itself, so a
+    /// link in it could lead the hub, or a chat reading the report, to any file on the Mac.
+    static func holdsOnlyFilesAndFolders(_ item: URL) -> Bool {
+        var info = stat()
+        guard lstat(item.path, &info) == 0 else { return false }
+        switch info.st_mode & S_IFMT {
+        case S_IFREG:
+            return info.st_nlink == 1
+        case S_IFDIR:
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: item.path) else { return false }
+            return names.allSatisfy { holdsOnlyFilesAndFolders(item.appending(path: $0)) }
+        default:
+            return false
         }
     }
 

@@ -75,6 +75,12 @@ struct AgentHookTests {
         let cursor = HookInput(.cursor, json: Data(#"{"conversation_id":"c1","workspace_roots":["/w"],"status":"completed"}"#.utf8))
         #expect(cursor?.chat == "c1")
         #expect(cursor?.folder == "/w")
+        // In a window with several folders, the one holding the chat's working folder comes first.
+        let roots = HookInput(.cursor, json: Data(#"{"conversation_id":"c1","workspace_roots":["/docs","/w","/w/App"],"cwd":"/w/App/Sources"}"#.utf8))
+        #expect(roots?.folders == ["/w/App", "/docs", "/w"])
+        let noCwd = HookInput(.cursor, json: Data(#"{"conversation_id":"c1","workspace_roots":["/docs","/w"]}"#.utf8))
+        #expect(noCwd?.folders == ["/docs", "/w"])
+        #expect(HookInput(.cursor, json: Data(#"{"conversation_id":"c1","cwd":"/w"}"#.utf8))?.folders == ["/w"])
         #expect(HookInput(.claude, json: Data("not json".utf8)) == nil)
     }
 

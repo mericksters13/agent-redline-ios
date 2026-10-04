@@ -160,6 +160,41 @@ struct HubTests {
         #expect(hub.apps.contains(other))
     }
 
+    @Test func chatsNotingTheirAppsAtOnceKeepEachOthers() {
+        let paths = self.paths
+        // Each stands in for a chat's own process: the file lock is per open file, not per process.
+        DispatchQueue.concurrentPerform(iterations: 40) { index in
+            let chat = ChatRecord(id: "c\(index)", agent: "test", folder: "/p\(index)", bundleIDs: ["com.example.app\(index)"],
+                                  pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
+            ProjectHistory.note(chat, paths: paths)
+        }
+        #expect(ProjectHistory.all(paths).count == 40)
+    }
+
+    @Test func aSimulatorReportWithALinkIsNotTaken() throws {
+        let files = FileManager.default
+        let folder = paths.root.appending(path: "copied", directoryHint: .isDirectory)
+        try files.createDirectory(at: folder.appending(path: "draft"), withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: folder.appending(path: "report.json"))
+        try Data("# Hi".utf8).write(to: folder.appending(path: "draft/report.md"))
+        #expect(SimulatorWatcher.holdsOnlyFilesAndFolders(folder))
+        // A link to a file elsewhere on the Mac, at any depth.
+        try files.createSymbolicLink(atPath: folder.appending(path: "draft/new-chat-output.jsonl").path, withDestinationPath: "/etc/hosts")
+        #expect(!SimulatorWatcher.holdsOnlyFilesAndFolders(folder))
+        try files.removeItem(at: folder.appending(path: "draft/new-chat-output.jsonl"))
+        // A hard link shares the file it names, so writing to it writes there.
+        let outside = paths.root.appending(path: "outside.txt")
+        try Data("secret".utf8).write(to: outside)
+        try files.linkItem(at: outside, to: folder.appending(path: "report.md"))
+        #expect(!SimulatorWatcher.holdsOnlyFilesAndFolders(folder))
+        try files.removeItem(at: folder.appending(path: "report.md"))
+        #expect(SimulatorWatcher.holdsOnlyFilesAndFolders(folder))
+        // The report folder itself a link.
+        let linked = paths.root.appending(path: "linked")
+        try files.createSymbolicLink(at: linked, withDestinationURL: folder)
+        #expect(!SimulatorWatcher.holdsOnlyFilesAndFolders(linked))
+    }
+
     @Test func aTokenOutlivesTheHub() throws {
         let token = try hub().token(device: phone, bundleID: app)
         #expect(token.count == 64)

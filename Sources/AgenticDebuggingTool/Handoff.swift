@@ -31,6 +31,12 @@ enum Routing {
         var destination: Pick?
     }
 
+    /// The user's pick, saved with the report on the phone. Nil when there's none.
+    static func pick(of report: URL) -> Listing.Pick? {
+        (try? Data(contentsOf: report.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }?
+            .destination.flatMap { Agent(rawValue: $0.agent) == nil ? nil : $0 }
+    }
+
     static func worktree(of report: URL) -> String? {
         (try? Data(contentsOf: report.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }?
             .app.sourceFile.map(Worktree.root(of:))
@@ -102,15 +108,19 @@ final class Handoff: @unchecked Sendable {
             sendToClaude(report, session: id, worktree: worktree)
         case .chat(.codex, let id):
             sendToCodex(report, thread: id)
-        case .chat(.cursor, let id) where !Chats.live(paths).contains(where: { $0.id == "cursor-\(id)" }):
-            // A Cursor chat gets reports only through its own hooks, which a closed chat never runs.
-            hub.log("The Cursor chat \(id) for report \(source.reportID) is closed; it waits in the inbox")
-            Self.notify(title: "Report from \(source.deviceName)", message: "The Cursor chat it was sent to is closed. The report waits in the inbox.")
         case .chat(.cursor, let id):
+            // A Cursor chat gets reports only through its own hooks. One that closed since the
+            // phone listed it runs them again when the user reopens it, so it's addressed too.
             InboxQueue.setAddress(Address(chat: "cursor-\(id)", agent: Agent.cursor.rawValue, folder: worktree ?? ""), of: report.folder)
             InboxQueue.signal(source.bundleID, paths: paths)
-            hub.log("Report \(source.reportID) goes to the Cursor chat \(id) when its hooks next run")
-            Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Cursor chat after its next reply or with your next message there.")
+            if Chats.live(paths).contains(where: { $0.id == "cursor-\(id)" }) {
+                hub.log("Report \(source.reportID) goes to the Cursor chat \(id) when its hooks next run")
+                Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Cursor chat after its next reply or with your next message there.")
+            } else {
+                hub.log("The Cursor chat \(id) for report \(source.reportID) is closed; it gets the report when it's reopened")
+                Self.notify(title: "Report from \(source.deviceName)",
+                            message: "The Cursor chat it was sent to is closed. It gets the report after you reopen it and send a message there.")
+            }
         case .newChat(let agent, let folder, let pick):
             // The chat this pick started for an earlier report, while its worktree exists.
             if let pick, let started = StartedChats.find(pick, paths: paths) {
@@ -231,8 +241,9 @@ final class Handoff: @unchecked Sendable {
         ].joined(separator: "\n") + "\n"
     }
 
-    /// Runs a command in a folder and waits for it.
-    static func run(_ executable: String, _ arguments: [String], in folder: String) {
+    /// Runs a command in a folder and waits for it. True when it ran and exited with status 0.
+    @discardableResult
+    static func run(_ executable: String, _ arguments: [String], in folder: String) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -240,8 +251,9 @@ final class Handoff: @unchecked Sendable {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        try? process.run()
+        guard (try? process.run()) != nil else { return false }
         process.waitUntilExit()
+        return process.terminationReason == .exit && process.terminationStatus == 0
     }
 
     private static func open(_ link: String) {
@@ -285,7 +297,13 @@ final class Handoff: @unchecked Sendable {
             }
             // Not open after a minute: the report goes in anyway, and shows when the chat is opened.
             hub.log("The Claude Code chat \(id) didn't open in time; giving it report \(source.reportID) with the claude command")
-            Self.run(claude.path, ["-p", text, "--resume", id, "--permission-mode", "plan"], in: folder)
+            guard Self.run(claude.path, ["-p", text, "--resume", id, "--permission-mode", "plan"], in: folder) else {
+                // Such as when the claude command's sign-in expired: the chat doesn't have it.
+                InboxQueue.release(report)
+                hub.log("The claude command didn't give report \(source.reportID) to the Claude Code chat \(id); it waits in the inbox")
+                Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code didn't take it. It waits in the inbox.")
+                return
+            }
             InboxQueue.handedOver(report)
             Self.notify(title: "Report from \(source.deviceName)", message: "Claude Code looked into it. Open the chat in worktree \(place) to see it.")
         }

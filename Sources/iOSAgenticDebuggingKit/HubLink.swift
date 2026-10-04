@@ -94,6 +94,11 @@ enum HubLink {
         var refused: String?
 
         func startsNewChats(_ agent: String) -> Bool { newChats?.contains(agent) ?? true }
+
+        /// Some agent has an open chat or can start a new one, so there's something to pick.
+        var offersDestination: Bool {
+            agents.contains { agent in startsNewChats(agent) || chats.contains { $0.agent == agent } }
+        }
     }
 
     /// The agent's name as the user knows it.

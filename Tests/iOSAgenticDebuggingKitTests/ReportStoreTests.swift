@@ -201,6 +201,10 @@ struct ReportStoreTests {
         let named = HubLink.decode(HubLink.ChatList.self, from: Data(#"{"agents":["claude","cursor"],"chats":[],"newChats":["claude"]}"#.utf8))
         #expect(named?.startsNewChats("claude") == true)
         #expect(named?.startsNewChats("cursor") == false)
+        // With no open chat and no agent that starts one, there's nothing to pick.
+        #expect(named?.offersDestination == true)
+        #expect(HubLink.decode(HubLink.ChatList.self, from: Data(#"{"agents":["cursor"],"chats":[],"newChats":[]}"#.utf8))?.offersDestination == false)
+        #expect(HubLink.decode(HubLink.ChatList.self, from: Data(#"{"agents":[],"chats":[]}"#.utf8))?.offersDestination == false)
         // A simulator app's address says it doesn't upload.
         try Data(#"{"device":"S","hosts":["127.0.0.1"],"port":47361,"token":"t","uploads":false}"#.utf8).write(to: store.hubAddressFile)
         #expect(store.hubAddress()?.uploads == false)

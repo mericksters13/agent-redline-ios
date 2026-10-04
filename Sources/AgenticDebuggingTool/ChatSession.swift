@@ -67,14 +67,15 @@ final class ChatSession: @unchecked Sendable {
         return wait(timeout: timeout, waiter: waiter) { !InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: self.paths).isEmpty }
     }
 
-    /// Takes the reports waiting for this chat's apps, oldest first. Always takes at least one
-    /// waiting report; takes more while their text and pictures fit in `budget` bytes.
+    /// Takes the reports waiting for this chat's apps that were sent to it or sent nowhere,
+    /// oldest first. Always takes at least one such report; takes more while their text and
+    /// pictures fit in `budget` bytes.
     func take(budget: Int) -> (items: [ReportContent.Item], taken: Int, remaining: Int) {
         let chat = self.chat
         var items: [ReportContent.Item] = []
         var used = 0
         var taken = 0
-        for report in InboxQueue.waiting(for: chat.bundleIDs, paths: paths) {
+        for report in InboxQueue.takeable(by: chat, paths: paths) {
             // Another report's text, however long, must fit too.
             if taken > 0, budget - used < ReportContent.longestText { break }
             // Another chat may have taken it a moment ago.
@@ -85,7 +86,7 @@ final class ChatSession: @unchecked Sendable {
             used += content.bytes
             taken += 1
         }
-        return (items, taken, InboxQueue.waiting(for: chat.bundleIDs, paths: paths).count)
+        return (items, taken, InboxQueue.takeable(by: chat, paths: paths).count)
     }
 
     /// How long a chat that wasn't used most recently waits for the one that was to take a
@@ -110,7 +111,7 @@ final class ChatSession: @unchecked Sendable {
             _ = waiter.signal.wait(timeout: .now() + Self.deferToRecentChat)
             if waiter.isCancelled { return false }
             // Still there: the more recent chat didn't take it.
-            if !InboxQueue.waiting(for: chat.bundleIDs, paths: paths).isEmpty { return true }
+            if !InboxQueue.takeable(by: chat, paths: paths).isEmpty { return true }
         }
     }
 
@@ -128,11 +129,11 @@ final class ChatSession: @unchecked Sendable {
         }
     }
 
-    /// Waits until a report for this chat's apps is waiting, `timeout` passes or the waiter is
+    /// Waits until a report this chat may take is waiting, `timeout` passes or the waiter is
     /// cancelled. Woken by the inbox changing, not by checking on a timer. True when one is waiting.
     func waitForReport(timeout: TimeInterval?, waiter: Waiter) -> Bool {
         let chat = self.chat
-        return wait(timeout: timeout, waiter: waiter) { !InboxQueue.waiting(for: chat.bundleIDs, paths: self.paths).isEmpty }
+        return wait(timeout: timeout, waiter: waiter) { !InboxQueue.takeable(by: chat, paths: self.paths).isEmpty }
     }
 
     private func wait(timeout: TimeInterval?, waiter: Waiter, until ready: () -> Bool) -> Bool {

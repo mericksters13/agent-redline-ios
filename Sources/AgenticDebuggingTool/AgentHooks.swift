@@ -30,24 +30,39 @@ enum HookEvent: String, Sendable {
     case end
 }
 
-/// Which chat a hook call is for, and its folder, from the agent's JSON.
+/// Which chat a hook call is for, and its folders, from the agent's JSON.
 struct HookInput: Equatable {
     var chat: String
-    var folder: String
+    /// Where the chat works, most likely first. A Cursor window can hold several folders: the
+    /// one holding the chat's working folder comes first, then the others in Cursor's order.
+    var folders: [String]
+
+    var folder: String { folders[0] }
 
     init?(_ agent: Agent, json: Data) {
         guard let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any] else { return nil }
+        let cwd = (object["cwd"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         switch agent {
         case .claude, .codex:
-            guard let id = object["session_id"] as? String, let cwd = object["cwd"] as? String else { return nil }
+            guard let id = object["session_id"] as? String, let cwd else { return nil }
             chat = id
-            folder = cwd
+            folders = [cwd]
         case .cursor:
-            guard let id = object["conversation_id"] as? String ?? object["session_id"] as? String,
-                  let root = (object["workspace_roots"] as? [String])?.first ?? object["cwd"] as? String
-            else { return nil }
+            guard let id = object["conversation_id"] as? String ?? object["session_id"] as? String else { return nil }
+            let roots = (object["workspace_roots"] as? [String] ?? []).filter { !$0.isEmpty }
+            func holds(_ root: String, _ path: String) -> Bool {
+                let root = URL(fileURLWithPath: root).standardizedFileURL.path
+                let path = URL(fileURLWithPath: path).standardizedFileURL.path
+                return path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+            }
+            var found = roots.isEmpty ? [cwd].compactMap { $0 } : roots
+            // The innermost root holding the working folder, when one does.
+            if let cwd, let first = roots.filter({ holds($0, cwd) }).max(by: { $0.count < $1.count }) {
+                found = [first] + roots.filter { $0 != first }
+            }
+            guard !found.isEmpty else { return nil }
             chat = id
-            folder = root
+            folders = found
         }
     }
 }
@@ -64,12 +79,13 @@ enum AgentHooks {
         let input = HookInput(agent, json: FileHandle.standardInput.readDataToEndOfFile())
         guard let input, ProcessInfo.processInfo.environment[startedByHub] == nil else { return answer(agent, event, nil) }
         let id = "\(agent.rawValue)-\(input.chat)"
-        let folder = URL(fileURLWithPath: input.folder)
-
-        let session = ChatSession(paths: paths, folder: folder, extraApps: [], agent: agent.rawValue, id: id,
-                                  pid: AgentProcess.find(agent, chat: input.chat))
+        let pid = AgentProcess.find(agent, chat: input.chat)
+        // The first of the chat's folders that builds an app; most chats have just one folder.
+        let session = input.folders.lazy.map { folder in
+            ChatSession(paths: paths, folder: URL(fileURLWithPath: folder), extraApps: [], agent: agent.rawValue, id: id, pid: pid)
+        }.first { !$0.chat.bundleIDs.isEmpty }
         // Not an app project: nothing to do, in every project the agent opens.
-        guard !session.chat.bundleIDs.isEmpty else { return answer(agent, event, nil) }
+        guard let session else { return answer(agent, event, nil) }
 
         switch event {
         case .start:

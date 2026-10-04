@@ -227,6 +227,42 @@ struct ChatTests {
         #expect(session(trail).take(budget: 1_000_000).taken == 0)
     }
 
+    @Test func aChatTakesOnlyReportsSentToItOrSentNowhere() throws {
+        let folder = try project()
+        let app = "com.markbuot.AthenaTracker"
+        let nowhere = try inboxReport("20261003-223449")
+        let pickedForCursor = try inboxReport("20261003-223450")
+        let addressedToCodex = try inboxReport("20261003-223451")
+        let pickedForNewChat = try inboxReport("20261003-223452")
+        func pick(_ report: URL, _ destination: String) throws {
+            try #"{"app":{},"destination":\#(destination),"screens":[],"items":[]}"#
+                .write(to: report.appending(path: "report.json"), atomically: true, encoding: .utf8)
+        }
+        // Picked on the phone, before the hub has handed it over.
+        try pick(pickedForCursor, #"{"agent":"cursor","chat":"c1"}"#)
+        InboxQueue.setAddress(Address(chat: "codex-t1", agent: "codex", folder: ""), of: addressedToCodex)
+        try pick(pickedForNewChat, #"{"agent":"claude","newChat":"p1"}"#)
+        func claimant(_ report: URL) -> String? {
+            InboxQueue.reports(for: [app], paths: paths).first { $0.folder.lastPathComponent == report.lastPathComponent }?.claim?.chat
+        }
+
+        let other = session(folder)
+        let taken = other.take(budget: 1_000_000)
+        #expect(taken.taken == 1 && taken.remaining == 0)
+        #expect(claimant(nowhere) == other.chat.id)
+        #expect(!other.waitForReport(timeout: 0.1, waiter: ChatSession.Waiter()))
+
+        // Each picked chat takes its own.
+        let cursor = ChatSession(paths: paths, folder: folder, extraApps: [], agent: "cursor", id: "cursor-c1", startsHub: false)
+        #expect(cursor.take(budget: 1_000_000).taken == 1)
+        #expect(claimant(pickedForCursor) == "cursor-c1")
+        let codex = ChatSession(paths: paths, folder: folder, extraApps: [], agent: "codex", id: "codex-t1", startsHub: false)
+        #expect(codex.takeAddressed() != nil)
+        #expect(claimant(addressedToCodex) == "codex-t1")
+        // The new chat's report waits for the chat the hub starts.
+        #expect(claimant(pickedForNewChat) == nil)
+    }
+
     @Test func picturesFollowTheSummaryInItsOrderWithinTheBudget() throws {
         let folder = try inboxReport("20261003-223449", pictureBytes: 600)
         #expect(ReportContent.pictures(in: folder).map(\.lastPathComponent) == ["screen-1.jpg", "note-2.jpg"])

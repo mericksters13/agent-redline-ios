@@ -53,9 +53,10 @@ struct DestinationPicker: View {
                 .fixedSize(horizontal: false, vertical: true)
         case .loaded(let list):
             if list.agents.isEmpty {
-                Text("No agents found on the Mac.")
+                Text("No agents found on the Mac. The report waits in the Mac's inbox.")
                     .font(.subheadline)
                     .foregroundStyle(Mono.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 agents(list.agents)
                 chats(in: list)
@@ -173,8 +174,11 @@ struct DestinationPicker: View {
     private var buttons: some View {
         let unavailable = session.chatList == .unavailable
         let loading = session.chatList == .loading
-        let ready = unavailable || session.pickerChoice?.agent == session.pickerAgent
-        let primary = session.sendsAfterPicking ? (unavailable ? "Send anyway" : "Send") : "Done"
+        // With nothing to pick, the report goes without a pick and waits in the Mac's inbox.
+        var nothingToPick = false
+        if case .loaded(let list) = session.chatList { nothingToPick = !list.offersDestination }
+        let ready = unavailable || nothingToPick || session.pickerChoice?.agent == session.pickerAgent
+        let primary = session.sendsAfterPicking ? (unavailable || nothingToPick ? "Send anyway" : "Send") : "Done"
         return HStack {
             Button("Cancel") { session.cancelDestinations() }
                 .font(.subheadline.weight(.medium))
