@@ -82,8 +82,9 @@ struct ReportStore: Sendable {
     }
 
     /// Copies the draft into a new report folder and clears the draft once the report is
-    /// complete. If any step fails, including a note whose screenshot is missing, the draft
-    /// stays as it was and no report is left behind. Returns the report folder.
+    /// complete. If any step fails, including a note whose screenshot is missing or a draft
+    /// that can't be cleared, the draft stays as it was and no report is left behind, so a
+    /// note is never both sent and still in the draft. Returns the report folder.
     func send(_ annotations: [Annotation], app: Report.App, device: Report.Device, date: Date) throws -> URL {
         let files = FileManager.default
         if let missing = annotations.first(where: { !files.fileExists(atPath: draftDirectory.appending(path: $0.screenshot).path) }) {
@@ -117,10 +118,17 @@ struct ReportStore: Sendable {
             }
             let report = Report(id: id, createdAt: date, app: app, device: device, annotations: annotations)
             try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)
+            // The draft file is what the next launch loads, so the send only counts once it is gone.
+            do {
+                try files.removeItem(at: draftFile)
+            } catch CocoaError.fileNoSuchFile {
+                // Nothing was saved as a draft, so there is nothing to bring back.
+            }
         } catch {
             try? files.removeItem(at: folder)
             throw error
         }
+        // Only the sent screenshots are left. One that stays behind is never loaded or sent again.
         try? files.removeItem(at: draftDirectory)
         return folder
     }

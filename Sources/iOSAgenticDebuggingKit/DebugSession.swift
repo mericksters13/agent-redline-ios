@@ -24,6 +24,8 @@ final class DebugSession {
     struct Toast: Equatable {
         var message: String
         var isError = false
+        /// Each showing is its own toast, so a repeated message gets its full time on screen.
+        let id = UUID()
     }
 
     private(set) var mode = Mode.idle
@@ -308,17 +310,20 @@ final class DebugSession {
         setMode(annotations.isEmpty ? trayReturnMode : .tray)
     }
 
-    func updateNote(_ id: UUID, to text: String) {
+    /// Saves an edited note. Returns false only when the change couldn't be saved, so the
+    /// viewer keeps the edit on screen and ending the edit, closing or moving on retries.
+    @discardableResult
+    func updateNote(_ id: UUID, to text: String) -> Bool {
         let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return }
+        guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return true }
         var updated = annotations
         updated[index].note = note
-        // On failure the viewer's field keeps the new text, so ending the edit again retries.
         guard persist(updated) else {
             showFailure("Couldn't save the change to the note")
-            return
+            return false
         }
         annotations = updated
+        return true
     }
 
     /// The note's whole screenshot, with its element outlined.
@@ -467,7 +472,7 @@ final class DebugSession {
 
     /// Only the button takes touches while the debugger is idle; the rest go to the app.
     func setButtonFrame(_ frame: CGRect?) {
-        window?.touchableRect = frame
+        window?.buttonFrame = frame
     }
 
     private static let buttonPositionKey = "AgenticDebuggingButtonPosition"

@@ -11,6 +11,15 @@ struct FloatingButtonPlacementTests {
         #expect(rect == CGRect(x: 34, y: 96, width: 334, height: 710))
     }
 
+    @Test func onlyTheRoundButtonTakesTouchesNotTheCornersOfItsFrame() {
+        let frame = CGRect(x: 100, y: 200, width: 52, height: 52)
+        #expect(FloatingButtonPlacement.buttonContains(CGPoint(x: 126, y: 226), frame: frame))
+        #expect(FloatingButtonPlacement.buttonContains(CGPoint(x: 101, y: 226), frame: frame))
+        #expect(!FloatingButtonPlacement.buttonContains(CGPoint(x: 102, y: 202), frame: frame))
+        #expect(!FloatingButtonPlacement.buttonContains(CGPoint(x: 150, y: 250), frame: frame))
+        #expect(!FloatingButtonPlacement.buttonContains(CGPoint(x: 126, y: 226), frame: .zero))
+    }
+
     @Test func snapsToTheNearestSideEdge() {
         #expect(FloatingButtonPlacement.snapped(CGPoint(x: 300, y: 400), within: area) == CGPoint(x: 368, y: 400))
         #expect(FloatingButtonPlacement.snapped(CGPoint(x: 60, y: 400), within: area) == CGPoint(x: 34, y: 400))

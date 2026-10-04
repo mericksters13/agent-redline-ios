@@ -7,11 +7,13 @@ import UIKit
 /// drawn from the app's windows only, so nothing in this window ever appears in them.
 final class OverlayWindow: UIWindow {
     var claimsAllTouches = false
-    var touchableRect: CGRect?
+    /// The floating button's frame. Only the round button inside it takes touches, so a
+    /// tap in a corner of the frame reaches the app underneath.
+    var buttonFrame: CGRect?
     var onLayout: ((OverlayWindow) -> Void)?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard claimsAllTouches || touchableRect?.contains(point) == true else { return nil }
+        guard claimsAllTouches || buttonFrame.map({ FloatingButtonPlacement.buttonContains(point, frame: $0) }) == true else { return nil }
         return super.hitTest(point, with: event)
     }
 

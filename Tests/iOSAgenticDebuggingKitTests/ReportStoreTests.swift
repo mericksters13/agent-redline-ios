@@ -109,5 +109,22 @@ struct ReportStoreTests {
         let reports = try FileManager.default.contentsOfDirectory(atPath: store.reportsDirectory.path)
         #expect(reports.isEmpty)
     }
+
+    @Test func aDraftThatCannotBeClearedStopsTheSend() throws {
+        let kept = try savedAnnotation("Cut off")
+        try store.saveDraft([kept])
+        // A read-only draft folder lets the report be written but not the draft file be removed.
+        let files = FileManager.default
+        try files.setAttributes([.posixPermissions: 0o555], ofItemAtPath: store.draftDirectory.path)
+        defer { try? files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: store.draftDirectory.path) }
+
+        #expect(throws: (any Error).self) {
+            try store.send([kept], app: app, device: device, date: .now)
+        }
+        #expect(store.loadDraft() == [kept])
+        #expect(files.fileExists(atPath: store.draftDirectory.appending(path: kept.screenshot).path))
+        let reports = try files.contentsOfDirectory(atPath: store.reportsDirectory.path)
+        #expect(reports.isEmpty)
+    }
 }
 #endif
