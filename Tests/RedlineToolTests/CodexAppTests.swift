@@ -84,6 +84,33 @@ struct CodexAppTests {
         #expect(answered())
     }
 
+    @Test func anAppThatKeepsTalkingButNeverAnswersIsGivenUpOnInTime() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "cx-\(UUID().uuidString.prefix(8)).sock").path
+        let server = socket(AF_UNIX, SOCK_STREAM, 0)
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &address.sun_path) { target in Array(path.utf8CString).withUnsafeBytes { target.copyMemory(from: $0) } }
+        let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(server, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
+        try #require(bound == 0)
+        listen(server, 1)
+        // Asks the client a question every 0.2 seconds, and never answers it.
+        Thread.detachNewThread {
+            let client = accept(server, nil, nil)
+            defer { close(client); close(server); unlink(path) }
+            var on: Int32 = 1
+            setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+            for _ in 0..<50 {
+                guard let data = CodexApp.frame(["type": "client-discovery-request", "requestId": "q", "request": [String: Any]()]),
+                      data.withUnsafeBytes({ write(client, $0.baseAddress, data.count) }) == data.count
+                else { return }
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+        }
+        let started = Date()
+        #expect(CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [], socketPath: path, timeout: 1) == .failed("The Codex app didn't answer"))
+        #expect(Date().timeIntervalSince(started) < 2.5)
+    }
+
     @Test func aChatNoWindowHasOpenIsReported() throws {
         let app = try fakeApp(answer: ["resultType": "error", "error": "no-client-found: no client can handle the request"])
         #expect(CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [], socketPath: app.path, timeout: 5) == .notOpen)

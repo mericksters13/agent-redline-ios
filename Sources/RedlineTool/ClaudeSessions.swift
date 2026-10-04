@@ -50,20 +50,8 @@ enum ClaudeSessions {
 
     /// Sends `text` to the chat. True once the chat's socket took it.
     static func send(_ text: String, to session: Session) -> Bool {
-        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard descriptor >= 0 else { return false }
+        guard let descriptor = UnixSocket.connect(path: session.socket) else { return false }
         defer { close(descriptor) }
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        let path = Array(session.socket.utf8CString)
-        guard path.count <= MemoryLayout.size(ofValue: address.sun_path) else { return false }
-        withUnsafeMutableBytes(of: &address.sun_path) { bytes in
-            path.withUnsafeBytes { bytes.copyMemory(from: $0) }
-        }
-        let connected = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
-        }
-        guard connected == 0 else { return false }
         let data = line(text)
         var sent = 0
         while sent < data.count {

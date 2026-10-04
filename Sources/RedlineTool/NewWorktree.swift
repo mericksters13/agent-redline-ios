@@ -100,9 +100,12 @@ enum NewWorktree {
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
         do { try process.run() } catch { return nil }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { if process.isRunning { process.terminate() } }
+        let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        // Done in time: the deadline doesn't keep the process around for the rest of the timeout.
+        deadline.cancel()
         return process.terminationStatus == 0 ? data : nil
     }
 }
