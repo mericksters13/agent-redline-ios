@@ -69,18 +69,37 @@ case "app":
     // PID file's lock counts as running, so a pid left behind and reused is never signaled.
     var keptApps: [String] = []
     if let running = HubProcess.running(paths), running != getpid() {
-        if let status = HubWindowModel.savedStatus(paths), status.pid == running { keptApps = status.fixedApps ?? [] }
-        kill(running, SIGTERM)
-        for _ in 0..<20 where HubProcess.running(paths) != nil { usleep(100_000) }
+        // A hub saves its status, with those apps, as it starts; give one starting now a moment.
+        var status = HubWindowModel.savedStatus(paths)
+        var tries = 0
+        while status?.pid != running, HubProcess.running(paths) == running, tries < 50 {
+            usleep(100_000)
+            status = HubWindowModel.savedStatus(paths)
+            tries += 1
+        }
+        if HubProcess.running(paths) == running {
+            guard let status, status.pid == running else {
+                failToStart("A hub is already running (pid \(running)) and didn't say which apps it watches, so it was left running.")
+            }
+            keptApps = status.fixedApps ?? []
+            // Stopping can wait for a simulator scan to finish, and the PID file stays locked until
+            // it has. A hub that hasn't stopped in 30 seconds is ended, which frees the lock at once.
+            kill(running, SIGTERM)
+            tries = 0
+            while HubProcess.running(paths) == running {
+                if tries == 300 { kill(running, SIGKILL) }
+                if tries == 350 { break }
+                usleep(100_000)
+                tries += 1
+            }
+        }
     }
     guard let devicectl = Devicectl.locate() else {
-        print("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
-        exit(1)
+        failToStart("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
     }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: keptApps)
     guard hub.start() else {
-        print("A hub is already running (pid \(HubProcess.running(paths).map(String.init) ?? "unknown")) and didn't stop.")
-        exit(1)
+        failToStart("A hub is already running (pid \(HubProcess.running(paths).map(String.init) ?? "unknown")) and didn't stop.")
     }
     stopOnSignals { hub.stop() }
     // Quit in the panel ends the app without a signal: let go of the PID file then too.
@@ -197,6 +216,22 @@ case "status":
 
 default:
     print(usage, terminator: "")
+}
+
+/// Says why the menu bar app can't start, then exits. Opened from Finder or by a chat, the app
+/// has no terminal to print to, so it shows the reason in an alert too.
+@MainActor
+func failToStart(_ reason: String) -> Never {
+    print(reason)
+    if Bundle.main.bundleURL.pathExtension == "app" {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        NSApplication.shared.activate()
+        let alert = NSAlert()
+        alert.messageText = "Agentic Debugging couldn't start"
+        alert.informativeText = reason
+        alert.runModal()
+    }
+    exit(1)
 }
 
 /// Runs `cleanup` and exits on Control-C or a termination request.

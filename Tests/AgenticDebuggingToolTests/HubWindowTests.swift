@@ -76,6 +76,33 @@ struct HubWindowTests {
         #expect(HubWindowModel.destination(of: sent).chat == "Untitled session")
     }
 
+    @Test func aClaimInTheSameSecondAsItsDeliveryStillShows() throws {
+        let folder = try report("20261004-133000", at: Date())
+        let delivered = Date(timeIntervalSince1970: 1_791_120_672.1)
+        var delivery = ReportDelivery(agent: .cursor, chat: "c-1", title: "Fix the chart", kind: .nextMessage)
+        delivery.at = delivered
+        ReportDelivery.save(delivery, in: folder)
+        let claim = Claim(chat: "cursor-c-1", agent: "cursor", folder: "/repo/wt", claimedAt: delivered.addingTimeInterval(0.5))
+        try Chats.coder.encode(claim).write(to: folder.appending(path: InboxQueue.claimFile))
+        #expect(!HubWindowModel.destination(of: folder).waiting)
+        // Dates saved before milliseconds were kept still read.
+        let older = Data(#"{"agent":"claude","chat":"c","claimedAt":"2026-10-04T13:31:12Z","folder":"/repo"}"#.utf8)
+        #expect(try Chats.decoder.decode(Claim.self, from: older).claimedAt == Date(timeIntervalSince1970: 1_791_120_672))
+    }
+
+    @Test func aClaimWhoseHandOverWasInterruptedLeavesTheReportWaiting() throws {
+        let folder = try report("20261004-134000", at: Date())
+        let ended = Process()
+        ended.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try ended.run()
+        ended.waitUntilExit()
+        let stranded = Claim(chat: "gone", agent: "claude", folder: "/repo/wt", claimedAt: Date(), handingOverIn: ended.processIdentifier)
+        try Chats.coder.encode(stranded).write(to: folder.appending(path: InboxQueue.claimFile))
+        let destination = HubWindowModel.destination(of: folder)
+        #expect(destination.chat == "Waiting in the inbox")
+        #expect(destination.waiting)
+    }
+
     @Test func phonesSayWhyTheyCantTakeReports() {
         #expect(HubWindowModel.phoneState("Ready for com.example.app") == "Ready")
         #expect(HubWindowModel.phoneState("Not reachable, trying again in 30 s or when a phone wakes") == "Not reachable")
