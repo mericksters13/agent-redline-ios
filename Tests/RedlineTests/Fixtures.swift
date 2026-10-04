@@ -131,6 +131,8 @@ struct GrowthScreen {
     var spinnerPhase: Int?
     /// How far the content is scrolled under the tab bar, in points.
     var scrollOffset: CGFloat = 0
+    /// The tab bar shows Insights as the selected tab.
+    var selectsInsights = false
     /// Pixels per point: 2 for a phone's capture; more draws a capture the size of a wide iPad one.
     var pixelsPerPoint = Self.scale
 
@@ -145,6 +147,8 @@ struct GrowthScreen {
     static let spinner = CGRect(x: 300, y: 330, width: 40, height: 40)
     /// The part of the sleep card with nothing drawn in it.
     static let sleepCardStrip = CGRect(x: 20, y: 660, width: 362, height: 50)
+    /// The Insights tab in the tab bar, which stays put while the content scrolls.
+    static let insightsTab = CGRect(x: 160, y: 780, width: 80, height: 50)
 
     /// The screen's scroll view: under the status bar and over the tab bar, scrolled by
     /// `scrollOffset`.
@@ -200,7 +204,7 @@ struct GrowthScreen {
             moved.frame.origin.y -= scrollOffset
             return moved
         }
-        list.append(element("Button", "Insights", nil, CGRect(x: 160, y: 780, width: 80, height: 50)))
+        list.append(element("Button", "Insights", nil, Self.insightsTab))
         if showsPopup { list.append(element("Button", "Keep editing", nil, Self.popupButton)) }
         if showsBanner { list.append(element("Button", "Back up your data", nil, Self.banner)) }
         return list
@@ -298,6 +302,7 @@ struct GrowthScreen {
         context.restoreGState()
 
         fill(context, CGRect(x: 30, y: 770, width: 333, height: 64), gray: 0.2, radius: 32)
+        if selectsInsights { fill(context, Self.insightsTab, gray: 0.4, radius: 25) }
         text(context, "Today   History   Insights   Settings", at: CGPoint(x: 52, y: 810), size: 13, gray: 1)
 
         if showsBanner {

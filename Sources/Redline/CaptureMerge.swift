@@ -127,8 +127,9 @@ enum CaptureMerge {
 
     /// Whether stitching a scrolled capture onto a group keeps every earlier note's state.
     ///
-    /// The newest capture draws the content it shows. Where that covers an earlier note's element,
-    /// the element must look identical in it; after a segment switch it doesn't, and the scrolled
+    /// The newest capture draws the content it shows, and the top or bottom bars when it is scrolled
+    /// highest or lowest. Where that covers an earlier note's element, the element must look
+    /// identical in it; after a segment switch, or a change in a bar, it doesn't, and the scrolled
     /// capture starts a new snapshot instead.
     static func keepsEarlierStates(
         stitching capture: Capture,
@@ -137,13 +138,20 @@ enum CaptureMerge {
         annotations: [Annotation],
         loadImage: (_ capture: Capture) -> CGImage?
     ) -> Bool {
-        guard let image, let to = capture.scroll, let band = ScreenComposition.band(for: group + [capture]) else {
-            return false
+        guard let image, let to = capture.scroll, let plan = ScreenComposition.plan(for: group + [capture]),
+            let band = plan.band
+        else { return false }
+        // The plan's first and last parts are the top and bottom bars, each taken from one capture.
+        let bars = [plan.segments.first, plan.segments.last].compactMap { segment -> CGRect? in
+            guard let segment, segment.captureID == capture.id else { return nil }
+            return CGRect(x: 0, y: segment.sourceMinY, width: capture.size.width, height: segment.height)
         }
         for annotation in annotations {
             guard let source = group.first(where: { $0.id == annotation.captureID }), let from = source.scroll,
                 let frame = annotation.element?.frame
             else { continue }
+            // The element's pixels as the note was made, and where the new capture would draw them.
+            var compared: [(shown: CGRect, drawn: CGRect)] = []
             // The element's content rows that both captures show between the bars.
             let top = max(
                 from.contentY(ofScreenY: max(frame.minY, band.lowerBound)),
@@ -153,16 +161,31 @@ enum CaptureMerge {
                 from.contentY(ofScreenY: min(frame.maxY, band.upperBound)),
                 to.contentY(ofScreenY: band.upperBound)
             )
-            guard bottom - top >= 1 else { continue }
+            if bottom - top >= 1 {
+                let height = bottom - top
+                compared.append(
+                    (
+                        shown: CGRect(
+                            x: frame.minX,
+                            y: from.screenY(ofContentY: top),
+                            width: frame.width,
+                            height: height
+                        ),
+                        drawn: CGRect(x: frame.minX, y: to.screenY(ofContentY: top), width: frame.width, height: height)
+                    )
+                )
+            }
+            // A note on a bar stays where it was made, over the bar the new capture would draw.
+            if frame.midY < band.lowerBound || frame.midY > band.upperBound {
+                for bar in bars {
+                    let shown = frame.intersection(bar)
+                    if !shown.isNull, shown.height >= 1 { compared.append((shown: shown, drawn: shown)) }
+                }
+            }
+            guard !compared.isEmpty else { continue }
             guard let sourceImage = loadImage(source) else { return false }
-            let shown = CGRect(
-                x: frame.minX,
-                y: from.screenY(ofContentY: top),
-                width: frame.width,
-                height: bottom - top
-            )
-            let drawn = CGRect(x: frame.minX, y: to.screenY(ofContentY: top), width: frame.width, height: bottom - top)
-            guard looksIdentical(shown, in: sourceImage, of: source, as: drawn, in: image, of: capture) else {
+            for pair in compared
+            where !looksIdentical(pair.shown, in: sourceImage, of: source, as: pair.drawn, in: image, of: capture) {
                 return false
             }
         }
