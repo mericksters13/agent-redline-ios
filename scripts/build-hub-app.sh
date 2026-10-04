@@ -35,6 +35,15 @@ PLIST
 identity="$(security find-identity -v -p codesigning | awk '/"Apple Development/ { print $2; exit }')"
 codesign --force --sign "${identity:--}" "$staging"
 mkdir -p "$destination"
+# A running copy is stopped first and opened again after: macOS may not match a running app to a
+# bundle replaced under it, and ask for permissions again. A stop signal, not an AppleScript quit,
+# which would need its own permission.
+running=false
+if pkill -TERM -f "$app/Contents/MacOS/" 2>/dev/null; then
+    running=true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "$app/Contents/MacOS/" >/dev/null || break; sleep 0.3; done
+fi
 rm -rf "$app"
 mv "$staging" "$app"
+if $running; then open -g "$app"; fi
 echo "Built $app"
