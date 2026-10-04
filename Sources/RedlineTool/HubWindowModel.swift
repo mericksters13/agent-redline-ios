@@ -196,12 +196,13 @@ final class HubWindowModel {
     /// chat that took it through MCP or a hook.
     ///
     /// A report the hub left waiting, or set to go with a chat's next message, shows the chat
-    /// that took it once one has.
+    /// that took it once one has. A claim whose hand-over was interrupted doesn't count: the report
+    /// is free again, as `Inbox.unclaimedReports` has it.
     nonisolated static func destination(of folder: URL, codexDatabase: URL?) -> (
         agent: String, chat: String, isWaiting: Bool
     ) {
         let delivery = ChatDelivery.load(from: folder)
-        let claim = Inbox.claim(of: folder)
+        let claim = Inbox.claim(of: folder).flatMap { $0.isInterrupted ? nil : $0 }
         if let delivery, !(delivery.isPending && claim.map { $0.claimedAt > delivery.deliveredAt } == true) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             return (agent, delivery.title, delivery.kind == .waiting)

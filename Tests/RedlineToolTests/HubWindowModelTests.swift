@@ -112,6 +112,42 @@ struct HubWindowModelTests {
         #expect(HubWindowModel.destination(of: sent, codexDatabase: nil).chat == "Untitled session")
     }
 
+    @Test func aClaimInTheSameSecondAsItsDeliveryStillShows() throws {
+        let folder = try report("20261004-133000", at: Date.now)
+        let delivered = Date(timeIntervalSince1970: 1_791_120_672.1)
+        var delivery = ChatDelivery(agent: .codex, chat: "c-1", title: "Fix the chart", kind: .nextMessage)
+        delivery.deliveredAt = delivered
+        try ChatDelivery.save(delivery, in: folder)
+        let claim = Claim(chat: "codex-c-1", agent: "codex", folder: "/repo/wt", claimedAt: delivered + 0.5)
+        try HubPaths.encoder.encode(claim).write(to: folder.appending(path: Inbox.claimFile))
+        #expect(!HubWindowModel.destination(of: folder, codexDatabase: nil).isWaiting)
+        // Dates saved before milliseconds were kept still read.
+        let older = Data(#"{"agent":"claude","chat":"c","claimedAt":"2026-10-04T13:31:12Z","folder":"/repo"}"#.utf8)
+        #expect(
+            try HubPaths.decoder.decode(Claim.self, from: older).claimedAt
+                == Date(timeIntervalSince1970: 1_791_120_672)
+        )
+    }
+
+    @Test func aClaimWhoseHandOverWasInterruptedLeavesTheReportWaiting() throws {
+        let folder = try report("20261004-134000", at: Date.now)
+        let ended = Process()
+        ended.executableURL = URL(filePath: "/usr/bin/true")
+        try ended.run()
+        ended.waitUntilExit()
+        let stranded = Claim(
+            chat: "gone",
+            agent: "claude",
+            folder: "/repo/wt",
+            claimedAt: .now,
+            handingOverIn: ended.processIdentifier
+        )
+        try HubPaths.encoder.encode(stranded).write(to: folder.appending(path: Inbox.claimFile))
+        let destination = HubWindowModel.destination(of: folder, codexDatabase: nil)
+        #expect(destination.chat == "Waiting in the inbox")
+        #expect(destination.isWaiting)
+    }
+
     @Test func aReportListingWithOnlyItsNotesStillShowsThem() throws {
         let folder = paths.root.appending(path: "minimal", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

@@ -178,6 +178,31 @@ struct ElementSelectionTests {
         #expect(ElementSelection.match(saved, in: [first, second]) == nil)
     }
 
+    @Test func repeatedRowsMatchOnlyTheOneInTheSavedPlace() {
+        let rows = (0..<3).map {
+            element(
+                role: "Button",
+                label: "Delete",
+                frame: CGRect(x: 0, y: 100 + CGFloat($0) * 60, width: 300, height: 44),
+                identifier: "row.delete"
+            )
+        }
+        let others = [
+            element(
+                role: "Button",
+                label: "Edit",
+                frame: CGRect(x: 0, y: 400, width: 300, height: 44),
+                identifier: "row.delete"
+            )
+        ]
+        #expect(ElementSelection.match(rows[2], in: rows + others) == rows[2])
+        #expect(ElementSelection.match(rows[1], in: rows) == rows[1])
+        // After a scroll none is where the saved one was, so no row gets its marker.
+        var scrolled = rows[1]
+        scrolled.frame.origin.y += 30
+        #expect(ElementSelection.match(scrolled, in: rows) == nil)
+    }
+
     @Test func theNameIsTheLabelThenTheIdentifierThenTheValue() {
         #expect(element(role: "Button", label: "Save", frame: .zero, identifier: "save").fullName == "Save")
         #expect(element(role: "Image", label: nil, frame: .zero, identifier: "logo").fullName == "logo")
