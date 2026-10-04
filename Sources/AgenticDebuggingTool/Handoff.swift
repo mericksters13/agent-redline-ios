@@ -110,18 +110,53 @@ final class Handoff: @unchecked Sendable {
                 hub.log("The Claude Code chat in \(session.folder) didn't take report \(source.reportID); it waits in the inbox")
                 Self.notify(title: "Report from \(source.deviceName)", message: "The Claude Code chat in \(place) didn't take it. It waits in the inbox.")
             }
-        case .codex, .cursor:
+        case .codex:
+            sendToCodex(report, build: build, place: place)
+        case .cursor:
             guard let chat = Chats.live(hub.paths).first(where: { $0.id == build.chat }) else {
-                hub.log("The \(agent.name) chat that built report \(source.reportID)'s app is closed; starting one in \(build.folder)")
-                startChat(agent, in: build.folder, for: report)
+                hub.log("The Cursor chat that built report \(source.reportID)'s app is closed; starting one in \(build.folder)")
+                startChat(.cursor, in: build.folder, for: report)
                 return
             }
             // A chat waiting after a reply takes it the moment it's in the inbox.
             guard !chat.isWaiting else { return }
-            hub.log("Report \(source.reportID) goes to the \(agent.name) chat in \(build.folder) when its hooks next run")
+            hub.log("Report \(source.reportID) goes to the Cursor chat in \(build.folder) when its hooks next run")
             Self.notify(title: "Report from \(source.deviceName)",
-                        message: "Goes to the \(agent.name) chat that built the app, in \(place), after its next reply or with your next message there.")
+                        message: "Goes to the Cursor chat that built the app, in \(place), after its next reply or with your next message there.")
         }
+    }
+
+    /// Starts a turn with the report, pictures attached, in the Codex chat that built the app.
+    /// A chat that isn't open in a Codex window is opened first. If the app can't take it, the
+    /// report goes in with the chat's next message.
+    private func sendToCodex(_ report: InboxReport, build: BuildRecord, place: String) {
+        let source = report.source
+        let thread = build.chat.replacingOccurrences(of: "codex-", with: "", options: .anchored)
+        let chat = ChatRecord(id: build.chat, agent: build.agent, folder: build.folder, bundleIDs: [source.bundleID], pid: getpid(),
+                              registeredAt: Date(), lastActiveAt: Date())
+        guard InboxQueue.claim(report, for: chat) else { return }
+        let pictures = ReportContent.pictures(in: report.folder)
+        let text = AgentHooks.reportPrompt(ReportContent.text(for: report), picturesAttached: true)
+        var outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
+        if outcome == .notOpen, let link = URL(string: "codex://threads/\(thread)") {
+            hub.log("The Codex chat for report \(source.reportID) isn't open; opening it")
+            let open = Process()
+            open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            open.arguments = [link.absoluteString]
+            try? open.run()
+            open.waitUntilExit()
+            Thread.sleep(forTimeInterval: 5)
+            outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
+        }
+        if outcome == .started {
+            hub.log("Sent report \(source.reportID) with \(pictures.count) pictures to the Codex chat that built it, in \(build.folder)")
+            Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Codex chat that built the app, in \(place).")
+            return
+        }
+        // The chat's own hooks hand it over with the next message.
+        try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+        hub.log("The Codex app didn't take report \(source.reportID) (\(outcome)); it goes in with the chat's next message")
+        Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Codex chat that built the app, in \(place), with your next message there.")
     }
 
     private func startChat(_ agent: Agent, in folder: String, for report: InboxReport) {

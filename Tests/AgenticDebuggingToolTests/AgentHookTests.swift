@@ -29,7 +29,8 @@ struct AgentHookTests {
 
     @Test func setupKeepsOtherHooksAndRemovesCleanly() {
         let added = AgentSettings.adding(.codex, to: codexSettings, executable: executable)
-        #expect(commands(added, "Stop") == ["node hook.mjs", "'\(executable)' hook codex stop"])
+        // Codex chats are woken through the Codex app: no stop hook holds them open.
+        #expect(commands(added, "Stop") == ["node hook.mjs"])
         #expect(commands(added, "PostToolUse") == ["node hook.mjs", "'\(executable)' hook codex built"])
         #expect(commands(added, "SessionStart") == ["'\(executable)' hook codex start"])
         #expect(commands(added, "UserPromptSubmit") == ["'\(executable)' hook codex prompt"])

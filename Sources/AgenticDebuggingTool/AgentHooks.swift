@@ -105,7 +105,7 @@ enum AgentHooks {
 
         case .prompt:
             session.touch()
-            return answer(agent, event, session.takeAddressed().map(reportPrompt))
+            return answer(agent, event, session.takeAddressed().map { reportPrompt($0) })
 
         case .stop:
             if let text = session.takeAddressed() { return answer(agent, event, reportPrompt(text)) }
@@ -156,12 +156,15 @@ enum AgentHooks {
         }
     }
 
-    /// What the agent reads when a report arrives.
-    static func reportPrompt(_ report: String) -> String {
-        """
+    /// What the agent reads when a report arrives. `picturesAttached` when the pictures come
+    /// with it, as in Codex; otherwise the agent opens them from their paths.
+    static func reportPrompt(_ report: String, picturesAttached: Bool = false) -> String {
+        let pictures = picturesAttached
+            ? "Its pictures are attached, in the order listed."
+            : "Open its pictures and show them to the user in this chat, with your tool for sending files to the user if you have one."
+        return """
         A UI report arrived from the user's device through iOSAgenticDebuggingKit, from the build of the app this chat made. \
-        Open its pictures and show them to the user in this chat, with your tool for sending files to the user if you have \
-        one. Then find the code for each noted element by its identifier or label, tell the user what you found and \
+        \(pictures) Find the code for each noted element by its identifier or label, tell the user what you found and \
         propose a fix before changing code.
 
         \(report)
