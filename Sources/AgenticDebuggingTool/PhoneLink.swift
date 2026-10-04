@@ -16,9 +16,15 @@ final class PhoneLink: @unchecked Sendable {
     private var missing = Set<String>()
     private var retryDelay = PhoneLink.firstRetry
     private var retryAt: Date?
+    /// When a wake last made this phone try. One wake is often announced on more than one
+    /// network interface, and should lead to one try.
+    private var lastWakeTry = Date.distantPast
 
     static let firstRetry: TimeInterval = 30
-    static let longestRetry: TimeInterval = 1800
+    /// The longest wait between tries, for a phone whose waking isn't announced, such as one
+    /// that comes back into Wi-Fi range already awake.
+    static let longestRetry: TimeInterval = 300
+    static let wakeSpacing: TimeInterval = 10
 
     init(phone: Devicectl.Phone, hub: Hub) {
         self.phone = phone
@@ -40,11 +46,15 @@ final class PhoneLink: @unchecked Sendable {
         }
     }
 
-    /// A phone woke up somewhere on the network. If this one still needs its address and its
-    /// wait is over, try now: it's awake and likely about to be used.
+    /// A phone woke up somewhere on the network. If this one is still waiting to try again, try
+    /// now instead of waiting out the delay, which grows while a phone sleeps: it's awake and
+    /// likely about to be used. The wake also starts the delays over, so a try made before the
+    /// phone's link is fully up is followed soon by another.
     func phoneWoke() {
         queue.async {
-            guard let retryAt = self.retryAt, Date() >= retryAt else { return }
+            guard self.retryAt != nil, Date().timeIntervalSince(self.lastWakeTry) >= Self.wakeSpacing else { return }
+            self.lastWakeTry = Date()
+            self.retryDelay = Self.firstRetry
             self.giveAddress()
         }
     }
