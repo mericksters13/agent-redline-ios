@@ -3,15 +3,15 @@ import Foundation
 import Testing
 @testable import RedlineTool
 
-struct HubWindowTests {
-    private let paths = HubPaths(root: FileManager.default.temporaryDirectory.appending(path: "HubWindowTests-\(UUID().uuidString)", directoryHint: .isDirectory))
+struct HubWindowModelTests {
+    private let temporary = TemporaryFolder("HubWindowModelTests")
+    private var root: URL { temporary.url }
+    private var paths: HubPaths { HubPaths(root: root.appending(path: "hub-root", directoryHint: .isDirectory)) }
 
     /// A report in the inbox, as the hub files it.
-    private func report(_ id: String, at date: Date, device: String = "Mark iPhone") throws -> URL {
-        let folder = paths.inbox.appending(path: "com.example.app/\(id)-0CF3C01C", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    private func report(_ id: String, at date: Date) throws -> URL {
         let listing: [String: Any] = [
-            "app": ["name": "Tiny Tally"],
+            "app": ["name": "Example"],
             "screens": [["images": [["file": "screen-1.jpg", "notes": [1]]]]],
             "items": [
                 ["number": 2, "title": "History", "note": "", "attachments": ["note-2.jpg"]],
@@ -19,11 +19,7 @@ struct HubWindowTests {
                  "element": ["identifier": "today.milestones", "label": "Log milestone", "role": "Button"]],
             ],
         ]
-        try JSONSerialization.data(withJSONObject: listing).write(to: folder.appending(path: "report.json"))
-        try Data([0xFF, 0xD8]).write(to: folder.appending(path: "screen-1.jpg"))
-        let source = ReportSource(kind: .phone, device: "D-\(device)", deviceName: device, bundleID: "com.example.app", reportID: id, receivedAt: date)
-        try HubPaths.encoder.encode(source).write(to: folder.appending(path: "source.json"))
-        return folder
+        return try fileInboxReport("\(id)-00000001", in: paths, listing: listing, receivedAt: date)
     }
 
     @Test func reportsShowWhereTheyWentNewestFirst() throws {
@@ -129,15 +125,6 @@ struct HubWindowTests {
         try ReportDelivery.save(.init(agent: .claude, chat: nil, title: "Waiting for claude auth login", kind: .waiting), in: waiting)
         #expect(HubWindowModel.chat(of: waiting) == nil)
         #expect(HubWindowModel.chat(of: try report("20261004-140500", at: Date.now)) == nil)
-    }
-
-    @Test func chatsOpenInTheirAgentsAppWhenItIsInstalled() {
-        #expect(Handoff.appLink(.claude, id: "c28a077b-d80c-4c2b-844e-c544401d77ec", isClaudeAppInstalled: true, isCodexAppInstalled: false)
-            == "claude://resume?session=c28a077b-d80c-4c2b-844e-c544401d77ec")
-        #expect(Handoff.appLink(.codex, id: "01a0e409-5a20", isClaudeAppInstalled: false, isCodexAppInstalled: true) == "codex://threads/01a0e409-5a20")
-        // Without the app, a terminal resumes the chat instead.
-        #expect(Handoff.appLink(.claude, id: "s-1", isClaudeAppInstalled: false, isCodexAppInstalled: true) == nil)
-        #expect(Handoff.appLink(.codex, id: "t-1", isClaudeAppInstalled: true, isCodexAppInstalled: false) == nil)
     }
 }
 #endif

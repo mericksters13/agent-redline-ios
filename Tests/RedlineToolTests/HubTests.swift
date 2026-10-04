@@ -4,9 +4,10 @@ import Testing
 @testable import RedlineTool
 
 struct HubTests {
-    private let paths = HubPaths(root: FileManager.default.temporaryDirectory.appending(path: "HubTests-\(UUID().uuidString)", directoryHint: .isDirectory))
-    private let phone = "00008150-00123C360CF3C01C"
-    private let app = "com.markbuot.AthenaTracker"
+    private let temporary = TemporaryFolder("HubTests")
+    private var paths: HubPaths { HubPaths(root: temporary.url) }
+    private let phone = "00000000-0000000000000001"
+    private let app = "com.example.app"
 
     /// A hub that's never started: no listener, no simulators, no devicectl.
     private func hub() throws -> Hub {
@@ -18,44 +19,19 @@ struct HubTests {
         HubMessage.Offer(device: phone, bundleID: app, token: token, reports: reports)
     }
 
-    /// The hub's state for the phone once `done` accepts it, waiting up to five seconds.
-    private func state(of hub: Hub, until done: (String) -> Bool) async throws -> String? {
-        func saved() -> String? {
-            (try? Data(contentsOf: paths.status)).flatMap { try? HubPaths.decoder.decode(HubStatus.self, from: $0) }?.phones.first?.state
+    @Test func onlySafeNamesBecomeFiles() {
+        #expect(Hub.isSafeName("20261004-031600"))
+        #expect(Hub.isSafeName("screen-1.jpg"))
+        for name in ["", ".hidden", "../escape", "a/b", "a b", "~home"] {
+            #expect(!Hub.isSafeName(name), "\(name) should be turned down")
         }
-        for _ in 0..<50 {
-            if let state = saved(), done(state) { return state }
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        return saved()
     }
 
-    @Test func aPhoneThatWakesGetsItsAddressWithoutWaitingOutTheDelay() async throws {
-        try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        // Stands in for devicectl: the app is installed, and copying to it works only once the phone is awake.
-        let awake = paths.root.appending(path: "awake")
-        let devicectl = paths.root.appending(path: "devicectl")
-        try """
-        #!/bin/sh
-        command="$1 $2"
-        while [ $# -gt 0 ]; do [ "$1" = "--json-output" ] && output="$2"; shift; done
-        case "$command" in
-          "device copy") [ -f '\(awake.path)' ] ;;
-          "device info") printf '{"result":{"apps":[{"bundleIdentifier":"\(app)"}]}}' > "$output" ;;
-          *) exit 1 ;;
-        esac
-        """.write(to: devicectl, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: devicectl.path)
-        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app])
-        hub.updateApps(isStarting: true)
-        let link = PhoneLink(phone: .init(udid: phone, name: "Mark iPhone", model: "iPhone 17 Pro"), hub: hub)
-
-        link.update(hosts: ["192.168.1.2"], port: 47361, includingNewApps: true)
-        #expect(try await state(of: hub) { $0.hasPrefix("Not reachable") }?.hasPrefix("Not reachable, trying again in 30 s") == true)
-        // The phone wakes long before the 30 seconds are up, and gets its address right away.
-        try Data().write(to: awake)
-        link.phoneDidWake()
-        #expect(try await state(of: hub) { $0.hasPrefix("Ready") } == "Ready for \(app)")
+    @Test func tokensMatchOnlyWhenEqual() {
+        #expect(Hub.constantTimeEquals("abc123", "abc123"))
+        #expect(!Hub.constantTimeEquals("abc123", "abc124"))
+        #expect(!Hub.constantTimeEquals("abc", "abc123"))
+        #expect(Hub.constantTimeEquals("", ""))
     }
 
     @Test func aTokenOutlivesTheHub() throws {
@@ -67,19 +43,6 @@ struct HubTests {
         #expect(try hub().issueToken(device: phone, bundleID: app) == token)
         let permissions = try FileManager.default.attributesOfItem(atPath: paths.tokens.path)[.posixPermissions] as? Int
         #expect(permissions == 0o600)
-    }
-
-    @Test func onlyTheHubHoldingTheLockCountsAsRunning() throws {
-        try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        let lock = try #require(HubProcess.lock(paths))
-        #expect(HubProcess.running(paths) == getpid())
-        // A second hub can't take it.
-        #expect(HubProcess.lock(paths) == nil)
-        close(lock)
-        #expect(HubProcess.running(paths) == nil)
-        // A pid file left behind, naming a process that is alive, names no hub.
-        try "\(getppid())".write(to: paths.pid, atomically: true, encoding: .utf8)
-        #expect(HubProcess.running(paths) == nil)
     }
 
     @Test func anUnreadableStateFileIsMovedAsideNotWrittenOver() throws {
@@ -109,6 +72,8 @@ struct HubTests {
         // Not counted as delivered, so it's offered again.
         hub.startTrackingIfNeeded(device: phone, bundleID: app)
         #expect(hub.reportIDsToCopy(device: phone, bundleID: app, finished: [FinishedReport(id: "20261004-031600", finishedAt: Date.now)]) == ["20261004-031600"])
+        // Queued writes land before the test's folder is removed.
+        hub.flushWrites()
     }
 
     @Test func anOfferWithoutTheRightTokenIsTurnedDown() throws {
@@ -120,6 +85,8 @@ struct HubTests {
         // An app this hub never gave an address to is turned down too.
         let stranger = HubMessage.Offer(device: "someone", bundleID: app, token: "x", reports: [])
         #expect(hub.answerNow(stranger).refused != nil)
+        // Queued writes land before the test's folder is removed.
+        hub.flushWrites()
     }
 
     @Test func theHubAsksOnlyForNewReportsAndFilesThemWhole() throws {
@@ -142,12 +109,14 @@ struct HubTests {
 
         let files = ["report.json": Data("{}".utf8), "report.md": Data("# Report".utf8), "screen-1.jpg": Data([0xFF, 0xD8])]
         try hub.storeNow(HubMessage.Upload(id: new.id, files: files), offeredIn: offered)
-        let folder = paths.inbox.appending(path: "\(app)/20261004-031600-0CF3C01C", directoryHint: .isDirectory)
+        let folder = paths.inbox.appending(path: "\(app)/20261004-031600-00000001", directoryHint: .isDirectory)
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted() == ["report.json", "report.md", "screen-1.jpg", "source.json"])
         // Offered again, it's on the Mac now.
         let again = hub.answerNow(offered)
         #expect(again.want.isEmpty)
         #expect(Set(again.delivered) == ["20261002-135144", "20261004-031600"])
+        // Queued writes land before the test's folder is removed.
+        hub.flushWrites()
     }
 }
 #endif

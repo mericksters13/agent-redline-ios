@@ -1,13 +1,30 @@
 #if os(macOS)
 import Darwin
 import Foundation
+import Synchronization
 import Testing
 @testable import RedlineTool
 
 struct CodexAppTests {
-    /// A stand-in for the Codex app's socket: answers `initialize`, asks the client the
-    /// question the app asks every client, then answers the turn with `answer`.
-    private func fakeApp(answer: [String: Any]) throws -> (path: String, requests: () -> [[String: Any]]) {
+    /// A stand-in for the Codex app: its socket, what the client sent it, and a signal when the
+    /// client answers the app's question to every client.
+    private final class FakeApp: Sendable {
+        let path: String
+        let seen = Mutex<[Data]>([])
+        let answered = DispatchSemaphore(value: 0)
+
+        init(path: String) {
+            self.path = path
+        }
+
+        var requests: [[String: Any]] {
+            seen.withLock { $0 }.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        }
+    }
+
+    /// Answers `initialize`, asks the client the question the app asks every client, then
+    /// answers the turn with `answer`.
+    private func fakeApp(answer: [String: Any]) throws -> FakeApp {
         let path = FileManager.default.temporaryDirectory.appending(path: "cx-\(UUID().uuidString.prefix(8)).sock").path
         let server = socket(AF_UNIX, SOCK_STREAM, 0)
         var address = sockaddr_un()
@@ -16,20 +33,24 @@ struct CodexAppTests {
         let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(server, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
         try #require(bound == 0)
         listen(server, 1)
-        let lock = NSLock()
-        nonisolated(unsafe) var seen: [[String: Any]] = []
+        let app = FakeApp(path: path)
+        // Handed to the app's thread as data, which is Sendable.
+        let answerData = try JSONSerialization.data(withJSONObject: answer)
         Thread.detachNewThread {
             let client = accept(server, nil, nil)
+            // Connected: the socket's file isn't needed any more.
+            unlink(path)
             defer { close(client); close(server) }
+            let answer = (try? JSONSerialization.jsonObject(with: answerData) as? [String: Any]) ?? [:]
             var buffer = Data()
-            func next() -> [String: Any]? {
+            func next() -> Data? {
                 while true {
                     if buffer.count >= 4 {
                         let length = Int(buffer.prefix(4).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
                         if buffer.count >= 4 + length {
                             let json = buffer.subdata(in: 4..<(4 + length))
                             buffer.removeSubrange(0..<(4 + length))
-                            return try? JSONSerialization.jsonObject(with: json) as? [String: Any]
+                            return json
                         }
                     }
                     var chunk = [UInt8](repeating: 0, count: 65_536)
@@ -39,11 +60,13 @@ struct CodexAppTests {
                 }
             }
             func send(_ message: [String: Any]) {
-                let data = CodexApp.frame(message)!
+                guard let data = CodexApp.frame(message) else { return }
                 _ = data.withUnsafeBytes { write(client, $0.baseAddress, data.count) }
             }
-            while let message = next() {
-                lock.withLock { seen.append(message) }
+            while let json = next() {
+                app.seen.withLock { $0.append(json) }
+                guard let message = try? JSONSerialization.jsonObject(with: json) as? [String: Any] else { continue }
+                if message["type"] as? String == "client-discovery-response" { app.answered.signal() }
                 let id = message["requestId"] as? String ?? ""
                 switch message["method"] as? String {
                 case "initialize":
@@ -57,14 +80,17 @@ struct CodexAppTests {
                 }
             }
         }
-        return (path, { lock.withLock { seen } })
+        return app
     }
 
-    @Test func aTurnGoesToTheChatWithItsPictures() throws {
+    @Test func aTurnGoesToTheChatWithItsPictures() async throws {
         let app = try fakeApp(answer: ["resultType": "success", "result": ["result": ["turn": ["status": "inProgress"]]]])
         let picture = URL(filePath: "/tmp/screen-1.jpg")
-        #expect(CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [picture], socketPath: app.path, timeout: 5) == .started)
-        let requests = app.requests()
+        #expect(await offPool { CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [picture], socketPath: app.path, timeout: 5) } == .started)
+        // The app's question to every client was answered. The stand-in reads the answer on its
+        // own thread, so wait for it.
+        #expect(await offPool { app.answered.wait(timeout: .now() + 5) == .success })
+        let requests = app.requests
         let turn = try #require(requests.first { $0["method"] as? String == "thread-follower-start-turn" })
         #expect(turn["sourceClientId"] as? String == "hub-1")
         #expect(turn["version"] as? Int == 2)
@@ -74,17 +100,11 @@ struct CodexAppTests {
         #expect(input?.first?["text"] as? String == "A report")
         #expect(input?.last?["type"] as? String == "localImage")
         #expect(input?.last?["path"] as? String == picture.path)
-        // The app's question to every client was answered: this client handles nothing. The
-        // stand-in reads the answer on its own thread, so give it a moment.
-        func answered() -> Bool {
-            app.requests().contains { $0["type"] as? String == "client-discovery-response" && ($0["response"] as? [String: Any])?["canHandle"] as? Bool == false }
-        }
-        let deadline = Date.now.addingTimeInterval(2)
-        while !answered(), Date.now < deadline { Thread.sleep(forTimeInterval: 0.02) }
-        #expect(answered())
+        // This client handles nothing for the app.
+        #expect(requests.contains { $0["type"] as? String == "client-discovery-response" && ($0["response"] as? [String: Any])?["canHandle"] as? Bool == false })
     }
 
-    @Test func anAppThatKeepsTalkingButNeverAnswersIsGivenUpOnInTime() throws {
+    @Test func anAppThatKeepsTalkingButNeverAnswersIsGivenUpOnInTime() async throws {
         let path = FileManager.default.temporaryDirectory.appending(path: "cx-\(UUID().uuidString.prefix(8)).sock").path
         let server = socket(AF_UNIX, SOCK_STREAM, 0)
         var address = sockaddr_un()
@@ -96,7 +116,8 @@ struct CodexAppTests {
         // Asks the client a question every 0.2 seconds, and never answers it.
         Thread.detachNewThread {
             let client = accept(server, nil, nil)
-            defer { close(client); close(server); unlink(path) }
+            unlink(path)
+            defer { close(client); close(server) }
             var on: Int32 = 1
             setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
             for _ in 0..<50 {
@@ -107,13 +128,13 @@ struct CodexAppTests {
             }
         }
         let started = Date.now
-        #expect(CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [], socketPath: path, timeout: 1) == .failed("The Codex app didn't answer"))
+        #expect(await offPool { CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [], socketPath: path, timeout: 1) } == .failed("The Codex app didn't answer"))
         #expect(Date.now.timeIntervalSince(started) < 2.5)
     }
 
-    @Test func aChatNoWindowHasOpenIsReported() throws {
+    @Test func aChatNoWindowHasOpenIsReported() async throws {
         let app = try fakeApp(answer: ["resultType": "error", "error": "no-client-found: no client can handle the request"])
-        #expect(CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [], socketPath: app.path, timeout: 5) == .notOpen)
+        #expect(await offPool { CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [], socketPath: app.path, timeout: 5) } == .notOpen)
         #expect(CodexApp.startTurn(thread: "t-1", text: "A report", pictures: [], socketPath: "/tmp/no-such-\(UUID().uuidString.prefix(6)).sock", timeout: 1)
             == .failed("The Codex app isn't running"))
     }

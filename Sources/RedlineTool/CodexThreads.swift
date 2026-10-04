@@ -14,8 +14,7 @@ enum CodexThreads {
 
     /// The newest of Codex's own databases of chats. Lists ~/.codex, so callers look it up once
     /// and pass it on.
-    static func newestDatabase() -> URL? {
-        let folder = URL.homeDirectory.appending(path: ".codex", directoryHint: .isDirectory)
+    static func newestDatabase(in folder: URL = URL.homeDirectory.appending(path: ".codex", directoryHint: .isDirectory)) -> URL? {
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
             .filter { $0.hasPrefix("state_") && $0.hasSuffix(".sqlite") }
         let newest = names.max { (Int($0.dropFirst(6).dropLast(7)) ?? 0) < (Int($1.dropFirst(6).dropLast(7)) ?? 0) }
