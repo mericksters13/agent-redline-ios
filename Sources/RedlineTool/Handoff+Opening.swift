@@ -63,6 +63,15 @@ extension Handoff {
     ///
     /// Throws when it can't.
     static func openChat(_ agent: Agent, id: String, in folder: String) throws {
+        // The Claude app's link copies a chat started in one of its tabs into a second tab that
+        // no longer follows the first, and no link opens the first one
+        // (https://github.com/anthropics/claude-code/issues/80773), so the app only comes forward.
+        if agent == .claude, AgentCommand.isClaudeAppInstalled(),
+            ClaudeSessions.openSessions().contains(where: { $0.id == id && $0.isAppTab })
+        {
+            try runOpen(["-b", AgentCommand.claudeAppID])
+            return
+        }
         if let link = appLink(agent, id: id) {
             try openURL(link)
             return
@@ -113,9 +122,16 @@ extension Handoff {
     ///
     /// Throws when open can't start.
     static func openURL(_ link: String) throws {
+        try runOpen([link])
+    }
+
+    /// Runs /usr/bin/open with `arguments` and waits for it.
+    ///
+    /// Throws when open can't start.
+    private static func runOpen(_ arguments: [String]) throws {
         let open = Process()
         open.executableURL = URL(filePath: "/usr/bin/open")
-        open.arguments = [link]
+        open.arguments = arguments
         try open.run()
         open.waitUntilExit()
     }

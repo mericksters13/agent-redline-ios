@@ -88,6 +88,16 @@ struct HubPathsTests {
             kill(hub.processIdentifier, SIGKILL)
             hub.waitUntilExit()
         }
+        let status = HubStatus(
+            pid: hub.processIdentifier,
+            startedAt: .now,
+            apps: [],
+            hosts: [],
+            port: 0,
+            phones: [],
+            simulatorContainers: 0
+        )
+        try HubPaths.encoder.encode(status).write(to: oldPaths.status)
         guard case .blocked = HubPaths.moveFromOldName(to: paths) else {
             Issue.record("The folder moved while the earlier version's hub was running")
             return
@@ -96,6 +106,23 @@ struct HubPathsTests {
         #expect(hub.isRunning)
         #expect(!FileManager.default.fileExists(atPath: paths.root.path))
         #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: oldPaths.root.path)) == nil)
+    }
+
+    @Test func anEarlierVersionsHubThatDoesntSayItsAppsIsLeftRunning() throws {
+        // Stands in for an old hub still starting: it holds the lock but hasn't saved its status,
+        // so the apps it was given on the command line aren't known.
+        let hub = try startOldHub(["/bin/sleep", "30"])
+        defer {
+            kill(hub.processIdentifier, SIGKILL)
+            hub.waitUntilExit()
+        }
+        // It isn't stopped, so the apps it watches keep being watched, and nothing moves.
+        guard case .blocked = HubPaths.moveFromOldName(to: paths) else {
+            Issue.record("The earlier version's hub was stopped without its apps being known")
+            return
+        }
+        #expect(hub.isRunning)
+        #expect(!FileManager.default.fileExists(atPath: paths.root.path))
     }
 
     @Test func aPidLeftByAnEarlierHubThatCrashedIsNeverSignaled() throws {

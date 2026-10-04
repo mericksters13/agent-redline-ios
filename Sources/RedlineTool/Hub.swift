@@ -12,11 +12,12 @@ import SystemConfiguration
 /// device link; simulator apps' folders are on the Mac, so the hub sees their reports as they're
 /// saved.
 ///
-/// Thread safety: everything that changes while the hub runs is in `state`, a `Mutex`.
-/// `simulators`, `listener`, `handoff`, `chatsWatchers`, `discovery` and `pidLock` are written once
-/// in `start()`, before any source, queue or listener that reads them starts, and only read
-/// afterwards; `stop()` runs after `start()`, once, under `isStopped`. `whenListenerFails` is set
-/// before `start()` and only read afterwards. `logDescriptor` is used only on `writer`.
+/// Thread safety: everything that changes while the hub runs is in `state`, a `Mutex`, apart from
+/// `chatsWatchers`, which has its own. `simulators`, `listener`, `handoff`, `discovery` and
+/// `pidLock` are written once in `start()`, before any source, queue or listener that reads them
+/// starts, and only read afterwards; `stop()` runs after `start()`, once, under `isStopped`.
+/// `whenListenerFails` is set before `start()` and only read afterwards. `logDescriptor` is used
+/// only on `writer`.
 ///
 /// Lives for the whole process: PhoneLink, HubListener, SimulatorWatcher and Handoff hold it
 /// unowned.
@@ -27,7 +28,10 @@ final class Hub: @unchecked Sendable {
     private let fixedApps: [String]
     private let startedAt = Date.now
     private let state: Mutex<State>
-    private var chatsWatchers: [DispatchSourceFileSystemObject] = []
+    /// Watchers of the chat record folders; nil once the hub has stopped.
+    ///
+    /// The sessions folder's watcher can be added after `start()`, once Claude Code makes it.
+    private let chatsWatchers = Mutex<[DispatchSourceFileSystemObject]?>([])
     /// Claude Code's open chats.
     ///
     /// It runs no hooks, so its chats are found from its own files.
@@ -179,7 +183,10 @@ final class Hub: @unchecked Sendable {
             guard !isStopped else { return }
             isStopped = true
             discovery?.cancel()
-            for watcher in chatsWatchers { watcher.cancel() }
+            chatsWatchers.withLock { watchers in
+                for watcher in watchers ?? [] { watcher.cancel() }
+                watchers = nil
+            }
             network.cancel()
             listener?.stop()
             // Before the simulator watcher: stopping it waits for a rescan under way, and hand-overs
@@ -251,17 +258,45 @@ final class Hub: @unchecked Sendable {
         let folder = Chats.folder(paths)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for folder in [folder.path] + ClaudeSessions.configFolders.map({ $0 + "/sessions" }) {
-            let descriptor = open(folder, O_EVTONLY)
-            guard descriptor >= 0 else { continue }
-            let source = DispatchSource.makeFileSystemObjectSource(
-                fileDescriptor: descriptor,
-                eventMask: .write,
-                queue: queue
-            )
-            source.setEventHandler { [weak self] in self?.updateApps(isStarting: false) }
-            source.setCancelHandler { close(descriptor) }
-            source.resume()
-            chatsWatchers.append(source)
+            watch(folder)
+        }
+    }
+
+    /// Watches a folder of chat records.
+    ///
+    /// Claude Code makes its sessions folder with its first chat, which can come after the hub
+    /// starts: until then the folder above it is watched, and the sessions folder once it appears.
+    private func watch(_ folder: String) {
+        let descriptor = open(folder, O_EVTONLY)
+        if descriptor >= 0 {
+            addWatcher(descriptor) { [weak self] _ in self?.updateApps(isStarting: false) }
+            return
+        }
+        let parent = open(URL(filePath: folder).deletingLastPathComponent().path, O_EVTONLY)
+        guard parent >= 0 else { return }
+        addWatcher(parent) { [weak self] source in
+            guard let self, FileManager.default.fileExists(atPath: folder) else { return }
+            source.cancel()
+            watch(folder)
+            updateApps(isStarting: false)
+        }
+    }
+
+    /// Runs `changed` on the hub's queue each time the folder open at `descriptor` changes.
+    ///
+    /// Once the hub has stopped, the folder is not watched.
+    private func addWatcher(_ descriptor: Int32, changed: @escaping (DispatchSourceFileSystemObject) -> Void) {
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: .write,
+            queue: queue
+        )
+        source.setEventHandler { [unowned source] in changed(source) }
+        source.setCancelHandler { close(descriptor) }
+        source.resume()
+        chatsWatchers.withLock { watchers in
+            guard watchers != nil else { return source.cancel() }
+            watchers?.append(source)
         }
     }
 
@@ -288,11 +323,14 @@ final class Hub: @unchecked Sendable {
 
     /// Notes the apps open Claude Code chats work on, so the hub watches them.
     ///
-    /// Other agents' chats note theirs when they register. Only apps not noted yet are written.
+    /// Other agents' chats note theirs when they register. A new chat for one of these apps starts
+    /// with the agent used last, so apps not noted since the chat was last active are written too.
     private func noteClaudeChats() {
         let known = ProjectHistory.all(paths)
         for session in claudeChats() {
-            let new = ChatDirectory.apps.bundleIDs(in: session.folder).filter { known[$0] == nil }
+            let new = ChatDirectory.apps.bundleIDs(in: session.folder).filter {
+                known[$0].map { $0.usedAt < session.updatedAt } ?? true
+            }
             guard !new.isEmpty else { continue }
             let chat = ChatRecord(
                 id: ChatID.make(.claude, session.id),

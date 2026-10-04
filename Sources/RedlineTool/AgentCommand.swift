@@ -12,6 +12,9 @@ enum AgentCommand {
         FileManager.default.fileExists(atPath: "/Applications/Claude.app")
     }
 
+    /// The Claude app's bundle identifier, which brings it forward with `open -b`.
+    static let claudeAppID = "com.anthropic.claudefordesktop"
+
     /// Codex's desktop app, inside the ChatGPT app or on its own, is installed.
     ///
     /// Checks the disk.

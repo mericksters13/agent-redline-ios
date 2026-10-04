@@ -10,6 +10,9 @@ struct ReportViewer: View {
     struct Contents: Sendable {
         var pictures: [HubWindowModel.Picture]
         var chat: HubWindowModel.ChatLink?
+        /// Where the report went, read again with `chat`: the panel's row may be older than a
+        /// delivery that happened while the panel was closed.
+        var destination: (agent: String, chat: String, isWaiting: Bool)
     }
 
     let report: HubWindowModel.ReportRow
@@ -18,6 +21,8 @@ struct ReportViewer: View {
     @State private var selected: Int?
 
     init(report: HubWindowModel.ReportRow, contents: Contents) {
+        var report = report
+        (report.agent, report.chat, report.isWaiting) = contents.destination
         self.report = report
         pictures = contents.pictures
         chat = contents.chat
@@ -25,7 +30,7 @@ struct ReportViewer: View {
 
     private nonisolated static let loader = DispatchQueue(label: "Redline.viewer.loader", qos: .userInitiated)
 
-    /// Reads the report's pictures and chat.
+    /// Reads the report's pictures, its chat and where it went.
     ///
     /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
     nonisolated static func load(_ folder: URL) async -> Contents {
@@ -34,7 +39,11 @@ struct ReportViewer: View {
                 continuation.resume(
                     returning: Contents(
                         pictures: HubWindowModel.pictures(in: folder),
-                        chat: HubWindowModel.chat(of: folder)
+                        chat: HubWindowModel.chat(of: folder),
+                        destination: HubWindowModel.destination(
+                            of: folder,
+                            codexDatabase: CodexThreads.newestDatabase()
+                        )
                     )
                 )
             }
