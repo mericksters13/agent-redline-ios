@@ -44,8 +44,7 @@ flowchart LR
         claude["Claude Code chats"]
         codex["Codex chats"]
     end
-    hub -->|"address and token, over Xcode's device link"| kit
-    kit -->|"reports, over the local network or the simulator folder"| hub
+    kit <-->|"reports go to the Mac; the Mac's address and a token come back"| hub
     hub --> inbox
     mcp -->|"registers the chat and the apps its project builds"| hub
     hook -->|"registers the chat"| hub
