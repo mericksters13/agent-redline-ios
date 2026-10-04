@@ -433,6 +433,28 @@ struct ReportStore: Sendable {
         return (id, folder, draft)
     }
 
+    /// The most a report's files may add up to: the Mac's hub turns down a bigger one, as
+    /// `Hub.largestReport`. Checked before the report is finished, while its notes can still go
+    /// back into the draft for photos to be taken out.
+    static let largestReport = 50_000_000
+
+    /// A report too big for the Mac to take.
+    struct TooLarge: Error, Equatable {
+        var bytes: Int
+    }
+
+    /// Checks that a report drawn in `folder`, with the summary and listing `finishReport` adds,
+    /// fits what the Mac takes. Call before `finishReport`: a finished report can't be changed.
+    func checkSize(of report: Report, in folder: URL, limit: Int = Self.largestReport) throws {
+        var bytes = Data(ReportSummary.markdown(report).utf8).count + (try Self.encoder.encode(report)).count
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where !name.hasPrefix(".") {
+            let values = try? folder.appending(path: name).resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+            if values?.isDirectory == true { continue }
+            bytes += values?.fileSize ?? 0
+        }
+        if bytes > limit { throw TooLarge(bytes: bytes) }
+    }
+
     /// Finishes a report: writes `report.md` and `report.json` and removes the old draft.
     /// `report.json` goes last, so a report is listed as sent only once it is complete.
     func finishReport(_ report: Report, in folder: URL) throws {

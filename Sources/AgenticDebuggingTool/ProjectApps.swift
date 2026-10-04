@@ -56,7 +56,11 @@ enum ProjectApps {
                 settings = ProjectApps.settings(project.settings(of: configuration), over: settings)
                 // A watch, TV, Mac or Vision app; the kit runs only on iOS.
                 if let sdk = settings["SDKROOT"], ["watchos", "appletvos", "macosx", "xros"].contains(sdk) { continue }
-                if let id = settings["PRODUCT_BUNDLE_IDENTIFIER"].flatMap({ expand($0, with: settings) }), isLiteral(id) { found.insert(id) }
+                // The app on a device and in the simulator, which can each have their own ID.
+                for sdk in ["iphoneos", "iphonesimulator"] {
+                    let resolved = ProjectApps.settings(settings, sdk: sdk)
+                    if let id = resolved["PRODUCT_BUNDLE_IDENTIFIER"].flatMap({ expand($0, with: resolved) }), isLiteral(id) { found.insert(id) }
+                }
             }
         }
         return found
@@ -108,7 +112,8 @@ enum ProjectApps {
     }
 
     /// The settings in an `.xcconfig` file and the files it includes. Settings for one SDK or
-    /// architecture only, such as `KEY[sdk=iphoneos*]`, are left out.
+    /// architecture only, such as `KEY[sdk=iphoneos*]`, keep their condition in the key for
+    /// `settings(_:sdk:)` to apply.
     static func xcconfigSettings(at file: URL, depth: Int = 0) -> [String: String] {
         guard depth < 8, let text = try? String(contentsOf: file, encoding: .utf8) else { return [:] }
         var settings: [String: String] = [:]
@@ -119,15 +124,21 @@ enum ProjectApps {
                 guard parts.count >= 3 else { continue }
                 let path = String(parts[1])
                 let included = path.hasPrefix("/") ? URL(fileURLWithPath: path) : file.deletingLastPathComponent().appending(path: path)
-                settings = Self.settings(xcconfigSettings(at: included, depth: depth + 1), over: settings)
+                settings = Self.settings(xcconfigSettings(at: included, depth: depth + 1), over: settings, sameLevel: true)
                 continue
             }
-            guard let equals = line.firstIndex(of: "=") else { continue }
+            // The first "=" outside a condition such as `[sdk=iphoneos*]`.
+            var inCondition = false
+            let equals = line.firstIndex { character in
+                if character == "[" { inCondition = true } else if character == "]" { inCondition = false }
+                return character == "=" && !inCondition
+            }
+            guard let equals else { continue }
             let key = line[..<equals].trimmingCharacters(in: .whitespaces)
-            guard !key.isEmpty, !key.contains("[") else { continue }
+            guard !key.isEmpty else { continue }
             var value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces)
             if value.hasSuffix(";") { value.removeLast() }
-            settings = Self.settings([key: value.trimmingCharacters(in: CharacterSet(charactersIn: " \t\""))], over: settings)
+            settings = Self.settings([key: value.trimmingCharacters(in: CharacterSet(charactersIn: " \t\""))], over: settings, sameLevel: true)
         }
         return settings
     }
@@ -135,9 +146,12 @@ enum ProjectApps {
     /// One level of settings over the levels below it, as Xcode layers them: the project's
     /// `.xcconfig`, the project, the target's `.xcconfig`, then the target. `$(inherited)` in a
     /// setting becomes the value below it; where nothing below sets it yet, it stays for a lower
-    /// level to fill in, and `expand` leaves it empty.
-    static func settings(_ upper: [String: String], over lower: [String: String]) -> [String: String] {
-        var settings = lower
+    /// level to fill in, and `expand` leaves it empty. A setting for every SDK replaces the lower
+    /// levels' settings of it for one SDK; within one level (`sameLevel`, such as later lines of
+    /// one `.xcconfig`) both stay, and the one for the SDK wins when it applies.
+    static func settings(_ upper: [String: String], over lower: [String: String], sameLevel: Bool = false) -> [String: String] {
+        let plain = sameLevel ? [] : Set(upper.keys.filter { !$0.contains("[") })
+        var settings = lower.filter { key, _ in key.firstIndex(of: "[").map { !plain.contains(String(key[..<$0])) } ?? true }
         for (key, value) in upper {
             guard let below = lower[key] else {
                 settings[key] = value
@@ -146,6 +160,27 @@ enum ProjectApps {
             settings[key] = value.replacingOccurrences(of: "$(inherited)", with: below).replacingOccurrences(of: "${inherited}", with: below)
         }
         return settings
+    }
+
+    /// The settings as Xcode applies them when building for `sdk`, such as `iphoneos`: a setting
+    /// for that SDK only, such as `KEY[sdk=iphoneos*]`, over the setting for every SDK. Settings
+    /// with other conditions, such as an architecture, are left out.
+    static func settings(_ settings: [String: String], sdk: String) -> [String: String] {
+        var resolved = settings.filter { !$0.key.contains("[") }
+        for (key, value) in settings {
+            guard let open = key.firstIndex(of: "["), key.hasSuffix("]") else { continue }
+            let conditions = key[key.index(after: open)..<key.index(before: key.endIndex)].components(separatedBy: "][")
+            let applies = conditions.allSatisfy { condition in
+                let parts = condition.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                guard parts.count == 2 else { return false }
+                return parts[1] == "*" || (parts[0] == "sdk" && fnmatch(parts[1], sdk, 0) == 0)
+            }
+            guard applies else { continue }
+            let name = key[..<open].trimmingCharacters(in: .whitespaces)
+            let below = settings[name] ?? ""
+            resolved[name] = value.replacingOccurrences(of: "$(inherited)", with: below).replacingOccurrences(of: "${inherited}", with: below)
+        }
+        return resolved
     }
 
     /// A setting with its references to other settings filled in, such as `$(APP_BUNDLE_ID)`,

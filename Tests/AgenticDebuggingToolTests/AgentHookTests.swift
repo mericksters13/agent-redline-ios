@@ -84,6 +84,44 @@ struct AgentHookTests {
         #expect(HookInput(.claude, json: Data("not json".utf8)) == nil)
     }
 
+    @Test func aChatWithSeveralFoldersTakesReportsFromEachFoldersApp() throws {
+        let docs = root.appending(path: "docs", directoryHint: .isDirectory)
+        let first = root.appending(path: "first", directoryHint: .isDirectory)
+        let second = root.appending(path: "second", directoryHint: .isDirectory)
+        for folder in [docs, first, second] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        try "targets:\n  A:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.first\n"
+            .write(to: first.appending(path: "project.yml"), atomically: true, encoding: .utf8)
+        try "targets:\n  B:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.second\n"
+            .write(to: second.appending(path: "project.yml"), atomically: true, encoding: .utf8)
+        let roots = [docs, first, second].map(\.path)
+        let json = try JSONSerialization.data(withJSONObject: ["conversation_id": "c1", "workspace_roots": roots])
+        let input = try #require(HookInput(.cursor, json: json))
+        let session = try #require(AgentHooks.session(for: input, agent: .cursor, id: "cursor-c1", pid: nil, paths: paths, startsHub: false))
+        // The chat works in the first folder that builds an app, and takes both apps' reports.
+        #expect(session.chat.folder == first.path)
+        #expect(session.chat.bundleIDs == ["com.example.first", "com.example.second"])
+        let none = try #require(HookInput(.cursor, json: try JSONSerialization.data(withJSONObject: ["conversation_id": "c2", "workspace_roots": [docs.path]])))
+        #expect(AgentHooks.session(for: none, agent: .cursor, id: "cursor-c2", pid: nil, paths: paths, startsHub: false) == nil)
+    }
+
+    @Test func aRestartedHubReplaysPromisedReportsHoweverOld() throws {
+        let old = Date().addingTimeInterval(-86_400)
+        let source = ReportSource(kind: .phone, device: "D", deviceName: "Mark iPhone", bundleID: "com.example.app", reportID: "r", receivedAt: old)
+        func waiting(_ folder: URL, claim: Claim? = nil) -> InboxReport { InboxReport(folder: folder, source: source, claim: claim) }
+        // Sent nowhere: only while recent, since a chat started for it a day later would surprise.
+        let unpicked = try report(sourceFile: "/w/App.swift", pick: nil)
+        #expect(!Handoff.replays(waiting(unpicked), within: 3600))
+        #expect(Handoff.replays(waiting(unpicked), within: 3600, now: old.addingTimeInterval(60)))
+        // Picked on the phone, or cut off mid hand-over: however old.
+        #expect(Handoff.replays(waiting(try report(sourceFile: "/w/App.swift", pick: ["agent": "cursor", "chat": "c1"])), within: 3600))
+        let cutOff = Claim(chat: "claude-s1", agent: "claude", folder: "/w", claimedAt: old, handingOverIn: Int32.max)
+        #expect(Handoff.replays(waiting(unpicked, claim: cutOff), within: 3600))
+        // Addressed to a chat: its hooks take it.
+        let addressed = try report(sourceFile: "/w/App.swift", pick: ["agent": "cursor", "chat": "c1"])
+        InboxQueue.setAddress(Address(chat: "cursor-c1", agent: "cursor", folder: "/w"), of: addressed)
+        #expect(!Handoff.replays(waiting(addressed), within: 3600))
+    }
+
     @Test func eachAgentReadsTheReportWhereItLooks() {
         #expect(json(AgentHooks.output(.claude, .prompt, "r")!) == json(["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": "r"]]))
         #expect(json(AgentHooks.output(.codex, .stop, "r")!) == json(["decision": "block", "reason": "r"]))
@@ -177,6 +215,14 @@ struct AgentHookTests {
             HubMessage.ChatList(agents: ["cursor", "codex"], chats: [], newChats: ["codex"])
         }
         #expect(cursorFirst == .newChat(.codex, folder: folder, pick: nil))
+        // A new chat starts with the agent last used on the app, while it can start one.
+        ProjectHistory.note(ChatRecord(id: "codex-X", agent: "codex", folder: folder, bundleIDs: ["com.example.app"], pid: getpid(),
+                                       registeredAt: Date(), lastActiveAt: Date()), paths: paths)
+        #expect(route(try report(sourceFile: file, pick: nil), []) == .newChat(.codex, folder: folder, pick: nil))
+        let codexGone = Routing.destination(of: try report(sourceFile: file, pick: nil), bundleID: "com.example.app", paths: paths) { _, _ in
+            HubMessage.ChatList(agents: ["claude", "codex"], chats: [], newChats: ["claude"])
+        }
+        #expect(codexGone == .newChat(.claude, folder: folder, pick: nil))
         // Several chats in the worktree and no pick: no guessing.
         if case .undecided = route(try report(sourceFile: file, pick: nil), others + [chat("C", "codex", sameWorktree: true)]) {} else {
             Issue.record("Two chats in the worktree should leave the report undecided")
@@ -387,10 +433,13 @@ struct AgentHookTests {
 
         // Another chat on the same app gets nothing, and an unaddressed report goes to no one.
         #expect(other.takeAddressed() == nil)
-        let text = try #require(builder.takeAddressed())
-        #expect(text.contains("1. Save (Button, editor.save): Too small."))
-        #expect(text.contains(report.appending(path: "screen-1.jpg").path))
+        let taken = try #require(builder.takeAddressed())
+        #expect(taken.text.contains("1. Save (Button, editor.save): Too small."))
+        #expect(taken.text.contains(report.appending(path: "screen-1.jpg").path))
         #expect(builder.takeAddressed() == nil)
+        // An answer that couldn't be written frees the report for the chat to take again.
+        ChatSession.settle(taken.reports, delivered: false)
+        #expect(builder.takeAddressed()?.reports.count == 1)
     }
 }
 #endif

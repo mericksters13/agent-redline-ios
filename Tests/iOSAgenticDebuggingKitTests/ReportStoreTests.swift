@@ -235,6 +235,18 @@ struct ReportStoreTests {
         #expect(store.reportFiles(started.id).isEmpty)
     }
 
+    @Test func aReportTooBigForTheMacIsCaughtBeforeItIsFinished() throws {
+        try store.saveDraft([annotation("Too small")])
+        let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        try Data(count: 4_000).write(to: started.folder.appending(path: "note-1.jpg"))
+        // The draft isn't sent, so it doesn't count.
+        try Data(count: 50_000).write(to: started.draft.appending(path: "big.png"))
+        let report = sampleReport(id: started.id)
+        try store.checkSize(of: report, in: started.folder, limit: 10_000)
+        #expect(throws: ReportStore.TooLarge.self) { try store.checkSize(of: report, in: started.folder, limit: 4_000) }
+        #expect(ReportStore.largestReport == 50_000_000)
+    }
+
     @Test func theLastDeliveryIsRemembered() {
         #expect(store.lastDelivery() == nil)
         store.recordDelivery(.unreachable, at: Date(timeIntervalSince1970: 1_791_000_000))

@@ -833,6 +833,11 @@ final class DebugSession {
         if let choice = pickerChoice {
             destination = choice
             if let data = try? JSONEncoder().encode(choice) { UserDefaults.standard.set(data, forKey: Self.destinationKey) }
+        } else if case .loaded = chatList {
+            // The Mac answered and no longer offers the saved pick: forget it, so the report
+            // goes where the Mac routes it instead of to a chat that's gone.
+            destination = nil
+            UserDefaults.standard.removeObject(forKey: Self.destinationKey)
         }
         let thenSend = sendsAfterPicking
         sendsAfterPicking = false
@@ -911,6 +916,7 @@ final class DebugSession {
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 let report = try ReportBuilder.build(input)
+                try store.checkSize(of: report, in: started.folder)
                 try store.finishReport(report, in: started.folder)
                 logger.notice("Report saved at \(started.folder.path, privacy: .public)")
                 // The first time, iOS asks about local network access before the hub can answer.
@@ -918,6 +924,11 @@ final class DebugSession {
                 let outcome = await DebugSession.deliverReports(from: store, patience: patience)
                 let notes = count == 1 ? "1 note" : "\(count) notes"
                 await self?.show(Toast(message: DebugSession.toast(for: outcome, notes: notes, to: destination?.title)))
+            } catch let tooLarge as ReportStore.TooLarge {
+                logger.error("The report is \(tooLarge.bytes) bytes, over the \(ReportStore.largestReport) the Mac takes")
+                let megabytes = (tooLarge.bytes + 999_999) / 1_000_000
+                await self?.restoreDraft(from: input, because: "The report is \(megabytes) MB; the Mac takes up to "
+                    + "\(ReportStore.largestReport / 1_000_000) MB. Its notes are back in the draft. Remove some photos, then send.")
             } catch {
                 logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
                 await self?.restoreDraft(from: input)
@@ -926,8 +937,9 @@ final class DebugSession {
     }
 
     /// Puts the notes of a report that couldn't be finished back into the draft, ahead of any
-    /// made since, so they can be sent again.
-    private func restoreDraft(from input: ReportBuilder.Input) {
+    /// made since, so they can be sent again, and says why with `message`.
+    private func restoreDraft(from input: ReportBuilder.Input,
+                              because message: String = "Couldn't save the report. Its notes are back in the draft.") {
         let before = screens
         do {
             try store.reclaimPictures(from: input.folder)
@@ -946,7 +958,7 @@ final class DebugSession {
         annotations = restored
         store.discardReport(input.folder)
         refreshMarkers()
-        showFailure("Couldn't save the report. Its notes are back in the draft.")
+        showFailure(message)
     }
 
     // MARK: - One picture per screen

@@ -80,12 +80,8 @@ enum AgentHooks {
         guard let input, ProcessInfo.processInfo.environment[startedByHub] == nil else { return answer(agent, event, nil) }
         let id = "\(agent.rawValue)-\(input.chat)"
         let pid = AgentProcess.find(agent, chat: input.chat)
-        // The first of the chat's folders that builds an app; most chats have just one folder.
-        let session = input.folders.lazy.map { folder in
-            ChatSession(paths: paths, folder: URL(fileURLWithPath: folder), extraApps: [], agent: agent.rawValue, id: id, pid: pid)
-        }.first { !$0.chat.bundleIDs.isEmpty }
         // Not an app project: nothing to do, in every project the agent opens.
-        guard let session else { return answer(agent, event, nil) }
+        guard let session = Self.session(for: input, agent: agent, id: id, pid: pid, paths: paths) else { return answer(agent, event, nil) }
 
         switch event {
         case .start:
@@ -100,7 +96,7 @@ enum AgentHooks {
             return answer(agent, event, session.takeAddressed())
 
         case .stop:
-            if let text = session.takeAddressed() { return answer(agent, event, text) }
+            if let taken = session.takeAddressed() { return answer(agent, event, taken) }
             // Only a chat a report was sent to waits for more; any other stops as usual.
             guard !InboxQueue.reports(for: session.chat.bundleIDs, paths: paths).filter({ InboxQueue.address(of: $0.folder)?.chat == id }).isEmpty,
                   let lock = WaitLock(chat: id, paths: paths) else { return answer(agent, event, nil) }
@@ -108,9 +104,9 @@ enum AgentHooks {
             let waiter = ChatSession.Waiter()
             let deadline = Date().addingTimeInterval(holdOpen)
             while session.waitForAddressed(timeout: deadline.timeIntervalSinceNow, waiter: waiter) {
-                guard let text = session.takeAddressed() else { continue }
+                guard let taken = session.takeAddressed() else { continue }
                 withExtendedLifetime(lock) {}
-                return answer(agent, event, text)
+                return answer(agent, event, taken)
             }
             return answer(agent, event, nil)
 
@@ -120,12 +116,30 @@ enum AgentHooks {
         }
     }
 
-    /// Prints what the agent expects from this event, carrying `text` when there is any.
-    static func answer(_ agent: Agent, _ event: HookEvent, _ text: String?) -> Int32 {
-        if let output = output(agent, event, text),
-           let data = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys, .withoutEscapingSlashes]) {
-            FileHandle.standardOutput.write(data + Data("\n".utf8))
+    /// The chat's session: it works in the first of its folders that builds an app, and takes
+    /// reports from the apps every one of its folders builds. Nil when none builds an app.
+    static func session(for input: HookInput, agent: Agent, id: String, pid: Int32?, paths: HubPaths, startsHub: Bool = true) -> ChatSession? {
+        func make(in folder: String, apps: [String]) -> ChatSession? {
+            let session = ChatSession(paths: paths, folder: URL(fileURLWithPath: folder), extraApps: apps, agent: agent.rawValue, id: id, pid: pid,
+                                      startsHub: startsHub)
+            return session.chat.bundleIDs.isEmpty ? nil : session
         }
+        // Most chats have just one folder.
+        guard input.folders.count > 1 else { return make(in: input.folder, apps: []) }
+        let apps = input.folders.map { ProjectApps.bundleIDs(in: URL(fileURLWithPath: $0)) }
+        guard let first = apps.firstIndex(where: { !$0.isEmpty }) else { return nil }
+        return make(in: input.folders[first], apps: apps.flatMap { $0 })
+    }
+
+    /// Prints what the agent expects from this event, carrying the reports taken when there are
+    /// any. They're the chat's only once the answer is written out.
+    static func answer(_ agent: Agent, _ event: HookEvent, _ taken: (text: String, reports: [InboxReport])?) -> Int32 {
+        var written = false
+        if let output = output(agent, event, taken?.text),
+           let data = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys, .withoutEscapingSlashes]) {
+            written = (try? FileHandle.standardOutput.write(contentsOf: data + Data("\n".utf8))) != nil
+        }
+        if let taken { ChatSession.settle(taken.reports, delivered: written) }
         return 0
     }
 

@@ -51,14 +51,20 @@ final class ChatSession: @unchecked Sendable {
     }
 
     /// Takes the reports sent to this chat, as text with pictures named by path, for agents
-    /// that get reports through hooks. Nil when there's none.
-    func takeAddressed() -> String? {
+    /// that get reports through hooks. Nil when there's none. The reports stay claimed by this
+    /// process until the caller has written the text out and calls `settle`.
+    func takeAddressed() -> (text: String, reports: [InboxReport])? {
         let chat = self.chat
         let reports = InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths)
             .filter { InboxQueue.claim($0, for: chat) }
-        let texts = reports.map(ReportContent.text(for:))
-        reports.forEach(InboxQueue.handedOver)
-        return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
+        guard !reports.isEmpty else { return nil }
+        return (reports.map(ReportContent.text(for:)).joined(separator: "\n\n"), reports)
+    }
+
+    /// Settles reports this process took: they're the chat's once what carries them was
+    /// written out (`delivered`); otherwise they're freed for the chat to take again.
+    static func settle(_ reports: [InboxReport], delivered: Bool) {
+        reports.forEach(delivered ? InboxQueue.handedOver : InboxQueue.release)
     }
 
     /// Waits until a report is sent to this chat, `timeout` passes or the waiter is cancelled.
@@ -69,22 +75,22 @@ final class ChatSession: @unchecked Sendable {
 
     /// Takes the reports waiting for this chat's apps that were sent to it or sent nowhere,
     /// oldest first. Always takes at least one such report; takes more while their text and
-    /// pictures fit in `budget` bytes.
-    func take(budget: Int) -> (items: [ReportContent.Item], taken: Int, remaining: Int) {
+    /// pictures fit in `budget` bytes. The reports stay claimed by this process until the caller
+    /// has written the items out and calls `settle`.
+    func take(budget: Int) -> (items: [ReportContent.Item], reports: [InboxReport], remaining: Int) {
         let chat = self.chat
         var items: [ReportContent.Item] = []
         var used = 0
-        var taken = 0
+        var taken: [InboxReport] = []
         for report in InboxQueue.takeable(by: chat, paths: paths) {
             // Another report's text, however long, must fit too.
-            if taken > 0, budget - used < ReportContent.longestText { break }
+            if !taken.isEmpty, budget - used < ReportContent.longestText { break }
             // Another chat may have taken it a moment ago.
             guard InboxQueue.claim(report, for: chat) else { continue }
             let content = ReportContent.items(for: report, budget: max(budget - used, 0))
-            InboxQueue.handedOver(report)
             items += content.items
             used += content.bytes
-            taken += 1
+            taken.append(report)
         }
         return (items, taken, InboxQueue.takeable(by: chat, paths: paths).count)
     }
