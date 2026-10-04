@@ -67,7 +67,7 @@ enum HubAppContext {
 @MainActor
 @Observable
 final class HubWindowModel {
-    struct DeviceRow: Identifiable, Equatable {
+    struct DeviceRow: Identifiable, Equatable, Sendable {
         var id: String
         var name: String
         /// "iPhone 17 Pro", or "Simulator".
@@ -80,12 +80,12 @@ final class HubWindowModel {
     }
 
     /// A note, numbered as on the phone.
-    struct Note: Equatable {
+    struct Note: Equatable, Sendable {
         var number: Int
         var text: String
     }
 
-    struct ReportRow: Identifiable, Equatable {
+    struct ReportRow: Identifiable, Equatable, Sendable {
         var id: String
         var folder: URL
         var device: String
@@ -97,11 +97,20 @@ final class HubWindowModel {
         var notes: [Note]
     }
 
+    /// Everything one refresh reads, off the main actor.
+    struct Snapshot: Sendable {
+        var status: HubStatus
+        var reports: [(deviceID: String, row: ReportRow)]
+        var simulators: [(udid: String, name: String)]
+    }
+
     private(set) var devices: [DeviceRow] = []
     private(set) var reports: [ReportRow] = []
     private(set) var address = ""
     private let hub: Hub
     private var timer: Timer?
+    /// The refresh under way; one at a time, cancelled when the panel closes.
+    private var refreshing: Task<Void, Never>?
 
     init(hub: Hub) {
         self.hub = hub
@@ -115,33 +124,58 @@ final class HubWindowModel {
         refresh()
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            // Scheduled on the main run loop, so it fires on the main thread.
+            MainActor.assumeIsolated { self?.refresh() }
         }
+        timer?.tolerance = 0.5
     }
 
     func panelClosed() {
         timer?.invalidate()
         timer = nil
+        refreshing?.cancel()
+        refreshing = nil
     }
 
+    /// Reads the hub and the inbox off the main actor, then shows the result in one step. A
+    /// refresh still running when the next is due is left to finish, so results never land out
+    /// of order.
     func refresh() {
-        let paths = hub.paths
-        let status = hub.statusSnapshot()
-        let watchedSimulators = hub.watchedSimulators()
-        Task.detached(priority: .userInitiated) {
-            let reports = HubWindowModel.readReports(paths: paths)
-            let booted = HubWindowModel.bootedSimulators().filter { watchedSimulators.contains($0.udid) }
-            await MainActor.run {
-                let last = Dictionary(reports.map { ($0.deviceID, $0.row.receivedAt) }, uniquingKeysWith: max)
-                let phones = status.phones.map {
-                    DeviceRow(id: $0.udid, name: $0.name, kind: $0.model ?? "iPhone", state: HubWindowModel.phoneState($0.state),
-                              lastReport: last[$0.udid], active: $0.state.hasPrefix("Ready"))
-                }
-                let simulators = booted.map { DeviceRow(id: $0.udid, name: $0.name, kind: "Simulator", state: "Running", lastReport: last[$0.udid]) }
-                // Ready phones and running simulators first, then paired phones that can't take reports now.
-                self.devices = phones.filter(\.active) + simulators + phones.filter { !$0.active }
-                self.reports = reports.map(\.row)
-                self.address = "\(status.hosts.first ?? "") · port \(status.port)"
+        guard refreshing == nil else { return }
+        let hub = hub
+        refreshing = Task {
+            let snapshot = await Self.loadSnapshot(hub: hub)
+            refreshing = nil
+            guard !Task.isCancelled else { return }
+            apply(snapshot)
+        }
+    }
+
+    private func apply(_ snapshot: Snapshot) {
+        let last = Dictionary(snapshot.reports.map { ($0.deviceID, $0.row.receivedAt) }, uniquingKeysWith: max)
+        let phones = snapshot.status.phones.map {
+            DeviceRow(id: $0.udid, name: $0.name, kind: $0.model ?? "iPhone", state: Self.phoneState($0.state),
+                      lastReport: last[$0.udid], active: $0.state.hasPrefix("Ready"))
+        }
+        let simulators = snapshot.simulators.map { DeviceRow(id: $0.udid, name: $0.name, kind: "Simulator", state: "Running", lastReport: last[$0.udid]) }
+        // Ready phones and running simulators first, then paired phones that can't take reports now.
+        devices = phones.filter(\.active) + simulators + phones.filter { !$0.active }
+        reports = snapshot.reports.map(\.row)
+        address = "\(snapshot.status.hosts.first ?? "") · port \(snapshot.status.port)"
+    }
+
+    /// Where refreshes read the inbox and run simctl, which block.
+    private nonisolated static let loader = DispatchQueue(label: "Redline.panel.loader", qos: .userInitiated)
+
+    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    nonisolated static func loadSnapshot(hub: Hub) async -> Snapshot {
+        await withCheckedContinuation { continuation in
+            loader.async {
+                let status = hub.statusSnapshot()
+                let watched = hub.watchedSimulators()
+                let reports = readReports(paths: hub.paths)
+                let simulators = bootedSimulators().filter { watched.contains($0.udid) }
+                continuation.resume(returning: Snapshot(status: status, reports: reports, simulators: simulators))
             }
         }
     }
@@ -432,13 +466,14 @@ struct NoteNumber: View {
     }
 }
 
-/// A report's first screenshot, small, read off the disk once.
+/// A report's first screenshot, small, decoded off the main actor.
 struct Thumbnail: View {
     let url: URL?
+    @State private var image: NSImage?
 
     var body: some View {
         Group {
-            if let url, let image = ThumbnailCache.image(for: url) {
+            if let image {
                 Image(nsImage: image).resizable().scaledToFill()
             } else {
                 Color.white.opacity(0.08)
@@ -447,24 +482,49 @@ struct Thumbnail: View {
         .frame(width: 56, height: 100)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
+        .task(id: url) {
+            image = nil
+            guard let url else { return }
+            image = await Thumbnails.load(url, maxPixels: 240)
+        }
     }
 }
 
-@MainActor
-enum ThumbnailCache {
-    private static var images: [URL: NSImage] = [:]
+/// Pictures decoded at the size they're shown, off the main actor, kept in a bounded cache.
+enum Thumbnails {
+    private static let queue = DispatchQueue(label: "Redline.panel.thumbnails", qos: .userInitiated)
+    /// Keeps the panel's rows and a few more, evicting on its own. NSCache is thread-safe, but the
+    /// SDK doesn't mark it Sendable.
+    nonisolated(unsafe) private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 60
+        return cache
+    }()
 
-    static func image(for url: URL) -> NSImage? {
-        if let image = images[url] { return image }
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                  kCGImageSourceCreateThumbnailFromImageAlways: true,
-                  kCGImageSourceThumbnailMaxPixelSize: 240,
-              ] as CFDictionary)
-        else { return nil }
-        let image = NSImage(cgImage: thumbnail, size: NSSize(width: thumbnail.width, height: thumbnail.height))
-        images[url] = image
-        return image
+    /// The picture at `url`, no more than `maxPixels` on its longer side. Runs off the main
+    /// actor. Add @concurrent when the tools version reaches 6.2.
+    static func load(_ url: URL, maxPixels: Int) async -> NSImage? {
+        let key = "\(maxPixels):\(url.path)" as NSString
+        if let image = cache.object(forKey: key) { return image }
+        return await withCheckedContinuation { continuation in
+            queue.async {
+                let image = thumbnail(url, maxPixels: maxPixels).map { NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)) }
+                if let image { cache.setObject(image, forKey: key) }
+                continuation.resume(returning: image)
+            }
+        }
+    }
+
+    /// Decodes the picture at `url` straight to `maxPixels`, upright, without keeping the full-size
+    /// image around.
+    static func thumbnail(_ url: URL, maxPixels: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+        ] as CFDictionary)
     }
 }
 #endif

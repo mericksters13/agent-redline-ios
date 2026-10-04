@@ -54,14 +54,14 @@ final class HubListener: @unchecked Sendable {
         guard let first = await lines.read() else { return }
         // Before sending, the app asks where a report can go.
         if let request = HubMessage.decode(HubMessage.ChatsRequest.self, from: first), request.kind == "chats" {
-            _ = await lines.send(HubMessage.encode(hub.chats(request)))
+            _ = await lines.send(HubMessage.encode(await hub.chats(request)))
             return
         }
         guard let offer = HubMessage.decode(HubMessage.Offer.self, from: first) else {
             hub.log("A connection didn't start with an offer from an app")
             return
         }
-        let answer = hub.answer(offer)
+        let answer = await hub.answer(offer)
         guard await lines.send(HubMessage.encode(answer)), !answer.want.isEmpty else { return }
         var waiting = Set(answer.want)
         while !waiting.isEmpty {
@@ -70,10 +70,11 @@ final class HubListener: @unchecked Sendable {
                 break
             }
             waiting.remove(upload.id)
-            hub.store(upload, offeredIn: offer)
+            await hub.store(upload, offeredIn: offer)
         }
         let finished = offer.reports.map { FinishedReport(id: $0.id, finishedAt: $0.finishedAt) }
-        _ = await lines.send(HubMessage.encode(HubMessage.Reply(delivered: hub.settled(device: offer.device, bundleID: offer.bundleID, finished: finished))))
+        let delivered = await hub.settled(device: offer.device, bundleID: offer.bundleID, finished: finished)
+        _ = await lines.send(HubMessage.encode(HubMessage.Reply(delivered: delivered)))
     }
 
     /// Phones announce Xcode's wireless link whenever they wake. The announcement doesn't say

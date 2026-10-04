@@ -87,6 +87,11 @@ final class Hub: @unchecked Sendable {
     /// Writes the hub's files, in order, outside the lock: state.json, tokens.json, status.json
     /// and the log.
     private let writer = DispatchQueue(label: "Redline.hub.writer", qos: .utility)
+    /// Answers phones' questions about chats: project scans, the Codex database and git, which
+    /// can take seconds. Its own queue, so an upload never waits behind one.
+    private let directory = DispatchQueue(label: "Redline.hub.directory", qos: .userInitiated)
+    /// Takes offers and files uploads for connections, which write up to `largestReport` bytes.
+    private let inbox = DispatchQueue(label: "Redline.hub.inbox", qos: .userInitiated)
     private let network = NWPathMonitor()
 
     private struct State {
@@ -276,7 +281,7 @@ final class Hub: @unchecked Sendable {
     /// The hub's answer to an app's offer: the reports to send now, and the ones the app can
     /// stop offering. Only an app that was given this hub's address, and so is on a phone paired
     /// with this Mac, can deliver.
-    func answer(_ offer: HubMessage.Offer) -> HubMessage.Answer {
+    func answerNow(_ offer: HubMessage.Offer) -> HubMessage.Answer {
         guard hasValidToken(offer.token, device: offer.device, bundleID: offer.bundleID) else {
             let known = state.withLock { $0.tokens[Self.key(device: offer.device, bundleID: offer.bundleID)] != nil }
             log("Turned down \(offer.bundleID) from \(phoneName(offer.device)): \(known ? "its token doesn't match" : "this hub never gave it an address")")
@@ -294,7 +299,7 @@ final class Hub: @unchecked Sendable {
     }
 
     /// The chats a report from this app can go to, for the phone to show before the user sends.
-    func chats(_ request: HubMessage.ChatsRequest) -> HubMessage.ChatList {
+    func chatsNow(_ request: HubMessage.ChatsRequest) -> HubMessage.ChatList {
         guard hasValidToken(request.token, device: request.device, bundleID: request.bundleID) else {
             log("Turned down \(request.bundleID)'s question about chats from \(phoneName(request.device)): its token doesn't match")
             return HubMessage.ChatList(agents: [], chats: [], refused: "The app needs this Mac's address again.")
@@ -304,7 +309,7 @@ final class Hub: @unchecked Sendable {
 
     /// Files a report the hub asked for. False when it can't be filed.
     @discardableResult
-    func store(_ upload: HubMessage.Upload, offeredIn offer: HubMessage.Offer) -> Bool {
+    func storeNow(_ upload: HubMessage.Upload, offeredIn offer: HubMessage.Offer) -> Bool {
         let total = upload.files.values.reduce(0) { $0 + $1.count }
         guard Self.isSafeName(upload.id), upload.files.keys.allSatisfy(Self.isSafeName), total <= Self.largestReport,
               upload.files["report.json"] != nil
@@ -322,6 +327,34 @@ final class Hub: @unchecked Sendable {
             } catch {
                 return false
             }
+        }
+    }
+
+    // Connections are served from Swift tasks, which must never block their thread: these run
+    // the blocking work above on the hub's own queues and resume when it's done.
+
+    func answer(_ offer: HubMessage.Offer) async -> HubMessage.Answer {
+        await withCheckedContinuation { continuation in
+            inbox.async { continuation.resume(returning: self.answerNow(offer)) }
+        }
+    }
+
+    func chats(_ request: HubMessage.ChatsRequest) async -> HubMessage.ChatList {
+        await withCheckedContinuation { continuation in
+            directory.async { continuation.resume(returning: self.chatsNow(request)) }
+        }
+    }
+
+    @discardableResult
+    func store(_ upload: HubMessage.Upload, offeredIn offer: HubMessage.Offer) async -> Bool {
+        await withCheckedContinuation { continuation in
+            inbox.async { continuation.resume(returning: self.storeNow(upload, offeredIn: offer)) }
+        }
+    }
+
+    func settled(device: String, bundleID: String, finished: [FinishedReport]) async -> [String] {
+        await withCheckedContinuation { continuation in
+            inbox.async { continuation.resume(returning: self.settled(device: device, bundleID: bundleID, finished: finished)) }
         }
     }
 

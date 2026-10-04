@@ -90,18 +90,28 @@ final class ChatSession: Sendable {
             let left = deadline.map { $0.timeIntervalSinceNow }
             if let left, left <= 0 { return false }
             guard waitForReport(timeout: left, waiter: waiter) else { return false }
-            let me = Chats.live(paths).first { $0.id == chat.id } ?? chat
-            let moreRecent = Chats.live(paths).contains { other in
+            let live = Chats.live(paths)
+            let me = live.first { $0.id == chat.id } ?? chat
+            let moreRecent = live.contains { other in
                 other.id != me.id && other.isWaiting && other.lastActiveAt > me.lastActiveAt
                     && !Set(other.bundleIDs).isDisjoint(with: me.bundleIDs)
             }
             guard moreRecent else { return true }
+            // Counts left from inbox changes already seen would cut the deferral short; no folder
+            // is watched now, so after draining only cancel() can end it early.
+            while waiter.signal.wait(timeout: .now()) == .success {}
+            if waiter.isCancelled { return false }
+            // Runs on `redline wait`'s main thread, never from a Task. Parks it for at most
+            // deferToRecentChat (4 s).
             _ = waiter.signal.wait(timeout: .now() + Self.deferToRecentChat)
             if waiter.isCancelled { return false }
             // Still there: the more recent chat didn't take it.
             if !InboxQueue.waiting(for: chat.bundleIDs, paths: paths).isEmpty { return true }
         }
     }
+
+    /// Where inbox changes wake waits.
+    private static let watching = DispatchQueue(label: "Redline.chat.inbox", qos: .utility)
 
     /// Something to wait on that can be stopped from another thread.
     final class Waiter: Sendable {
@@ -112,6 +122,11 @@ final class ChatSession: Sendable {
 
         func cancel() {
             stopped.withLock { $0 = true }
+            signal.signal()
+        }
+
+        /// Makes a wait look again, as a change in the inbox does.
+        func wake() {
             signal.signal()
         }
     }
@@ -132,8 +147,8 @@ final class ChatSession: Sendable {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let descriptor = open(folder.path, O_EVTONLY)
             guard descriptor >= 0 else { continue }
-            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: .write, queue: .global())
-            source.setEventHandler { waiter.signal.signal() }
+            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: .write, queue: Self.watching)
+            source.setEventHandler { waiter.wake() }
             source.setCancelHandler { close(descriptor) }
             source.resume()
             sources.append(source)
@@ -142,6 +157,9 @@ final class ChatSession: Sendable {
         while true {
             if ready() { return true }
             if waiter.isCancelled { return false }
+            // Runs on a wait's own thread in the MCP server or on `redline wait`'s main thread,
+            // never from a Task. Parks that thread for at most the timeout: MCPServer.longestWait
+            // (600 s) for the server, the --timeout given, or until cancelled for the command.
             if let deadline {
                 let left = deadline.timeIntervalSinceNow
                 guard left > 0 else { return false }
@@ -149,6 +167,8 @@ final class ChatSession: Sendable {
             } else {
                 waiter.signal.wait()
             }
+            // One report makes several inbox changes; one scan covers them all.
+            while waiter.signal.wait(timeout: .now()) == .success {}
         }
     }
 

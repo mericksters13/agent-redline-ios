@@ -4,12 +4,16 @@ import Synchronization
 
 /// The MCP server one agent chat runs: JSON-RPC over standard input and output, one message
 /// per line. It registers the chat with the hub and hands over the reports for its project.
-final class MCPServer: @unchecked Sendable {
+final class MCPServer: Sendable {
     let session: ChatSession
-    private let output = NSLock()
-    private let lock = NSLock()
-    private var waiters: [String: ChatSession.Waiter] = [:]
-    private let work = DispatchQueue(label: "mcp", attributes: .concurrent)
+    /// Writes one response line; standard output unless a test passes its own.
+    private let write: @Sendable (Data) -> Void
+    /// Waits in progress, by request ID, so a cancel notification can stop one.
+    private let waiters = Mutex<[String: ChatSession.Waiter]>([:])
+    /// Answers every request except waits, one at a time, in order.
+    private let work = DispatchQueue(label: "Redline.mcp", qos: .userInitiated)
+    /// Keeps responses whole when a wait's thread and `work` answer at the same time.
+    private let output = DispatchQueue(label: "Redline.mcp.output")
     private let inFlight = DispatchGroup()
 
     /// The most picture bytes in one reply. Agent apps cap a tool result's size; Claude's
@@ -25,38 +29,75 @@ final class MCPServer: @unchecked Sendable {
     Find the code for a note by the element's identifier or label, and its parents.
     """
 
-    /// A parsed request, handed to the queue that answers it.
+    /// A parsed request, handed to the queue or thread that answers it. JSONSerialization's
+    /// dictionary isn't Sendable, but each request is read by one thread at a time.
     private struct Request: @unchecked Sendable {
         let message: [String: Any]
     }
 
-    init(session: ChatSession) {
+    init(session: ChatSession, write: @escaping @Sendable (Data) -> Void = { try? FileHandle.standardOutput.write(contentsOf: $0) }) {
         self.session = session
+        self.write = write
     }
 
     /// Reads requests until the chat closes its end, then unregisters the chat.
     func run() {
         while let line = readLine(strippingNewline: true) {
-            guard let data = line.data(using: .utf8),
-                  let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else { continue }
-            guard message["id"] != nil else {
-                notice(message)
-                continue
-            }
-            let request = Request(message: message)
-            work.async(group: inFlight) {
-                if let response = self.respond(to: request.message) { self.send(response) }
-            }
+            receive(line)
         }
-        // The chat closed its end: stop any waits, answer what's in flight, then go.
-        lock.withLock { waiters.values }.forEach { $0.cancel() }
+        finish()
+    }
+
+    /// Takes one line from the chat. A wait gets a thread of its own, so it never holds up other
+    /// requests; everything else is answered on `work`, in order.
+    func receive(_ line: String) {
+        guard let data = line.data(using: .utf8),
+              let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return }
+        guard let id = message["id"] else {
+            notice(message)
+            return
+        }
+        let request = Request(message: message)
+        if Self.isWait(message) {
+            // Registered here, on the reading thread, so a cancel read right after it finds it.
+            let waiter = ChatSession.Waiter()
+            let key = Self.key(id)
+            waiters.withLock { $0[key] = waiter }
+            inFlight.enter()
+            Thread {
+                defer { self.inFlight.leave() }
+                defer { _ = self.waiters.withLock { $0.removeValue(forKey: key) } }
+                self.send(self.respond(to: request.message, waiter: waiter))
+            }.start()
+            return
+        }
+        work.async(group: inFlight) {
+            self.send(self.respond(to: request.message))
+        }
+    }
+
+    /// The chat closed its end: stops any waits, answers what's in flight, then unregisters.
+    func finish() {
+        for waiter in waiters.withLock({ Array($0.values) }) {
+            waiter.cancel()
+        }
         inFlight.wait()
         session.unregister()
     }
 
-    /// The response to one request.
-    func respond(to message: [String: Any]) -> [String: Any]? {
+    private static func isWait(_ message: [String: Any]) -> Bool {
+        message["method"] as? String == "tools/call" && (message["params"] as? [String: Any])?["name"] as? String == "wait_for_message"
+    }
+
+    /// A request ID as a key: a number and a string that read the same stay apart.
+    private static func key(_ id: Any) -> String {
+        id is String ? "s:\(id)" : "n:\(id)"
+    }
+
+    /// The response to one request. `waiter` stops a wait early; the server passes the one it
+    /// registered for the request.
+    func respond(to message: [String: Any], waiter: ChatSession.Waiter = ChatSession.Waiter()) -> [String: Any] {
         let id = message["id"] ?? NSNull()
         let params = message["params"] as? [String: Any] ?? [:]
         switch message["method"] as? String {
@@ -80,7 +121,7 @@ final class MCPServer: @unchecked Sendable {
                 return result(id, check())
             case "wait_for_message":
                 let seconds = (arguments["timeout_seconds"] as? NSNumber)?.doubleValue ?? Self.defaultWait
-                return result(id, wait(seconds: min(max(seconds, 1), Self.longestWait), request: "\(id)"))
+                return result(id, wait(seconds: min(max(seconds, 1), Self.longestWait), waiter: waiter))
             default:
                 return error(id, code: -32602, message: "Unknown tool")
             }
@@ -134,11 +175,9 @@ final class MCPServer: @unchecked Sendable {
         return ["content": content]
     }
 
-    func wait(seconds: TimeInterval, request: String) -> [String: Any] {
+    /// Runs on a thread of its own, started for this request.
+    func wait(seconds: TimeInterval, waiter: ChatSession.Waiter) -> [String: Any] {
         session.touch()
-        let waiter = ChatSession.Waiter()
-        lock.withLock { waiters[request] = waiter }
-        defer { _ = lock.withLock { waiters.removeValue(forKey: request) } }
         guard session.waitForReport(timeout: seconds, waiter: waiter) else {
             return text("No report arrived in \(Int(seconds)) seconds.")
         }
@@ -152,14 +191,12 @@ final class MCPServer: @unchecked Sendable {
         guard message["method"] as? String == "notifications/cancelled",
               let request = (message["params"] as? [String: Any])?["requestId"]
         else { return }
-        lock.withLock { waiters["\(request)"] }?.cancel()
+        waiters.withLock { $0[Self.key(request)] }?.cancel()
     }
 
     private func send(_ message: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) else { return }
-        output.withLock {
-            FileHandle.standardOutput.write(data + Data("\n".utf8))
-        }
+        output.sync { write(data + Data("\n".utf8)) }
     }
 
     private func result(_ id: Any, _ result: [String: Any]) -> [String: Any] {
