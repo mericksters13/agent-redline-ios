@@ -233,6 +233,10 @@ final class DebugSession {
     @ObservationIgnored private var suggestionTimer: Task<Void, Never>?
     /// True while a finger is down in pick mode.
     @ObservationIgnored private var isTouchDown = false
+    /// Waits for scrolling to settle after pick mode opens, then reads the screen; nil once read.
+    @ObservationIgnored private var settling: Task<Void, Never>?
+    /// The latest touch made while `settling` runs, replayed against its read.
+    @ObservationIgnored private var settlingTouch: (point: CGPoint, isLifted: Bool)?
     @ObservationIgnored private let store = ReportStore.standard
     @ObservationIgnored private let selectionFeedback = UISelectionFeedbackGenerator()
     @ObservationIgnored private let logger = Log.session
@@ -397,7 +401,9 @@ final class DebugSession {
         notesThisVisit = []
         setMode(.picking)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        Task {
+        settling?.cancel()
+        settlingTouch = nil
+        settling = Task {
             try? await Task.sleep(for: .milliseconds(60))
             var positions = AppWindows.scrollPositions(of: scrollViews)
             for _ in 0..<27 where !Task.isCancelled && mode == .picking {
@@ -406,13 +412,27 @@ final class DebugSession {
                 if next == positions { break }
                 positions = next
             }
-            guard !Task.isCancelled, mode == .picking else { return }
-            readScreen()
+            guard !Task.isCancelled else { return }
+            settling = nil
+            guard mode == .picking else { return }
+            // A touch made while the screen settled picks from this read, not a moving one.
+            let touch = settlingTouch
+            settlingTouch = nil
+            if let touch, touch.isLifted {
+                finishHover(at: touch.point)
+            } else if let touch {
+                hover(at: touch.point)
+            } else {
+                readScreen()
+            }
         }
     }
 
     func exitPicking() {
         guard mode == .picking || mode == .tray else { return }
+        settling?.cancel()
+        settling = nil
+        settlingTouch = nil
         levels = []
         markers = []
         elements = []
@@ -422,6 +442,10 @@ final class DebugSession {
 
     func hover(at point: CGPoint) {
         guard mode == .picking else { return }
+        if settling != nil {
+            settlingTouch = (point, false)
+            return
+        }
         if !isTouchDown {
             // Each new touch reads the screen again, so positions, saved-note markers
             // and the report screenshot match what is on screen right now.
@@ -438,6 +462,10 @@ final class DebugSession {
     }
 
     func finishHover(at point: CGPoint) {
+        if mode == .picking, settling != nil {
+            settlingTouch = (point, true)
+            return
+        }
         hover(at: point)
         isTouchDown = false
         guard selected != nil else {
@@ -1725,7 +1753,8 @@ final class DebugSession {
         noteError = nil
         isAwaitingKeyboard = keyboardTop == .infinity
         setMode(.noting)
-        // A hardware keyboard never shows the on-screen one; stop waiting for it.
+        // A hardware keyboard never shows the on-screen one; stop waiting for it. Only this card's
+        // wait may end it, not one left from a card closed moments ago.
         keyboardWait?.cancel()
         keyboardWait = Task {
             try? await Task.sleep(for: .seconds(0.8))

@@ -13,8 +13,8 @@ extension HubWindowModel {
         var mainFor: [Int] = []
     }
 
-    /// The report's pictures in the order the agent gets them: each screen's pictures, then the
-    /// pictures attached to notes.
+    /// The report's pictures in the order the agent gets them: each screen's pictures, then each
+    /// note's own pictures, including the picture of an element note from an older report.
     ///
     /// Only the files `ReportContent.pictures(in:)` reads, so a name that leads out of the report's
     /// folder, or a link to another file on the Mac, is left out.
@@ -39,11 +39,17 @@ extension HubWindowModel {
             }
         }
         func mainFor(_ file: String) -> [Int] { items.filter { $0.picture == file }.map(\.number).sorted() }
-        let shown = images.flatMap { $0 }.map { title, file, notes in
+        let screenImages = images.flatMap { $0 }
+        let shown = screenImages.map { title, file, notes in
             Picture(file: folder.appending(path: file), title: title ?? "Screen", notes: notes, mainFor: mainFor(file))
         }
+        let screenFiles = screenImages.map { _, file, _ in file }
         let attached = items.flatMap { item in
-            item.attachments.map {
+            ReportContent.ownPictures(
+                picture: item.picture,
+                attachments: item.attachments,
+                screenPictures: screenFiles
+            ).map {
                 Picture(
                     file: folder.appending(path: $0),
                     title: item.title,

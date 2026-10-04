@@ -91,7 +91,7 @@ enum ElementSelection {
     }
 
     /// Finds the element a saved annotation points at on a fresh read of the screen: by identifier
-    /// first, then by role and label.
+    /// first, then by role and label only when the identifier is gone from the screen.
     ///
     /// Look-alikes, such as repeated list rows, only match when exactly one is still where the saved
     /// one was.
@@ -99,8 +99,10 @@ enum ElementSelection {
         if let identifier = target.identifier?.nonEmpty {
             let hits = elements.filter { $0.identifier == identifier }
             if hits.count == 1 { return hits[0] }
-            let exact = hits.filter { $0.role == target.role && $0.label == target.label }
-            if !exact.isEmpty { return unique(exact, for: target) }
+            // Elements still carrying the identifier rule out a look-alike elsewhere.
+            if !hits.isEmpty {
+                return unique(hits.filter { $0.role == target.role && $0.label == target.label }, for: target)
+            }
         }
         guard let label = target.label?.nonEmpty else { return nil }
         return unique(elements.filter { $0.role == target.role && $0.label == label }, for: target)
