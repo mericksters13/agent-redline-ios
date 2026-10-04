@@ -45,7 +45,9 @@ final class MCPServer: @unchecked Sendable {
             }
             let request = Request(message: message)
             work.async(group: inFlight) {
-                if let response = self.respond(to: request.message) { self.send(response) }
+                guard let response = self.respond(to: request.message) else { return }
+                // The reports it carries are the chat's once it's written out.
+                ChatSession.settle(response.reports, delivered: self.send(response.message))
             }
         }
         // The chat closed its end: stop any waits, answer what's in flight, then go.
@@ -54,37 +56,40 @@ final class MCPServer: @unchecked Sendable {
         session.unregister()
     }
 
-    /// The response to one request.
-    func respond(to message: [String: Any]) -> [String: Any]? {
+    /// The response to one request, and the reports it hands over, which this process holds
+    /// until the response is written out.
+    func respond(to message: [String: Any]) -> (message: [String: Any], reports: [InboxReport])? {
         let id = message["id"] ?? NSNull()
         let params = message["params"] as? [String: Any] ?? [:]
         switch message["method"] as? String {
         case "initialize":
             let client = (params["clientInfo"] as? [String: Any])?["name"] as? String
             session.register(agent: client ?? "unknown")
-            return result(id, [
+            return (result(id, [
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": [String: Any]()],
                 "serverInfo": ["name": "redline", "version": "0.1.0"],
                 "instructions": Self.instructions,
-            ])
+            ]), [])
         case "ping":
-            return result(id, [String: Any]())
+            return (result(id, [String: Any]()), [])
         case "tools/list":
-            return result(id, ["tools": Self.tools])
+            return (result(id, ["tools": Self.tools]), [])
         case "tools/call":
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             switch params["name"] as? String {
             case "check_messages":
-                return result(id, check())
+                let checked = check()
+                return (result(id, checked.content), checked.reports)
             case "wait_for_message":
                 let seconds = (arguments["timeout_seconds"] as? NSNumber)?.doubleValue ?? Self.defaultWait
-                return result(id, wait(seconds: min(max(seconds, 1), Self.longestWait), request: "\(id)"))
+                let waited = wait(seconds: min(max(seconds, 1), Self.longestWait), request: "\(id)")
+                return (result(id, waited.content), waited.reports)
             default:
-                return error(id, code: -32602, message: "Unknown tool")
+                return (error(id, code: -32602, message: "Unknown tool"), [])
             }
         default:
-            return error(id, code: -32601, message: "Method not found")
+            return (error(id, code: -32601, message: "Method not found"), [])
         }
     }
 
@@ -113,33 +118,33 @@ final class MCPServer: @unchecked Sendable {
         ],
     ] }
 
-    func check() -> [String: Any] {
+    func check() -> (content: [String: Any], reports: [InboxReport]) {
         session.touch()
         let chat = session.chat
         guard !chat.bundleIDs.isEmpty else {
-            return text("""
+            return (text("""
             No app found for this project: no PRODUCT_BUNDLE_IDENTIFIER in an Xcode project or project.yml under \(chat.folder). \
             Add `--app <bundle ID>` to this MCP server's arguments.
-            """)
+            """), [])
         }
         let taken = session.take(budget: Self.budget)
-        guard taken.taken > 0 else {
-            return text("No reports waiting for \(chat.bundleIDs.joined(separator: ", ")).")
+        guard !taken.reports.isEmpty else {
+            return (text("No reports waiting for \(chat.bundleIDs.joined(separator: ", "))."), [])
         }
         var content = taken.items.map(Self.encode)
         if taken.remaining > 0 {
             content.append(["type": "text", "text": "\(taken.remaining) more \(taken.remaining == 1 ? "report is" : "reports are") waiting. Call check_messages again."])
         }
-        return ["content": content]
+        return (["content": content], taken.reports)
     }
 
-    func wait(seconds: TimeInterval, request: String) -> [String: Any] {
+    func wait(seconds: TimeInterval, request: String) -> (content: [String: Any], reports: [InboxReport]) {
         session.touch()
         let waiter = ChatSession.Waiter()
         lock.withLock { waiters[request] = waiter }
         defer { _ = lock.withLock { waiters.removeValue(forKey: request) } }
         guard session.waitForReport(timeout: seconds, waiter: waiter) else {
-            return text("No report arrived in \(Int(seconds)) seconds.")
+            return (text("No report arrived in \(Int(seconds)) seconds."), [])
         }
         return check()
     }
@@ -154,10 +159,11 @@ final class MCPServer: @unchecked Sendable {
         lock.withLock { waiters["\(request)"] }?.cancel()
     }
 
-    private func send(_ message: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) else { return }
-        output.withLock {
-            FileHandle.standardOutput.write(data + Data("\n".utf8))
+    /// Writes a message out. False when it couldn't be.
+    private func send(_ message: [String: Any]) -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) else { return false }
+        return output.withLock {
+            (try? FileHandle.standardOutput.write(contentsOf: data + Data("\n".utf8))) != nil
         }
     }
 

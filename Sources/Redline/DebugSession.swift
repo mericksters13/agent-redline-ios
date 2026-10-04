@@ -185,6 +185,9 @@ final class DebugSession {
         self.window = window
         displayCornerRadius = Self.displayCornerRadius(of: scene.screen)
 
+        // A report cut short last time, such as by the app being killed while it was drawn,
+        // puts its notes back in the draft.
+        store.recoverInterruptedReports()
         annotations = store.loadDraft()
         screens = store.loadScreens()
         observeKeyboard()
@@ -332,7 +335,9 @@ final class DebugSession {
                 ready.loading = nil
                 isSavingNote = false
                 // Canceled while loading, maybe with another attachment begun since: not this one.
-                guard self.pending?.id == ready.id, !ready.images.isEmpty else { return }
+                // Fewer images than were chosen: the note box stays open and says so, so Add
+                // saves the rest only once the user has seen which are missing.
+                guard self.pending?.id == ready.id, !ready.images.isEmpty, ready.images.count == pending.count else { return }
                 saveAttachment(ready, note: note)
             }
             return
@@ -582,11 +587,17 @@ final class DebugSession {
             guard !images.isEmpty else {
                 logger.error("None of the chosen photos could be loaded")
                 cancelNote()
+                showFailure(count == 1 ? "Couldn't load the photo. Try choosing it again." : "Couldn't load the photos. Try choosing them again.")
                 return
             }
             pending?.images = images
             pending?.count = images.count
             pending?.loading = nil
+            let missing = count - images.count
+            if missing > 0 {
+                logger.error("\(missing) of the chosen photos couldn't be loaded")
+                noteError = "\(missing) of the \(count) photos couldn't be loaded. Add attaches the other \(images.count)."
+            }
         }
     }
 
@@ -707,13 +718,15 @@ final class DebugSession {
     }
 
     /// When the app comes back, offers what the Mac hasn't confirmed, such as a report sent from
-    /// another network. Only after a report has reached the hub once, so iOS's local network
-    /// question is never asked at launch.
+    /// another network, or one sent before any Mac had set this app up. Nothing reaches the
+    /// network without a report the user sent and a hub's address, so iOS's local network
+    /// question is asked at launch only for a report the user is waiting on.
     private func offerUndeliveredReports() {
-        guard UserDefaults.standard.bool(forKey: Self.hubReachedKey) else { return }
         let store = store
+        // The first time, iOS asks about local network access before the hub can answer.
+        let patience: TimeInterval = UserDefaults.standard.bool(forKey: Self.hubReachedKey) ? 8 : 60
         Task.detached(priority: .utility) {
-            _ = await DebugSession.deliverReports(from: store, patience: 8)
+            _ = await DebugSession.deliverReports(from: store, patience: patience)
         }
     }
 
@@ -793,6 +806,10 @@ final class DebugSession {
             if let choice = pickerChoice, let chat = choice.chat, !list.chats.contains(where: { $0.id == chat && $0.agent == choice.agent }) {
                 pickerChoice = nil
             }
+            // Nor a new chat with an agent the Mac can no longer start one with.
+            if let choice = pickerChoice, choice.chat == nil, !list.startsNewChats(choice.agent) {
+                pickerChoice = nil
+            }
             if pickerChoice == nil, let here = list.chats.first(where: \.sameWorktree) {
                 pickerChoice = Report.Destination(agent: here.agent, chat: here.id, title: here.title)
             }
@@ -819,6 +836,11 @@ final class DebugSession {
         if let choice = pickerChoice {
             destination = choice
             if let data = try? JSONEncoder().encode(choice) { UserDefaults.standard.set(data, forKey: Self.destinationKey) }
+        } else if case .loaded = chatList {
+            // The Mac answered and no longer offers the saved pick: forget it, so the report
+            // goes where the Mac routes it instead of to a chat that's gone.
+            destination = nil
+            UserDefaults.standard.removeObject(forKey: Self.destinationKey)
         }
         let thenSend = sendsAfterPicking
         sendsAfterPicking = false
@@ -897,6 +919,7 @@ final class DebugSession {
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 let report = try ReportBuilder.build(input)
+                try store.checkSize(of: report, in: started.folder)
                 try store.finishReport(report, in: started.folder)
                 logger.notice("Report saved at \(started.folder.path, privacy: .public)")
                 // The first time, iOS asks about local network access before the hub can answer.
@@ -904,6 +927,11 @@ final class DebugSession {
                 let outcome = await DebugSession.deliverReports(from: store, patience: patience)
                 let notes = count == 1 ? "1 note" : "\(count) notes"
                 await self?.show(Toast(message: DebugSession.toast(for: outcome, notes: notes, to: destination?.title)))
+            } catch let tooLarge as ReportStore.TooLarge {
+                logger.error("The report is \(tooLarge.bytes) bytes, over the \(ReportStore.largestReport) the Mac takes")
+                let megabytes = (tooLarge.bytes + 999_999) / 1_000_000
+                await self?.restoreDraft(from: input, because: "The report is \(megabytes) MB; the Mac takes up to "
+                    + "\(ReportStore.largestReport / 1_000_000) MB. Its notes are back in the draft. Remove some photos, then send.")
             } catch {
                 logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
                 await self?.restoreDraft(from: input)
@@ -912,8 +940,9 @@ final class DebugSession {
     }
 
     /// Puts the notes of a report that couldn't be finished back into the draft, ahead of any
-    /// made since, so they can be sent again.
-    private func restoreDraft(from input: ReportBuilder.Input) {
+    /// made since, so they can be sent again, and says why with `message`.
+    private func restoreDraft(from input: ReportBuilder.Input,
+                              because message: String = "Couldn't save the report. Its notes are back in the draft.") {
         let before = screens
         do {
             try store.reclaimPictures(from: input.folder)
@@ -932,7 +961,7 @@ final class DebugSession {
         annotations = restored
         store.discardReport(input.folder)
         refreshMarkers()
-        showFailure("Couldn't save the report. Its notes are back in the draft.")
+        showFailure(message)
     }
 
     // MARK: - One picture per screen

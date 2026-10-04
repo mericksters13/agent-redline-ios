@@ -53,9 +53,10 @@ struct DestinationPicker: View {
                 .fixedSize(horizontal: false, vertical: true)
         case .loaded(let list):
             if list.agents.isEmpty {
-                Text("No agents found on the Mac.")
+                Text("No agents found on the Mac. The report waits in the Mac's inbox.")
                     .font(.subheadline)
                     .foregroundStyle(Mono.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 agents(list.agents)
                 chats(in: list)
@@ -85,27 +86,39 @@ struct DestinationPicker: View {
     private func chats(in list: HubLink.ChatList) -> some View {
         let agent = session.pickerAgent ?? ""
         let chats = list.chats.filter { $0.agent == agent }
+        let startsNew = list.startsNewChats(agent)
         return ScrollView {
             VStack(spacing: 0) {
-                row(title: "New chat", detail: "In a new worktree from \(list.newChatBase ?? "main")", tag: nil, icon: "plus",
-                    choice: Report.Destination(agent: agent, chat: nil, title: "a new \(HubLink.agentName(agent)) chat"))
-                ForEach(chats) { chat in
-                    Rectangle().fill(Mono.hairline).frame(height: 1)
+                if startsNew {
+                    row(title: "New chat", detail: "In a new worktree from \(list.newChatBase ?? "main")", tag: nil, icon: "plus",
+                        choice: Report.Destination(agent: agent, chat: nil, title: "a new \(HubLink.agentName(agent)) chat"))
+                }
+                ForEach(Array(chats.enumerated()), id: \.element.id) { index, chat in
+                    if startsNew || index > 0 { Rectangle().fill(Mono.hairline).frame(height: 1) }
                     row(title: chat.title, detail: detail(chat), tag: chat.sameWorktree ? "This build" : nil, icon: nil,
                         choice: Report.Destination(agent: agent, chat: chat.id, title: chat.title))
                 }
                 if chats.isEmpty {
-                    Text("No open \(HubLink.agentName(agent)) chats work on this app.")
-                        .font(.caption)
-                        .foregroundStyle(Mono.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 6)
+                    caption("No open \(HubLink.agentName(agent)) chats work on this app.")
+                }
+                if !startsNew {
+                    caption(list.newChatBase == nil
+                        ? "New chats need the app's project in a Git repository with a main branch."
+                        : "New \(HubLink.agentName(agent)) chats need its command line on the Mac.")
                 }
             }
         }
         .scrollBounceBehavior(.basedOnSize)
         .frame(maxHeight: session.screenSize.height * 0.45)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(Mono.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 6)
     }
 
     private func detail(_ chat: HubLink.Chat) -> String {
@@ -161,8 +174,11 @@ struct DestinationPicker: View {
     private var buttons: some View {
         let unavailable = session.chatList == .unavailable
         let loading = session.chatList == .loading
-        let ready = unavailable || session.pickerChoice?.agent == session.pickerAgent
-        let primary = session.sendsAfterPicking ? (unavailable ? "Send anyway" : "Send") : "Done"
+        // With nothing to pick, the report goes without a pick and waits in the Mac's inbox.
+        var nothingToPick = false
+        if case .loaded(let list) = session.chatList { nothingToPick = !list.offersDestination }
+        let ready = unavailable || nothingToPick || session.pickerChoice?.agent == session.pickerAgent
+        let primary = session.sendsAfterPicking ? (unavailable || nothingToPick ? "Send anyway" : "Send") : "Done"
         return HStack {
             Button("Cancel") { session.cancelDestinations() }
                 .font(.subheadline.weight(.medium))

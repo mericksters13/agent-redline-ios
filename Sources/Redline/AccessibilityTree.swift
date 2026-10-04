@@ -108,13 +108,15 @@ enum AccessibilityTree {
 
     /// The screen the user is looking at: the navigation bar title, else the
     /// topmost header on screen (custom headers such as a large "Today"), else the
-    /// selected tab, plus the view controller type.
+    /// selected tab, plus the view controller type. Only a presented sheet is read
+    /// while one is up, so it never takes the title of the screen it covers.
     static func screen(of window: UIWindow?, elements: [ElementSnapshot]) -> ScreenInfo {
         guard let window else { return ScreenInfo() }
         let controller = topController(from: window.rootViewController)
-        let title = navigationBarTitle(in: window)
+        let cover = coveringController(in: window)
+        let title = navigationBarTitle(in: cover?.viewIfLoaded ?? window)
             ?? ElementSelection.headerTitle(in: elements)
-            ?? selectedTabTitle(from: window.rootViewController)
+            ?? selectedTabTitle(from: cover ?? window.rootViewController)
             ?? controller?.navigationItem.title?.nonEmpty
             ?? controller?.title?.nonEmpty
         let typeName = controller.map { String(describing: type(of: $0)).split(separator: "<").first.map(String.init) ?? "" }

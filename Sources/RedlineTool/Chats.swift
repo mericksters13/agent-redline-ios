@@ -30,8 +30,9 @@ struct Claim: Codable, Equatable, Sendable {
     var handingOverIn: Int32? = nil
 
     /// True when the process handing the report over ended before the chat had it, such as
-    /// when it crashed: the report is free for another chat to take.
-    var isInterrupted: Bool { handingOverIn.map { !Chats.isRunning($0) } ?? false }
+    /// when it crashed: the report is free for another chat to take. A process that started
+    /// after the claim only reuses the PID, so it doesn't hold the report.
+    var isInterrupted: Bool { handingOverIn.map { !Chats.isRunning($0, since: claimedAt) } ?? false }
 }
 
 /// A report in the inbox.
@@ -95,8 +96,7 @@ enum Chats {
         }
     }
 
-    /// Dates keep their milliseconds: the menu bar panel orders a claim and a delivery saved
-    /// in the same second by them.
+    /// Dates keep their milliseconds, so reports received in the same second stay in order.
     static let coder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .custom { date, encoder in
@@ -159,9 +159,15 @@ enum ProjectHistory {
     }
 
     static func note(_ chat: ChatRecord, paths: HubPaths) {
+        try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
+        // Each chat notes its apps from its own process: one at a time reads and rewrites the
+        // file, so none drops the apps another just added. Released when the descriptor closes.
+        let lock = open(paths.hub.appending(path: "projects.lock").path, O_RDWR | O_CREAT, 0o600)
+        guard lock >= 0 else { return }
+        defer { close(lock) }
+        guard flock(lock, LOCK_EX) == 0 else { return }
         var uses = all(paths)
         for bundleID in chat.bundleIDs { uses[bundleID] = ProjectUse(agent: chat.agent, folder: chat.folder, at: Date()) }
-        try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
         try? Chats.coder.encode(uses).write(to: file(paths), options: .atomic)
     }
 }
@@ -189,6 +195,22 @@ enum InboxQueue {
     /// Reports for this chat that it hasn't taken yet, oldest first.
     static func addressed(to chat: String, bundleIDs: [String], paths: HubPaths) -> [InboxReport] {
         waiting(for: bundleIDs, paths: paths).filter { address(of: $0.folder)?.chat == chat }
+    }
+
+    /// The chat a report was sent to, as its chat record's ID: its address, or else the pick
+    /// the phone saved with it, which the hub may still be handing over. A "New chat" pick names
+    /// the chat it started, or no chat ("") until it has. Nil when nothing says where it goes.
+    static func recipient(of report: URL, paths: HubPaths) -> String? {
+        if let address = address(of: report) { return address.chat }
+        guard let pick = Routing.pick(of: report) else { return nil }
+        if let chat = pick.chat { return "\(pick.agent)-\(chat)" }
+        return pick.newChat.flatMap { StartedChats.find($0, paths: paths) }.map { "\(pick.agent)-\($0.chat)" } ?? ""
+    }
+
+    /// Reports a chat may take, oldest first: those sent to it, and those sent nowhere. A report
+    /// sent to another chat, or to a new one, is never taken by a chat that only builds its app.
+    static func takeable(by chat: ChatRecord, paths: HubPaths) -> [InboxReport] {
+        waiting(for: chat.bundleIDs, paths: paths).filter { recipient(of: $0.folder, paths: paths).map { $0 == chat.id } ?? true }
     }
 
     /// Wakes chats waiting on an app's reports, after a report already in the inbox changed.
@@ -222,28 +244,55 @@ enum InboxQueue {
         reports(for: bundleIDs, paths: paths).filter { $0.claim.map(\.isInterrupted) ?? true }
     }
 
+    /// How many reports, of any app, the process `pid` has claimed and is still handing over.
+    static func handingOver(by pid: Int32, paths: HubPaths) -> Int {
+        let apps = ((try? FileManager.default.contentsOfDirectory(atPath: paths.inbox.path)) ?? []).filter { !$0.hasPrefix(".") }
+        return reports(for: apps, paths: paths).count { $0.claim.map { $0.handingOverIn == pid && !$0.isInterrupted } ?? false }
+    }
+
     /// Takes a report for a chat, to be handed over by this process. False when another chat
     /// took it first. A claim left by a hand-over that was interrupted is replaced.
     static func claim(_ report: InboxReport, for chat: ChatRecord) -> Bool {
         let claim = Claim(chat: chat.id, agent: chat.agent, folder: chat.folder, claimedAt: Date(), handingOverIn: getpid())
         guard let data = try? Chats.coder.encode(claim) else { return false }
         // One process at a time decides who takes the report, so two can't both replace the
-        // same interrupted claim. The lock is released when the descriptor closes.
-        let lock = open(report.folder.appending(path: ".claim.lock").path, O_RDWR | O_CREAT, 0o600)
-        guard lock >= 0 else { return false }
+        // same interrupted claim.
+        return withClaimLock(report.folder) {
+            let file = report.folder.appending(path: claimFile)
+            if FileManager.default.fileExists(atPath: file.path) {
+                // A claim that can't be read was cut off mid-write, which only an interrupted process leaves.
+                if let existing = (try? Data(contentsOf: file)).flatMap({ try? Chats.decoder.decode(Claim.self, from: $0) }),
+                   !existing.isInterrupted { return false }
+                try? FileManager.default.removeItem(at: file)
+            }
+            let descriptor = open(file.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+            guard descriptor >= 0 else { return false }
+            defer { close(descriptor) }
+            return data.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) } == data.count
+        } ?? false
+    }
+
+    /// Runs `body` unless a chat holds the report: a claim that wasn't interrupted, other than
+    /// one this process is still handing over. Holds the lock claims take meanwhile, so a chat
+    /// can't take the report while `body` runs. False when a chat holds it or the lock failed.
+    @discardableResult
+    static func unlessTaken(_ report: URL, _ body: () -> Void) -> Bool {
+        withClaimLock(report) {
+            let claim = (try? Data(contentsOf: report.appending(path: claimFile))).flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
+            if let claim, !claim.isInterrupted, claim.handingOverIn != getpid() { return false }
+            body()
+            return true
+        } ?? false
+    }
+
+    /// Runs `body` while this process alone decides who takes the report. Nil when the lock
+    /// can't be taken. The lock is released when the descriptor closes.
+    private static func withClaimLock<T>(_ report: URL, _ body: () -> T) -> T? {
+        let lock = open(report.appending(path: ".claim.lock").path, O_RDWR | O_CREAT, 0o600)
+        guard lock >= 0 else { return nil }
         defer { close(lock) }
-        guard flock(lock, LOCK_EX) == 0 else { return false }
-        let file = report.folder.appending(path: claimFile)
-        if FileManager.default.fileExists(atPath: file.path) {
-            // A claim that can't be read was cut off mid-write, which only an interrupted process leaves.
-            if let existing = (try? Data(contentsOf: file)).flatMap({ try? Chats.decoder.decode(Claim.self, from: $0) }),
-               !existing.isInterrupted { return false }
-            try? FileManager.default.removeItem(at: file)
-        }
-        let descriptor = open(file.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
-        guard descriptor >= 0 else { return false }
-        defer { close(descriptor) }
-        return data.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) } == data.count
+        guard flock(lock, LOCK_EX) == 0 else { return nil }
+        return body()
     }
 
     /// Records where the chat that took a report works, once that is known: a chat the hub
@@ -301,8 +350,13 @@ struct ReportDelivery: Codable, Equatable, Sendable {
 
     static let file = "delivery.json"
 
+    /// Saves where the report went. One not in a chat yet is saved only while no chat holds
+    /// the report, and no chat can take it meanwhile: a chat that took it first, such as one
+    /// whose wait woke when the report was filed, keeps showing, and a chat that takes it later
+    /// is always newer than this.
     static func save(_ delivery: ReportDelivery, in report: URL) {
-        try? Chats.coder.encode(delivery).write(to: report.appending(path: file), options: .atomic)
+        let write = { _ = try? Chats.coder.encode(delivery).write(to: report.appending(path: file), options: .atomic) }
+        if delivery.pending { InboxQueue.unlessTaken(report, write) } else { write() }
     }
 
     static func load(from report: URL) -> ReportDelivery? {

@@ -84,6 +84,8 @@ enum HubMessage {
         var worktree: String?
         /// The branch a new chat's worktree starts from, such as "main".
         var newChatBase: String? = nil
+        /// The agents whose command is on this Mac to start a new chat; nil for every agent.
+        var newChats: [String]? = nil
         /// Why the request was turned down, when it was.
         var refused: String?
     }
@@ -115,65 +117,69 @@ struct FinishedReport: Equatable {
 /// Where the kit keeps sent reports, inside an app's data container.
 enum ReportFolder {
     static let path = "Library/Application Support/Redline/reports"
+    /// Where a build from before the rename keeps them. A simulator app still running such a
+    /// build after the Mac tool is updated writes its reports here, until a new build moves them.
+    static let earlierPath = "Library/Application Support/iOSAgenticDebuggingKit/reports"
+    static let paths = [path, earlierPath]
     /// The empty file in a report's folder that says the Mac has it, as the kit's `ReportStore` names it.
     static let deliveredMark = "delivered"
 
-    /// The finished reports among paths relative to the reports folder. A report is finished
-    /// once its `report.json` is written and the draft it was drawn from is gone.
+    /// The finished reports among paths relative to the reports folder that a Mac doesn't have
+    /// yet. A report is finished once its `report.json` is written and the draft it was drawn
+    /// from is gone; one with the delivered mark is already on a Mac.
     static func finished(in entries: [(path: String, modified: Date?)]) -> [FinishedReport] {
         var written: [String: FinishedReport] = [:]
-        var drawing = Set<String>()
+        var skipped = Set<String>()
         for entry in entries {
             let parts = entry.path.split(separator: "/")
             guard parts.count >= 2 else { continue }
             let id = String(parts[0])
             if parts.count == 2, parts[1] == "report.json" { written[id] = FinishedReport(id: id, finishedAt: entry.modified) }
-            if parts[1] == "draft" { drawing.insert(id) }
+            if parts[1] == "draft" || (parts.count == 2 && parts[1] == deliveredMark) { skipped.insert(id) }
         }
-        return written.values.filter { !drawing.contains($0.id) }.sorted { $0.id < $1.id }
+        return written.values.filter { !skipped.contains($0.id) }.sorted { $0.id < $1.id }
     }
 }
 
-/// What the hub has taken from one app on one phone or simulator.
+/// What the hub has taken from one app on one phone or simulator. Every report an app offers
+/// is one the user sent and the Mac hasn't confirmed, however long ago: one sent before any
+/// Mac set the app up is still waiting for one.
 struct SourceState: Codable, Equatable {
-    /// Reports finished before this were there before the hub first looked, and stay where they are.
-    var since: Date
     var delivered: [String] = []
 
     /// The finished reports still to copy.
     func toCopy(from finished: [FinishedReport]) -> [String] {
         let done = Set(delivered)
-        return finished.filter { report in
-            !done.contains(report.id) && !isOld(report)
-        }.map(\.id)
+        return finished.filter { !done.contains($0.id) }.map(\.id)
     }
 
-    /// The offered reports the app can stop offering: copied, or there before the hub first looked.
+    /// The offered reports the app can stop offering: the ones copied.
     func settled(_ finished: [FinishedReport]) -> [String] {
         let done = Set(delivered)
-        return finished.filter { done.contains($0.id) || isOld($0) }.map(\.id)
-    }
-
-    private func isOld(_ report: FinishedReport) -> Bool {
-        report.finishedAt.map { $0 < since } ?? false
+        return finished.filter { done.contains($0.id) }.map(\.id)
     }
 }
 
 /// A report folder inside a simulator app's data container, found from the path of a file in it.
-struct SimulatorReportPath: Equatable {
+struct SimulatorReportPath: Hashable {
     /// The app's data container.
     var container: String
     /// The simulator's UDID.
     var device: String
     var reportID: String
+    /// The reports folder in the container, one of `ReportFolder.paths`.
+    var folder = ReportFolder.path
 
     static func parse(_ path: String) -> SimulatorReportPath? {
-        guard let marker = path.range(of: "/" + ReportFolder.path + "/") else { return nil }
-        let container = String(path[..<marker.lowerBound])
-        guard let id = path[marker.upperBound...].split(separator: "/").first.map(String.init), !id.isEmpty else { return nil }
-        let parts = container.split(separator: "/")
-        guard let devices = parts.lastIndex(of: "Devices"), devices + 1 < parts.count else { return nil }
-        return SimulatorReportPath(container: container, device: String(parts[devices + 1]), reportID: id)
+        for folder in ReportFolder.paths {
+            guard let marker = path.range(of: "/" + folder + "/") else { continue }
+            let container = String(path[..<marker.lowerBound])
+            guard let id = path[marker.upperBound...].split(separator: "/").first.map(String.init), !id.isEmpty else { return nil }
+            let parts = container.split(separator: "/")
+            guard let devices = parts.lastIndex(of: "Devices"), devices + 1 < parts.count else { return nil }
+            return SimulatorReportPath(container: container, device: String(parts[devices + 1]), reportID: id, folder: folder)
+        }
+        return nil
     }
 }
 

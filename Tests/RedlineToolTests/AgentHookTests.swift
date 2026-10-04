@@ -65,7 +65,7 @@ struct AgentHookTests {
         try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
         let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
         // No hub was running, so none is started for it.
-        #expect(!HubPaths.moveFromOldName(to: paths))
+        #expect(HubPaths.moveFromOldName(to: paths) == .done)
         #expect(FileManager.default.fileExists(atPath: paths.inbox.path))
         // The old name now leads to the new folder, so an MCP server of the earlier version
         // still serving a chat sees what this version's hub writes.
@@ -96,13 +96,54 @@ struct AgentHookTests {
         try hub.run()
         try "\(hub.processIdentifier)".write(to: old.pid, atomically: false, encoding: .utf8)
         close(descriptor)
+        // The hub was given an app on the command line, which it saved in its status.
+        let status = HubStatus(pid: hub.processIdentifier, startedAt: Date(), apps: ["com.example.chat", "com.example.kept"],
+                               fixedApps: ["com.example.kept"], hosts: [], port: 0, phones: [], simulatorContainers: 0)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(status).write(to: old.status)
         let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
-        // It says it stopped the hub, so the command that moved the folder starts this version's.
-        #expect(HubPaths.moveFromOldName(to: paths))
+        // It says it stopped the hub, so the command that moved the folder starts this version's
+        // for the app that hub was given.
+        #expect(HubPaths.moveFromOldName(to: paths) == .stoppedHub(fixedApps: ["com.example.kept"]))
         hub.waitUntilExit()
         #expect(hub.terminationReason == .uncaughtSignal)
         #expect(FileManager.default.fileExists(atPath: paths.hub.path))
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: old.root.path) == paths.root.path)
+    }
+
+    @Test func nothingMovesWhileTheEarlierVersionsHubWontStop() throws {
+        let support = root.appending(path: "busy", directoryHint: .isDirectory)
+        let old = HubPaths(root: support.appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
+        try FileManager.default.createDirectory(at: old.hub, withIntermediateDirectories: true)
+        // Stands in for an old hub still handing a report over: it holds the lock and doesn't
+        // stop when asked to.
+        let descriptor = open(old.pid.path, O_RDWR | O_CREAT, 0o644)
+        #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+        let hub = Process()
+        hub.executableURL = URL(fileURLWithPath: "/bin/sh")
+        hub.arguments = ["-c", "trap '' TERM; echo ready; exec /bin/sleep 30"]
+        hub.standardInput = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+        let ready = Pipe()
+        hub.standardOutput = ready
+        try hub.run()
+        // Once it says so, it ignores the request to stop.
+        _ = ready.fileHandleForReading.availableData
+        defer {
+            kill(hub.processIdentifier, SIGKILL)
+            hub.waitUntilExit()
+        }
+        try "\(hub.processIdentifier)".write(to: old.pid, atomically: false, encoding: .utf8)
+        close(descriptor)
+        let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
+        // The command is told to stop, and the old folder stays where the old hub uses it.
+        guard case .blocked = HubPaths.moveFromOldName(to: paths) else {
+            Issue.record("The folder moved while the earlier version's hub was running")
+            return
+        }
+        #expect(hub.isRunning)
+        #expect(!FileManager.default.fileExists(atPath: paths.root.path))
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: old.root.path)) == nil)
     }
 
     @Test func aPidLeftByAnEarlierHubThatCrashedIsNeverSignaled() throws {
@@ -117,9 +158,24 @@ struct AgentHookTests {
         defer { other.terminate() }
         try "\(other.processIdentifier)".write(to: old.pid, atomically: true, encoding: .utf8)
         let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
-        #expect(!HubPaths.moveFromOldName(to: paths))
+        #expect(HubPaths.moveFromOldName(to: paths) == .done)
         #expect(other.isRunning)
         #expect(FileManager.default.fileExists(atPath: paths.hub.path))
+    }
+
+    @Test func hooksFromAnEarlierInstallAreReplacedAndRemoved() {
+        let moved = AgentSettings.adding(.codex, to: codexSettings, executable: "/Users/someone/Downloads/it's here/agentic-debugging")
+        var settings = moved
+        // An earlier install under the old name, since moved, is replaced. Another tool's
+        // command that also runs `hook` stays.
+        var events = settings["hooks"] as? [String: Any] ?? [:]
+        events["SessionStart"] = [["hooks": [["type": "command", "command": "'/usr/local/bin/other-tool' hook codex start"]]]]
+        settings["hooks"] = events
+        let added = AgentSettings.adding(.codex, to: settings, executable: executable)
+        #expect(commands(added, "UserPromptSubmit") == ["'\(executable)' hook codex prompt"])
+        #expect(commands(added, "SessionStart") == ["'/usr/local/bin/other-tool' hook codex start"])
+        let removed = AgentSettings.removing(.codex, from: moved, executable: executable)
+        #expect(json(removed) == json(codexSettings))
     }
 
     @Test func eachAgentGetsItsOwnShape() {
@@ -142,7 +198,51 @@ struct AgentHookTests {
         let cursor = HookInput(.cursor, json: Data(#"{"conversation_id":"c1","workspace_roots":["/w"],"status":"completed"}"#.utf8))
         #expect(cursor?.chat == "c1")
         #expect(cursor?.folder == "/w")
+        // In a window with several folders, the one holding the chat's working folder comes first.
+        let roots = HookInput(.cursor, json: Data(#"{"conversation_id":"c1","workspace_roots":["/docs","/w","/w/App"],"cwd":"/w/App/Sources"}"#.utf8))
+        #expect(roots?.folders == ["/w/App", "/docs", "/w"])
+        let noCwd = HookInput(.cursor, json: Data(#"{"conversation_id":"c1","workspace_roots":["/docs","/w"]}"#.utf8))
+        #expect(noCwd?.folders == ["/docs", "/w"])
+        #expect(HookInput(.cursor, json: Data(#"{"conversation_id":"c1","cwd":"/w"}"#.utf8))?.folders == ["/w"])
         #expect(HookInput(.claude, json: Data("not json".utf8)) == nil)
+    }
+
+    @Test func aChatWithSeveralFoldersTakesReportsFromEachFoldersApp() throws {
+        let docs = root.appending(path: "docs", directoryHint: .isDirectory)
+        let first = root.appending(path: "first", directoryHint: .isDirectory)
+        let second = root.appending(path: "second", directoryHint: .isDirectory)
+        for folder in [docs, first, second] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        try "targets:\n  A:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.first\n"
+            .write(to: first.appending(path: "project.yml"), atomically: true, encoding: .utf8)
+        try "targets:\n  B:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.second\n"
+            .write(to: second.appending(path: "project.yml"), atomically: true, encoding: .utf8)
+        let roots = [docs, first, second].map(\.path)
+        let json = try JSONSerialization.data(withJSONObject: ["conversation_id": "c1", "workspace_roots": roots])
+        let input = try #require(HookInput(.cursor, json: json))
+        let session = try #require(AgentHooks.session(for: input, agent: .cursor, id: "cursor-c1", pid: nil, paths: paths, startsHub: false))
+        // The chat works in the first folder that builds an app, and takes both apps' reports.
+        #expect(session.chat.folder == first.path)
+        #expect(session.chat.bundleIDs == ["com.example.first", "com.example.second"])
+        let none = try #require(HookInput(.cursor, json: try JSONSerialization.data(withJSONObject: ["conversation_id": "c2", "workspace_roots": [docs.path]])))
+        #expect(AgentHooks.session(for: none, agent: .cursor, id: "cursor-c2", pid: nil, paths: paths, startsHub: false) == nil)
+    }
+
+    @Test func aRestartedHubReplaysPromisedReportsHoweverOld() throws {
+        let old = Date().addingTimeInterval(-86_400)
+        let source = ReportSource(kind: .phone, device: "D", deviceName: "Mark iPhone", bundleID: "com.example.app", reportID: "r", receivedAt: old)
+        func waiting(_ folder: URL, claim: Claim? = nil) -> InboxReport { InboxReport(folder: folder, source: source, claim: claim) }
+        // Sent nowhere: only while recent, since a chat started for it a day later would surprise.
+        let unpicked = try report(sourceFile: "/w/App.swift", pick: nil)
+        #expect(!Handoff.replays(waiting(unpicked), within: 3600))
+        #expect(Handoff.replays(waiting(unpicked), within: 3600, now: old.addingTimeInterval(60)))
+        // Picked on the phone, or cut off mid hand-over: however old.
+        #expect(Handoff.replays(waiting(try report(sourceFile: "/w/App.swift", pick: ["agent": "cursor", "chat": "c1"])), within: 3600))
+        let cutOff = Claim(chat: "claude-s1", agent: "claude", folder: "/w", claimedAt: old, handingOverIn: Int32.max)
+        #expect(Handoff.replays(waiting(unpicked, claim: cutOff), within: 3600))
+        // Addressed to a chat: its hooks take it.
+        let addressed = try report(sourceFile: "/w/App.swift", pick: ["agent": "cursor", "chat": "c1"])
+        InboxQueue.setAddress(Address(chat: "cursor-c1", agent: "cursor", folder: "/w"), of: addressed)
+        #expect(!Handoff.replays(waiting(addressed), within: 3600))
     }
 
     @Test func eachAgentReadsTheReportWhereItLooks() {
@@ -233,6 +333,19 @@ struct AgentHookTests {
         // No pick: the one chat in the worktree, or a new chat there with the first agent.
         #expect(route(try report(sourceFile: file, pick: nil), others) == .chat(.claude, id: "A"))
         #expect(route(try report(sourceFile: file, pick: nil), [chat("B", "codex", sameWorktree: false)]) == .newChat(.claude, folder: folder, pick: nil))
+        // Only an agent that can start a chat is given a new one.
+        let cursorFirst = Routing.destination(of: try report(sourceFile: file, pick: nil), bundleID: "com.example.app", paths: paths) { _, _ in
+            HubMessage.ChatList(agents: ["cursor", "codex"], chats: [], newChats: ["codex"])
+        }
+        #expect(cursorFirst == .newChat(.codex, folder: folder, pick: nil))
+        // A new chat starts with the agent last used on the app, while it can start one.
+        ProjectHistory.note(ChatRecord(id: "codex-X", agent: "codex", folder: folder, bundleIDs: ["com.example.app"], pid: getpid(),
+                                       registeredAt: Date(), lastActiveAt: Date()), paths: paths)
+        #expect(route(try report(sourceFile: file, pick: nil), []) == .newChat(.codex, folder: folder, pick: nil))
+        let codexGone = Routing.destination(of: try report(sourceFile: file, pick: nil), bundleID: "com.example.app", paths: paths) { _, _ in
+            HubMessage.ChatList(agents: ["claude", "codex"], chats: [], newChats: ["claude"])
+        }
+        #expect(codexGone == .newChat(.claude, folder: folder, pick: nil))
         // Several chats in the worktree and no pick: no guessing.
         if case .undecided = route(try report(sourceFile: file, pick: nil), others + [chat("C", "codex", sameWorktree: true)]) {} else {
             Issue.record("Two chats in the worktree should leave the report undecided")
@@ -324,6 +437,11 @@ struct AgentHookTests {
         #expect(StartedChats.find("N2", paths: paths) == nil)
         try FileManager.default.removeItem(atPath: made)
         #expect(StartedChats.find("N1", paths: paths) == nil)
+        // Chats started for different picks that finish together are all remembered.
+        DispatchQueue.concurrentPerform(iterations: 40) { index in
+            StartedChats.remember(StartedChat(chat: "s-\(index)", folder: repository.path, at: Date()), for: "P\(index)", paths: paths)
+        }
+        #expect(StartedChats.all(paths).count == 41)
     }
 
     @Test func theStartedChatIsReadFromEachCommandLine() {
@@ -378,7 +496,8 @@ struct AgentHookTests {
             "screens": [["images": [["file": "screen-1.jpg", "notes": [1]]]], ["images": [["file": "screen-2.jpg", "notes": [3]]]]],
             "items": [
                 ["number": 1, "title": "Log milestone", "note": "This is ugly", "attachments": [String](),
-                 "element": ["identifier": "today.milestones", "label": "Log milestone", "role": "Button"]],
+                 "element": ["identifier": "today.milestones", "label": "Log milestone", "role": "Button"],
+                 "ancestors": [["role": "Group"], ["identifier": "today.card", "label": "Milestones", "role": "Group"]]],
                 ["number": 2, "title": "History", "note": "The list breaks", "attachments": ["note-2.jpg"]],
                 ["number": 3, "title": "growth.card", "note": "", "attachments": [String](), "element": ["identifier": "growth.card", "role": "Group"]],
             ],
@@ -390,7 +509,7 @@ struct AgentHookTests {
             UI report from Mark iPhone · Tiny Tally
 
             \(report.path)/screen-1.jpg
-            1. Log milestone (Button, today.milestones): This is ugly
+            1. Log milestone (Button, today.milestones), in Group "Milestones" (today.card): This is ugly
 
             \(report.path)/screen-2.jpg
             3. growth.card (Group): No note
@@ -441,10 +560,13 @@ struct AgentHookTests {
 
         // Another chat on the same app gets nothing, and an unaddressed report goes to no one.
         #expect(other.takeAddressed() == nil)
-        let text = try #require(builder.takeAddressed())
-        #expect(text.contains("1. Save (Button, editor.save): Too small."))
-        #expect(text.contains(report.appending(path: "screen-1.jpg").path))
+        let taken = try #require(builder.takeAddressed())
+        #expect(taken.text.contains("1. Save (Button, editor.save): Too small."))
+        #expect(taken.text.contains(report.appending(path: "screen-1.jpg").path))
         #expect(builder.takeAddressed() == nil)
+        // An answer that couldn't be written frees the report for the chat to take again.
+        ChatSession.settle(taken.reports, delivered: false)
+        #expect(builder.takeAddressed()?.reports.count == 1)
     }
 }
 #endif

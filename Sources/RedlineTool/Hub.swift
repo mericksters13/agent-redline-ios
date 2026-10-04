@@ -2,6 +2,7 @@
 import Foundation
 import Network
 import Security
+import SystemConfiguration
 
 /// Where the tool keeps things on the Mac.
 ///
@@ -22,37 +23,56 @@ struct HubPaths: Sendable {
     /// The token each app on each phone was given; secret, readable only by the user.
     var tokens: URL { hub.appending(path: "tokens.json") }
 
+    /// What `moveFromOldName` did.
+    enum OldFolderMove: Equatable {
+        /// Nothing had to stop: the folder moved, or there was nothing to move.
+        case done
+        /// The folder moved once the earlier version's hub stopped. This version's has to take
+        /// over, watching the apps that hub was given on the command line.
+        case stoppedHub(fixedApps: [String])
+        /// The folder couldn't move yet, for the reason given. Nothing may use this version's
+        /// folder until it has, or what the earlier version kept would stay behind for good.
+        case blocked(String)
+    }
+
     /// Moves the folder an earlier version kept under its old name, iOSAgenticDebuggingKit, to
     /// this one, so reports, chats and settings carry over. Only while nothing is here yet. A hub
     /// of the earlier version that is still running knows only the old folder, so it's stopped
-    /// first; if it won't stop, nothing moves. Only a process holding the old PID file's lock is
-    /// that hub, so a pid left behind by a hub that crashed, and since reused, is never signaled.
+    /// first; if it doesn't stop in time, such as while it hands a report over, nothing moves
+    /// and the result says why. Only a process holding the old PID file's lock is that hub, so a
+    /// pid left behind by a hub that crashed, and since reused, is never signaled.
     /// The old name is left as a link to the new folder: an MCP server of the earlier version
     /// still serving an open chat knows only the old folder, and through the link it keeps
     /// reading the same inbox and chat records as this version's hub.
-    /// True when it stopped that hub, so this version's has to take over.
     @discardableResult
-    static func moveFromOldName(to paths: HubPaths) -> Bool {
+    static func moveFromOldName(to paths: HubPaths) -> OldFolderMove {
         let old = HubPaths(root: paths.root.deletingLastPathComponent().appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
         let files = FileManager.default
-        guard files.fileExists(atPath: old.root.path), !files.fileExists(atPath: paths.root.path) else { return false }
-        var stopped = false
+        guard files.fileExists(atPath: old.root.path), !files.fileExists(atPath: paths.root.path) else { return .done }
+        var stoppedHub = false
+        var fixedApps: [String] = []
         if let running = HubProcess.running(old), running != getpid() {
+            // Read before it stops: the apps it was given on the command line. A hub from before
+            // fixedApps was saved lists them only among all its apps.
+            if let status = HubWindowModel.savedStatus(old), status.pid == running { fixedApps = status.fixedApps ?? status.apps }
             kill(running, SIGTERM)
             for _ in 0..<30 where HubProcess.running(old) != nil { usleep(100_000) }
             guard HubProcess.running(old) == nil else {
-                FileHandle.standardError.write(Data("The hub of an earlier version (pid \(running)) is still running. Quit Agentic Debugging, then run redline again.\n".utf8))
-                return false
+                return .blocked("The hub of an earlier version (pid \(running)) is still running, so its folder can't move to Redline's yet. It stops on its own once the reports it's handing over reach their chats; run redline again then.")
             }
-            stopped = true
+            stoppedHub = true
         }
         do {
             try files.moveItem(at: old.root, to: paths.root)
+        } catch {
+            return .blocked("Couldn't move \(old.root.path) to \(paths.root.path): \(error.localizedDescription)")
+        }
+        do {
             try files.createSymbolicLink(at: old.root, withDestinationURL: paths.root)
         } catch {
-            FileHandle.standardError.write(Data("Couldn't move \(old.root.path) to \(paths.root.path): \(error.localizedDescription)\n".utf8))
+            FileHandle.standardError.write(Data("Couldn't leave a link to \(paths.root.path) at \(old.root.path): \(error.localizedDescription)\n".utf8))
         }
-        return stopped
+        return stoppedHub ? .stoppedHub(fixedApps: fixedApps) : .done
     }
 }
 
@@ -116,10 +136,10 @@ final class Hub: @unchecked Sendable {
     private let network = NWPathMonitor()
     /// The PID file, held open and locked while the hub runs.
     private var pidFile: Int32?
+    /// Held while the hub stops; `stopped` once it has.
+    private let stopping = NSLock()
+    private var stopped = false
 
-    /// A report finished up to this long before the hub first looked at its app still counts
-    /// as new: the phone's clock and the Mac's can disagree by a little.
-    static let firstLookMargin: TimeInterval = 120
     /// How often the hub looks for newly paired phones and newly installed apps. Changes to the
     /// Mac's network are noticed as they happen.
     static let discoveryInterval: TimeInterval = 1800
@@ -159,6 +179,8 @@ final class Hub: @unchecked Sendable {
         let listener = HubListener(hub: self)
         listener.start()
         self.listener = listener
+        // A listener that failed at once has stopped the hub, and `whenListenerFails` says so.
+        guard stopping.withLock({ !stopped }) else { return true }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: Self.discoveryInterval, leeway: .seconds(60))
         timer.setEventHandler { [weak self] in self?.discover(rediscover: true) }
@@ -173,22 +195,36 @@ final class Hub: @unchecked Sendable {
         return true
     }
 
+    /// Stops taking reports, lets the reports being handed over reach their chats, then lets go
+    /// of the PID file. A hub that starts next, such as the menu bar app taking over, hands over
+    /// again only what this one gave back, so no report starts two chats. Called again, it
+    /// waits for the first call to finish.
     func stop() {
+        stopping.lock()
+        defer { stopping.unlock() }
+        guard !stopped else { return }
+        stopped = true
         discovery?.cancel()
         chatsWatcher?.cancel()
         network.cancel()
         listener?.stop()
         simulators?.stop()
+        handoff?.finish()
         try? FileManager.default.removeItem(at: paths.pid)
         if let pidFile { close(pidFile) }
         log("Hub stopped")
     }
 
-    /// The hub can't take reports without its listener: it stops, so the next chat starts a new one.
+    /// Set before `start` by the menu bar app, which shows why the listener failed and then exits.
+    var whenListenerFails: (@Sendable (String) -> Void)?
+
+    /// The hub can't take reports without its listener: it stops, so the next chat starts a new
+    /// one, and exits, or first tells `whenListenerFails`.
     func listenerFailed(_ reason: String) {
         log(reason)
         stop()
-        exit(1)
+        guard let whenListenerFails else { exit(1) }
+        whenListenerFails(reason)
     }
 
     /// Gives every paired phone's watched apps the hub's current address. `rediscover` also
@@ -203,7 +239,14 @@ final class Hub: @unchecked Sendable {
         }
         forgetPhones(except: Set(paired.map(\.udid)))
         for phone in paired {
-            link(for: phone).update(hosts: hosts, port: HubListener.port, rediscover: rediscover)
+            let link = link(for: phone)
+            // Off every network, phones keep the address they have, which works again once the
+            // Mac is back on theirs; the new address follows as soon as the Mac has one.
+            if hosts.isEmpty {
+                link.macOffline()
+            } else {
+                link.update(hosts: hosts, port: HubListener.port, rediscover: rediscover)
+            }
         }
         writeStatus()
     }
@@ -323,7 +366,8 @@ final class Hub: @unchecked Sendable {
         }
     }
 
-    /// A report bigger than this isn't taken: a phone screen's picture is about 100 KB.
+    /// A report bigger than this isn't taken: a phone screen's picture is about 100 KB. The app
+    /// checks its reports against the same size, `ReportStore.largestReport`, before sending.
     static let largestReport = 50_000_000
 
     private func phoneName(_ udid: String) -> String {
@@ -342,10 +386,13 @@ final class Hub: @unchecked Sendable {
         return zip(x, y).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
-    /// The Mac's addresses on its local networks, then its `.local` name, which keeps working
-    /// when the address changes.
+    /// The Mac's IPv4 addresses on its local networks, then its `.local` name, which keeps
+    /// working when the address changes and is the only way to reach the Mac on an IPv6-only
+    /// network. None while no Wi-Fi or Ethernet link has an address, since phones can't reach
+    /// the Mac by any of them then.
     static func addresses() -> [String] {
         var found: [String] = []
+        var onNetwork = false
         var list: UnsafeMutablePointer<ifaddrs>?
         if getifaddrs(&list) == 0, let first = list {
             defer { freeifaddrs(list) }
@@ -355,34 +402,41 @@ final class Hub: @unchecked Sendable {
                 let name = String(cString: interface.ifa_name)
                 // Wi-Fi and Ethernet, not VPN tunnels or AirDrop's own links.
                 guard flags & IFF_UP != 0, flags & IFF_RUNNING != 0, flags & IFF_LOOPBACK == 0, name.hasPrefix("en"),
-                      let address = interface.ifa_addr, address.pointee.sa_family == UInt8(AF_INET)
+                      let address = interface.ifa_addr
                 else { continue }
+                if address.pointee.sa_family == UInt8(AF_INET6) {
+                    let ipv6 = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee.sin6_addr }
+                    if isOnNetwork(ipv6) { onNetwork = true }
+                    continue
+                }
+                guard address.pointee.sa_family == UInt8(AF_INET) else { continue }
                 var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                 if getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
                     found.append(String(decoding: host.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self))
+                    onNetwork = true
                 }
             }
         }
-        let name = ProcessInfo.processInfo.hostName
-        if name.hasSuffix(".local") { found.append(name) }
+        // The name the Mac answers to over Bonjour, as set in Sharing settings.
+        if onNetwork, let name = SCDynamicStoreCopyLocalHostName(nil) as String? { found.append("\(name).local") }
         return found
+    }
+
+    /// Whether an IPv6 address comes from a network rather than only from the link being up:
+    /// every active interface has a link-local address (fe80::/10), with or without a network.
+    static func isOnNetwork(_ address: in6_addr) -> Bool {
+        let bytes = withUnsafeBytes(of: address) { Array($0) }
+        let linkLocal = bytes[0] == 0xFE && bytes[1] & 0xC0 == 0x80
+        return !linkLocal && bytes != Array(repeating: 0, count: 16)
     }
 
     // MARK: - Delivery
 
-    /// The reports from one app on one device still to copy. The first look at a source only
-    /// takes reports finished from about then on, so old ones aren't delivered as new. That's
-    /// the time of the first look itself: an app first seen hours after the hub started has
-    /// no reason to send the reports made before then.
-    func toCopy(device: String, bundleID: String, finished: [FinishedReport], now: Date = Date()) -> [String] {
-        lock.withLock {
-            let key = "\(device)|\(bundleID)"
-            if state[key] == nil {
-                state[key] = SourceState(since: now.addingTimeInterval(-Self.firstLookMargin))
-                saveState()
-            }
-            return state[key]!.toCopy(from: finished)
-        }
+    /// The reports from one app on one device still to copy. A phone offers only reports the
+    /// Mac hasn't confirmed, and a simulator's reports without the delivered mark are the same,
+    /// so every one is taken, including those sent before this hub first saw the app.
+    func toCopy(device: String, bundleID: String, finished: [FinishedReport]) -> [String] {
+        lock.withLock { (state["\(device)|\(bundleID)"] ?? SourceState()).toCopy(from: finished) }
     }
 
     /// The offered reports the app can stop offering.
@@ -409,12 +463,10 @@ final class Hub: @unchecked Sendable {
             log("Couldn't copy report \(source.reportID) of \(source.bundleID) from \(source.deviceName)")
             return false
         }
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        // The inbox lists a report only by its source.json, so without one it isn't filed.
+        // The inbox lists a report only by its source.json, so without one it isn't filed. Its
+        // date keeps milliseconds, so reports received in the same second stay in order.
         do {
-            try encoder.encode(source).write(to: incoming.appending(path: "source.json"))
+            try Chats.coder.encode(source).write(to: incoming.appending(path: "source.json"))
         } catch {
             log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
             return false
@@ -430,7 +482,7 @@ final class Hub: @unchecked Sendable {
                 log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
                 return false
             }
-            state[key, default: SourceState(since: Date())].delivered.append(source.reportID)
+            state[key, default: SourceState()].delivered.append(source.reportID)
             saveState()
             return true
         }
