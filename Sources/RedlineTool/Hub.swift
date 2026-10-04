@@ -56,6 +56,9 @@ final class Hub: @unchecked Sendable {
         var hosts: [String] = []
         /// Files with a write already queued on `writer`, which takes the newest state when it runs.
         var queuedWrites: Set<SavedFile> = []
+        /// Reports being moved into the inbox, by source key and report ID, so a second copy of one
+        /// that arrives at the same time isn't filed too.
+        var filing: Set<String> = []
     }
 
     private enum SavedFile: CustomStringConvertible {
@@ -157,6 +160,14 @@ final class Hub: @unchecked Sendable {
         try? FileManager.default.removeItem(at: paths.pid)
         if pidLock >= 0 { close(pidLock) }
         pidLock = -1
+    }
+
+    /// The hub can't take reports without its listener: it stops, so the next chat starts a new
+    /// one.
+    func listenerFailed(_ reason: String) {
+        log(reason)
+        stop()
+        exit(1)
     }
 
     /// Waits until every file write queued so far has landed.
@@ -466,13 +477,21 @@ final class Hub: @unchecked Sendable {
     /// Files a report in the inbox. `copy` fills a folder that doesn't exist yet; the report
     /// appears in the inbox only once it's complete, with its source.json.
     ///
+    /// The same report can arrive twice at once, such as from two offers sent back to back. Each
+    /// copy fills its own folder, and the first to finish is the one filed; the others are dropped.
+    ///
     /// Throws, after logging why, when it couldn't be filed; then nothing is left in the inbox and
     /// the report isn't counted as delivered, so it's offered again.
     func receive(_ source: ReportSource, copy: (_ destination: URL) throws -> Void) throws {
         let folder = paths.inbox.appending(path: source.bundleID, directoryHint: .isDirectory)
         let name = Inbox.folderName(reportID: source.reportID, device: source.device)
-        let incoming = folder.appending(path: Inbox.incomingPrefix + name, directoryHint: .isDirectory)
+        let incoming = folder.appending(
+            path: Inbox.incomingPrefix + name + "-" + UUID().uuidString,
+            directoryHint: .isDirectory
+        )
         let destination = folder.appending(path: name, directoryHint: .isDirectory)
+        let key = Self.key(device: source.device, bundleID: source.bundleID)
+        let filingKey = key + "|" + source.reportID
         let files = FileManager.default
         let started = Date.now
         // The menu bar app has no window, so App Nap would slow filing a report the user just sent.
@@ -481,27 +500,38 @@ final class Hub: @unchecked Sendable {
             reason: "Filing a report from a device"
         )
         defer { ProcessInfo.processInfo.endActivity(activity) }
+        // Whatever happens, this attempt's own folder doesn't stay.
+        defer { try? files.removeItem(at: incoming) }
         do {
             try files.createDirectory(at: folder, withIntermediateDirectories: true)
-            // Left by an earlier try that didn't finish.
-            try? files.removeItem(at: incoming)
             try copy(incoming)
             try HubPaths.encoder.encode(source).write(to: incoming.appending(path: Inbox.sourceFile))
-            // The same report sent again replaces the earlier copy.
-            try? files.removeItem(at: destination)
+        } catch {
+            log(
+                "Couldn't file report \(source.reportID) of \(source.bundleID) from \(source.deviceName): \(error.localizedDescription)"
+            )
+            throw error
+        }
+        // Another copy of this report was filed, or is being filed, first.
+        let isFirst = state.withLock { state in
+            guard state.sources[key]?.delivered.contains(source.reportID) != true else { return false }
+            return state.filing.insert(filingKey).inserted
+        }
+        guard isFirst else { return }
+        do {
+            // Left by an attempt whose filing wasn't recorded, such as one cut short by a crash.
+            if files.fileExists(atPath: destination.path) { try files.removeItem(at: destination) }
             try files.moveItem(at: incoming, to: destination)
         } catch {
-            try? files.removeItem(at: incoming)
+            state.withLock { _ = $0.filing.remove(filingKey) }
             log(
                 "Couldn't file report \(source.reportID) of \(source.bundleID) from \(source.deviceName): \(error.localizedDescription)"
             )
             throw error
         }
         state.withLock { state in
-            state.sources[
-                Self.key(device: source.device, bundleID: source.bundleID),
-                default: SourceState(since: startedAt)
-            ].delivered.append(source.reportID)
+            state.filing.remove(filingKey)
+            state.sources[key, default: SourceState(since: startedAt)].delivered.append(source.reportID)
             queueWrite(.state, in: &state)
         }
         log(
@@ -544,6 +574,7 @@ final class Hub: @unchecked Sendable {
                 pid: getpid(),
                 startedAt: startedAt,
                 apps: state.currentApps,
+                fixedApps: fixedApps,
                 hosts: state.hosts,
                 port: HubListener.port,
                 phones: state.phoneStates.values.sorted { $0.name < $1.name },

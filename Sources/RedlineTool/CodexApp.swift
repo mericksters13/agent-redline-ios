@@ -108,9 +108,20 @@ enum CodexApp {
             return setsockopt(descriptor, SOL_SOCKET, option, &wait, socklen_t(MemoryLayout<timeval>.size)) == 0
         }
 
+        /// Writes the whole frame: a write can take only part of it, or be interrupted.
         func send(_ message: [String: Any]) -> Bool {
             guard let data = CodexApp.frame(message), limit(SO_SNDTIMEO) else { return false }
-            return data.withUnsafeBytes { write(descriptor, $0.baseAddress, data.count) } == data.count
+            return data.withUnsafeBytes { bytes in
+                guard let base = bytes.baseAddress else { return bytes.isEmpty }
+                var sent = 0
+                while sent < bytes.count {
+                    let written = write(descriptor, base + sent, bytes.count - sent)
+                    if written < 0, errno == EINTR { continue }
+                    guard written > 0 else { return false }
+                    sent += written
+                }
+                return true
+            }
         }
 
         /// The response to a request, answering the app's questions to every client on the way.

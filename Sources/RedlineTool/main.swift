@@ -87,8 +87,18 @@ if arguments.isEmpty, Bundle.main.bundleURL.pathExtension == "app" { arguments =
 
 switch arguments.first {
 case "app":
-    // The menu bar app is the hub: one process. A hub already running steps aside.
+    // The menu bar app is the hub: one process. A hub already running steps aside, and the apps
+    // it was told to watch on the command line stay watched.
+    var keptApps: [String] = []
     if let running = HubProcess.running(paths), running != getpid() {
+        do {
+            let status = try HubPaths.decoder.decode(HubStatus.self, from: Data(contentsOf: paths.status))
+            if status.pid == running { keptApps = status.fixedApps ?? [] }
+        } catch {
+            printError(
+                "Couldn't read the running hub's status; its command-line apps aren't kept: \(error.localizedDescription)"
+            )
+        }
         kill(running, SIGTERM)
         for _ in 0..<20 where HubProcess.running(paths) != nil { usleep(100_000) }
     }
@@ -96,7 +106,7 @@ case "app":
         print("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
         exit(1)
     }
-    let hub = Hub(paths: paths, devicectl: devicectl, apps: [])
+    let hub = Hub(paths: paths, devicectl: devicectl, apps: keptApps)
     guard hub.start() else {
         print("Another hub is running and didn't stop. Quit it, then open Redline again.")
         exit(1)

@@ -179,5 +179,18 @@ struct ChatSessionTests {
         gone.waiter = Int32.max
         #expect(!gone.isWaiting)
     }
+
+    @Test func anotherReportWaitsWhenItsTextMightNotFit() throws {
+        let folder = try inboxReport("20261003-223449")
+        try ("# UI report\n\n1. **Log**: " + String(repeating: "é", count: 200_000)).write(
+            to: folder.appending(path: "report.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try inboxReport("20261003-223500")
+        let taken = session(try project()).take(budget: ReportContent.longestText + 30)
+        #expect(taken.taken == 1)
+        #expect(taken.remaining == 1)
+    }
 }
 #endif

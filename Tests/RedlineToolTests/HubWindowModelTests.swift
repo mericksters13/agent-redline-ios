@@ -9,7 +9,12 @@ struct HubWindowModelTests {
     private var paths: HubPaths { HubPaths(root: root.appending(path: "hub-root", directoryHint: .isDirectory)) }
 
     /// A report in the inbox, as the hub files it.
-    private func report(_ id: String, at date: Date) throws -> URL {
+    private func report(
+        _ id: String,
+        at date: Date,
+        deviceName: String = "Test iPhone",
+        device: String = "00000000-0000000000000001"
+    ) throws -> URL {
         let listing: [String: Any] = [
             "app": ["name": "Example"],
             "screens": [["images": [["file": "screen-1.jpg", "notes": [1]]]]],
@@ -21,7 +26,14 @@ struct HubWindowModelTests {
                 ],
             ],
         ]
-        return try fileInboxReport("\(id)-00000001", in: paths, listing: listing, receivedAt: date)
+        return try fileInboxReport(
+            "\(id)-\(device.suffix(8))",
+            in: paths,
+            listing: listing,
+            deviceName: deviceName,
+            device: device,
+            receivedAt: date
+        )
     }
 
     @Test func reportsShowWhereTheyWentNewestFirst() throws {
@@ -33,7 +45,7 @@ struct HubWindowModelTests {
             in: older
         )
 
-        let rows = HubWindowModel.readReports(paths: paths).map(\.row)
+        let rows = HubWindowModel.readReports(paths: paths).rows
         #expect(rows.map(\.folder) == [newer, older])
         #expect(rows[0].agent == "Claude Code")
         #expect(rows[0].chat == "Untitled session")
@@ -56,12 +68,48 @@ struct HubWindowModelTests {
                 at: Date(timeIntervalSince1970: 1_791_000_000 + Double(minute) * 60)
             )
         }
-        let rows = HubWindowModel.readReports(paths: paths, limit: 2).map(\.row)
+        let rows = HubWindowModel.readReports(paths: paths, limit: 2).rows
         #expect(
             rows.map(\.receivedAt) == [
                 Date(timeIntervalSince1970: 1_791_000_240), Date(timeIntervalSince1970: 1_791_000_180),
             ]
         )
+    }
+
+    @Test func devicesKeepTheirLastReportWhenAnotherFillsTheList() throws {
+        let quiet = Date(timeIntervalSince1970: 1_791_000_000)
+        _ = try report("20261004-080000", at: quiet, deviceName: "Quiet iPhone", device: "00000000-0000000000000002")
+        for minute in 0..<3 {
+            _ = try report("20261004-09\(minute)000", at: quiet.addingTimeInterval(TimeInterval(60 * (minute + 1))))
+        }
+
+        let (rows, lastReport) = HubWindowModel.readReports(paths: paths, limit: 2)
+        #expect(rows.count == 2)
+        #expect(!rows.contains { $0.device == "Quiet iPhone" })
+        #expect(lastReport["00000000-0000000000000002"] == quiet)
+        #expect(lastReport["00000000-0000000000000001"] == quiet.addingTimeInterval(180))
+    }
+
+    @Test func aChatThatTakesAWaitingReportShowsOverTheWait() throws {
+        let waiting = try report("20261004-110000", at: Date.now)
+        try ChatDelivery.save(
+            .init(agent: nil, chat: nil, title: "2 chats work in wt; pick one on the phone", kind: .waiting),
+            in: waiting
+        )
+        #expect(HubWindowModel.destination(of: waiting, codexDatabase: nil).isWaiting)
+        let claim = Claim(chat: "started-claude-1", agent: "claude", folder: "/repo/wt", claimedAt: .now + 5)
+        try HubPaths.encoder.encode(claim).write(to: waiting.appending(path: Inbox.claimFile))
+        let taken = HubWindowModel.destination(of: waiting, codexDatabase: nil)
+        #expect(taken.agent == "Claude Code")
+        #expect(taken.chat == "New chat in wt")
+        #expect(!taken.isWaiting)
+
+        // A report sent to a chat keeps the hub's record, which names the chat best.
+        let sent = try report("20261004-113000", at: Date.now)
+        try HubPaths.encoder.encode(Claim(chat: "claude-s-1", agent: "claude", folder: "/repo/wt", claimedAt: .now))
+            .write(to: sent.appending(path: Inbox.claimFile))
+        try ChatDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: sent)
+        #expect(HubWindowModel.destination(of: sent, codexDatabase: nil).chat == "Untitled session")
     }
 
     @Test func aReportListingWithOnlyItsNotesStillShowsThem() throws {
@@ -162,6 +210,10 @@ struct HubWindowModelTests {
             atomically: true,
             encoding: .utf8
         )
+        #expect(HubWindowModel.chat(of: started)?.id == "t-2")
+        // It took the report before its worktree existed, and is resumed from the worktree.
+        try Inbox.moveClaim(of: started, to: "/repo-worktrees/report-1")
+        #expect(HubWindowModel.chat(of: started)?.folder == "/repo-worktrees/report-1")
         #expect(HubWindowModel.chat(of: started)?.id == "t-2")
 
         // Waiting: nothing to open.

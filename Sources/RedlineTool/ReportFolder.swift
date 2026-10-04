@@ -11,6 +11,9 @@ struct FinishedReport: Equatable {
 /// Where the kit keeps sent reports, inside an app's data container.
 enum ReportFolder {
     static let path = HubMessage.kitFolder + "/reports"
+    /// The empty file in a report's folder that says the Mac has it, as the kit's `ReportStore`
+    /// names it.
+    static let deliveredMark = "delivered"
 
     /// The finished reports among paths relative to the reports folder.
     ///

@@ -214,19 +214,30 @@ final class SimulatorWatcher: @unchecked Sendable {
         }
         let finished = ReportFolder.finishedReports(in: entries)
         hub.startTrackingIfNeeded(device: path.device, bundleID: bundleID)
-        guard !hub.reportIDsToCopy(device: path.device, bundleID: bundleID, finished: finished).isEmpty else { return }
-        let source = ReportSource(
-            kind: .simulator,
-            device: path.device,
-            deviceName: name(of: path.device),
-            bundleID: bundleID,
-            reportID: reportID,
-            receivedAt: .now
-        )
-        do {
-            try hub.receive(source) { destination in try files.copyItem(at: folder, to: destination) }
-        } catch {
-            // The hub logged why; the report isn't counted as delivered, so it's taken at the next look.
+        if !hub.reportIDsToCopy(device: path.device, bundleID: bundleID, finished: finished).isEmpty {
+            let source = ReportSource(
+                kind: .simulator,
+                device: path.device,
+                deviceName: name(of: path.device),
+                bundleID: bundleID,
+                reportID: reportID,
+                receivedAt: .now
+            )
+            do {
+                try hub.receive(source) { destination in try files.copyItem(at: folder, to: destination) }
+            } catch {
+                // The hub logged why; the report isn't counted as delivered, so it's taken at the next look.
+                return
+            }
+        }
+        // The mark the app shows as "On the Mac", and waits for after Send; a phone's app makes it
+        // when the hub's reply says so.
+        let mark = folder.appending(path: ReportFolder.deliveredMark)
+        guard hub.settledReportIDs(device: path.device, bundleID: bundleID, finished: finished).contains(reportID),
+            !files.fileExists(atPath: mark.path)
+        else { return }
+        if !files.createFile(atPath: mark.path, contents: nil) {
+            hub.log("Couldn't mark report \(reportID) of \(bundleID) in \(name(of: path.device)) as on the Mac")
         }
     }
 

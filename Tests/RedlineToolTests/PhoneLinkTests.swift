@@ -56,5 +56,55 @@ struct PhoneLinkTests {
         #expect(try await state(of: hub) { $0.hasPrefix("Ready") } == "Ready for \(app)")
         hub.flushWrites()
     }
+
+    @Test func aReinstalledAppGetsTheAddressAgainAtTheNextDiscovery() async throws {
+        try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
+        // Stands in for devicectl, noting each call; the phone answers only while it's awake.
+        let awake = paths.root.appending(path: "awake")
+        let calls = paths.root.appending(path: "calls")
+        let devicectl = paths.root.appending(path: "devicectl")
+        try """
+        #!/bin/sh
+        command="$1 $2"
+        echo "$command" >> '\(calls.path)'
+        while [ $# -gt 0 ]; do [ "$1" = "--json-output" ] && output="$2"; shift; done
+        [ -f '\(awake.path)' ] || exit 1
+        case "$command" in
+          "device copy") exit 0 ;;
+          "device info") printf '{"result":{"apps":[{"bundleIdentifier":"\(app)"}]}}' > "$output" ;;
+          *) exit 1 ;;
+        esac
+        """.write(to: devicectl, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: devicectl.path)
+        let hub = Hub(paths: paths, devicectl: Devicectl(executable: devicectl), apps: [app])
+        hub.updateApps(isStarting: true)
+        let link = PhoneLink(phone: .init(udid: phone, name: "Test iPhone", model: "iPhone 17 Pro"), hub: hub)
+        func called() -> [String] {
+            ((try? String(contentsOf: calls, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+        }
+        func waitForCalls(_ count: Int) async throws {
+            for _ in 0..<50 where called().count < count { try await Task.sleep(for: .milliseconds(100)) }
+        }
+
+        try Data().write(to: awake)
+        link.update(hosts: ["192.168.1.2"], port: 47361, includingNewApps: true)
+        #expect(try await state(of: hub) { $0.hasPrefix("Ready") } == "Ready for \(app)")
+        // The same address at the next discovery is written again, in case the app lost it.
+        link.update(hosts: ["192.168.1.2"], port: 47361, includingNewApps: true)
+        try await waitForCalls(2)
+        #expect(called() == ["device copy", "device copy"])
+        // A phone that can't be reached then keeps the address it has, with no retries.
+        try FileManager.default.removeItem(at: awake)
+        link.update(hosts: ["192.168.1.2"], port: 47361, includingNewApps: true)
+        try await waitForCalls(4)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(called() == ["device copy", "device copy", "device copy", "device info"])
+        #expect(try await state(of: hub) { _ in true } == "Ready for \(app)")
+        // Without a discovery, nothing is written.
+        link.update(hosts: ["192.168.1.2"], port: 47361, includingNewApps: false)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(called().count == 4)
+        hub.flushWrites()
+    }
 }
 #endif

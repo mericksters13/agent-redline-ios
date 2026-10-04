@@ -29,11 +29,12 @@ enum ReportDelivery {
             store.recordDelivery(.noHub)
             return .noHub
         }
-        // In a simulator the hub takes reports from the app's folder as they're saved.
+        // In a simulator the hub takes reports from the app's folder as they're saved, and marks
+        // each one delivered once it's copied. No mark soon means no hub is watching.
         if !address.acceptsUploads {
-            store.markDelivered(reports.map(\.id))
-            store.recordDelivery(.delivered)
-            return .delivered
+            let outcome = await waitForSimulatorHub(toTake: Set(reports.map(\.id)), in: store, patience: patience)
+            store.recordDelivery(outcome)
+            return outcome
         }
         let result = await HubLink.deliver(
             reports,
@@ -47,6 +48,22 @@ enum ReportDelivery {
         // The hub answered, so iOS has allowed local network access.
         if result.outcome != .unreachable { UserDefaults.standard.set(true, forKey: hubReachedKey) }
         return result.outcome
+    }
+
+    /// Waits up to `patience`, and no more than 5 seconds, for a simulator's hub to mark every
+    /// one of `ids` delivered.
+    private static func waitForSimulatorHub(
+        toTake ids: Set<String>,
+        in store: ReportStore,
+        patience: TimeInterval
+    ) async -> HubLink.Outcome {
+        let deadline = Date.now.addingTimeInterval(min(patience, 5))
+        while Date.now < deadline {
+            try? await Task.sleep(for: .milliseconds(250))
+            if Task.isCancelled { break }
+            if !store.undeliveredReports().contains(where: { ids.contains($0.id) }) { return .delivered }
+        }
+        return .unreachable
     }
 
     /// What the toast after Send says, so a report that didn't reach the Mac says why.

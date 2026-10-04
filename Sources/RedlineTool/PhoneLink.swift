@@ -3,12 +3,12 @@ import Foundation
 
 /// One paired phone.
 ///
-/// Leaves the hub's address and a token in each watched app's folder on it, once and again only
-/// when the address changes. The apps send their reports themselves, so nothing runs while the
-/// phone is quiet.
+/// Leaves the hub's address and a token in each watched app's folder on it, again when the address
+/// changes, and again at each discovery in case an app was reinstalled. The apps send their
+/// reports themselves, so nothing runs while the phone is quiet.
 ///
-/// Thread safety: `address`, `given`, `missing`, `retryDelay`, `retryAt` and `lastWakeTry` are
-/// read and written only on `queue`.
+/// Thread safety: `address`, `given`, `missing`, `recheck`, `retryDelay`, `retryAt` and
+/// `lastWakeTry` are read and written only on `queue`.
 final class PhoneLink: @unchecked Sendable {
     let phone: Devicectl.Phone
     private unowned let hub: Hub
@@ -19,6 +19,11 @@ final class PhoneLink: @unchecked Sendable {
     private var given: [String: HubMessage.Address] = [:]
     /// Apps not on the phone at the last look; looked for again at the next discovery.
     private var missing = Set<String>()
+    /// Apps given the address before the last discovery.
+    ///
+    /// Each gets it again, in case it was reinstalled since and lost it; a phone that can't be
+    /// reached is left until the next discovery.
+    private var recheck = Set<String>()
     private var retryDelay = PhoneLink.firstRetry
     private var retryAt: Date?
     /// When a wake last made this phone try.
@@ -41,7 +46,7 @@ final class PhoneLink: @unchecked Sendable {
     }
 
     /// Gives the address to every watched app that doesn't have it yet. `includingNewApps` looks
-    /// again for apps that weren't installed.
+    /// again for apps that weren't installed, and gives it again to those that have it.
     func update(hosts: [String], port: UInt16, includingNewApps: Bool) {
         queue.async {
             let address = HubMessage.Address(device: self.phone.udid, hosts: hosts, port: port)
@@ -50,6 +55,7 @@ final class PhoneLink: @unchecked Sendable {
                 self.missing = []
                 self.retryDelay = Self.firstRetry
             }
+            if includingNewApps { self.recheck = Set(self.given.keys) }
             self.giveAddress()
         }
     }
@@ -83,17 +89,22 @@ final class PhoneLink: @unchecked Sendable {
             }
         )
         for (bundleID, address) in addresses.sorted(by: { $0.key < $1.key })
-        where given[bundleID] != address && !missing.contains(bundleID) {
+        where (given[bundleID] != address || recheck.contains(bundleID)) && !missing.contains(bundleID) {
+            let isRechecking = recheck.remove(bundleID) != nil && given[bundleID] == address
             if hub.devicectl.write(HubMessage.encode(address), to: HubMessage.addressPath, of: bundleID, on: phone.udid)
             {
+                if !isRechecking { hub.log("Gave \(bundleID) on \(phone.name) the hub's address") }
                 given[bundleID] = address
-                hub.log("Gave \(bundleID) on \(phone.name) the hub's address")
                 continue
             }
             // Either the app isn't installed, or the phone can't be reached right now.
             switch hub.devicectl.installation(of: bundleID, on: phone.udid) {
-            case .notInstalled: missing.insert(bundleID)
-            case .installed, .unreachable: unreachable = true
+            case .notInstalled:
+                missing.insert(bundleID)
+                given[bundleID] = nil
+            case .installed, .unreachable:
+                // Rechecked, it most likely still has the address; the next discovery checks again.
+                if !isRechecking { unreachable = true }
             }
         }
         let ready = apps.filter { given[$0] == addresses[$0] }
