@@ -19,6 +19,10 @@ struct OverlayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var noteFocused: Bool
     @State private var cardHeight: CGFloat = 0
+    /// The note card's element row and text field, which scroll when the card is capped.
+    @State private var noteContentHeight: CGFloat = 0
+    /// The note card's error line and buttons, which never scroll.
+    @State private var noteFooterHeight: CGFloat = 0
     /// The card's height when it opened, before any typing.
     @State private var openingCardHeight: CGFloat = 0
     @State private var islandHeight: CGFloat = 52
@@ -75,13 +79,14 @@ struct OverlayView: View {
                     .transition(.opacity)
             }
 
-            if session.mode == .idle {
-                if let toast = session.toast {
-                    toastView(toast)
-                }
-                if let center = session.buttonCenter {
-                    floatingButton(at: center)
-                }
+            if session.mode == .idle, let center = session.buttonCenter {
+                floatingButton(at: center)
+            }
+
+            // Shown in every mode but noting, which has its own error line on the card,
+            // so a failed Send or delete is seen where it happened.
+            if session.mode != .noting, let toast = session.toast {
+                toastView(toast)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -242,6 +247,51 @@ struct OverlayView: View {
 
     private var noteCard: some View {
         VStack(alignment: .leading, spacing: 14) {
+            // Scrolls only when the card is taller than the space above the keyboard, such
+            // as in landscape or at large text sizes, so the buttons below stay in reach.
+            ScrollView {
+                noteCardContent
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { noteContentHeight = $0 }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: noteScrollHeight)
+
+            noteCardFooter
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { noteFooterHeight = $0 }
+        }
+        .buttonStyle(.plain)
+        .padding(16)
+        .frame(width: panelWidth)
+        .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.3), radius: 18, y: 8)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+            cardHeight = height
+            // Wait for the real content height; the first pass uses an estimate.
+            if openingCardHeight == 0, noteContentHeight > 0 { openingCardHeight = height }
+        }
+        .padding(.leading, panelLeading)
+        .padding(.top, session.noteCardTop(height: cardHeight == 0 ? 190 : cardHeight, reservedHeight: reservedCardHeight))
+        .onAppear { noteFocused = true }
+        .onDisappear {
+            cardHeight = 0
+            openingCardHeight = 0
+            noteContentHeight = 0
+            noteFooterHeight = 0
+        }
+    }
+
+    /// The scrolling part's height: all of it when the card fits, otherwise what is left
+    /// once the card's padding, spacing and buttons are in.
+    private var noteScrollHeight: CGFloat {
+        let content = noteContentHeight == 0 ? 120 : noteContentHeight
+        let footer = noteFooterHeight == 0 ? 44 : noteFooterHeight
+        let room = session.noteCardMaxHeight - 32 - 14 - footer
+        return max(min(content, room), 44)
+    }
+
+    private var noteCardContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
                 if elementIsHidden, let preview = session.selectedElementPreview() {
                     // The element is behind the keyboard or this card, so show what was picked.
@@ -284,7 +334,11 @@ struct OverlayView: View {
                 .focused($noteFocused)
                 .padding(12)
                 .background(Mono.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
 
+    private var noteCardFooter: some View {
+        VStack(alignment: .leading, spacing: 14) {
             if let error = session.noteError {
                 Text(error)
                     .font(.footnote.weight(.medium))
@@ -309,23 +363,6 @@ struct OverlayView: View {
                         .contentShape(Rectangle())
                 }
             }
-        }
-        .buttonStyle(.plain)
-        .padding(16)
-        .frame(width: panelWidth)
-        .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
-        .shadow(color: .black.opacity(0.3), radius: 18, y: 8)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-            cardHeight = height
-            if openingCardHeight == 0 { openingCardHeight = height }
-        }
-        .padding(.leading, panelLeading)
-        .padding(.top, session.noteCardTop(height: cardHeight == 0 ? 190 : cardHeight, reservedHeight: reservedCardHeight))
-        .onAppear { noteFocused = true }
-        .onDisappear {
-            cardHeight = 0
-            openingCardHeight = 0
         }
     }
 
@@ -445,26 +482,41 @@ struct OverlayView: View {
         }
     }
 
-    // MARK: - Idle
+    // MARK: - Toast
 
-    private func toastView(_ message: String) -> some View {
+    /// At the top of the screen when idle, under the island while picking or listing
+    /// notes, and under the viewer's top bar.
+    private var toastTop: CGFloat {
+        switch session.mode {
+        case .idle, .noting: islandTop
+        case .picking, .tray: islandBottom + 8
+        case .viewer: session.safeAreaTop + 56
+        }
+    }
+
+    private func toastView(_ toast: DebugSession.Toast) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill")
+            Image(systemName: toast.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                 .foregroundStyle(Mono.text)
-            Text(message)
+            Text(toast.message)
                 .foregroundStyle(Mono.text)
+                .multilineTextAlignment(.leading)
         }
         .font(.subheadline.weight(.semibold))
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
-        .background(Mono.surface, in: Capsule(style: .continuous))
-        .overlay(Capsule(style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+        .background(Mono.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.3), radius: 14, y: 6)
+        .padding(.horizontal, 16)
         .frame(width: width)
-        .offset(y: islandTop)
+        .offset(y: toastTop)
         .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
         .transition(.move(edge: .top).combined(with: .opacity))
     }
+
+    // MARK: - Idle
 
     private func floatingButton(at center: CGPoint) -> some View {
         let count = session.annotations.count

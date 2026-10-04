@@ -55,10 +55,17 @@ struct ReportStoreTests {
     private let app = Report.App(bundleIdentifier: "com.example.app", name: "Example", version: "1.0", build: "1")
     private let device = Report.Device(model: "iPhone17,1", systemName: "iOS", systemVersion: "27.0")
 
+    /// A draft note with its screenshot saved, ready to send.
+    private func savedAnnotation(_ note: String) throws -> Annotation {
+        let item = annotation(note)
+        try store.saveScreenshot(Data([1]), named: item.screenshot)
+        return item
+    }
+
     @Test func reportsInTheSameSecondGetTheirOwnFolders() throws {
         let date = Date(timeIntervalSince1970: 1_790_000_000)
-        let first = try store.send([annotation("Cut off")], app: app, device: device, date: date)
-        let second = try store.send([annotation("Wrong color")], app: app, device: device, date: date)
+        let first = try store.send([savedAnnotation("Cut off")], app: app, device: device, date: date)
+        let second = try store.send([savedAnnotation("Wrong color")], app: app, device: device, date: date)
         #expect(first != second)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -67,6 +74,19 @@ struct ReportStoreTests {
         #expect(firstReport.annotations.map(\.note) == ["Cut off"])
         #expect(secondReport.annotations.map(\.note) == ["Wrong color"])
         #expect(firstReport.id != secondReport.id)
+    }
+
+    @Test func aMissingScreenshotStopsTheSendAndKeepsTheDraft() throws {
+        let kept = try savedAnnotation("Cut off")
+        let lost = annotation("Wrong color")
+        try store.saveDraft([kept, lost])
+
+        #expect(throws: ReportStore.MissingScreenshot(annotationID: lost.id)) {
+            try store.send([kept, lost], app: app, device: device, date: .now)
+        }
+        #expect(store.loadDraft() == [kept, lost])
+        #expect(FileManager.default.fileExists(atPath: store.draftDirectory.appending(path: kept.screenshot).path))
+        #expect(!FileManager.default.fileExists(atPath: store.reportsDirectory.path))
     }
 
     @Test func aFailedSendLeavesTheDraftWhole() throws {

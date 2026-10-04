@@ -48,6 +48,12 @@ struct Report: Codable, Sendable {
 /// - `draft/annotations.json` and one PNG per annotation
 /// - `reports/<id>/report.json` and the PNGs it references
 struct ReportStore: Sendable {
+    /// A draft note whose screenshot file is gone. Sending stops so the draft stays
+    /// for recovery instead of producing a report that points at a missing file.
+    struct MissingScreenshot: Error, Equatable {
+        var annotationID: UUID
+    }
+
     let root: URL
 
     static let standard = ReportStore(root: URL.applicationSupportDirectory.appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory))
@@ -76,14 +82,17 @@ struct ReportStore: Sendable {
     }
 
     /// Copies the draft into a new report folder and clears the draft once the report is
-    /// complete. If any step fails, the draft stays as it was and no report is left behind.
-    /// Returns the report folder.
+    /// complete. If any step fails, including a note whose screenshot is missing, the draft
+    /// stays as it was and no report is left behind. Returns the report folder.
     func send(_ annotations: [Annotation], app: Report.App, device: Report.Device, date: Date) throws -> URL {
+        let files = FileManager.default
+        if let missing = annotations.first(where: { !files.fileExists(atPath: draftDirectory.appending(path: $0.screenshot).path) }) {
+            throw MissingScreenshot(annotationID: missing.id)
+        }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let stamp = formatter.string(from: date)
-        let files = FileManager.default
         try files.createDirectory(at: reportsDirectory, withIntermediateDirectories: true)
 
         // Creating the folder itself fails when it exists, so two reports in the same
@@ -104,10 +113,7 @@ struct ReportStore: Sendable {
 
         do {
             for annotation in annotations {
-                let source = draftDirectory.appending(path: annotation.screenshot)
-                if files.fileExists(atPath: source.path) {
-                    try files.copyItem(at: source, to: folder.appending(path: annotation.screenshot))
-                }
+                try files.copyItem(at: draftDirectory.appending(path: annotation.screenshot), to: folder.appending(path: annotation.screenshot))
             }
             let report = Report(id: id, createdAt: date, app: app, device: device, annotations: annotations)
             try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)

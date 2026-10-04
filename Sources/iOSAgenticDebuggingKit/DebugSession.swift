@@ -20,6 +20,12 @@ final class DebugSession {
         var frame: CGRect
     }
 
+    /// A short message under the island, or at the top of the screen when idle.
+    struct Toast: Equatable {
+        var message: String
+        var isError = false
+    }
+
     private(set) var mode = Mode.idle
     private(set) var annotations: [Annotation] = []
     /// What's under the finger, innermost first. `levelIndex` picks one of them.
@@ -30,7 +36,7 @@ final class DebugSession {
     var noteText = ""
     /// The note showing in the full-screen viewer.
     private(set) var viewerID: UUID?
-    private(set) var toast: String?
+    private(set) var toast: Toast?
     private(set) var screenSize = CGSize.zero
     private(set) var safeAreaInsets = UIEdgeInsets.zero
     private(set) var keyboardTop = CGFloat.infinity
@@ -214,21 +220,21 @@ final class DebugSession {
         guard let element = selected, let screenshot else { return }
         let id = UUID()
         let fileName = "\(id.uuidString).png"
+        // A failed save keeps the card open with the text for another try: a note without
+        // its screenshot would show blank, and one missing from the draft file would
+        // vanish on the next launch.
         do {
             guard let data = AccessibilityTree.outlining(element.frame, in: screenshot).pngData() else {
                 throw CocoaError(.fileWriteUnknown)
             }
             try store.saveScreenshot(data, named: fileName)
         } catch {
-            // A note without its screenshot would show blank and send a report missing it,
-            // so keep the card open with the text for another try.
             logger.error("Couldn't save the screenshot: \(error.localizedDescription, privacy: .public)")
             noteError = "Couldn't save the screenshot. Try again."
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             return
         }
-        notesThisVisit.insert(id)
-        annotations.append(Annotation(
+        let annotation = Annotation(
             id: id,
             createdAt: .now,
             note: note,
@@ -236,8 +242,15 @@ final class DebugSession {
             ancestors: Array(levels.dropFirst(levelIndex + 1)),
             screen: screen,
             screenshot: fileName
-        ))
-        persist()
+        )
+        guard persist(annotations + [annotation]) else {
+            store.deleteScreenshot(named: fileName)
+            noteError = "Couldn't save the note. Try again."
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return
+        }
+        notesThisVisit.insert(id)
+        annotations.append(annotation)
         levels = []
         refreshMarkers()
         endNoting(returningTo: .picking)
@@ -251,11 +264,17 @@ final class DebugSession {
 
     func delete(_ annotation: Annotation) {
         guard let index = annotations.firstIndex(where: { $0.id == annotation.id }) else { return }
-        annotations.remove(at: index)
+        var remaining = annotations
+        remaining.remove(at: index)
+        // The draft file goes first, so a failed write leaves the note and its screenshot as they were.
+        guard persist(remaining) else {
+            showFailure("Couldn't delete the note")
+            return
+        }
+        annotations = remaining
         thumbnails[annotation.id] = nil
         fullScreenshots[annotation.id] = nil
         store.deleteScreenshot(named: annotation.screenshot)
-        persist()
         refreshMarkers()
         if mode == .viewer {
             // Show the next note, or the one before when the last was deleted.
@@ -292,8 +311,14 @@ final class DebugSession {
     func updateNote(_ id: UUID, to text: String) {
         let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return }
-        annotations[index].note = note
-        persist()
+        var updated = annotations
+        updated[index].note = note
+        // On failure the viewer's field keeps the new text, so ending the edit again retries.
+        guard persist(updated) else {
+            showFailure("Couldn't save the change to the note")
+            return
+        }
+        annotations = updated
     }
 
     /// The note's whole screenshot, with its element outlined.
@@ -335,10 +360,15 @@ final class DebugSession {
             elements = []
             screenshot = nil
             setMode(.idle)
-            show(toast: count == 1 ? "Saved 1 note on this iPhone" : "Saved \(count) notes on this iPhone")
+            show(Toast(message: count == 1 ? "Saved 1 note on this iPhone" : "Saved \(count) notes on this iPhone"))
+        } catch let missing as ReportStore.MissingScreenshot {
+            // The debugger stays open on the draft, so the note can be deleted and the rest sent.
+            let number = (annotations.firstIndex { $0.id == missing.annotationID } ?? 0) + 1
+            logger.error("Couldn't send: the screenshot for note \(number) is missing")
+            showFailure("Note \(number) lost its screenshot. Delete it, then send.")
         } catch {
             logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
-            show(toast: "Couldn't save the report")
+            showFailure("Couldn't save the report. Your notes are kept.")
         }
     }
 
@@ -385,16 +415,25 @@ final class DebugSession {
 
     /// The note card's top edge.
     func noteCardTop(height: CGFloat, reservedHeight: CGFloat) -> CGFloat {
-        let keyboard = noteKeyboardTop
-        return NoteCardPlacement.top(
+        NoteCardPlacement.top(
             // After a rotation the picked frame points at the wrong place; the card shows
             // a crop of the element instead.
             element: screenReadIsCurrent ? selected?.frame : nil,
             height: height,
             reservedHeight: reservedHeight,
             top: safeAreaTop,
-            bottom: min(keyboard, screenSize.height - safeAreaInsets.bottom)
+            bottom: noteCardBottom
         )
+    }
+
+    /// The tallest the note card can be and still fit whole above the keyboard.
+    var noteCardMaxHeight: CGFloat {
+        NoteCardPlacement.maxHeight(top: safeAreaTop, bottom: noteCardBottom)
+    }
+
+    /// The lowest the note card's bottom may go: the keyboard, or the home indicator without one.
+    private var noteCardBottom: CGFloat {
+        min(noteKeyboardTop, screenSize.height - safeAreaInsets.bottom)
     }
 
     private static let keyboardHeightKey = "AgenticDebuggingKeyboardHeight"
@@ -509,11 +548,15 @@ final class DebugSession {
         refreshMarkers()
     }
 
-    private func persist() {
+    /// Writes `updated` as the draft. Callers change `annotations` only when this succeeds,
+    /// so the notes on screen always match what the next launch loads.
+    private func persist(_ updated: [Annotation]) -> Bool {
         do {
-            try store.saveDraft(annotations)
+            try store.saveDraft(updated)
+            return true
         } catch {
             logger.error("Couldn't save the draft: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 
@@ -531,12 +574,18 @@ final class DebugSession {
         }
     }
 
-    private func show(toast message: String) {
+    private func show(_ message: Toast) {
         toast = message
         Task {
-            try? await Task.sleep(for: .seconds(2.5))
+            try? await Task.sleep(for: .seconds(message.isError ? 4 : 2.5))
             if toast == message { toast = nil }
         }
+    }
+
+    private func showFailure(_ message: String) {
+        show(Toast(message: message, isError: true))
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
+        UIAccessibility.post(notification: .announcement, argument: message)
     }
 
     /// The app's own visible windows, bottom to top, without the debugger's.
