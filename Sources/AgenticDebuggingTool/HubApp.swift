@@ -9,11 +9,42 @@ struct HubMenuBarApp: App {
     @State private var model = HubWindowModel(hub: HubAppContext.hub)
 
     var body: some Scene {
-        MenuBarExtra("Agentic Debugging", systemImage: "iphone.gen3.radiowaves.left.and.right") {
+        MenuBarExtra {
             HubPanel(model: model)
+        } label: {
+            Image(nsImage: MenuBarIcon.image)
         }
         .menuBarExtraStyle(.window)
     }
+}
+
+/// The menu bar icon: the app icon's phone with a marked element and its note number, as a
+/// template image the menu bar tints for light and dark.
+enum MenuBarIcon {
+    static let image: NSImage = {
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { _ in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            let badge = CGRect(x: 10.5, y: 1.2, width: 6, height: 6)
+            context.setFillColor(NSColor.black.cgColor)
+            context.setStrokeColor(NSColor.black.cgColor)
+            // The phone and its marked element, cut back around the badge so the two stay apart.
+            context.saveGState()
+            context.addRect(CGRect(x: 0, y: 0, width: 18, height: 18))
+            context.addEllipse(in: badge.insetBy(dx: -1.3, dy: -1.3))
+            context.clip(using: .evenOdd)
+            context.setLineWidth(1.5)
+            context.addPath(CGPath(roundedRect: CGRect(x: 4.5, y: 1.25, width: 9, height: 15.5), cornerWidth: 2.8, cornerHeight: 2.8, transform: nil))
+            context.strokePath()
+            context.addPath(CGPath(roundedRect: CGRect(x: 6.3, y: 7, width: 5.4, height: 3.4), cornerWidth: 1, cornerHeight: 1, transform: nil))
+            context.fillPath()
+            context.restoreGState()
+            context.fillEllipse(in: badge)
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Agentic Debugging"
+        return image
+    }()
 }
 
 /// Hands the running hub to the app, which SwiftUI creates on its own.
