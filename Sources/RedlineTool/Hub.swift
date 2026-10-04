@@ -120,7 +120,9 @@ final class Hub: @unchecked Sendable {
     /// Apps given on the command line, watched whether or not a chat is open for them.
     private let fixedApps: [String]
     private var currentApps: [String] = []
-    private var chatsWatcher: DispatchSourceFileSystemObject?
+    private var chatsWatchers: [DispatchSourceFileSystemObject] = []
+    /// Claude Code's open chats. It runs no hooks, so its chats are found from its own files.
+    private let claudeChats: @Sendable () -> [ClaudeSessions.Session]
     private let startedAt = Date()
     private let lock = NSLock()
     private var state: [String: SourceState] = [:]
@@ -148,10 +150,11 @@ final class Hub: @unchecked Sendable {
     /// and any given on the command line.
     var apps: [String] { lock.withLock { currentApps } }
 
-    init(paths: HubPaths, devicectl: Devicectl, apps: [String]) {
+    init(paths: HubPaths, devicectl: Devicectl, apps: [String], claudeChats: @escaping @Sendable () -> [ClaudeSessions.Session] = ClaudeSessions.open) {
         self.paths = paths
         self.devicectl = devicectl
         fixedApps = apps
+        self.claudeChats = claudeChats
         if let data = try? Data(contentsOf: paths.state), let saved = try? Self.decoder.decode([String: SourceState].self, from: data) {
             state = saved
         }
@@ -205,7 +208,7 @@ final class Hub: @unchecked Sendable {
         guard !stopped else { return }
         stopped = true
         discovery?.cancel()
-        chatsWatcher?.cancel()
+        chatsWatchers.forEach { $0.cancel() }
         network.cancel()
         listener?.stop()
         // Before the simulator watcher: stopping it waits for a rescan under way, and hand-overs
@@ -253,20 +256,24 @@ final class Hub: @unchecked Sendable {
         writeStatus()
     }
 
-    /// A chat opening or closing changes the apps to take reports from.
+    /// A chat opening or closing changes the apps to take reports from: the hub's own chat
+    /// records, and the session files of Claude Code's chats.
     private func watchChats() {
         let folder = Chats.folder(paths)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let descriptor = open(folder.path, O_EVTONLY)
-        guard descriptor >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: .write, queue: queue)
-        source.setEventHandler { [weak self] in self?.updateApps(starting: false) }
-        source.setCancelHandler { close(descriptor) }
-        source.resume()
-        chatsWatcher = source
+        for folder in [folder.path] + ClaudeSessions.configFolders.map({ $0 + "/sessions" }) {
+            let descriptor = open(folder, O_EVTONLY)
+            guard descriptor >= 0 else { continue }
+            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: .write, queue: queue)
+            source.setEventHandler { [weak self] in self?.updateApps(starting: false) }
+            source.setCancelHandler { close(descriptor) }
+            source.resume()
+            chatsWatchers.append(source)
+        }
     }
 
     func updateApps(starting: Bool) {
+        noteClaudeChats()
         // Apps a chat worked on before stay watched after it closes, so their reports still
         // arrive and can start a new chat.
         let apps = Array(Set(fixedApps + Chats.live(paths).flatMap(\.bundleIDs) + ProjectHistory.all(paths).keys)).sorted()
@@ -279,6 +286,18 @@ final class Hub: @unchecked Sendable {
         // New apps' simulator folders to watch and phones to give the address to.
         simulators?.rescan()
         queue.async { self.discover(rediscover: true) }
+    }
+
+    /// Notes the apps open Claude Code chats work on, as other agents' chats note theirs when
+    /// they register, so the hub watches them. Only apps not noted yet are written.
+    private func noteClaudeChats() {
+        let known = ProjectHistory.all(paths)
+        for session in claudeChats() {
+            let new = ChatDirectory.apps.bundleIDs(in: session.folder).filter { known[$0] == nil }
+            guard !new.isEmpty else { continue }
+            ProjectHistory.note(ChatRecord(id: "claude-\(session.id)", agent: Agent.claude.rawValue, folder: session.folder, bundleIDs: new,
+                                           pid: getpid(), registeredAt: Date(), lastActiveAt: session.updatedAt), paths: paths)
+        }
     }
 
     private func link(for phone: Devicectl.Phone) -> PhoneLink {

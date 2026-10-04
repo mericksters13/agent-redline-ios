@@ -38,21 +38,31 @@ enum Routing {
             .destination.flatMap { Agent(rawValue: $0.agent) == nil ? nil : $0 }
     }
 
-    static func worktree(of report: URL) -> String? {
-        (try? Data(contentsOf: report.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }?
-            .app.sourceFile.map(Worktree.root(of:))
+    /// The worktree the app was built from, as the report says, when that folder builds the
+    /// report's app. The phone writes the report, so a path to any other project isn't used:
+    /// the hub makes worktrees and starts chats in this folder.
+    static func worktree(of report: URL, bundleID: String) -> String? {
+        let listing = (try? Data(contentsOf: report.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }
+        return worktree(of: listing, bundleID: bundleID)
+    }
+
+    private static func worktree(of listing: Listing?, bundleID: String) -> String? {
+        guard let worktree = listing?.app.sourceFile.map(Worktree.root(of:)), ChatDirectory.apps.bundleIDs(in: worktree).contains(bundleID) else { return nil }
+        return worktree
     }
 
     static func destination(of report: URL, bundleID: String, paths: HubPaths,
                             list: (String, String?) -> HubMessage.ChatList) -> Destination {
         let listing = (try? Data(contentsOf: report.appending(path: "report.json"))).flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }
-        let worktree = listing?.app.sourceFile.map(Worktree.root(of:))
+        let worktree = worktree(of: listing, bundleID: bundleID)
+        let unknown = listing?.app.sourceFile == nil ? "The report doesn't say which worktree the app was built from"
+            : "The worktree the report names doesn't build \(bundleID)"
         if let pick = listing?.destination, let agent = Agent(rawValue: pick.agent) {
             if let chat = pick.chat { return .chat(agent, id: chat) }
-            guard let worktree else { return .undecided("The report doesn't say which worktree the app was built from") }
+            guard let worktree else { return .undecided(unknown) }
             return .newChat(agent, folder: worktree, pick: pick.newChat)
         }
-        guard let worktree else { return .undecided("The report doesn't say which worktree the app was built from") }
+        guard let worktree else { return .undecided(unknown) }
         let directory = list(bundleID, listing?.app.sourceFile)
         let here = directory.chats.filter(\.sameWorktree)
         if here.count == 1, let chat = here.first, let agent = Agent(rawValue: chat.agent) { return .chat(agent, id: chat.id) }
@@ -151,7 +161,7 @@ final class Handoff: @unchecked Sendable {
         let destination = Routing.destination(of: report.folder, bundleID: source.bundleID, paths: paths) { bundleID, sourceFile in
             ChatDirectory.list(bundleID: bundleID, sourceFile: sourceFile, paths: paths)
         }
-        let worktree = Routing.worktree(of: report.folder)
+        let worktree = Routing.worktree(of: report.folder, bundleID: source.bundleID)
         switch destination {
         case .chat(.claude, let id):
             sendToClaude(report, session: id, worktree: worktree)
@@ -350,7 +360,9 @@ final class Handoff: @unchecked Sendable {
         let kind: ReportDelivery.Kind = reopening ? .sent : .newChat
         let title = reopening ? place : "New chat in \(place)"
         hub.log("Opened the Claude Code chat \(id) in \(AgentCommand.hasClaudeApp ? "the Claude app" : "a terminal"), in \(folder)")
-        queue.async { [self] in
+        // Off the handoff queue: waiting for the chat, and the claude command after it, can take
+        // minutes, and other reports go on meanwhile. `pickSettled` goes back to the queue.
+        DispatchQueue.global(qos: .utility).async { [self] in
             defer { pickSettled(pick) }
             for _ in 0..<60 {
                 if let session = ClaudeSessions.open().first(where: { $0.id == id }), ClaudeSessions.send(text, to: session) {

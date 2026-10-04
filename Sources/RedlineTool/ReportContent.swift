@@ -37,8 +37,13 @@ enum ReportContent {
 
     /// The report as an agent reads it in a chat: each picture's path, then the notes on it,
     /// numbered like the outlines drawn in the picture, with the element each note is about.
-    /// Nothing else.
+    /// Nothing else. A long text is cut at `longestText`, pointing to report.md for the rest,
+    /// so it fits in a command's arguments and a chat message.
     static func text(for report: InboxReport) -> String {
+        shortened(fullText(for: report), to: longestText, rest: "\n\nThe rest is in \(report.folder.appending(path: "report.md").path).")
+    }
+
+    private static func fullText(for report: InboxReport) -> String {
         guard let data = try? Data(contentsOf: report.folder.appending(path: "report.json")),
               let listing = try? JSONDecoder().decode(Listing.self, from: data)
         else { return header(for: report) + "\n" + summary(of: report).trimmingCharacters(in: .whitespacesAndNewlines) }

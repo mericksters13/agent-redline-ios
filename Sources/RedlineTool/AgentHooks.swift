@@ -89,7 +89,9 @@ enum AgentHooks {
             return answer(agent, event, nil)
 
         case .prompt:
-            session.touch()
+            // Registered, not just marked used: for Codex this is the only hook, so it's what
+            // notes the chat's apps and starts the hub.
+            session.register()
             // Cursor's prompt hook can't add text: a report taken here would be lost, so it
             // stays in the inbox for the stop hook.
             guard agent != .cursor else { return answer(agent, event, nil) }
