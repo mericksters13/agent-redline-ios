@@ -403,8 +403,8 @@ struct ReportRowView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .onTapGesture { NSWorkspace.shared.open(report.folder) }
-        .help("Opens the report's folder")
+        .onTapGesture { ReportWindows.show(report) }
+        .help("Opens the report")
     }
 }
 

@@ -235,6 +235,35 @@ final class Handoff: @unchecked Sendable {
         process.waitUntilExit()
     }
 
+    /// Opens a chat where the user works with its agent: in the Claude or Codex app when it's
+    /// installed, else in a terminal window in `folder` that resumes it. True when it opened.
+    @discardableResult
+    static func openChat(_ agent: Agent, id: String, in folder: String) -> Bool {
+        if let link = appLink(agent, id: id) {
+            open(link)
+            return true
+        }
+        guard agent != .cursor, let command = AgentCommand.locate(agent) else { return false }
+        return openTerminal(in: folder, running: command.path, arguments: agent == .codex ? ["resume"] : ["--resume"], with: id)
+    }
+
+    /// The link that opens a chat in its agent's app, when the app is installed. The Claude
+    /// app's link is the one `claude --desktop --resume` opens: the app takes the chat over from
+    /// the claude command.
+    static func appLink(_ agent: Agent, id: String, hasClaudeApp: Bool = AgentCommand.hasClaudeApp,
+                        hasCodexApp: Bool = AgentCommand.hasCodexApp) -> String? {
+        switch agent {
+        case .claude where hasClaudeApp:
+            var link = URLComponents(string: "claude://resume")
+            link?.queryItems = [URLQueryItem(name: "session", value: id)]
+            return link?.string
+        case .codex where hasCodexApp:
+            return "codex://threads/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)"
+        default:
+            return nil
+        }
+    }
+
     private static func open(_ link: String) {
         let open = Process()
         open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
@@ -243,19 +272,14 @@ final class Handoff: @unchecked Sendable {
         open.waitUntilExit()
     }
 
-    /// Opens a Claude Code chat the claude command made: in the desktop app with
-    /// `claude --desktop --resume`, or in a terminal without the app. Once the chat is open, sends
-    /// it the report through its socket, so the user sees it start. If the chat doesn't open in
-    /// time, the report goes in with the claude command instead.
+    /// Opens a Claude Code chat the claude command made, in the desktop app or in a terminal
+    /// without it. Once the chat is open, sends it the report through its socket, so the user
+    /// sees it start. If the chat doesn't open in time, the report goes in with the claude
+    /// command instead.
     private func openClaude(_ id: String, in folder: String, thenSend text: String, for report: InboxReport) {
         let source = report.source
         guard let claude = AgentCommand.locate(.claude) else { return }
-        if AgentCommand.hasClaudeApp {
-            // claude --desktop refuses to run without a terminal; script gives it one.
-            Self.run("/usr/bin/script", ["-q", "/dev/null", claude.path, "--desktop", "--resume", id], in: folder)
-        } else {
-            Self.openTerminal(in: folder, running: claude.path, arguments: ["--resume"], with: id)
-        }
+        Self.openChat(.claude, id: id, in: folder)
         let place = Self.folderName(folder)
         hub.log("Opened the Claude Code chat \(id) in \(AgentCommand.hasClaudeApp ? "the Claude app" : "a terminal"), in \(folder)")
         queue.async { [self] in
@@ -352,12 +376,7 @@ final class Handoff: @unchecked Sendable {
                 try? answer.write(to: report.folder.appending(path: "answer.md"), atomically: true, encoding: .utf8)
             }
             if agent == .codex {
-                // Shown in the Codex app, or in a terminal without it.
-                if AgentCommand.hasCodexApp {
-                    Handoff.open("codex://threads/\(started.chat)")
-                } else {
-                    Handoff.openTerminal(in: workFolder, running: executable.path, arguments: ["resume"], with: started.chat)
-                }
+                Handoff.openChat(.codex, id: started.chat, in: workFolder)
                 hub.log("The Codex chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
                 ReportDelivery.save(.init(agent: .codex, chat: started.chat, title: "New chat in \(place)", kind: .newChat), in: report.folder)
                 Handoff.notify(title: "Codex looked into a report", message: "Opened in Codex, in worktree \(place).")

@@ -60,5 +60,63 @@ struct HubWindowTests {
         // A Codex chat stored no folder: never the folder this process happens to be in.
         #expect(HubWindowModel.chatTitle(Claim(chat: "codex-unknown", agent: "codex", folder: "", claimedAt: Date())) == "Codex chat")
     }
+
+    @Test func theViewerShowsEachPictureWithTheNotesItShows() throws {
+        let folder = try report("20261004-130000", at: Date())
+        try Data([0xFF, 0xD8]).write(to: folder.appending(path: "note-2.jpg"))
+        let pictures = HubWindowModel.pictures(in: folder)
+        // Screens' pictures first, then pictures attached to notes, as the agent gets them.
+        #expect(pictures == [
+            .init(file: folder.appending(path: "screen-1.jpg"), title: "Screen", notes: [1]),
+            .init(file: folder.appending(path: "note-2.jpg"), title: "History", notes: [2]),
+        ])
+        #expect(pictures.map(\.file) == ReportContent.pictures(in: folder))
+        #expect(HubWindowModel.picture(showing: 1, in: pictures) == folder.appending(path: "screen-1.jpg"))
+        #expect(HubWindowModel.picture(showing: 2, in: pictures) == folder.appending(path: "note-2.jpg"))
+        #expect(HubWindowModel.picture(showing: 3, in: pictures) == nil)
+    }
+
+    @Test func theViewerOpensTheChatAReportWentTo() throws {
+        func claim(_ chat: String, agent: String, folder: String = "", in report: URL) throws {
+            try Chats.coder.encode(Claim(chat: chat, agent: agent, folder: folder, claimedAt: Date())).write(to: report.appending(path: InboxQueue.claimFile))
+        }
+        // What the hub saved when it delivered it, with the folder of the chat that took it.
+        let sent = try report("20261004-140000", at: Date())
+        try claim("claude-s-1", agent: "claude", folder: "/repo", in: sent)
+        ReportDelivery.save(.init(agent: .claude, chat: "s-1", title: "Untitled session", kind: .sent), in: sent)
+        let chat = try #require(HubWindowModel.chat(of: sent))
+        #expect(chat.agent == .claude && chat.id == "s-1" && chat.folder == "/repo")
+
+        // Taken before deliveries were saved: the chat that took it.
+        let taken = try report("20261004-140100", at: Date())
+        try claim("codex-t-1", agent: "codex", in: taken)
+        let codex = try #require(HubWindowModel.chat(of: taken))
+        #expect(codex.agent == .codex && codex.id == "t-1" && codex.folder == nil)
+
+        // A chat the hub started: its ID from what the command printed.
+        let started = try report("20261004-140200", at: Date())
+        try claim("started-codex-20261004-140200", agent: "codex", folder: "/repo", in: started)
+        try #"{"type":"thread.started","thread_id":"t-2"}"#.write(to: started.appending(path: "new-chat-output.jsonl"), atomically: true, encoding: .utf8)
+        #expect(HubWindowModel.chat(of: started)?.id == "t-2")
+
+        // Waiting, or with Cursor: nothing to open.
+        let waiting = try report("20261004-140300", at: Date())
+        ReportDelivery.save(.init(agent: .claude, chat: nil, title: "Waiting for claude auth login", kind: .waiting), in: waiting)
+        #expect(HubWindowModel.chat(of: waiting) == nil)
+        let cursor = try report("20261004-140400", at: Date())
+        ReportDelivery.save(.init(agent: .cursor, chat: "c-1", title: "Cursor chat", kind: .nextMessage), in: cursor)
+        #expect(HubWindowModel.chat(of: cursor) == nil)
+        #expect(HubWindowModel.chat(of: try report("20261004-140500", at: Date())) == nil)
+    }
+
+    @Test func chatsOpenInTheirAgentsAppWhenItIsInstalled() {
+        #expect(Handoff.appLink(.claude, id: "c28a077b-d80c-4c2b-844e-c544401d77ec", hasClaudeApp: true, hasCodexApp: false)
+            == "claude://resume?session=c28a077b-d80c-4c2b-844e-c544401d77ec")
+        #expect(Handoff.appLink(.codex, id: "01a0e409-5a20", hasClaudeApp: false, hasCodexApp: true) == "codex://threads/01a0e409-5a20")
+        // Without the app, a terminal resumes the chat instead.
+        #expect(Handoff.appLink(.claude, id: "s-1", hasClaudeApp: false, hasCodexApp: true) == nil)
+        #expect(Handoff.appLink(.codex, id: "t-1", hasClaudeApp: true, hasCodexApp: false) == nil)
+        #expect(Handoff.appLink(.cursor, id: "c-1", hasClaudeApp: true, hasCodexApp: true) == nil)
+    }
 }
 #endif
