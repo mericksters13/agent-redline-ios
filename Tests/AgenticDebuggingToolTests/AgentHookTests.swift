@@ -184,6 +184,14 @@ struct AgentHookTests {
         // The new chat's worktree starts from main.
         let made = try #require(NewWorktree.create(from: repository.path, name: "report-1", agent: .claude))
         #expect(made.hasSuffix("/.claude/worktrees/report-1"))
+        let branch = Process()
+        branch.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        branch.arguments = ["-C", made, "branch", "--show-current"]
+        let pipe = Pipe()
+        branch.standardOutput = pipe
+        try branch.run()
+        branch.waitUntilExit()
+        #expect(String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == "report/1")
         #expect(try String(contentsOfFile: made + "/App.swift", encoding: .utf8) == "one\n")
         // The same name again gets a number rather than failing.
         let again = try #require(NewWorktree.create(from: repository.path, name: "report-1", agent: .claude))

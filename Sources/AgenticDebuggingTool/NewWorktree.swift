@@ -14,14 +14,16 @@ enum NewWorktree {
         else { return nil }
         let commonURL = URL(fileURLWithPath: common)
         let repository = commonURL.lastPathComponent == ".git" ? commonURL.deletingLastPathComponent().path : top
+        // The folder is named "report-<ID>", its branch "report/<ID>".
+        let id = name.hasPrefix("report-") ? String(name.dropFirst("report-".count)) : name
         var path = folder(for: agent, repository: repository, name: name)
-        var branch = "report/\(name)"
+        var branch = "report/\(id)"
         // A name already taken, by an earlier report with the same name, gets a number.
         var attempt = 1
         while FileManager.default.fileExists(atPath: path) || git(top, ["rev-parse", "--verify", "--quiet", "refs/heads/\(branch)"]) != nil {
             attempt += 1
             path = folder(for: agent, repository: repository, name: "\(name)-\(attempt)")
-            branch = "report/\(name)-\(attempt)"
+            branch = "report/\(id)-\(attempt)"
         }
         try? FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
         let base = mainBranch(of: top, fetching: true)?.ref ?? "HEAD"
