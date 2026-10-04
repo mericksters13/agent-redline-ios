@@ -325,5 +325,44 @@ struct ReportStoreTests {
         let left = defaults.persistentDomain(forName: domain)?.keys.filter { $0.hasPrefix("AgenticDebugging") } ?? []
         #expect(left.isEmpty)
     }
+
+    @Test func aDraftThatCannotLeaveStopsTheReport() throws {
+        let kept = annotation("Cut off")
+        try store.saveDraft([kept])
+        try store.saveScreenshot(Data([1]), named: kept.screenshots[0])
+        let files = FileManager.default
+        try files.createDirectory(at: store.reportsDirectory, withIntermediateDirectories: true)
+        // A read-only root lets the report folder be made but not the draft be moved out.
+        try files.setAttributes([.posixPermissions: 0o555], ofItemAtPath: store.root.path)
+        defer { try? files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: store.root.path) }
+
+        #expect(throws: (any Error).self) {
+            try store.beginReport(date: .now)
+        }
+        #expect(store.loadDraft() == [kept])
+        #expect(files.fileExists(atPath: store.draftDirectory.appending(path: kept.screenshots[0]).path))
+        let reports = try files.contentsOfDirectory(atPath: store.reportsDirectory.path)
+        #expect(reports.isEmpty)
+    }
+
+    @Test func anUnfinishedReportGivesItsPicturesBack() throws {
+        let sent = annotation("Cut off")
+        try store.saveDraft([sent])
+        try store.saveScreenshot(Data([1]), named: sent.screenshots[0])
+        let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        // A note made while the report was being drawn.
+        let later = annotation("Wrong color")
+        try store.saveDraft([later])
+        try store.saveScreenshot(Data([2]), named: later.screenshots[0])
+
+        try store.reclaimPictures(from: started.folder)
+        let files = FileManager.default
+        #expect(files.fileExists(atPath: store.draftDirectory.appending(path: sent.screenshots[0]).path))
+        #expect(try Data(contentsOf: store.draftDirectory.appending(path: later.screenshots[0])) == Data([2]))
+        // The current draft's list stays; the session saves both lists together.
+        #expect(store.loadDraft() == [later])
+        store.discardReport(started.folder)
+        #expect(try files.contentsOfDirectory(atPath: store.reportsDirectory.path).isEmpty)
+    }
 }
 #endif

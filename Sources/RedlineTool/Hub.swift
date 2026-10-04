@@ -201,6 +201,7 @@ final class Hub: @unchecked Sendable {
             log("Couldn't list paired phones")
             return
         }
+        forgetPhones(except: Set(paired.map(\.udid)))
         for phone in paired {
             link(for: phone).update(hosts: hosts, port: HubListener.port, rediscover: rediscover)
         }
@@ -370,12 +371,14 @@ final class Hub: @unchecked Sendable {
     // MARK: - Delivery
 
     /// The reports from one app on one device still to copy. The first look at a source only
-    /// takes reports finished from about then on, so old ones aren't delivered as new.
-    func toCopy(device: String, bundleID: String, finished: [FinishedReport]) -> [String] {
+    /// takes reports finished from about then on, so old ones aren't delivered as new. That's
+    /// the time of the first look itself: an app first seen hours after the hub started has
+    /// no reason to send the reports made before then.
+    func toCopy(device: String, bundleID: String, finished: [FinishedReport], now: Date = Date()) -> [String] {
         lock.withLock {
             let key = "\(device)|\(bundleID)"
             if state[key] == nil {
-                state[key] = SourceState(since: startedAt.addingTimeInterval(-Self.firstLookMargin))
+                state[key] = SourceState(since: now.addingTimeInterval(-Self.firstLookMargin))
                 saveState()
             }
             return state[key]!.toCopy(from: finished)
@@ -409,7 +412,13 @@ final class Hub: @unchecked Sendable {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? encoder.encode(source).write(to: incoming.appending(path: "source.json"))
+        // The inbox lists a report only by its source.json, so without one it isn't filed.
+        do {
+            try encoder.encode(source).write(to: incoming.appending(path: "source.json"))
+        } catch {
+            log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
+            return false
+        }
         let key = "\(source.device)|\(source.bundleID)"
         let filed: Bool? = lock.withLock {
             if state[key]?.delivered.contains(source.reportID) == true { return nil }
@@ -421,7 +430,7 @@ final class Hub: @unchecked Sendable {
                 log("Couldn't file report \(source.reportID): \(error.localizedDescription)")
                 return false
             }
-            state[key, default: SourceState(since: startedAt)].delivered.append(source.reportID)
+            state[key, default: SourceState(since: Date())].delivered.append(source.reportID)
             saveState()
             return true
         }
@@ -437,6 +446,27 @@ final class Hub: @unchecked Sendable {
     func phoneChanged(_ phone: Devicectl.Phone, state description: String) {
         lock.withLock { phoneStates[phone.udid] = HubStatus.Phone(name: phone.name, udid: phone.udid, state: description,
                                                                              model: phone.model.isEmpty ? nil : phone.model) }
+        writeStatus()
+    }
+
+    /// Phones no longer paired leave the status, and their links stop giving them the address.
+    /// A link's state goes once the try it has in progress is over, so that try can't bring it back.
+    func forgetPhones(except paired: Set<String>) {
+        let unpaired = lock.withLock {
+            let gone = links.filter { !paired.contains($0.key) }
+            for udid in gone.keys { links[udid] = nil }
+            for udid in phoneStates.keys where !paired.contains(udid) && gone[udid] == nil { phoneStates[udid] = nil }
+            return Array(gone.values)
+        }
+        for link in unpaired {
+            link.unpair { [weak self] in
+                guard let self else { return }
+                let udid = link.phone.udid
+                // Paired again meanwhile: the new link's state stays.
+                lock.withLock { if links[udid] == nil { phoneStates[udid] = nil } }
+                writeStatus()
+            }
+        }
         writeStatus()
     }
 

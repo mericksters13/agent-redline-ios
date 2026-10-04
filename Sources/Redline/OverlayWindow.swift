@@ -7,13 +7,17 @@ import UIKit
 /// drawn from the app's windows only, so nothing in this window ever appears in them.
 final class OverlayWindow: UIWindow {
     var claimsAllTouches = false
-    /// What takes touches while Redline is idle, such as the floating button and a
-    /// suggested screenshot, by name.
+    /// The floating button's frame. Only the round button inside it takes touches, so a
+    /// tap in a corner of the frame reaches the app underneath.
+    var buttonFrame: CGRect?
+    /// Anything else that takes touches while Redline is idle, such as a suggested
+    /// screenshot, by name.
     var touchableRects: [String: CGRect] = [:]
     var onLayout: ((OverlayWindow) -> Void)?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard claimsAllTouches || touchableRects.values.contains(where: { $0.contains(point) }) else { return nil }
+        let onButton = buttonFrame.map { FloatingButtonPlacement.buttonContains(point, frame: $0) } == true
+        guard claimsAllTouches || onButton || touchableRects.values.contains(where: { $0.contains(point) }) else { return nil }
         return super.hitTest(point, with: event)
     }
 
