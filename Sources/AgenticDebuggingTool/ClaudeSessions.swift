@@ -16,18 +16,6 @@ enum ClaudeSessions {
         var isIdle: Bool
         /// The chat's name in Claude Code, when it has one.
         var title: String? = nil
-        /// Where it runs: `claude-desktop` for the desktop app, `cli` in a terminal.
-        var entrypoint: String? = nil
-        var startedAt: Date = .distantPast
-    }
-
-    /// Where the user uses Claude Code: wherever their most recent chat runs, or the desktop app
-    /// when it's installed and there's no chat to go by.
-    static func usesDesktopApp() -> Bool {
-        if let latest = open().max(by: { $0.updatedAt < $1.updatedAt }), let entrypoint = latest.entrypoint {
-            return entrypoint == "claude-desktop"
-        }
-        return FileManager.default.fileExists(atPath: "/Applications/Claude.app")
     }
 
     /// The interactive chats that are still running.
@@ -52,9 +40,7 @@ enum ClaudeSessions {
         else { return nil }
         let updated = (object["updatedAt"] as? Double) ?? (object["startedAt"] as? Double) ?? 0
         return Session(id: id, folder: folder, socket: socket, updatedAt: Date(timeIntervalSince1970: updated / 1000),
-                       isIdle: object["status"] as? String == "idle", title: object["name"] as? String,
-                       entrypoint: object["entrypoint"] as? String,
-                       startedAt: Date(timeIntervalSince1970: ((object["startedAt"] as? Double) ?? 0) / 1000))
+                       isIdle: object["status"] as? String == "idle", title: object["name"] as? String)
     }
 
     /// The line a chat's socket takes: one message, as if typed by another of the user's chats.
@@ -97,14 +83,14 @@ enum ClaudeCLI {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var checked: (ready: Bool, at: Date)?
 
-    /// Signed in with `claude auth login`, and new enough to open a chat in the desktop app.
-    /// Checked at most every minute.
+    /// Signed in with `claude auth login`, and, with the desktop app installed, new enough to open
+    /// a chat in it. Checked at most every minute.
     static func ready() -> Bool {
         if let checked = lock.withLock({ checked }), Date().timeIntervalSince(checked.at) < 60 { return checked.ready }
         guard let claude = AgentCommand.locate(.claude) else { return false }
         let signedIn = output(claude, ["auth", "status"]) != nil
         let version = output(claude, ["--version"]).flatMap { version(in: $0) } ?? []
-        let ready = signedIn && version.lexicographicallyPrecedes(desktopVersion) == false
+        let ready = signedIn && (!AgentCommand.hasClaudeApp || !version.lexicographicallyPrecedes(desktopVersion))
         lock.withLock { checked = (ready, Date()) }
         return ready
     }

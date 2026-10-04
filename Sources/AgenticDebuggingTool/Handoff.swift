@@ -111,8 +111,7 @@ final class Handoff: @unchecked Sendable {
                 case .cursor: startChat(agent, in: started.folder, for: report, resuming: started.chat)
                 }
             } else if agent == .claude, !ClaudeCLI.ready() {
-                // Without a signed-in claude command, only the desktop app's draft is possible.
-                openClaudeChat(in: folder, for: report, pick: pick)
+                waitForClaudeSignIn(report)
             } else {
                 startChat(agent, in: folder, for: report, pick: pick)
             }
@@ -128,11 +127,11 @@ final class Handoff: @unchecked Sendable {
         let source = report.source
         guard let session = ClaudeSessions.open().first(where: { $0.id == id }) else {
             hub.log("The Claude Code chat for report \(source.reportID) is closed")
-            // Continued where it left off, then reopened where the user uses Claude Code.
+            // Continued where it left off, then reopened in the desktop app.
             if let worktree, ClaudeCLI.ready() {
                 startChat(.claude, in: worktree, for: report, resuming: id)
-            } else if let worktree {
-                openClaudeChat(in: worktree, for: report, pick: nil)
+            } else if worktree != nil {
+                waitForClaudeSignIn(report)
             }
             return
         }
@@ -234,76 +233,12 @@ final class Handoff: @unchecked Sendable {
         open.waitUntilExit()
     }
 
-    /// Opens a new Claude Code chat wherever the user uses Claude Code. In the desktop app, the
-    /// app's new chat screen opens on the repository with the report filled in: the app makes the
-    /// chat, and its worktree, only when the user presses Return, and doesn't send for anyone. In
-    /// a terminal, `claude` starts at once with the report, in a worktree the hub makes from main
-    /// with the report's files copied in. Once the chat starts, it's remembered for the pick, and
-    /// later reports go straight into it, the same way in both.
-    private func openClaudeChat(in folder: String, for report: InboxReport, pick: String?) {
+    /// The claude command, which starts new Claude Code chats, isn't signed in: the report waits
+    /// in the inbox, and the Mac says what to run once.
+    private func waitForClaudeSignIn(_ report: InboxReport) {
         let source = report.source
-        let desktop = ClaudeSessions.usesDesktopApp()
-        let workFolder: String
-        if desktop {
-            // The app ignores a worktree folder in a link and makes its own from the repository.
-            guard let repository = NewWorktree.repository(of: folder) else {
-                hub.log("\(folder) isn't in a git repository; report \(source.reportID) waits in the inbox")
-                return
-            }
-            workFolder = repository
-        } else {
-            guard let made = NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: .claude) else {
-                hub.log("Couldn't make a worktree from \(folder) for report \(source.reportID); it waits in the inbox")
-                Self.notify(title: "Report from \(source.deviceName)", message: "Couldn't make a worktree for a new chat. The report waits in the inbox.")
-                return
-            }
-            workFolder = made
-        }
-        let chat = ChatRecord(id: "started-claude-\(report.folder.lastPathComponent)", agent: Agent.claude.rawValue, folder: workFolder,
-                              bundleIDs: [source.bundleID], pid: getpid(), registeredAt: Date(), lastActiveAt: Date())
-        guard InboxQueue.claim(report, for: chat) else { return }
-        let files = desktop ? report.folder.path : (NewWorktree.copyReport(report.folder, into: workFolder) ?? report.folder.path)
-        let prompt = "A UI report arrived from the user's \(source.kind == .phone ? "iPhone" : "simulator") through iOSAgenticDebuggingKit. "
-            + "It's in \(files): read report.md there and open the pictures it lists. "
-            + "Find the code for each noted element by its identifier or label, then tell me what you found and propose a fix before changing code."
-        let opened = Date()
-        if desktop {
-            var link = URLComponents()
-            link.scheme = "claude"
-            link.host = "code"
-            link.path = "/new"
-            link.queryItems = [URLQueryItem(name: "folder", value: workFolder), URLQueryItem(name: "q", value: prompt)]
-            guard let url = link.url?.absoluteString else { return }
-            Self.open(url)
-            hub.log("Opened the Claude app's new chat screen on \(workFolder) with report \(source.reportID); it starts when the user presses Return")
-            Self.notify(title: "Report from \(source.deviceName)", message: "The Claude app has a new chat ready: press Return to start it. To start new chats by themselves, run claude auth login once.")
-        } else {
-            guard let claude = AgentCommand.locate(.claude), Self.openTerminal(in: workFolder, running: claude.path, with: prompt) else {
-                try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
-                hub.log("Couldn't open a terminal for a new Claude Code chat for report \(source.reportID); it waits in the inbox")
-                return
-            }
-            hub.log("Opened a new Claude Code chat in a terminal in \(workFolder) for report \(source.reportID)")
-            Self.notify(title: "Report from \(source.deviceName)", message: "A new Claude Code chat is looking into it in Terminal.")
-        }
-        // Once the chat starts, later reports with the same pick go to it: in the desktop app, the
-        // first chat started in the repository after the screen opened.
-        let paths = hub.paths
-        queue.async {
-            for _ in 0..<300 {
-                let started = ClaudeSessions.open().first { session in
-                    desktop ? session.startedAt >= opened.addingTimeInterval(-2) && NewWorktree.repository(of: session.folder) == workFolder
-                        : Worktree.root(of: session.folder) == workFolder
-                }
-                if let started {
-                    if let pick { StartedChats.remember(StartedChat(chat: started.id, folder: started.folder, at: Date()), for: pick, paths: paths) }
-                    self.hub.log("The new Claude Code chat \(started.id) for report \(source.reportID) started in \(started.folder)")
-                    return
-                }
-                Thread.sleep(forTimeInterval: 2)
-            }
-            self.hub.log("The new Claude Code chat for report \(source.reportID) wasn't started within 10 minutes")
-        }
+        hub.log("Report \(source.reportID) waits: the claude command that starts new chats isn't signed in or is older than \(ClaudeCLI.desktopVersion.map(String.init).joined(separator: "."))")
+        Self.notify(title: "Report from \(source.deviceName)", message: "To start new Claude Code chats, run claude auth login once in Terminal. The report waits until then.")
     }
 
     /// Starts a chat with the report. A new chat gets a worktree of its own made from `folder`,
@@ -369,8 +304,8 @@ final class Handoff: @unchecked Sendable {
                 try? answer.write(to: report.folder.appending(path: "answer.md"), atomically: true, encoding: .utf8)
             }
             if agent == .codex {
-                // Shown where the user uses Codex: the Codex app, or a terminal.
-                if CodexThreads.usesDesktopApp() {
+                // Shown in the Codex app, or in a terminal without it.
+                if AgentCommand.hasCodexApp {
                     Handoff.open("codex://threads/\(started.chat)")
                 } else {
                     Handoff.openTerminal(in: workFolder, running: executable.path, arguments: ["resume"], with: started.chat)
@@ -378,14 +313,15 @@ final class Handoff: @unchecked Sendable {
                 hub.log("The Codex chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
                 Handoff.notify(title: "Codex looked into a report", message: "Opened in Codex, in worktree \(place).")
             } else if agent == .claude {
-                // Moved where the user uses Claude Code, with what it found so far.
-                if ClaudeSessions.usesDesktopApp() {
+                // Moved into the desktop app with what it found so far: its chat list doesn't pick
+                // up chats the claude command starts by itself. In a terminal without the app.
+                if AgentCommand.hasClaudeApp {
                     Handoff.run(executable.path, ["--desktop", "--resume", started.chat], in: workFolder)
                 } else {
                     Handoff.openTerminal(in: workFolder, running: executable.path, arguments: ["--resume"], with: started.chat)
                 }
                 hub.log("The Claude Code chat \(started.chat) in \(workFolder) looked into report \(source.reportID) and was opened")
-                Handoff.notify(title: "Claude Code looked into a report", message: "Opened in \(ClaudeSessions.usesDesktopApp() ? "the Claude app" : "Terminal"), in worktree \(place).")
+                Handoff.notify(title: "Claude Code looked into a report", message: "Opened in \(AgentCommand.hasClaudeApp ? "the Claude app" : "Terminal"), in worktree \(place).")
             } else {
                 hub.log("The \(agent.name) chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
                 Handoff.notify(title: "\(agent.name) looked into a report", message: "Its answer is in the report's folder, answer.md. Worktree \(place).")
@@ -420,6 +356,9 @@ final class Handoff: @unchecked Sendable {
 /// Starting a chat with each agent from the command line. Each runs without permission to
 /// change files, so the chat can only look and propose.
 enum AgentCommand {
+    /// Claude's desktop app, where new Claude Code chats open.
+    static var hasClaudeApp: Bool { FileManager.default.fileExists(atPath: "/Applications/Claude.app") }
+
     /// Codex's desktop app, inside the ChatGPT app or on its own.
     static var hasCodexApp: Bool {
         ["/Applications/ChatGPT.app/Contents/Resources/codex-cli", "/Applications/Codex.app"].contains { FileManager.default.fileExists(atPath: $0) }
