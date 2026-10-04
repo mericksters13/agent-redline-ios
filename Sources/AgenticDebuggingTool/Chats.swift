@@ -30,8 +30,9 @@ struct Claim: Codable, Equatable, Sendable {
     var handingOverIn: Int32? = nil
 
     /// True when the process handing the report over ended before the chat had it, such as
-    /// when it crashed: the report is free for another chat to take.
-    var isInterrupted: Bool { handingOverIn.map { !Chats.isRunning($0) } ?? false }
+    /// when it crashed: the report is free for another chat to take. A process that started
+    /// after the claim only reuses the PID, so it doesn't hold the report.
+    var isInterrupted: Bool { handingOverIn.map { !Chats.isRunning($0, since: claimedAt) } ?? false }
 }
 
 /// A report in the inbox.

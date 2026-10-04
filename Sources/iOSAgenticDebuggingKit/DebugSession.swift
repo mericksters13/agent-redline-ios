@@ -704,13 +704,15 @@ final class DebugSession {
     }
 
     /// When the app comes back, offers what the Mac hasn't confirmed, such as a report sent from
-    /// another network. Only after a report has reached the hub once, so iOS's local network
-    /// question is never asked at launch.
+    /// another network, or one sent before any Mac had set this app up. Nothing reaches the
+    /// network without a report the user sent and a hub's address, so iOS's local network
+    /// question is asked at launch only for a report the user is waiting on.
     private func offerUndeliveredReports() {
-        guard UserDefaults.standard.bool(forKey: Self.hubReachedKey) else { return }
         let store = store
+        // The first time, iOS asks about local network access before the hub can answer.
+        let patience: TimeInterval = UserDefaults.standard.bool(forKey: Self.hubReachedKey) ? 8 : 60
         Task.detached(priority: .utility) {
-            _ = await DebugSession.deliverReports(from: store, patience: 8)
+            _ = await DebugSession.deliverReports(from: store, patience: patience)
         }
     }
 
@@ -788,6 +790,10 @@ final class DebugSession {
             chatList = .loaded(list)
             // A saved chat that closed isn't offered; the chat in the build's worktree is.
             if let choice = pickerChoice, let chat = choice.chat, !list.chats.contains(where: { $0.id == chat && $0.agent == choice.agent }) {
+                pickerChoice = nil
+            }
+            // Nor a new chat with an agent the Mac can no longer start one with.
+            if let choice = pickerChoice, choice.chat == nil, !list.startsNewChats(choice.agent) {
                 pickerChoice = nil
             }
             if pickerChoice == nil, let here = list.chats.first(where: \.sameWorktree) {

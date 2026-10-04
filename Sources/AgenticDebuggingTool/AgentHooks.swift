@@ -78,6 +78,9 @@ enum AgentHooks {
 
         case .prompt:
             session.touch()
+            // Cursor's prompt hook can't add text: a report taken here would be lost, so it
+            // stays in the inbox for the stop hook.
+            guard agent != .cursor else { return answer(agent, event, nil) }
             return answer(agent, event, session.takeAddressed())
 
         case .stop:

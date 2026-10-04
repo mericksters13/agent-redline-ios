@@ -55,8 +55,11 @@ enum ChatDirectory {
                             folder: $0.folder, lastActive: $0.lastActiveAt) }
         }
         chats.sort { ($0.sameWorktree ? 1 : 0, $0.lastActive) > ($1.sameWorktree ? 1 : 0, $1.lastActive) }
+        // An agent can have open chats without the command that starts new ones, such as Cursor
+        // without cursor-agent: the phone offers "New chat" only where it can start.
         return HubMessage.ChatList(agents: agents.map(\.rawValue), chats: chats, worktree: worktree.map { URL(fileURLWithPath: $0).lastPathComponent },
-                                   newChatBase: worktree.flatMap { NewWorktree.mainBranch(of: $0)?.name })
+                                   newChatBase: worktree.flatMap { NewWorktree.mainBranch(of: $0)?.name },
+                                   newChats: agents.filter { AgentCommand.locate($0) != nil }.map(\.rawValue))
     }
 }
 

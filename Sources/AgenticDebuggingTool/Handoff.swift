@@ -49,7 +49,9 @@ enum Routing {
         let directory = list(bundleID, listing?.app.sourceFile)
         let here = directory.chats.filter(\.sameWorktree)
         if here.count == 1, let chat = here.first, let agent = Agent(rawValue: chat.agent) { return .chat(agent, id: chat.id) }
-        if here.isEmpty, let agent = directory.agents.first.flatMap(Agent.init(rawValue:)) { return .newChat(agent, folder: worktree, pick: nil) }
+        if here.isEmpty, let agent = (directory.newChats ?? directory.agents).first.flatMap(Agent.init(rawValue:)) {
+            return .newChat(agent, folder: worktree, pick: nil)
+        }
         return .undecided("\(here.count) chats work in \(URL(fileURLWithPath: worktree).lastPathComponent); pick one on the phone")
     }
 }

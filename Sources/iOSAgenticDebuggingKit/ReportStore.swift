@@ -472,13 +472,17 @@ struct ReportStore: Sendable {
     }
 
     /// A sent report's files, as the hub keeps them: everything in its folder but the draft
-    /// and the delivery mark.
+    /// and the delivery mark. Empty when any of them can't be read: the hub turns down a report
+    /// without its `report.json`, so the report stays on the phone and is offered again,
+    /// rather than reaching the Mac without a picture it names.
     func reportFiles(_ id: String) -> [String: Data] {
         let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [:] }
         var files: [String: Data] = [:]
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name != "delivered" && !name.hasPrefix(".") {
+        for name in names where name != "delivered" && !name.hasPrefix(".") {
             let file = folder.appending(path: name)
-            guard (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true, let data = try? Data(contentsOf: file) else { continue }
+            if (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true { continue }
+            guard let data = try? Data(contentsOf: file) else { return [:] }
             files[name] = data
         }
         return files

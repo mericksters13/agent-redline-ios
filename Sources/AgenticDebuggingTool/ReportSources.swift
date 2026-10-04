@@ -84,6 +84,8 @@ enum HubMessage {
         var worktree: String?
         /// The branch a new chat's worktree starts from, such as "main".
         var newChatBase: String? = nil
+        /// The agents whose command is on this Mac to start a new chat; nil for every agent.
+        var newChats: [String]? = nil
         /// Why the request was turned down, when it was.
         var refused: String?
     }

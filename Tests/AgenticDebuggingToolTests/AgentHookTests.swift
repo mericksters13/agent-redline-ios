@@ -152,6 +152,11 @@ struct AgentHookTests {
         // No pick: the one chat in the worktree, or a new chat there with the first agent.
         #expect(route(try report(sourceFile: file, pick: nil), others) == .chat(.claude, id: "A"))
         #expect(route(try report(sourceFile: file, pick: nil), [chat("B", "codex", sameWorktree: false)]) == .newChat(.claude, folder: folder, pick: nil))
+        // Only an agent that can start a chat is given a new one.
+        let cursorFirst = Routing.destination(of: try report(sourceFile: file, pick: nil), bundleID: "com.example.app", paths: paths) { _, _ in
+            HubMessage.ChatList(agents: ["cursor", "codex"], chats: [], newChats: ["codex"])
+        }
+        #expect(cursorFirst == .newChat(.codex, folder: folder, pick: nil))
         // Several chats in the worktree and no pick: no guessing.
         if case .undecided = route(try report(sourceFile: file, pick: nil), others + [chat("C", "codex", sameWorktree: true)]) {} else {
             Issue.record("Two chats in the worktree should leave the report undecided")
@@ -243,6 +248,11 @@ struct AgentHookTests {
         #expect(StartedChats.find("N2", paths: paths) == nil)
         try FileManager.default.removeItem(atPath: made)
         #expect(StartedChats.find("N1", paths: paths) == nil)
+        // Chats started for different picks that finish together are all remembered.
+        DispatchQueue.concurrentPerform(iterations: 40) { index in
+            StartedChats.remember(StartedChat(chat: "s-\(index)", folder: repository.path, at: Date()), for: "P\(index)", paths: paths)
+        }
+        #expect(StartedChats.all(paths).count == 41)
     }
 
     @Test func theStartedChatIsReadFromEachCommandLine() {

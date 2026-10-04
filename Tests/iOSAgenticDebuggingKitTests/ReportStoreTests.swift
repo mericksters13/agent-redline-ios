@@ -196,6 +196,11 @@ struct ReportStoreTests {
         #expect(HubLink.decode(HubLink.ChatList.self, from: Data(list.utf8)) == HubLink.ChatList(
             agents: ["claude"], chats: [HubLink.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt", sameWorktree: true,
                                                      lastActive: Date(timeIntervalSince1970: 1_791_000_000))], worktree: "wt"))
+        // A Mac from before newChats offers new chats with every agent; a newer one names them.
+        #expect(HubLink.decode(HubLink.ChatList.self, from: Data(list.utf8))?.startsNewChats("cursor") == true)
+        let named = HubLink.decode(HubLink.ChatList.self, from: Data(#"{"agents":["claude","cursor"],"chats":[],"newChats":["claude"]}"#.utf8))
+        #expect(named?.startsNewChats("claude") == true)
+        #expect(named?.startsNewChats("cursor") == false)
         // A simulator app's address says it doesn't upload.
         try Data(#"{"device":"S","hosts":["127.0.0.1"],"port":47361,"token":"t","uploads":false}"#.utf8).write(to: store.hubAddressFile)
         #expect(store.hubAddress()?.uploads == false)
@@ -219,6 +224,11 @@ struct ReportStoreTests {
         store.markDelivered([started.id])
         #expect(store.reportFiles(started.id).keys.sorted() == ["report.json", "report.md", "screen-1.jpg"])
         #expect(store.sentReports().first?.delivered == true)
+        // A picture that can't be read sends nothing, so the hub doesn't take the report without it.
+        let picture = started.folder.appending(path: "screen-1.jpg")
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: picture.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: picture.path) }
+        #expect(store.reportFiles(started.id).isEmpty)
     }
 
     @Test func theLastDeliveryIsRemembered() {

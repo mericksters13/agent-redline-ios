@@ -130,6 +130,19 @@ struct ChatTests {
         #expect(session(folder).take(budget: 1_000_000).taken == 0)
     }
 
+    @Test func aProcessThatReusedTheHandOversPIDDoesntHoldTheReport() throws {
+        let folder = try project()
+        let inbox = try inboxReport("20261003-223449")
+        // This test's process stands in for a later process that got the crashed hand-over's PID:
+        // it started long after the claim was made.
+        let reused = Claim(chat: "gone", agent: "test", folder: folder.path, claimedAt: Date(timeIntervalSince1970: 0), handingOverIn: getpid())
+        #expect(reused.isInterrupted)
+        try Chats.coder.encode(reused).write(to: inbox.appending(path: InboxQueue.claimFile))
+        #expect(InboxQueue.waiting(for: ["com.markbuot.AthenaTracker"], paths: paths).count == 1)
+        // The process that made the claim, still handing the report over, holds it.
+        #expect(!Claim(chat: "here", agent: "test", folder: folder.path, claimedAt: Date(), handingOverIn: getpid()).isInterrupted)
+    }
+
     @Test func aTrailChatNeverGetsATinyTallyReport() throws {
         _ = try inboxReport("20261003-223449")
         let trail = root.appending(path: "Trail", directoryHint: .isDirectory)
