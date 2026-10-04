@@ -109,8 +109,9 @@ enum HubLink {
         let request = ChatsRequest(device: address.device, bundleID: bundleID, token: token, sourceFile: sourceFile)
         for host in address.hosts {
             let line = Line(host: host, port: port)
-            guard await line.open(patience: patience) else { continue }
+            // Runs at the end of each pass, `continue` included, so a line that never opened is closed too.
             defer { line.close() }
+            guard await line.open(patience: patience) else { continue }
             guard await line.send(encode(request)), let data = await line.read(), let list = decode(ChatList.self, from: data),
                   list.refused == nil
             else { return nil }
@@ -156,8 +157,9 @@ enum HubLink {
         let offer = Offer(device: address.device, bundleID: bundleID, token: token, reports: reports)
         for host in address.hosts {
             let line = Line(host: host, port: port)
-            guard await line.open(patience: patience) else { continue }
+            // Runs at the end of each pass, `continue` included, so a line that never opened is closed too.
             defer { line.close() }
+            guard await line.open(patience: patience) else { continue }
             guard await line.send(encode(offer)), let answerData = await line.read(), let answer = decode(Answer.self, from: answerData) else {
                 return (.interrupted, [])
             }
@@ -176,51 +178,92 @@ enum HubLink {
     }
 
     /// A connection that sends and reads whole lines.
-    private final class Line: @unchecked Sendable {
+    ///
+    /// Thread safety: `buffer` is read and written only on `queue`. The connection is
+    /// Sendable, and everything else is a `let`.
+    private final class Line: Sendable {
+        /// Every connection's callbacks run on this queue, at background priority.
+        private static let network = DispatchQueue(label: "Redline.link", qos: .utility)
+
         private let connection: NWConnection
-        private let queue = DispatchQueue(label: "hub-link")
-        private var buffer = Data()
+        private let queue = DispatchQueue(label: "Redline.link.line", target: Line.network)
+        nonisolated(unsafe) private var buffer = Data()
 
         init(host: String, port: NWEndpoint.Port) {
             connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
         }
 
         /// Waits for the connection. `.waiting` (no route yet, or iOS still asking about local
-        /// network access) keeps waiting until `patience` runs out.
+        /// network access) keeps waiting until `patience` runs out. A connection that doesn't
+        /// open, or whose task is cancelled, is cancelled too.
         func open(patience: TimeInterval) async -> Bool {
+            guard !Task.isCancelled else {
+                connection.cancel()
+                return false
+            }
             let once = Once<Bool>()
-            return await withCheckedContinuation { continuation in
-                once.set(continuation)
-                connection.stateUpdateHandler = { state in
-                    switch state {
-                    case .ready: once.resume(true)
-                    case .failed, .cancelled: once.resume(false)
-                    default: break
+            let opened = await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    once.set(continuation)
+                    once.resume(false, after: .seconds(patience))
+                    connection.stateUpdateHandler = { state in
+                        switch state {
+                        case .ready:
+                            once.resume(true)
+                        case .failed, .cancelled:
+                            once.resume(false)
+                        case .setup, .preparing, .waiting:
+                            break  // Keep waiting until patience runs out.
+                        @unknown default:
+                            break
+                        }
+                    }
+                    connection.start(queue: queue)
+                }
+            } onCancel: {
+                connection.cancel()  // Leads to .cancelled, which resumes once.
+            }
+            // A connection left waiting keeps retrying until it is cancelled.
+            if !opened { connection.cancel() }
+            return opened
+        }
+
+        /// Sends one line. False when it couldn't be sent or the task was cancelled.
+        func send(_ data: Data) async -> Bool {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    connection.send(content: data, completion: .contentProcessed { error in
+                        continuation.resume(returning: error == nil)
+                    })
+                }
+            } onCancel: {
+                connection.cancel()  // The pending send then completes with an error.
+            }
+        }
+
+        /// The next line, without its newline; nil when the connection ends first, the task is
+        /// cancelled or 30 seconds pass.
+        func read() async -> Data? {
+            let once = Once<Data?>()
+            return await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    once.set(continuation)
+                    once.resume(nil, after: .seconds(30))
+                    queue.async {
+                        if let line = self.takeLine() {
+                            once.resume(line)
+                        } else {
+                            self.receive(once)
+                        }
                     }
                 }
-                connection.start(queue: queue)
-                queue.asyncAfter(deadline: .now() + patience) { once.resume(false) }
-            }
-        }
-
-        func send(_ data: Data) async -> Bool {
-            await withCheckedContinuation { continuation in
-                connection.send(content: data, completion: .contentProcessed { error in continuation.resume(returning: error == nil) })
-            }
-        }
-
-        /// The next line, without its newline; nil when the connection ends first or 30 seconds pass.
-        func read() async -> Data? {
-            if let line = takeLine() { return line }
-            let once = Once<Data?>()
-            return await withCheckedContinuation { continuation in
-                once.set(continuation)
-                queue.asyncAfter(deadline: .now() + 30) { once.resume(nil) }
-                receive(once)
+            } onCancel: {
+                connection.cancel()  // The pending receive then completes with an error.
             }
         }
 
         func close() {
+            connection.stateUpdateHandler = nil
             connection.cancel()
         }
 
@@ -240,28 +283,11 @@ enum HubLink {
         }
 
         private func takeLine() -> Data? {
+            dispatchPrecondition(condition: .onQueue(queue))
             guard let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) else { return nil }
             let line = buffer[..<newline]
             buffer.removeSubrange(...newline)
             return Data(line)
-        }
-    }
-
-    /// Resumes a continuation once, whichever of several callbacks comes first.
-    private final class Once<T: Sendable>: @unchecked Sendable {
-        private let lock = NSLock()
-        private var continuation: CheckedContinuation<T, Never>?
-
-        func set(_ continuation: CheckedContinuation<T, Never>) {
-            lock.withLock { self.continuation = continuation }
-        }
-
-        func resume(_ value: T) {
-            let continuation = lock.withLock {
-                defer { self.continuation = nil }
-                return self.continuation
-            }
-            continuation?.resume(returning: value)
         }
     }
 }

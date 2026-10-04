@@ -1,6 +1,7 @@
 #if REDLINE && canImport(UIKit)
 import ImageIO
 import Photos
+import Synchronization
 import UIKit
 
 /// Reads recent photos and screenshots from Photos with the app's own Photos access.
@@ -56,22 +57,37 @@ enum PhotoLibrary {
     }
 
     /// The asset's image, no bigger than `pixels` on its longest side. Images only in
-    /// iCloud are skipped rather than downloaded.
+    /// iCloud are skipped rather than downloaded. Nil when there is none, or when the task is
+    /// cancelled, which also cancels the request.
     static func image(for asset: PHAsset, pixels: CGFloat, fill: Bool = false) async -> UIImage? {
         let options = PHImageRequestOptions()
         options.isNetworkAccessAllowed = false
         // One call back, with the final image.
         options.deliveryMode = .highQualityFormat
         options.resizeMode = fill ? .fast : .exact
-        let image: UIImage? = await withCheckedContinuation { continuation in
-            PHImageManager.default().requestImage(
-                for: asset,
-                targetSize: CGSize(width: pixels, height: pixels),
-                contentMode: fill ? .aspectFill : .aspectFit,
-                options: options
-            ) { image, _ in
-                continuation.resume(returning: image)
+        let once = Once<UIImage?>()
+        let request = Mutex<PHImageRequestID?>(nil)
+        let image: UIImage? = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                once.set(continuation)
+                let id = PHImageManager.default().requestImage(
+                    for: asset,
+                    targetSize: CGSize(width: pixels, height: pixels),
+                    contentMode: fill ? .aspectFill : .aspectFit,
+                    options: options
+                ) { image, _ in
+                    once.resume(image)
+                }
+                request.withLock { $0 = id }
+                // Cancelled before the request existed: the cancellation handler found no request to stop.
+                if Task.isCancelled {
+                    PHImageManager.default().cancelImageRequest(id)
+                    once.resume(nil)
+                }
             }
+        } onCancel: {
+            if let id = request.withLock({ $0 }) { PHImageManager.default().cancelImageRequest(id) }
+            once.resume(nil)  // A cancelled request may never call back.
         }
         // Decoded here, off the main thread, so drawing it later never stalls an animation.
         return await image?.byPreparingForDisplay() ?? image

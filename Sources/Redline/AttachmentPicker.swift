@@ -355,17 +355,20 @@ final class RecentPhotos {
         isLoaded = true
     }
 
-    /// The chosen photos at attachment size, in the order they were chosen, all requested at once.
+    /// The chosen photos at attachment size, in the order they were chosen, all requested at
+    /// once. Cancelling the task stops the requests.
     func images(for ids: [String]) async -> [UIImage] {
         if usesSamples { return ids.compactMap { UIImage(contentsOfFile: $0) } }
-        let requests = ids.compactMap { assets[$0] }.map { asset in
-            Task { await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels) }
+        let chosen = ids.compactMap { assets[$0] }
+        // At most `AttachmentPicker.selectionLimit` photos, so no limit on how many load at once.
+        return await withTaskGroup(of: (index: Int, image: UIImage?).self) { group in
+            for (index, asset) in chosen.enumerated() {
+                group.addTask { (index, await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels)) }
+            }
+            var images = [UIImage?](repeating: nil, count: chosen.count)
+            for await (index, image) in group { images[index] = image }
+            return images.compactMap { $0 }
         }
-        var images: [UIImage] = []
-        for request in requests {
-            if let image = await request.value { images.append(image) }
-        }
-        return images
     }
 }
 
