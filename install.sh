@@ -276,15 +276,18 @@ JS
 # An earlier version kept its reports, paired phones and chats in another folder. Redline moves
 # them on its first run, but only while its own folder doesn't exist, so the installer moves them
 # before it writes its log there. A hub of the earlier version still running is stopped first.
+# The pid in hub.pid counts only while that process has the file open: a running hub holds its
+# lock on it, and a file left by a hub that crashed may name a pid macOS has given to another app.
 move_old_data() {
-    local pid try
+    local pid pid_file try
     if [ ! -d "$OLD_DATA" ] || [ -e "$DATA" ]; then return 0; fi
     stop_app "$OLD_APP" || true
-    pid="$(tr -d '[:space:]' <"$OLD_DATA/hub/hub.pid" 2>/dev/null)"
+    pid_file="$OLD_DATA/hub/hub.pid"
+    pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null)"
     case "$pid" in
         '' | *[!0-9]*) ;;
         *)
-            if kill -0 "$pid" 2>/dev/null; then
+            if lsof -t -a -p "$pid" -- "$pid_file" 2>/dev/null | grep -qx "$pid"; then
                 kill -TERM "$pid" 2>/dev/null
                 for try in 1 2 3 4 5 6 7 8 9 10; do
                     kill -0 "$pid" 2>/dev/null || break
@@ -574,7 +577,12 @@ register_mcp() {
     [ -n "$CLAUDE" ] || return 0
     step "Adding Redline's MCP server to Claude Code"
     if [ -n "$(mcp_entry agentic-debugging)" ]; then
-        "$CLAUDE" mcp remove --scope user agentic-debugging >>"$LOG" 2>&1 && note="; removed the old agentic-debugging entry"
+        if "$CLAUDE" mcp remove --scope user agentic-debugging >>"$LOG" 2>&1; then
+            note="; removed the old agentic-debugging entry"
+        else
+            item "Needs you" "MCP server: couldn't remove the earlier version's agentic-debugging entry, which runs a command that is gone (see $LOG)." \
+                "Run: claude mcp remove --scope user agentic-debugging"
+        fi
     fi
     have="$(mcp_entry redline)"
     if [ "$have" = "$COMMAND mcp" ]; then
@@ -687,24 +695,28 @@ Next: add Redline to your iOS app. Add the package https://github.com/merickster
     finish "Redline install checklist" "$summary"
 }
 
-# Takes Redline's hooks out of the agents' settings: with redline remove, or without it when the
-# command is already gone, so no hook is left running a missing command.
+# Takes Redline's hooks out of the agents' settings: with redline remove when the command is
+# installed, then by scanning the settings files, so no hook is left running a missing command.
+# The scan also catches hooks that an older installed command doesn't know about, such as Cursor's.
 remove_hooks() {
-    local output status file result found=false
+    local output status file result failed="" delegated=false found=false
     if [ -x "$COMMAND" ]; then
+        delegated=true
         output="$("$COMMAND" remove 2>&1)"
         status=$?
         printf '%s\n' "$output" >>"$LOG"
         if [ "$status" -eq 0 ]; then
             item "Done" "Hooks: removed Redline's hooks; other hooks stay"
         else
-            file="$(failed_settings_file "$output")"
-            item "Needs you" "Hooks: couldn't update ${file:-a settings file} (see $LOG)." \
+            failed="$(failed_settings_file "$output")"
+            item "Needs you" "Hooks: couldn't update ${failed:-a settings file} (see $LOG)." \
                 "Fix that file, then run: $COMMAND remove" "Or delete the hooks whose command ends in \"redline hook ...\" by hand."
+            # Without the file's name, the scan could report the same file twice.
+            [ -n "$failed" ] || return
         fi
-        return
     fi
     for file in "$HOME/.codex/hooks.json" "$HOME/.claude/settings.json" "$HOME/.cursor/hooks.json"; do
+        [ "$file" != "$failed" ] || continue
         grep -qE "/(redline|agentic-debugging)' hook " "$file" 2>/dev/null || continue
         found=true
         result="$(remove_hooks_from "$file")"
@@ -715,7 +727,7 @@ remove_hooks() {
                 "Delete the hooks whose command ends in \"redline hook ...\" by hand."
         fi
     done
-    $found || item "Skipped" "Hooks: none of Redline's were found"
+    $found || $delegated || item "Skipped" "Hooks: none of Redline's were found"
 }
 
 uninstall() {

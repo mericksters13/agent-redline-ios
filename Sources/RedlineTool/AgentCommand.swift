@@ -22,8 +22,14 @@ enum AgentCommand {
     }
 
     /// The agent's command, from the places its installers put it; nil when it isn't installed.
-    static func locate(_ agent: Agent) -> URL? {
-        let home = URL.homeDirectory.path
+    ///
+    /// The home folder is the one in `HOME`, as for the agents' settings, so setup run with another
+    /// `HOME` finds the command installed there.
+    static func locate(
+        _ agent: Agent,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URL? {
+        let home = AgentSettings.homeDirectory(in: environment).path
         let candidates: [String]
         switch agent {
         case .claude:

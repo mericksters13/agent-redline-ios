@@ -22,5 +22,15 @@ struct AgentCommandTests {
                 == ["-i", "/a.jpg", "--", "p"]
         )
     }
+
+    @Test func theClaudeCommandIsFoundInTheHomeFolderFromHOME() throws {
+        let home = TemporaryFolder("agent-command-home")
+        let bin = home.url.appending(path: ".local/bin", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let claude = bin.appending(path: "claude")
+        try Data("#!/bin/sh\n".utf8).write(to: claude)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claude.path)
+        #expect(AgentCommand.locate(.claude, environment: ["HOME": home.url.path])?.path == claude.path)
+    }
 }
 #endif
