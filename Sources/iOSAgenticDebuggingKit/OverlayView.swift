@@ -427,7 +427,30 @@ struct OverlayView: View {
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
+    /// Opening the note and deleting it are two sibling buttons, so a tap on the trash
+    /// never reaches the row's open action.
     private func noteRow(number: Int, annotation: Annotation) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Button { session.openViewer(annotation) } label: {
+                noteSummary(number: number, annotation: annotation)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the screenshot and note")
+            Button(role: .destructive) { session.delete(annotation) } label: {
+                Image(systemName: "trash")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.red)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 10)
+            .padding(.trailing, 16)
+            .accessibilityLabel("Delete note \(number)")
+        }
+    }
+
+    private func noteSummary(number: Int, annotation: Annotation) -> some View {
         HStack(alignment: .top, spacing: 12) {
             thumbnail(for: annotation)
                 .overlay(alignment: .topLeading) {
@@ -448,22 +471,10 @@ struct OverlayView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
-            Button(role: .destructive) { session.delete(annotation) } label: {
-                Image(systemName: "trash")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.red)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Delete note \(number)")
         }
-        .padding(.horizontal, 16)
+        .padding(.leading, 16)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .onTapGesture { session.openViewer(annotation) }
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint("Opens the screenshot and note")
     }
 
     @ViewBuilder
