@@ -100,7 +100,17 @@ final class DebugSession {
     // MARK: - Install
 
     func install(in scene: UIWindowScene) {
-        guard window == nil else { return }
+        if let window {
+            // UIKit can disconnect a scene and later connect a new one while the app keeps
+            // running. The debugger then moves to the new scene with its draft and state.
+            // While its own scene is still connected, it stays there.
+            if window.windowScene.map({ $0.activationState == .unattached }) ?? true {
+                appKeyWindow = nil
+                window.windowScene = scene
+                window.isHidden = false
+            }
+            return
+        }
         AccessibilityTree.enableAutomation()
 
         let window = OverlayWindow(windowScene: scene)

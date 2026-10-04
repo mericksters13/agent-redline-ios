@@ -29,6 +29,23 @@ struct ReportStoreTests {
         #expect(store.loadDraft().isEmpty)
     }
 
+    @Test func anUnreadableDraftIsKeptAsideAndNotOverwritten() throws {
+        let files = FileManager.default
+        let unreadable = Data("not a draft".utf8)
+        try store.saveScreenshot(Data([1]), named: "old.png")
+        try unreadable.write(to: store.draftDirectory.appending(path: "annotations.json"))
+
+        #expect(store.loadDraft().isEmpty)
+        let fresh = try savedAnnotation("Cut off")
+        try store.saveDraft([fresh])
+        #expect(store.loadDraft() == [fresh])
+
+        let kept = try files.contentsOfDirectory(at: store.unreadableDraftsDirectory, includingPropertiesForKeys: nil)
+        #expect(kept.count == 1)
+        #expect(try Data(contentsOf: kept[0].appending(path: "annotations.json")) == unreadable)
+        #expect(files.fileExists(atPath: kept[0].appending(path: "old.png").path))
+    }
+
     @Test func sendPutsScreenshotsInTheReportAndClearsTheDraft() throws {
         let annotations = [annotation("Cut off"), annotation("Wrong color")]
         for item in annotations {
