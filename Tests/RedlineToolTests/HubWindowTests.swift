@@ -39,7 +39,7 @@ struct HubWindowTests {
         #expect(!rows[0].waiting)
         #expect(rows[0].thumbnail == newer.appending(path: "screen-1.jpg"))
         // Notes in their numbers' order, with the element's name.
-        #expect(rows[0].notes == ["1. Log milestone: Too plain", "2. History: No note"])
+        #expect(rows[0].notes == [.init(number: 1, text: "Log milestone: Too plain"), .init(number: 2, text: "History: No note")])
         #expect(rows[1].waiting)
         #expect(rows[1].chat == "2 chats work in wt; pick one on the phone")
     }

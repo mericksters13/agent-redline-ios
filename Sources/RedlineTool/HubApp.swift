@@ -68,6 +68,12 @@ final class HubWindowModel {
         var isSimulator: Bool { kind == "Simulator" }
     }
 
+    /// A note, numbered as on the phone.
+    struct Note: Equatable {
+        var number: Int
+        var text: String
+    }
+
     struct ReportRow: Identifiable, Equatable {
         var id: String
         var folder: URL
@@ -77,7 +83,7 @@ final class HubWindowModel {
         var chat: String
         var waiting: Bool
         var thumbnail: URL?
-        var notes: [String]
+        var notes: [Note]
     }
 
     private(set) var devices: [DeviceRow] = []
@@ -185,8 +191,8 @@ final class HubWindowModel {
         return folder ?? "Chat"
     }
 
-    /// "1. Log milestone: This is ugly", one per note, numbered as on the phone.
-    nonisolated static func notes(in folder: URL) -> [String] {
+    /// The report's notes in their numbers' order, each as "Log milestone: This is ugly".
+    nonisolated static func notes(in folder: URL) -> [Note] {
         struct Listing: Decodable {
             struct Item: Decodable {
                 struct Element: Decodable {
@@ -205,7 +211,7 @@ final class HubWindowModel {
         else { return [] }
         return listing.items.sorted { $0.number < $1.number }.map { item in
             let name = item.element?.label ?? item.element?.identifier ?? item.title
-            return "\(item.number). \(name): \(item.note.isEmpty ? "No note" : item.note)"
+            return Note(number: item.number, text: "\(name): \(item.note.isEmpty ? "No note" : item.note)")
         }
     }
 
@@ -228,6 +234,12 @@ final class HubWindowModel {
             return (udid, name)
         }
     }
+}
+
+/// Redline's red: the color it marks elements and numbers notes with on the phone, and the
+/// only color in the panel besides the screenshots.
+enum Mark {
+    static let red = Color(red: 1, green: 0.271, blue: 0.227)
 }
 
 /// The panel: the devices, then the reports sent.
@@ -284,17 +296,27 @@ struct HubPanel: View {
         }
     }
 
+    /// The name marked up the way Redline marks an element on the phone, as in the app icon:
+    /// outlined in red, with a red dot on the corner.
     private var header: some View {
-        HStack(spacing: 10) {
-            Circle().fill(Color.white).frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Redline").font(.headline)
-                Text(model.address.isEmpty ? "Starting" : "Apps reach it at \(model.address)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer()
+        HStack(spacing: 12) {
+            Text("Redline")
+                .font(.headline)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Mark.red, lineWidth: 1.5))
+                .overlay(alignment: .topTrailing) {
+                    Circle()
+                        .fill(Mark.red)
+                        .frame(width: 9, height: 9)
+                        .overlay(Circle().stroke(Color.black, lineWidth: 2))
+                        .offset(x: 4, y: -4)
+                }
+            Text(model.address.isEmpty ? "Starting" : "Apps reach it at \(model.address)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
         }
         .padding(16)
     }
@@ -362,10 +384,13 @@ struct ReportRowView: View {
                     + Text(report.chat))
                     .font(.callout.weight(.semibold))
                     .lineLimit(1)
-                ForEach(Array(report.notes.prefix(3).enumerated()), id: \.offset) { _, note in
-                    Text(note)
-                        .font(.caption)
-                        .lineLimit(2)
+                ForEach(report.notes.prefix(3), id: \.number) { note in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        NoteNumber(number: note.number)
+                        Text(note.text)
+                            .font(.caption)
+                            .lineLimit(2)
+                    }
                 }
                 if report.notes.count > 3 {
                     Text("\(report.notes.count - 3) more")
@@ -380,6 +405,21 @@ struct ReportRowView: View {
         .contentShape(Rectangle())
         .onTapGesture { NSWorkspace.shared.open(report.folder) }
         .help("Opens the report's folder")
+    }
+}
+
+/// A note's number as the phone draws it: white on a red dot.
+struct NoteNumber: View {
+    let number: Int
+
+    var body: some View {
+        Text("\(number)")
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+            .padding(.horizontal, number < 10 ? 0 : 4)
+            .frame(minWidth: 15, minHeight: 15)
+            .background(Capsule().fill(Mark.red))
+            .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 3.5 }
     }
 }
 
