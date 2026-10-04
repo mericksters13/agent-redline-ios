@@ -252,28 +252,32 @@ final class Handoff: @unchecked Sendable {
         let chat = ChatRecord(id: "codex-\(thread)", agent: Agent.codex.rawValue, folder: "", bundleIDs: [source.bundleID], pid: getpid(),
                               registeredAt: Date(), lastActiveAt: Date())
         guard InboxQueue.claim(report, for: chat) else { return }
-        let pictures = ReportContent.pictures(in: report.folder)
-        let text = ReportContent.text(for: report)
-        var outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
-        if outcome == .notOpen {
-            hub.log("The Codex chat for report \(source.reportID) isn't open; opening it")
-            Self.open("codex://threads/\(thread)")
-            Thread.sleep(forTimeInterval: 5)
-            outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
+        // Off the handoff queue: an app that doesn't answer holds this for its timeout, and
+        // opening the chat waits seconds more, while other reports go on. The claim covers it.
+        DispatchQueue.global(qos: .utility).async { [self] in
+            let pictures = ReportContent.pictures(in: report.folder)
+            let text = ReportContent.text(for: report)
+            var outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
+            if outcome == .notOpen {
+                hub.log("The Codex chat for report \(source.reportID) isn't open; opening it")
+                Self.open("codex://threads/\(thread)")
+                Thread.sleep(forTimeInterval: 5)
+                outcome = CodexApp.startTurn(thread: thread, text: text, pictures: pictures)
+            }
+            if outcome == .started {
+                InboxQueue.handedOver(report)
+                hub.log("Sent report \(source.reportID) with \(pictures.count) pictures to the Codex chat \(thread)")
+                ReportDelivery.save(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread) ?? "Codex chat", kind: .sent), in: report.folder)
+                Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Codex chat, with its pictures.")
+                return
+            }
+            // Saved before the report is free, so a claim the chat's hook makes is always newer than this.
+            ReportDelivery.save(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread) ?? "Codex chat", kind: .nextMessage), in: report.folder)
+            InboxQueue.release(report)
+            InboxQueue.setAddress(Address(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
+            hub.log("The Codex app didn't take report \(source.reportID) (\(outcome)); it goes in with the chat's next message")
+            Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Codex chat with your next message there.")
         }
-        if outcome == .started {
-            InboxQueue.handedOver(report)
-            hub.log("Sent report \(source.reportID) with \(pictures.count) pictures to the Codex chat \(thread)")
-            ReportDelivery.save(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread) ?? "Codex chat", kind: .sent), in: report.folder)
-            Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Codex chat, with its pictures.")
-            return
-        }
-        // Saved before the report is free, so a claim the chat's hook makes is always newer than this.
-        ReportDelivery.save(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread) ?? "Codex chat", kind: .nextMessage), in: report.folder)
-        InboxQueue.release(report)
-        InboxQueue.setAddress(Address(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
-        hub.log("The Codex app didn't take report \(source.reportID) (\(outcome)); it goes in with the chat's next message")
-        Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Codex chat with your next message there.")
     }
 
     /// Opens a terminal window in `folder` running `command`, with `arguments` and then `last`,
