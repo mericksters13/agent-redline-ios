@@ -137,8 +137,9 @@ final class DebugSession {
     @ObservationIgnored private var trayReturnMode = Mode.idle
     /// Where Cancel or Add on the note card goes back to.
     @ObservationIgnored private var notingReturnMode = Mode.picking
-    /// Notes added since pick mode opened. The app can't move while the debugger takes
-    /// every touch, so these are on the current screen even when it has no title.
+    /// Notes added since pick mode opened on the screen showing now. The user can't move
+    /// the app while the debugger takes every touch, so these are on the current screen
+    /// even when it has no title, until a read finds another screen.
     @ObservationIgnored private var notesThisVisit: Set<UUID> = []
     /// The view controller showing the screen that was last read.
     @ObservationIgnored private weak var screenController: UIViewController?
@@ -1408,9 +1409,16 @@ final class DebugSession {
         guard let window else { return }
         let appWindows = self.appWindows()
         let screenWindow = appWindows.first(where: \.isKeyWindow) ?? appWindows.last
+        let previousController = screenController
+        let previousScreen = screen
         elements = AccessibilityTree.elements(in: appWindows, screenBounds: window.bounds)
         screen = AccessibilityTree.screen(of: screenWindow, elements: elements)
         screenController = AccessibilityTree.topController(of: screenWindow)
+        // The app can still move on by itself, after a timer or a network response. Notes
+        // made before that belong to the screen it left, so a new visit starts.
+        if screenController !== previousController || screen != previousScreen {
+            notesThisVisit = []
+        }
         screenshot = AccessibilityTree.screenshot(of: appWindows, bounds: window.bounds)
         scrollState = AccessibilityTree.mainScrollState(in: appWindows, screenBounds: window.bounds)
         readSize = window.bounds.size
@@ -1432,8 +1440,8 @@ final class DebugSession {
         }
     }
 
-    /// Markers go on notes made on this screen. Notes added since pick mode opened always
-    /// count, since the app can't move while the debugger takes every touch. An earlier
+    /// Markers go on notes made on this screen. Notes added since pick mode opened count
+    /// while the screen read is the same one they were made on. An earlier
     /// note counts only when it was taken on the very view controller showing now, with
     /// the same title: two SwiftUI destinations can share a title and a hosting controller
     /// type, and one untitled controller can show several screens in turn. Notes from an
