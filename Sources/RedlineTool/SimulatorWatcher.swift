@@ -100,7 +100,7 @@ final class SimulatorWatcher: @unchecked Sendable {
     /// container until the kit has written anything.
     private static func roots(for containers: [String]) -> [String] {
         containers.map { container in
-            let kit = container + "/Library/Application Support/AgentRedline"
+            let kit = container + "/Library/Application Support/Redline"
             return FileManager.default.fileExists(atPath: kit) ? kit : container
         }.sorted()
     }

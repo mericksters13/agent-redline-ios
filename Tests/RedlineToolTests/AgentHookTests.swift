@@ -57,7 +57,7 @@ struct AgentHookTests {
         let support = root.appending(path: "support", directoryHint: .isDirectory)
         let old = support.appending(path: "iOSAgenticDebuggingKit/inbox", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
-        let paths = HubPaths(root: support.appending(path: "AgentRedline", directoryHint: .isDirectory))
+        let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
         HubPaths.moveFromOldName(to: paths)
         #expect(FileManager.default.fileExists(atPath: paths.inbox.path))
         #expect(!FileManager.default.fileExists(atPath: old.path))
@@ -77,7 +77,7 @@ struct AgentHookTests {
         hub.arguments = ["30"]
         try hub.run()
         try "\(hub.processIdentifier)".write(to: old.pid, atomically: true, encoding: .utf8)
-        let paths = HubPaths(root: support.appending(path: "AgentRedline", directoryHint: .isDirectory))
+        let paths = HubPaths(root: support.appending(path: "Redline", directoryHint: .isDirectory))
         HubPaths.moveFromOldName(to: paths)
         hub.waitUntilExit()
         #expect(hub.terminationReason == .uncaughtSignal)

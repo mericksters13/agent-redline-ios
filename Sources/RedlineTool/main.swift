@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import UserNotifications
 
-/// `redline`: the Mac side of Agent Redline. It takes reports off paired
+/// `redline`: the Mac side of Redline. It takes reports off paired
 /// phones and simulators and keeps them in an inbox on the Mac for agent chats.
 let usage = """
 Usage:

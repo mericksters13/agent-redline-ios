@@ -55,7 +55,7 @@ struct HookInput: Equatable {
 enum AgentHooks {
     /// Set for chats the hub starts itself. Their hooks stay out of the way: such a chat runs
     /// once and ends, and must not be held open or take other reports.
-    static let startedByHub = "AGENT_REDLINE_STARTED_CHAT"
+    static let startedByHub = "REDLINE_STARTED_CHAT"
     /// How long a Codex or Cursor chat that builds the app stays open for reports after a reply.
     static let holdOpen: TimeInterval = 1800
 

@@ -89,7 +89,7 @@ enum HubMessage {
     }
 
     /// Where the kit looks for the hub's address, inside an app's data container.
-    static let addressPath = "Library/Application Support/AgentRedline/hub.json"
+    static let addressPath = "Library/Application Support/Redline/hub.json"
 
     static func encode<T: Encodable>(_ value: T) -> Data {
         let encoder = JSONEncoder()
@@ -114,7 +114,7 @@ struct FinishedReport: Equatable {
 
 /// Where the kit keeps sent reports, inside an app's data container.
 enum ReportFolder {
-    static let path = "Library/Application Support/AgentRedline/reports"
+    static let path = "Library/Application Support/Redline/reports"
 
     /// The finished reports among paths relative to the reports folder. A report is finished
     /// once its `report.json` is written and the draft it was drawn from is gone.

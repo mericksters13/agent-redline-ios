@@ -1,4 +1,4 @@
-# Agent Redline instructions
+# Redline instructions
 
 These rules apply to every change in this repository.
 
@@ -13,16 +13,16 @@ These rules apply to every change in this repository.
 ## Engineering rules
 
 - Use plain language and no emoji in code, comments, documentation, commit messages, or UI strings.
-- The kit ships in Debug builds only. Every source file except the public modifier is wrapped in `#if AGENT_REDLINE`, which `Package.swift` defines for debug configurations only. The public modifier must return the view unchanged without it.
-- Private API use, such as the accessibility automation switch, stays inside `AGENT_REDLINE`.
-- The Mac tool in `Sources/RedlineTool` runs only on the Mac and never ships in an app, so it is wrapped in `#if os(macOS)` instead of `AGENT_REDLINE`.
+- The kit ships in Debug builds only. Every source file except the public modifier is wrapped in `#if REDLINE`, which `Package.swift` defines for debug configurations only. The public modifier must return the view unchanged without it.
+- Private API use, such as the accessibility automation switch, stays inside `REDLINE`.
+- The Mac tool in `Sources/RedlineTool` runs only on the Mac and never ships in an app, so it is wrapped in `#if os(macOS)` instead of `REDLINE`.
 - Keep platform-independent logic (button placement, element selection, report storage) free of UIKit so `swift test` runs on the Mac without a simulator.
 - Do not add speculative abstractions, wrapper types, or dependencies. Every user-visible behavior must trace to the active issue.
 
 ## Verification
 
 - `swift test` for logic.
-- `xcodebuild -scheme AgentRedline -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/xcode build` in Debug and Release. The Release product must not contain `AXSSetAutomationEnabled`.
+- `xcodebuild -scheme Redline -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/xcode build` in Debug and Release. The Release product must not contain `AXSSetAutomationEnabled`.
 - Simulator and device runs happen through a host app such as Trail or Tiny Tally and follow that repository's simulator rules.
 - Physical-device behavior (gestures, haptics, the real accessibility tree) needs a device check; a simulator run does not prove it.
 

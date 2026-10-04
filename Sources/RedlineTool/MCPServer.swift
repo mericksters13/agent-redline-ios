@@ -18,7 +18,7 @@ final class MCPServer: @unchecked Sendable {
     static let longestWait: TimeInterval = 600
 
     static let instructions = """
-    Delivers UI reports the user sends from their iPhone or a simulator with Agent Redline, for the app this project builds. \
+    Delivers UI reports the user sends from their iPhone or a simulator with Redline, for the app this project builds. \
     A report has numbered notes about elements on screen, and screenshots where each note's element is outlined in red with the same number. \
     Call check_messages when the user mentions a report, notes or screenshots from their phone, or asks you to check. \
     Find the code for a note by the element's identifier or label, and its parents.
