@@ -22,6 +22,8 @@ final class PhoneLink: @unchecked Sendable {
     /// When a wake last made this phone try. One wake is often announced on more than one
     /// network interface, and should lead to one try.
     private var lastWakeTry = Date.distantPast
+    /// Set once the phone is no longer paired: the link stops trying and stops reporting.
+    private var unpaired = false
 
     static let firstRetry: TimeInterval = 30
     /// The longest wait between tries, for a phone whose waking isn't announced, such as one
@@ -63,8 +65,18 @@ final class PhoneLink: @unchecked Sendable {
         }
     }
 
+    /// The phone is no longer paired: the link stops trying, and `done` runs once a try in
+    /// progress has finished, so nothing it reports comes after.
+    func unpair(then done: @escaping @Sendable () -> Void) {
+        queue.async {
+            self.unpaired = true
+            self.retryAt = nil
+            done()
+        }
+    }
+
     private func giveAddress() {
-        guard let address else { return }
+        guard !unpaired, let address else { return }
         retryAt = nil
         var unreachable = false
         let addresses = Dictionary(uniqueKeysWithValues: hub.apps.map { bundleID in

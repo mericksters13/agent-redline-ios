@@ -28,6 +28,8 @@ final class DebugSession {
 
     /// Images waiting for their note: what the note card is about when no element is picked.
     struct PendingAttachment {
+        /// Tells this attachment from one started after it was canceled.
+        let id = UUID()
         var kind: Annotation.Kind
         /// The images, or small previews of them while the full ones load.
         var images: [UIImage]
@@ -58,6 +60,8 @@ final class DebugSession {
     struct Toast: Equatable {
         var message: String
         var isError = false
+        /// Each showing is its own toast, so a repeated message gets its full time on screen.
+        let id = UUID()
     }
 
     private(set) var mode = Mode.idle
@@ -327,7 +331,8 @@ final class DebugSession {
                 ready.images = await loading.value
                 ready.loading = nil
                 isSavingNote = false
-                guard self.pending != nil, !ready.images.isEmpty else { return }
+                // Canceled while loading, maybe with another attachment begun since: not this one.
+                guard self.pending?.id == ready.id, !ready.images.isEmpty else { return }
                 saveAttachment(ready, note: note)
             }
             return
@@ -491,17 +496,20 @@ final class DebugSession {
         store.lastDelivery()
     }
 
-    func updateNote(_ id: UUID, to text: String) {
+    /// Saves an edited note. Returns false only when the change couldn't be saved, so the
+    /// viewer keeps the edit on screen and ending the edit, closing or moving on retries.
+    @discardableResult
+    func updateNote(_ id: UUID, to text: String) -> Bool {
         let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return }
+        guard let index = annotations.firstIndex(where: { $0.id == id }), annotations[index].note != note else { return true }
         var updated = annotations
         updated[index].note = note
-        // On failure the viewer's field keeps the new text, so ending the edit again retries.
         guard persist(updated) else {
             showFailure("Couldn't save the change to the note")
-            return
+            return false
         }
         annotations = updated
+        return true
     }
 
     /// One of the item's images at full size: its screen's picture with every note on it
@@ -898,9 +906,33 @@ final class DebugSession {
                 await self?.show(Toast(message: DebugSession.toast(for: outcome, notes: notes, to: destination?.title)))
             } catch {
                 logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
-                await self?.showFailure("Couldn't save the report")
+                await self?.restoreDraft(from: input)
             }
         }
+    }
+
+    /// Puts the notes of a report that couldn't be finished back into the draft, ahead of any
+    /// made since, so they can be sent again.
+    private func restoreDraft(from input: ReportBuilder.Input) {
+        let before = screens
+        do {
+            try store.reclaimPictures(from: input.folder)
+        } catch {
+            logger.error("Couldn't take back the report's pictures: \(error.localizedDescription, privacy: .public)")
+            showFailure("Couldn't save the report or bring its notes back")
+            return
+        }
+        screens = input.screens + screens
+        let restored = input.annotations + annotations
+        guard persist(restored) else {
+            screens = before
+            showFailure("Couldn't save the report or bring its notes back")
+            return
+        }
+        annotations = restored
+        store.discardReport(input.folder)
+        refreshMarkers()
+        showFailure("Couldn't save the report. Its notes are back in the draft.")
     }
 
     // MARK: - One picture per screen
@@ -1173,8 +1205,12 @@ final class DebugSession {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
-    /// While Redline is idle only the floating button and a suggested screenshot
-    /// take touches; the rest go to the app.
+    /// While Redline is idle only the round floating button takes touches; the rest go to the app.
+    func setButtonFrame(_ frame: CGRect?) {
+        window?.buttonFrame = frame
+    }
+
+    /// Anything else that takes touches while Redline is idle, such as a suggested screenshot.
     func setTouchableFrame(_ frame: CGRect?, for name: String) {
         window?.touchableRects[name] = frame
     }
@@ -1277,8 +1313,13 @@ final class DebugSession {
         writes.append(Task.detached(priority: .userInitiated) {
             for (image, name) in zip(images, names) {
                 do {
-                    let data = asPNG ? image.pngData() : image.jpegData(compressionQuality: 0.85)
-                    try store.saveScreenshot(data ?? Data(), named: name)
+                    // An image that can't be encoded isn't written at all: Send then finds it
+                    // missing and says which note to delete, instead of sending it without it.
+                    guard let data = asPNG ? image.pngData() : image.jpegData(compressionQuality: 0.85) else {
+                        logger.error("Couldn't encode an image")
+                        continue
+                    }
+                    try store.saveScreenshot(data, named: name)
                 } catch {
                     logger.error("Couldn't save an image: \(error.localizedDescription, privacy: .public)")
                 }

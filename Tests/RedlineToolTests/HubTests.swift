@@ -111,6 +111,24 @@ struct HubTests {
         #expect(try hub().statusSnapshot().fixedApps == [app])
     }
 
+    @Test func aPhoneNoLongerPairedLeavesTheStatus() async throws {
+        let hub = try hub()
+        let kept = Devicectl.Phone(udid: phone, name: "Mark iPhone", model: "iPhone 17 Pro")
+        let unpaired = Devicectl.Phone(udid: "00008150-000000000000AAAA", name: "Old iPhone", model: "iPhone 15")
+        hub.phoneChanged(kept, state: "Ready for \(app)")
+        hub.phoneChanged(unpaired, state: "Ready for \(app)")
+        hub.forgetPhones(except: [phone])
+        #expect(hub.statusSnapshot().phones.map(\.udid) == [phone])
+
+        // A link whose phone was unpaired stops trying, and so never reports the phone again.
+        let link = PhoneLink(phone: unpaired, hub: hub)
+        await withCheckedContinuation { done in link.unpair { done.resume() } }
+        link.update(hosts: ["192.168.1.2"], port: 47361, rediscover: true)
+        link.phoneWoke()
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(hub.statusSnapshot().phones.map(\.udid) == [phone])
+    }
+
     @Test func aReportArrivingTwiceAtOnceIsFiledOnce() throws {
         let hub = try hub()
         let source = ReportSource(kind: .phone, device: phone, deviceName: "Mark iPhone", bundleID: app, reportID: "20261004-031600", receivedAt: Date())
@@ -204,6 +222,38 @@ struct HubTests {
         let again = hub.answer(offered)
         #expect(again.want.isEmpty)
         #expect(Set(again.delivered) == ["20261002-135144", "20261004-031600"])
+    }
+
+    @Test func aSourceFirstSeenLaterTakesOnlyReportsFromThen() throws {
+        let hub = try hub()
+        let firstLook = Date().addingTimeInterval(3 * 3600)
+        let before = FinishedReport(id: "20261004-120000", finishedAt: firstLook.addingTimeInterval(-3600))
+        let fresh = FinishedReport(id: "20261004-145930", finishedAt: firstLook.addingTimeInterval(-30))
+        #expect(hub.toCopy(device: phone, bundleID: app, finished: [before, fresh], now: firstLook) == ["20261004-145930"])
+        #expect(hub.settled(device: phone, bundleID: app, finished: [before, fresh]) == ["20261004-120000"])
+    }
+
+    @Test func aReportWhoseSourceCannotBeWrittenIsNotFiled() throws {
+        let hub = try hub()
+        let source = ReportSource(kind: .phone, device: phone, deviceName: "iPhone", bundleID: app, reportID: "20261004-031600", receivedAt: Date())
+        var incoming: URL?
+        let filed = hub.receive(source) { folder in
+            incoming = folder
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? Data("{}".utf8).write(to: folder.appending(path: "report.json"))
+            // Read-only, so source.json can't be written next to the report.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+            return true
+        }
+        if let incoming {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: incoming.path)
+            try? FileManager.default.removeItem(at: incoming)
+        }
+        #expect(!filed)
+        let folder = paths.inbox.appending(path: app, directoryHint: .isDirectory)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { !$0.hasPrefix(".") }.isEmpty)
+        // Not recorded as delivered, so the phone offers it again.
+        #expect(hub.toCopy(device: phone, bundleID: app, finished: [FinishedReport(id: "20261004-031600", finishedAt: Date())]) == ["20261004-031600"])
     }
 }
 #endif

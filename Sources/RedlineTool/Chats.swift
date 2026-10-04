@@ -64,12 +64,30 @@ enum Chats {
         kill(pid, 0) == 0 || errno == EPERM
     }
 
+    /// True when the process that was running at `date` still is: a process with the same PID
+    /// that started later only reuses it. Dates are saved to the second, so a little slack.
+    static func isRunning(_ pid: Int32, since date: Date) -> Bool {
+        guard isRunning(pid) else { return false }
+        guard let started = startTime(of: pid) else { return true }
+        return started <= date.addingTimeInterval(2)
+    }
+
+    /// When the process started, from the kernel.
+    static func startTime(of pid: Int32) -> Date? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&name, u_int(name.count), &info, &size, nil, 0) == 0, size > 0, info.kp_proc.p_pid == pid else { return nil }
+        let start = info.kp_proc.p_un.__p_starttime
+        return Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
+    }
+
     /// Chats whose MCP copy is still running. Files left by a copy that was killed are removed.
     static func live(_ paths: HubPaths) -> [ChatRecord] {
         let files = (try? FileManager.default.contentsOfDirectory(at: folder(paths), includingPropertiesForKeys: nil)) ?? []
         return files.filter { $0.pathExtension == "json" }.compactMap { file in
             guard let data = try? Data(contentsOf: file), let chat = try? decoder.decode(ChatRecord.self, from: data) else { return nil }
-            guard isRunning(chat.pid) else {
+            guard isRunning(chat.pid, since: chat.registeredAt) else {
                 unregister(chat.id, paths: paths)
                 return nil
             }

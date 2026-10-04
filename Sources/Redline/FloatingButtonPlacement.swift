@@ -20,6 +20,15 @@ enum FloatingButtonPlacement {
         )
     }
 
+    /// Whether a point is on the round button drawn in `frame`, matching the button's
+    /// circular tap shape rather than its square frame.
+    static func buttonContains(_ point: CGPoint, frame: CGRect) -> Bool {
+        guard frame.width > 0, frame.height > 0 else { return false }
+        let dx = (point.x - frame.midX) / (frame.width / 2)
+        let dy = (point.y - frame.midY) / (frame.height / 2)
+        return dx * dx + dy * dy <= 1
+    }
+
     /// How close to the top or bottom a drop must land to rest there instead of on a side.
     static let topBottomZone: CGFloat = 56
 

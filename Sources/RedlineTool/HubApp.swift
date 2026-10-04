@@ -179,7 +179,7 @@ final class HubWindowModel {
 
     /// The agent and chat a report went to: what the hub saved when it delivered it, or the
     /// chat that took it through MCP or a hook. A report the hub left waiting, or set to go with
-    /// a chat's next message, shows the chat that took it once one has. A claim whose hand-over
+    /// a chat's next message, shows as waiting until a chat takes it, and then shows that chat. A claim whose hand-over
     /// was interrupted doesn't count: the report is free again, as `InboxQueue.waiting` has it.
     nonisolated static func destination(of folder: URL) -> (agent: String, chat: String, waiting: Bool) {
         let delivery = ReportDelivery.load(from: folder)
@@ -188,7 +188,9 @@ final class HubWindowModel {
             .flatMap { $0.isInterrupted ? nil : $0 }
         if let delivery, !(delivery.pending && claim.map { $0.claimedAt > delivery.at } == true) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
-            return (agent, delivery.title, delivery.kind == .waiting)
+            // A report set to go with a chat's next message isn't in that chat yet.
+            let chat = delivery.kind == .nextMessage ? "\(delivery.title) (next message)" : delivery.title
+            return (agent, chat, delivery.pending)
         }
         if let claim {
             let agent = Agent(rawValue: claim.agent)?.name ?? claim.agent

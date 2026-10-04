@@ -43,7 +43,7 @@ enum ElementSelection {
     /// `elements` come back to front, each parent before its children, as
     /// `AccessibilityTree` reads them, so the last one containing the point is the one
     /// the user sees there. A touch that misses every element picks the nearest one
-    /// within `nearbyDistance`. Elements covering almost the whole screen are left out,
+    /// within `nearbyDistance`, the frontmost of any at the same distance. Elements covering almost the whole screen are left out,
     /// since "the whole screen" says nothing useful.
     static func levels(at point: CGPoint, in elements: [ElementSnapshot], screenSize: CGSize) -> [ElementSnapshot] {
         let screenArea = screenSize.width * screenSize.height
@@ -55,6 +55,7 @@ enum ElementSelection {
         if hit == nil,
            let nearest = elements.indices
                .filter({ isUsable(elements[$0]) && !elements[$0].isContainer })
+               .reversed()
                .min(by: { distance(from: point, to: elements[$0].frame) < distance(from: point, to: elements[$1].frame) }),
            distance(from: point, to: elements[nearest].frame) <= nearbyDistance {
             hit = nearest
