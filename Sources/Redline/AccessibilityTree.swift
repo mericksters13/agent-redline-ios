@@ -103,13 +103,18 @@ enum AccessibilityTree {
     /// The screen the user is looking at: the navigation bar title, else the
     /// topmost header on screen (custom headers such as a large "Today"), else the
     /// selected tab, plus the view controller type.
+    ///
+    /// A sheet or full-screen cover is read alone, so it never takes the title of the screen it
+    /// covers; a translucent presentation takes the title of the screen still showing under it,
+    /// front first.
     static func screen(of window: UIWindow?, elements: [ElementSnapshot]) -> ScreenInfo {
         guard let window else { return ScreenInfo() }
-        let controller = topController(from: window.rootViewController)
+        let controller = topController(of: window)
+        let cover = coveringController(in: window)
         let title =
-            navigationBarTitle(in: window)
+            visibleRoots(of: window).reversed().lazy.compactMap(navigationBarTitle(in:)).first
             ?? ElementSelection.headerTitle(in: elements)
-            ?? selectedTabTitle(from: window.rootViewController)
+            ?? selectedTabTitle(from: cover ?? window.rootViewController)
             ?? controller?.navigationItem.title?.nonEmpty
             ?? controller?.title?.nonEmpty
         let typeName = controller.map {
@@ -118,16 +123,53 @@ enum AccessibilityTree {
         return ScreenInfo(title: title, viewController: typeName?.nonEmpty)
     }
 
+    /// The view controller showing the screen in `window`: the topmost presented one, or the
+    /// visible one inside navigation and tab controllers.
+    static func topController(of window: UIWindow?) -> UIViewController? {
+        topController(from: window?.rootViewController)
+    }
+
     // MARK: - Presented screens
 
-    /// A presented sheet or full-screen cover hides what's under it, so only its view is
-    /// read when one is up, along with anything drawn above it, such as a menu opened from it.
+    /// The views that make up what is on screen in `window`, back to front.
+    ///
+    /// A sheet or a full-screen cover hides what's under it, so reading starts again at its view,
+    /// along with anything drawn in the window above it, such as a menu opened from it. An
+    /// over-context, over-full-screen or custom presentation that keeps the presenting view leaves
+    /// that view showing unless its own view is opaque and covers the window, so both are read. An
+    /// open menu's empty presented controller hides nothing.
     private static func visibleRoots(of window: UIWindow) -> [UIView] {
-        guard let cover = coveringController(in: window)?.viewIfLoaded else { return [window] }
-        var top: UIView = cover
-        while let parent = top.superview, parent !== window { top = parent }
-        guard let index = window.subviews.firstIndex(of: top) else { return [cover] }
-        return [cover] + window.subviews[(index + 1)...]
+        var roots: [UIView] = [window]
+        var controller = window.rootViewController
+        while let presented = controller?.presentedViewController, !presented.isBeingDismissed {
+            controller = presented
+            guard let view = presented.viewIfLoaded, showsContent(presented) else { continue }
+            if hidesPresenter(presented, in: window) {
+                var top: UIView = view
+                while let parent = top.superview, parent !== window { top = parent }
+                let above = window.subviews.firstIndex(of: top).map { window.subviews[($0 + 1)...] } ?? []
+                roots = [view] + above
+            } else {
+                roots.append(view)
+            }
+        }
+        return roots
+    }
+
+    /// Whether a presentation hides the screen it was presented from.
+    private static func hidesPresenter(_ controller: UIViewController, in window: UIWindow) -> Bool {
+        switch controller.modalPresentationStyle {
+        case .overFullScreen, .overCurrentContext:
+            break
+        case .custom where controller.presentationController?.shouldRemovePresentersView == false:
+            break
+        default:
+            return true
+        }
+        guard let view = controller.viewIfLoaded else { return false }
+        let backgroundAlpha = view.backgroundColor?.resolvedColor(with: view.traitCollection).cgColor.alpha ?? 0
+        return backgroundAlpha > 0.99 && view.alpha > 0.99
+            && view.convert(view.bounds, to: window).contains(window.bounds)
     }
 
     /// The topmost presented controller that shows something of its own.

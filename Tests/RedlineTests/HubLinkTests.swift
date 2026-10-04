@@ -90,6 +90,27 @@ struct HubLinkTests {
         )
     }
 
+    @Test func aChatListSaysWhichAgentsStartNewChats() throws {
+        // A Mac from before newChats offers new chats with every agent; a newer one names them.
+        let older = try HubLink.decode(HubLink.ChatList.self, from: Data(#"{"agents":["claude"],"chats":[]}"#.utf8))
+        #expect(older.startsNewChats("codex"))
+        let named = try HubLink.decode(
+            HubLink.ChatList.self,
+            from: Data(#"{"agents":["claude","codex"],"chats":[],"newChats":["claude"]}"#.utf8)
+        )
+        #expect(named.startsNewChats("claude"))
+        #expect(!named.startsNewChats("codex"))
+        // With no open chat and no agent that starts one, there's nothing to pick.
+        #expect(named.offersDestination)
+        let none = try HubLink.decode(
+            HubLink.ChatList.self,
+            from: Data(#"{"agents":["codex"],"chats":[],"newChats":[]}"#.utf8)
+        )
+        #expect(!none.offersDestination)
+        let empty = try HubLink.decode(HubLink.ChatList.self, from: Data(#"{"agents":[],"chats":[]}"#.utf8))
+        #expect(!empty.offersDestination)
+    }
+
     @Test func renamedFieldsKeepTheirWireNames() throws {
         let chat = HubLink.Chat(
             id: "s1",

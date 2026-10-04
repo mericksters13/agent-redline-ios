@@ -13,6 +13,9 @@ extension HubWindowModel {
 
     /// The report's pictures in the order the agent gets them: each screen's pictures, then the
     /// pictures attached to notes.
+    ///
+    /// Only the files `ReportContent.pictures(in:)` reads, so a name that leads out of the report's
+    /// folder, or a link to another file on the Mac, is left out.
     nonisolated static func pictures(in folder: URL) -> [Picture] {
         let listing = ReportListing.load(from: folder)
         guard let screens = listing?.screens,
@@ -35,7 +38,8 @@ extension HubWindowModel {
         let attached = items.flatMap { number, title, attachments in
             attachments.map { Picture(file: folder.appending(path: $0), title: title, notes: [number]) }
         }
-        return (shown + attached).filter { FileManager.default.fileExists(atPath: $0.file.path) }
+        let safe = Set(ReportContent.pictures(in: folder, listing: listing))
+        return (shown + attached).filter { safe.contains($0.file) }
     }
 
     /// The first picture that shows a note.
@@ -60,7 +64,7 @@ extension HubWindowModel {
     ///
     /// Nil when the report went to no chat.
     nonisolated static func chat(of report: URL) -> ChatLink? {
-        let claim = Inbox.claim(of: report).flatMap { $0.isInterrupted ? nil : $0 }
+        let claim = Inbox.activeClaim(of: report)
         let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
         if let delivery = ChatDelivery.load(from: report),
             !(delivery.isPending && claim.map { $0.claimedAt > delivery.deliveredAt } == true)

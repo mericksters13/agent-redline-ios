@@ -212,6 +212,37 @@ struct ReportStore: Sendable {
         return (id, folder, draft)
     }
 
+    /// The most a report's files may add up to: the Mac's hub turns down a bigger one, as
+    /// `Hub.largestReport`.
+    ///
+    /// Checked before the report is finished, while its notes can still go back into the draft for
+    /// photos to be taken out.
+    static let largestReport = 50_000_000
+
+    /// A report too big for the Mac to take.
+    struct TooLarge: Error, Equatable {
+        var bytes: Int
+    }
+
+    /// Checks that a report drawn in `folder`, with the summary and listing `finishReport` adds,
+    /// fits what the Mac takes.
+    ///
+    /// Call before `finishReport`: a finished report can't be changed.
+    func checkSize(of report: Report, in folder: URL, limit: Int = Self.largestReport) throws {
+        var bytes = Data(ReportSummary.markdown(report).utf8).count + (try Self.encoder.encode(report)).count
+        let contents = try FileManager.default.contentsOfDirectory(
+            at: folder,
+            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey]
+        )
+        for file in contents where !file.lastPathComponent.hasPrefix(".") {
+            let values = try file.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+            // The draft the pictures were drawn from isn't sent.
+            if values.isDirectory == true { continue }
+            bytes += values.fileSize ?? 0
+        }
+        if bytes > limit { throw TooLarge(bytes: bytes) }
+    }
+
     /// Finishes a report: writes `report.md` and `report.json` and removes the old draft.
     ///
     /// `report.json` goes last, so a report is listed as sent only once it is complete.
@@ -256,6 +287,60 @@ struct ReportStore: Sendable {
             Log.store.error(
                 "Couldn't remove the unfinished report \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
+        }
+    }
+
+    /// Brings back reports cut short, such as by the app being killed while their pictures were
+    /// drawn.
+    ///
+    /// A finished one only loses the draft it was drawn from. An unfinished one's notes, screens
+    /// and pictures go back into the draft, ahead of any made since, so they can be sent again.
+    /// Call at launch only, before any report starts. Safe to run again after being cut short
+    /// itself: notes and screens already back in the draft aren't added twice. A report whose
+    /// notes can't be read, or whose notes can't go back into a draft that can't be read, is left
+    /// as it is for the next launch.
+    func recoverInterruptedReports() {
+        let files = FileManager.default
+        let folders =
+            (try? files.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        // Newest first, so each older report's notes go ahead of it.
+        for folder in folders.sorted(by: { $0.lastPathComponent > $1.lastPathComponent })
+        where (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            let old = folder.appending(path: "draft", directoryHint: .isDirectory)
+            let isFinished = files.fileExists(atPath: folder.appending(path: "report.json").path(percentEncoded: false))
+            guard files.fileExists(atPath: old.path(percentEncoded: false)) else {
+                // Cut short before the draft moved in: there's nothing to bring back.
+                if !isFinished { discardReport(folder) }
+                continue
+            }
+            do {
+                if isFinished {
+                    try files.removeItem(at: old)
+                    continue
+                }
+                let annotations =
+                    try Self.contents(of: old.appending(path: draftFile.lastPathComponent)).map {
+                        try Self.decoder.decode([Annotation].self, from: $0)
+                    } ?? []
+                let screens =
+                    try Self.contents(of: old.appending(path: screensFile.lastPathComponent)).map {
+                        try Self.decoder.decode([ScreenRecord].self, from: $0)
+                    } ?? []
+                try reclaimPictures(from: folder)
+                // Screens first, as when a note is added: a listed screen no note uses is harmless.
+                let currentScreens = try loadScreens()
+                let screenIDs = Set(currentScreens.map(\.id))
+                try saveScreens(screens.filter { !screenIDs.contains($0.id) } + currentScreens)
+                let draft = try loadDraft()
+                let noteIDs = Set(draft.map(\.id))
+                try saveDraft(annotations.filter { !noteIDs.contains($0.id) } + draft)
+                discardReport(folder)
+            } catch {
+                // Left as it is, to be tried again at the next launch.
+                Log.store.error(
+                    "Couldn't recover the report \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
+            }
         }
     }
 
@@ -312,17 +397,27 @@ struct ReportStore: Sendable {
 
     /// A sent report's files, as the hub keeps them: everything in its folder but the draft
     /// and the delivery mark.
+    ///
+    /// Empty when any of them can't be read: the hub turns down a report without its
+    /// `report.json`, so the report stays on the phone and is offered again, rather than reaching
+    /// the Mac without a picture it names.
     func reportFiles(_ id: String) -> [String: Data] {
         let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
         var files: [String: Data] = [:]
-        let contents =
-            (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey]))
-            ?? []
-        for file in contents where file.lastPathComponent != "delivered" && !file.lastPathComponent.hasPrefix(".") {
-            guard (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true,
-                let data = try? Data(contentsOf: file)
-            else { continue }
-            files[file.lastPathComponent] = data
+        do {
+            let contents = try FileManager.default.contentsOfDirectory(
+                at: folder,
+                includingPropertiesForKeys: [.isDirectoryKey]
+            )
+            for file in contents where file.lastPathComponent != "delivered" && !file.lastPathComponent.hasPrefix(".") {
+                if try file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true { continue }
+                files[file.lastPathComponent] = try Data(contentsOf: file)
+            }
+        } catch {
+            Log.store.error(
+                "Couldn't read report \(id, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return [:]
         }
         return files
     }

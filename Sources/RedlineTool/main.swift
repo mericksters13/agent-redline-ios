@@ -37,7 +37,7 @@ let usage = """
       redline hub [--app <bundle ID> ...]
           Takes reports from phones and simulators for the open chats' apps and files them in the inbox.
           Chats start it when it isn't running.
-      redline app
+      redline app [--app <bundle ID> ...]
           The hub as a menu bar app, showing the active devices and the reports sent. Opening the
           app bundle does the same.
       redline status
@@ -85,11 +85,46 @@ let paths = HubPaths.standard
 // Opened as an app bundle, it's the menu bar app.
 if arguments.isEmpty, Bundle.main.bundleURL.pathExtension == "app" { arguments = ["app"] }
 
+// The folder an earlier version kept under the old name moves here before anything uses this one.
+// A hub of that version stopped for the move is replaced at once, watching the apps it was given
+// on the command line, so reports keep coming from them; the app and hub commands are that hub.
+var movedApps: [String]?
+switch HubPaths.moveFromOldName(to: paths) {
+case .done:
+    break
+case .stoppedHub(let fixedApps):
+    movedApps = fixedApps
+case .blocked(let reason):
+    switch arguments.first {
+    case "app":
+        failToStart(reason)
+    case "hook":
+        // The chat goes on as if no report were waiting for it.
+        printError(reason)
+        _ = FileHandle.standardInput.readDataToEndOfFile()
+        guard arguments.count == 3, let event = HookEvent(rawValue: arguments[2]) else { exit(0) }
+        exit(AgentHooks.answer(for: event, taken: nil))
+    case "hub", "mcp", "check", "wait", "status":
+        printError(reason)
+        exit(1)
+    default:
+        // Setup, remove and the usage don't use the folder.
+        break
+    }
+}
+if let movedApps, !["app", "hub"].contains(arguments.first) { HubProcess.startIfNeeded(paths, apps: movedApps) }
+
 switch arguments.first {
 case "app":
-    // The menu bar app is the hub: one process. A hub already running steps aside, and the apps
-    // it was told to watch on the command line stay watched.
-    var keptApps: [String] = []
+    // The menu bar app is the hub: one process. It watches the apps given with --app. A hub
+    // already running steps aside, and the apps it was told to watch on the command line stay
+    // watched. Launch Services may add arguments of its own, so ones it doesn't know are ignored.
+    // What the app needs is checked first, so a hub that works is never stopped for one that can't
+    // start.
+    guard let devicectl = Devicectl.locate() else {
+        failToStart("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
+    }
+    var keptApps = (ChatOptions.parse(arguments.dropFirst())?.apps ?? []) + (movedApps ?? [])
     if let running = HubProcess.running(paths), running != getpid() {
         // A hub saves its status, with those apps, as it starts; give one starting now a moment.
         var status = savedStatus(paths)
@@ -105,23 +140,46 @@ case "app":
                     "A hub is already running (pid \(running)) and didn't say which apps it watches, so it was left running."
                 )
             }
-            keptApps = status.fixedApps ?? []
-            // Stopping can wait for a simulator scan to finish, and the PID file stays locked until it
-            // has. A hub that hasn't stopped in 30 seconds is ended, which frees the lock at once.
+            // A hub from before fixedApps was saved lists them only among all its apps.
+            keptApps += status.fixedApps ?? status.apps
+            // Asked to stop, the hub takes no more reports and starts no more hand-overs at once,
+            // then lets the hand-overs under way reach their chats before it lets go of the PID file.
+            // One that hasn't stopped in 30 seconds and isn't handing a report over is ended, which
+            // frees the lock at once. One still handing a report over is never ended, or the report
+            // would be handed over twice; a new chat can take minutes to look into a report, so
+            // instead of waiting out of sight the app says why it can't start yet, and the hub stops
+            // on its own once its reports are handed over.
+            print("Waiting for the hub (pid \(running)) to stop")
             kill(running, SIGTERM)
             tries = 0
+            var killedAt: Int?
             while HubProcess.running(paths) == running {
-                if tries == 300 { kill(running, SIGKILL) }
-                if tries == 350 { break }
+                if killedAt == nil, tries >= 300 {
+                    let handingOver = Inbox.reportsHandedOver(by: running, paths: paths)
+                    guard handingOver == 0 else {
+                        let reports =
+                            handingOver == 1
+                            ? "the report it's handing over reaches its chat"
+                            : "the \(handingOver) reports it's handing over reach their chats"
+                        failToStart(
+                            "The hub that was running (pid \(running)) stops once \(reports). Open Redline again then."
+                        )
+                    }
+                    kill(running, SIGKILL)
+                    killedAt = tries
+                }
+                if let killedAt, tries >= killedAt + 50 { break }
                 usleep(100_000)
                 tries += 1
             }
         }
     }
-    guard let devicectl = Devicectl.locate() else {
-        failToStart("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
+    let hub = Hub(paths: paths, devicectl: devicectl, apps: unique(keptApps))
+    // The listener can fail after the hub has started, such as when another process has the port;
+    // the app then says so before it exits, rather than vanish.
+    hub.whenListenerFails = { reason in
+        Task { @MainActor in failToStart("\(reason). Phones and simulators can't send reports without it.") }
     }
-    let hub = Hub(paths: paths, devicectl: devicectl, apps: keptApps)
     guard hub.start() else {
         failToStart("Another hub is running and didn't stop. Quit it, then open Redline again.")
     }
@@ -142,7 +200,7 @@ case "hub":
         print("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
         exit(1)
     }
-    let hub = Hub(paths: paths, devicectl: devicectl, apps: options.apps)
+    let hub = Hub(paths: paths, devicectl: devicectl, apps: unique(options.apps + (movedApps ?? [])))
     guard hub.start() else {
         print("A hub is already running\(HubProcess.running(paths).map { " (pid \($0))" } ?? "").")
         exit(1)
@@ -318,6 +376,12 @@ func failToStart(_ reason: String) -> Never {
     exit(1)
 }
 
+/// `apps` without repeats, in their order.
+func unique(_ apps: [String]) -> [String] {
+    var seen = Set<String>()
+    return apps.filter { seen.insert($0).inserted }
+}
+
 /// Writes a line to standard error.
 func printError(_ message: String) {
     try? FileHandle.standardError.write(contentsOf: Data((message + "\n").utf8))
@@ -355,7 +419,7 @@ enum SignalSources {
 @discardableResult
 func printReports(_ session: ChatSession, isQuietWhenNone: Bool = false) -> Bool {
     let taken = session.take(budget: Int.max)
-    guard taken.taken > 0 else {
+    guard !taken.reports.isEmpty else {
         if !isQuietWhenNone {
             print(
                 session.chat.bundleIDs.isEmpty
@@ -371,6 +435,8 @@ func printReports(_ session: ChatSession, isQuietWhenNone: Bool = false) -> Bool
         case .image(let file, _): print("Picture: \(file.path)")
         }
     }
+    // The reports are the chat's once they're written out.
+    ChatSession.settle(taken.reports, isDelivered: fflush(stdout) == 0 && ferror(stdout) == 0)
     return true
 }
 
@@ -383,7 +449,11 @@ func printStatus(_ paths: HubPaths) {
             print(
                 "Hub running (pid \(pid)) since \(status.startedAt.formatted(date: .omitted, time: .shortened)), for \(status.apps.joined(separator: ", "))"
             )
-            print("  Apps reach it at \(status.hosts.joined(separator: ", ")), port \(status.port)")
+            print(
+                status.hosts.isEmpty
+                    ? "  Not on a network, so apps can't reach it"
+                    : "  Apps reach it at \(status.hosts.joined(separator: ", ")), port \(status.port)"
+            )
             for phone in status.phones {
                 print(
                     "  \(phone.name) (\([phone.model, phone.udid].compactMap { $0 }.joined(separator: ", "))): \(phone.state)"

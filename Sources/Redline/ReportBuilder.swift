@@ -21,6 +21,16 @@ enum ReportBuilder {
         var destination: Report.Destination? = nil
     }
 
+    /// A picture that couldn't be read or encoded.
+    ///
+    /// Building stops so the draft is restored and can be sent again, instead of sending a report
+    /// with the picture left out.
+    struct PictureFailed: LocalizedError, Equatable {
+        var file: String
+
+        var errorDescription: String? { "Couldn't make the picture \(file)" }
+    }
+
     static func build(_ input: Input) throws -> Report {
         let scale = ReportRenderer.sendScale
         let numbers = Dictionary(uniqueKeysWithValues: input.annotations.enumerated().map { ($1.id, $0 + 1) })
@@ -66,20 +76,22 @@ enum ReportBuilder {
                 let ids = Set(group.map(\.id))
                 let notes = input.annotations.filter { $0.captureID.map(ids.contains) ?? false }
                 guard !notes.isEmpty, let plan = ScreenComposition.plan(for: group) else { continue }
-                let images = Dictionary(
-                    uniqueKeysWithValues: group.compactMap { capture -> (UUID, UIImage)? in
-                        guard
-                            let image = UIImage(
-                                contentsOfFile: input.draft.appending(path: capture.file).path(percentEncoded: false)
-                            )
-                        else {
-                            // Its rows come out white in the picture.
-                            Log.report.error("Couldn't load capture \(capture.file, privacy: .public)")
-                            return nil
-                        }
-                        return (capture.id, image)
+                // The newest group is the screen as it is; older groups are its earlier states.
+                let earlier = groupIndex < groups.count - 1
+                let base = earlier ? "\(screenID)-earlier-\(groupIndex + 1)" : screenID
+                // A capture that can't be read would leave part of the picture blank.
+                var images: [UUID: UIImage] = [:]
+                for capture in group {
+                    guard
+                        let image = UIImage(
+                            contentsOfFile: input.draft.appending(path: capture.file).path(percentEncoded: false)
+                        )
+                    else {
+                        Log.report.error("Couldn't load capture \(capture.file, privacy: .public)")
+                        throw PictureFailed(file: "\(base).jpg")
                     }
-                )
+                    images[capture.id] = image
+                }
                 let outlines = notes.compactMap { note -> ReportRenderer.Outline? in
                     guard let number = numbers[note.id], let frame = note.element?.frame,
                         let captureID = note.captureID,
@@ -89,9 +101,6 @@ enum ReportBuilder {
                 }
                 screenNotes += outlines.map(\.number)
 
-                // The newest group is the screen as it is; older groups are its earlier states.
-                let earlier = groupIndex < groups.count - 1
-                let base = earlier ? "\(screenID)-earlier-\(groupIndex + 1)" : screenID
                 // Everything that was on screen, where it sits in the picture, so cuts fall between rows and sections.
                 let onScreen = group.flatMap { capture in
                     capture.elements.compactMap { plan.position(of: $0.frame, from: capture.id) }
@@ -103,8 +112,8 @@ enum ReportBuilder {
                     avoiding: onScreen,
                     preferring: plan.gaps.map(\.rect.midY)
                 )
-                // One entry per part, nil for a part that couldn't be encoded, so indices stay matched to `parts`.
-                var files: [String?] = []
+                // One entry per part, so indices stay matched to `parts`.
+                var files: [String] = []
                 for (partIndex, rows) in parts.enumerated() {
                     let file = partIndex == 0 ? "\(base).jpg" : "\(base)-part-\(partIndex + 1).jpg"
                     let image = ReportRenderer.render(
@@ -116,8 +125,7 @@ enum ReportBuilder {
                     )
                     guard let data = ReportRenderer.jpeg(image) else {
                         Log.report.error("Couldn't encode \(file, privacy: .public)")
-                        files.append(nil)
-                        continue
+                        throw PictureFailed(file: file)
                     }
                     try data.write(to: input.folder.appending(path: file), options: .atomic)
                     files.append(file)
@@ -146,7 +154,8 @@ enum ReportBuilder {
                 for outline in outlines {
                     let best =
                         parts.indices.max { overlap(outline.rect, parts[$0]) < overlap(outline.rect, parts[$1]) } ?? 0
-                    guard files.indices.contains(best), let file = files[best] else { continue }
+                    guard files.indices.contains(best) else { continue }
+                    let file = files[best]
                     let rect = outline.rect.offsetBy(dx: 0, dy: -parts[best].lowerBound)
                     items[outline.number]?.screen = screenID
                     items[outline.number]?.picture = file
@@ -174,20 +183,20 @@ enum ReportBuilder {
             guard let number = numbers[annotation.id] else { continue }
             var files: [String] = []
             for (index, name) in annotation.screenshots.enumerated() {
+                let file = annotation.screenshots.count == 1 ? "note-\(number).jpg" : "note-\(number)-\(index + 1).jpg"
                 guard let image = UIImage(contentsOfFile: input.draft.appending(path: name).path(percentEncoded: false))
                 else {
-                    Log.report.error("Couldn't load attachment \(name, privacy: .public); it's left out of the report")
-                    continue
+                    Log.report.error("Couldn't load attachment \(name, privacy: .public)")
+                    throw PictureFailed(file: file)
                 }
                 // Captures of the app's own screen are sent at the same size as screen pictures.
                 let pointWidth = image.size.width * image.scale / 2
                 let sized =
                     annotation.kind == .photo
                     ? image : ReportRenderer.shrunk(image, maxPixels: (pointWidth * scale).rounded())
-                let file = annotation.screenshots.count == 1 ? "note-\(number).jpg" : "note-\(number)-\(index + 1).jpg"
                 guard let data = ReportRenderer.jpeg(sized) else {
-                    Log.report.error("Couldn't encode \(file, privacy: .public); it's left out of the report")
-                    continue
+                    Log.report.error("Couldn't encode \(file, privacy: .public)")
+                    throw PictureFailed(file: file)
                 }
                 try data.write(to: input.folder.appending(path: file), options: .atomic)
                 files.append(file)

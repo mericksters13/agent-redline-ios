@@ -11,16 +11,50 @@ private enum Mark {
 /// The panel: the devices, then the reports sent.
 struct HubPanel: View {
     let model: HubWindowModel
-    /// The report list's own height.
+    /// The height of the devices and reports.
     ///
-    /// A scroll view in the menu bar panel has no height of its own, so the list sets it, up to a
-    /// limit.
-    @State private var listHeight: CGFloat = 0
+    /// A scroll view in the menu bar panel has no height of its own, so they set it, up to what
+    /// fits on the screen.
+    @State private var contentHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().overlay(Color.white.opacity(0.12))
+            // Devices and reports scroll together, so with many of both the header and the footer's
+            // Open inbox and Quit stay on the screen.
+            ScrollView {
+                content.onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.height
+                } action: { height in
+                    contentHeight = height
+                }
+            }
+            .frame(
+                height: min(
+                    max(contentHeight, 1),
+                    Self.largestContentHeight(screen: NSScreen.main?.visibleFrame.height)
+                )
+            )
+            Divider().overlay(Color.white.opacity(0.12))
+            footer
+        }
+        .frame(width: 400)
+        .background(Color.black)
+        .preferredColorScheme(.dark)
+        .onAppear { model.panelDidOpen() }
+        .onDisappear { model.panelDidClose() }
+    }
+
+    /// The tallest the devices and reports get: 720 points, less on a screen too short for that
+    /// with the header, the footer and some room below.
+    nonisolated static func largestContentHeight(screen: CGFloat?) -> CGFloat {
+        guard let screen else { return 520 }
+        return max(min(720, screen - 160), 120)
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 0) {
             section("Devices")
             if model.devices.isEmpty {
                 Text("No paired iPhone or running simulator.")
@@ -40,30 +74,10 @@ struct HubPanel: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
             } else {
-                ScrollView {
-                    reportList.onGeometryChange(for: CGFloat.self) { proxy in
-                        proxy.size.height
-                    } action: { height in
-                        listHeight = height
-                    }
+                ForEach(model.reports) { report in
+                    ReportRowView(report: report)
+                    Divider().overlay(Color.white.opacity(0.08)).padding(.leading, 84)
                 }
-                .frame(height: min(max(listHeight, 1), 520))
-            }
-            Divider().overlay(Color.white.opacity(0.12))
-            footer
-        }
-        .frame(width: 400)
-        .background(Color.black)
-        .preferredColorScheme(.dark)
-        .onAppear { model.panelDidOpen() }
-        .onDisappear { model.panelDidClose() }
-    }
-
-    private var reportList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(model.reports) { report in
-                ReportRowView(report: report)
-                Divider().overlay(Color.white.opacity(0.08)).padding(.leading, 84)
             }
         }
     }
@@ -117,7 +131,14 @@ struct HubPanel: View {
             }
             Spacer()
             Button {
-                NSApplication.shared.terminate(nil)
+                // The hub stops first, on a thread of its own: it waits for the reports being
+                // handed over to reach their chats, which can take minutes, and the panel shouldn't
+                // freeze meanwhile. Stopping again as the app ends returns at once.
+                let hub = HubAppContext.hub
+                Thread {
+                    hub?.stop()
+                    Task { @MainActor in NSApplication.shared.terminate(nil) }
+                }.start()
             } label: {
                 footerLabel("Quit")
             }

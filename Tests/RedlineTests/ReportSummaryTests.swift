@@ -71,5 +71,31 @@ struct ReportSummaryTests {
             )
         )
     }
+
+    @Test func theElementsHoldingANoteAreNamed() {
+        func container(_ role: String, label: String?, identifier: String?) -> ElementSnapshot {
+            ElementSnapshot(
+                role: role,
+                label: label,
+                value: nil,
+                identifier: identifier,
+                className: nil,
+                isContainer: true,
+                frame: .zero
+            )
+        }
+        var report = Fixtures.report(id: "r")
+        // Unnamed holders don't help find the code, so they're left out.
+        report.items[0].ancestors = [
+            container("Cell", label: "Milestones", identifier: "today.row"),
+            container("Group", label: nil, identifier: nil),
+            container("List", label: nil, identifier: "today.list"),
+        ]
+        #expect(
+            ReportSummary.markdown(report).contains(
+                #"1. **Save** (Button, identifier `save`), in Cell "Milestones" `today.row` in List `today.list`: Cut off. See screen-1.jpg."#
+            )
+        )
+    }
 }
 #endif

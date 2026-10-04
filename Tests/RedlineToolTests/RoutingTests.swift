@@ -59,6 +59,30 @@ struct RoutingTests {
             route(try report(sourceFile: file, pick: nil), [chat("B", "codex", sameWorktree: false)])
                 == .newChat(.claude, folder: folder, pick: nil)
         )
+        // Only an agent that can start a chat is given a new one.
+        let codexOnly = Routing.destination(of: try report(sourceFile: file, pick: nil), bundleID: "com.example.app") {
+            _,
+            _ in
+            HubMessage.ChatList(agents: ["claude", "codex"], chats: [], newChats: ["codex"])
+        }
+        #expect(codexOnly == .newChat(.codex, folder: folder, pick: nil))
+        // A new chat starts with the agent last used on the app, while it can start one.
+        let lastCodex = Routing.destination(
+            of: try report(sourceFile: file, pick: nil),
+            bundleID: "com.example.app",
+            lastAgent: "codex"
+        ) { _, _ in
+            HubMessage.ChatList(agents: ["claude", "codex"], chats: [])
+        }
+        #expect(lastCodex == .newChat(.codex, folder: folder, pick: nil))
+        let codexGone = Routing.destination(
+            of: try report(sourceFile: file, pick: nil),
+            bundleID: "com.example.app",
+            lastAgent: "codex"
+        ) { _, _ in
+            HubMessage.ChatList(agents: ["claude", "codex"], chats: [], newChats: ["claude"])
+        }
+        #expect(codexGone == .newChat(.claude, folder: folder, pick: nil))
         // Several chats in the worktree and no pick: no guessing.
         if case .undecided = route(
             try report(sourceFile: file, pick: nil),
@@ -71,6 +95,36 @@ struct RoutingTests {
         } else {
             Issue.record("A report without its worktree should be undecided")
         }
+    }
+
+    @Test func aRestartedHubReplaysPromisedReportsHoweverOld() throws {
+        let old = Date.now.addingTimeInterval(-86_400)
+        let source = ReportSource(
+            kind: .phone,
+            device: "D",
+            deviceName: "Test iPhone",
+            bundleID: "com.example.app",
+            reportID: "r",
+            receivedAt: old
+        )
+        func waiting(_ folder: URL, claim: Claim? = nil) -> InboxReport {
+            InboxReport(folder: folder, source: source, claim: claim)
+        }
+        // Sent nowhere: only while recent, since a chat started for it a day later would surprise.
+        let unpicked = try report(sourceFile: "/w/App.swift", pick: nil)
+        #expect(!Handoff.isReplayed(waiting(unpicked), within: 3600))
+        #expect(Handoff.isReplayed(waiting(unpicked), within: 3600, now: old.addingTimeInterval(60)))
+        // Picked on the phone, or cut off mid hand-over: however old.
+        let picked = try report(sourceFile: "/w/App.swift", pick: ["agent": "codex", "chat": "c1"])
+        #expect(Handoff.isReplayed(waiting(picked), within: 3600))
+        let cutOff = Claim(chat: "claude-s1", agent: "claude", folder: "/w", claimedAt: old, handingOverIn: Int32.max)
+        #expect(Handoff.isReplayed(waiting(unpicked, claim: cutOff), within: 3600))
+        // A pick for an agent the hub doesn't send reports to isn't a promise.
+        let elsewhere = try report(sourceFile: "/w/App.swift", pick: ["agent": "cursor", "chat": "c1"])
+        #expect(!Handoff.isReplayed(waiting(elsewhere), within: 3600))
+        // Addressed to a chat: its hooks take it.
+        try Inbox.setRecipient(ReportRecipient(chat: "codex-c1", agent: "codex", folder: "/w"), of: picked)
+        #expect(!Handoff.isReplayed(waiting(picked), within: 3600))
     }
 }
 #endif

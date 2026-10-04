@@ -202,6 +202,13 @@ final class DebugSession {
     /// The app can't move while the debugger takes every touch, so these are on the current
     /// screen even when it has no title.
     @ObservationIgnored private var notesThisVisit: Set<UUID> = []
+    /// The view controller showing the screen that was last read.
+    @ObservationIgnored private weak var screenController: UIViewController?
+    /// The view controller each note made since launch was taken on.
+    ///
+    /// Held weakly, so once that screen closes its notes match no other screen, even one with the
+    /// same title.
+    @ObservationIgnored private let noteControllers = NSMapTable<NSUUID, UIViewController>.strongToWeakObjects()
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var thumbnails: [UUID: UIImage] = [:]
     /// Full-size images for the viewer, kept for the few around the one showing.
@@ -266,6 +273,9 @@ final class DebugSession {
         self.window = window
         displayCornerRadius = Self.displayCornerRadius(of: scene.screen)
 
+        // A report cut short last time, such as by the app being killed while it was drawn, puts
+        // its notes back in the draft.
+        store.recoverInterruptedReports()
         annotations = loadDraftFile(store.draftFile, named: "notes") { try store.loadDraft() }
         screens = loadDraftFile(store.screensFile, named: "screens") { try store.loadScreens() }
         observeKeyboard()
@@ -368,15 +378,25 @@ final class DebugSession {
 
     func enterPicking() {
         guard mode == .idle, window != nil else { return }
-        // A list still gliding from a scroll would keep moving after the screen is
-        // read, leaving every outline behind. Stop it, let it settle, then read.
-        AppWindows.stopScrolling(in: appWindows())
+        // A list still moving would leave every outline behind once the screen is read. A fling
+        // the user started is stopped where it is. A scroll the app animates itself is left to
+        // reach the place the app sent it, so wait, up to half a second, until no scroll view
+        // moves from one frame to the next.
+        let scrollViews = AppWindows.scrollViews(in: appWindows())
+        AppWindows.stopScrolling(scrollViews)
         levels = []
         notesThisVisit = []
         setMode(.picking)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         Task {
             try? await Task.sleep(for: .milliseconds(60))
+            var positions = AppWindows.scrollPositions(of: scrollViews)
+            for _ in 0..<27 where !Task.isCancelled && mode == .picking {
+                try? await Task.sleep(for: .milliseconds(16))
+                let next = AppWindows.scrollPositions(of: scrollViews)
+                if next == positions { break }
+                positions = next
+            }
             guard !Task.isCancelled, mode == .picking else { return }
             readScreen()
         }
@@ -448,6 +468,12 @@ final class DebugSession {
                 guard var ready = self.pending, ready.id == id else { return }
                 // None loaded: attachPhotos's own task cancels the note.
                 guard !images.isEmpty else { return }
+                // Fewer images than were chosen: the note box stays open and says so, so Add
+                // saves the rest only once the user has seen which are missing.
+                guard images.count == pending.count else {
+                    self.pending?.isSaving = false
+                    return
+                }
                 ready.images = images
                 ready.loading = nil
                 saveAttachment(ready, note: note)
@@ -491,6 +517,7 @@ final class DebugSession {
         }
         thumbnails[id] = Self.crop(screenshot, around: element.frame)
         notesThisVisit.insert(id)
+        if let screenController { noteControllers.setObject(screenController, forKey: id as NSUUID) }
         annotations.append(annotation)
         pruneCaptures()
         fullImages.removeAllObjects()
@@ -752,6 +779,11 @@ final class DebugSession {
             guard !images.isEmpty else {
                 logger.error("None of the chosen photos could be loaded")
                 cancelNote()
+                showFailure(
+                    count == 1
+                        ? "Couldn't load the photo. Try choosing it again."
+                        : "Couldn't load the photos. Try choosing them again."
+                )
                 return
             }
             if images.count < count { logger.error("Loaded \(images.count) of \(count) chosen photos") }
@@ -767,6 +799,11 @@ final class DebugSession {
             pending?.previews = shown
             pending?.count = images.count
             pending?.loading = nil
+            let missing = count - images.count
+            if missing > 0 {
+                noteError =
+                    "\(missing) of the \(count) photos couldn't be loaded. Add attaches the other \(images.count)."
+            }
         }
     }
 
@@ -845,16 +882,21 @@ final class DebugSession {
                 offered: offeredPhotoIDs,
                 inAppCaptures: inAppCaptureDates
             ),
+            pick.id != loadingPhotoID,
             let asset = assets.first(where: { $0.localIdentifier == pick.id })
         else { return }
-        markOffered(pick.id)
+        // Noted as offered only once it's shown: one still in iCloud, that doesn't load, or that
+        // loads while the debugger is busy is offered again on a later activation.
+        loadingPhotoID = pick.id
         Task {
+            defer { if loadingPhotoID == pick.id { loadingPhotoID = nil } }
             // Another screenshot may have been offered while this one loaded; it stays.
             guard let image = await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels),
                 mode == .idle || mode == .picking, suggestion == nil
             else { return }
             let preview = await image.byPreparingThumbnail(ofSize: Self.cardPreviewSize(of: image)) ?? image
             guard mode == .idle || mode == .picking, suggestion == nil else { return }
+            markOffered(pick.id)
             offer(Suggestion(image: image, preview: preview, kind: .photo, screen: nil))
         }
     }
@@ -875,18 +917,20 @@ final class DebugSession {
     // MARK: - Handing reports to the Mac
 
     /// When the app comes back, offers what the Mac hasn't confirmed, such as a report sent from
-    /// another network.
+    /// another network, or one sent before any Mac had set this app up.
     ///
-    /// Only after a report has reached the hub once, so iOS's local network question is never asked
-    /// at launch.
+    /// Nothing reaches the network without a report the user sent and a hub's address, so iOS's
+    /// local network question is asked at launch only for a report the user is waiting on.
     private func offerUndeliveredReports() {
-        guard UserDefaults.standard.bool(forKey: ReportDelivery.hubReachedKey) else { return }
+        let patience = ReportDelivery.patience
         Task(priority: .utility) { [store] in
-            _ = await ReportDelivery.deliver(from: store, bundleID: Bundle.main.bundleIdentifier, patience: 8)
+            _ = await ReportDelivery.deliver(from: store, bundleID: Bundle.main.bundleIdentifier, patience: patience)
         }
     }
 
     private static let offeredPhotosKey = "RedlineOfferedScreenshots"
+    /// The screenshot being loaded to offer, so a second activation meanwhile doesn't load it too.
+    @ObservationIgnored private var loadingPhotoID: String?
     private static let inAppCapturesKey = "RedlineInAppScreenshots"
 
     private var offeredPhotoIDs: Set<String> {
@@ -930,16 +974,24 @@ final class DebugSession {
 
     /// The pick saved for this build.
     ///
-    /// One that can't be read is forgotten, so the picker opens again.
+    /// One that can't be read, or that names an agent the Mac no longer sends reports to, is
+    /// forgotten, so the picker opens again.
     private func savedDestination() -> Report.Destination? {
         guard let data = UserDefaults.standard.data(forKey: destinationKey) else { return nil }
+        let saved: Report.Destination
         do {
-            return try Self.destinationDecoder.decode(Report.Destination.self, from: data)
+            saved = try Self.destinationDecoder.decode(Report.Destination.self, from: data)
         } catch {
             logger.error("Couldn't read the saved destination: \(error.localizedDescription, privacy: .public)")
             UserDefaults.standard.removeObject(forKey: destinationKey)
             return nil
         }
+        guard saved.isForSupportedAgent else {
+            logger.notice("Forgot the saved destination: reports no longer go to \(saved.agent, privacy: .public)")
+            UserDefaults.standard.removeObject(forKey: destinationKey)
+            return nil
+        }
+        return saved
     }
 
     /// Opens the picker and asks the Mac for its chats. `thenSend` when opened from Send.
@@ -983,6 +1035,10 @@ final class DebugSession {
             {
                 pickerChoice = nil
             }
+            // Nor a new chat with an agent the Mac can no longer start one with.
+            if let choice = pickerChoice, choice.chat == nil, !list.startsNewChats(choice.agent) {
+                pickerChoice = nil
+            }
             if pickerChoice == nil, let here = list.chats.first(where: \.isSameWorktree) {
                 pickerChoice = Report.Destination(agent: here.agent, chat: here.id, title: here.title)
             }
@@ -1015,6 +1071,11 @@ final class DebugSession {
             } catch {
                 logger.error("Couldn't save the destination: \(error.localizedDescription, privacy: .public)")
             }
+        } else if case .loaded = chatList {
+            // The Mac answered and no longer offers the saved pick: forget it, so the report
+            // goes where the Mac routes it instead of to a chat that's gone.
+            destination = nil
+            UserDefaults.standard.removeObject(forKey: destinationKey)
         }
         let thenSend = sendsAfterChoosingDestination
         sendsAfterChoosingDestination = false
@@ -1112,6 +1173,17 @@ final class DebugSession {
                     logger: logger
                 )
                 show(Toast(message: ReportDelivery.toast(for: outcome, notes: notes, to: destination?.title)))
+            } catch let tooLarge as ReportStore.TooLarge {
+                logger.error(
+                    "The report is \(tooLarge.bytes) bytes, over the \(ReportStore.largestReport) the Mac takes"
+                )
+                let megabytes = (tooLarge.bytes + 999_999) / 1_000_000
+                restoreDraft(
+                    from: input,
+                    because: "The report is \(megabytes) MB; the Mac takes up to "
+                        + "\(ReportStore.largestReport / 1_000_000) MB. Its notes are back in the draft. "
+                        + "Remove some photos, then send."
+                )
             } catch {
                 logger.error("Couldn't save the report: \(error.localizedDescription, privacy: .public)")
                 restoreDraft(from: input)
@@ -1120,8 +1192,11 @@ final class DebugSession {
     }
 
     /// Puts the notes of a report that couldn't be finished back into the draft, ahead of any made
-    /// since, so they can be sent again.
-    private func restoreDraft(from input: ReportBuilder.Input) {
+    /// since, so they can be sent again, and says why with `message`.
+    private func restoreDraft(
+        from input: ReportBuilder.Input,
+        because message: String = "Couldn't save the report. Its notes are back in the draft."
+    ) {
         let before = screens
         do {
             try store.reclaimPictures(from: input.folder)
@@ -1145,7 +1220,7 @@ final class DebugSession {
         annotations = restored
         store.discardReport(input.folder)
         refreshMarkers()
-        showFailure("Couldn't save the report. Its notes are back in the draft.")
+        showFailure(message)
     }
 
     /// Draws the report's pictures, writes it, then hands every report the Mac hasn't confirmed to
@@ -1160,6 +1235,7 @@ final class DebugSession {
         logger: Logger
     ) async throws -> HubLink.Outcome? {
         let report = try ReportBuilder.build(input)
+        try store.checkSize(of: report, in: folder)
         try store.finishReport(report, in: folder)
         logger.notice("Report saved at \(folder.path(percentEncoded: false), privacy: .public)")
         return await ReportDelivery.deliver(
@@ -1760,11 +1836,10 @@ final class DebugSession {
         let appWindows = self.appWindows()
         // Found once and shared: finding them walks a presented sheet's tree.
         let roots = AccessibilityTree.visibleRoots(in: appWindows)
+        let screenWindow = appWindows.first(where: \.isKeyWindow) ?? appWindows.last
         elements = AccessibilityTree.elements(under: roots, screenBounds: window.bounds)
-        screen = AccessibilityTree.screen(
-            of: appWindows.first(where: \.isKeyWindow) ?? appWindows.last,
-            elements: elements
-        )
+        screen = AccessibilityTree.screen(of: screenWindow, elements: elements)
+        screenController = AccessibilityTree.topController(of: screenWindow)
         screenshot = AppWindows.screenshot(of: appWindows, bounds: window.bounds)
         scrollState = AppWindows.mainScrollState(under: roots, screenBounds: window.bounds)
         readSize = window.bounds.size
@@ -1773,12 +1848,18 @@ final class DebugSession {
 
     /// Markers go on notes made on this screen.
     ///
-    /// Without a title, two screens of the same kind look alike (SwiftUI routes share one hosting
-    /// controller type), so only notes added since pick mode opened count as this screen's.
+    /// Notes added since pick mode opened always count, since the app can't move while the
+    /// debugger takes every touch. An earlier note counts only when it was taken on the very view
+    /// controller showing now, with the same title: two SwiftUI destinations can share a title and
+    /// a hosting controller type, and one untitled controller can show several screens in turn.
+    /// Notes from an earlier launch get no marker, since nothing ties them to a screen open now.
     private func refreshMarkers() {
         let found = annotations.enumerated().compactMap { index, annotation -> Marker? in
+            let isSameController =
+                screenController.map { noteControllers.object(forKey: annotation.id as NSUUID) === $0 } ?? false
             let sameScreen =
-                notesThisVisit.contains(annotation.id) || (screen.title != nil && annotation.screen == screen)
+                notesThisVisit.contains(annotation.id)
+                || (isSameController && screen.title != nil && annotation.screen == screen)
             guard let element = annotation.element, sameScreen,
                 let match = ElementSelection.match(element, in: elements)
             else { return nil }

@@ -57,7 +57,9 @@ struct Claim: Codable, Equatable, Sendable {
 
     /// True when the process handing the report over ended before the chat had it, such as when it
     /// crashed: the report is free for another chat to take.
-    var isInterrupted: Bool { handingOverIn.map { !Chats.isRunning($0) } ?? false }
+    ///
+    /// A process that started after the claim only reuses the PID, so it doesn't hold the report.
+    var isInterrupted: Bool { handingOverIn.map { !Chats.isRunning($0, since: claimedAt) } ?? false }
 }
 
 /// Open chats, each as a file under `hub/chats/`, written by its MCP copy.

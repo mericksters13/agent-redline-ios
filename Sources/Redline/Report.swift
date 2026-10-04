@@ -33,6 +33,13 @@ struct Report: Codable, Sendable {
         /// until the user picks again.
         var newChat: String? = nil
 
+        /// The agents the Mac sends reports to.
+        static let supportedAgents: Set<String> = ["claude", "codex"]
+
+        /// False for a pick of an agent the Mac doesn't send reports to, such as one saved by an
+        /// earlier version that offered an agent no longer supported.
+        var isForSupportedAgent: Bool { Self.supportedAgents.contains(agent) }
+
         /// The same choice in the picker: the same chat, or "New chat" for the same agent.
         func isSameChoice(as other: Destination?) -> Bool {
             other?.agent == agent && other?.chat == chat

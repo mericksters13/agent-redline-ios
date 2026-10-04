@@ -113,6 +113,34 @@ struct AgentSettingsTests {
         #expect(try Data(contentsOf: file) == original)
     }
 
+    @Test func hooksFromBeforeTheRenameAreReplacedAndRemoved() throws {
+        // Installed as agentic-debugging, from a folder with an apostrophe, before the rename.
+        let old = AgentSettings.adding(
+            .codex,
+            to: codexSettings,
+            executable: "/Users/someone/Someone's tools/agentic-debugging"
+        )
+        var settings = old
+        var events = try #require(settings["hooks"] as? [String: Any])
+        events["SessionStart"] = [
+            [
+                "hooks": [
+                    ["type": "command", "command": "'/Users/someone/.local/bin/agentic-debugging' hook codex start"]
+                ]
+            ]
+        ]
+        settings["hooks"] = events
+        // Setup replaces them rather than adding a second hook.
+        let added = AgentSettings.adding(.codex, to: settings, executable: executable)
+        #expect(commands(added, "UserPromptSubmit") == ["'\(executable)' hook codex prompt"])
+        #expect(commands(added, "SessionStart").isEmpty)
+        // Remove takes them out too.
+        #expect(
+            try sortedJSON(AgentSettings.removing(from: settings, executable: executable))
+                == sortedJSON(codexSettings)
+        )
+    }
+
     @Test func aHookFromAFolderWithAnApostropheIsStillRecognized() throws {
         let executable = "/Users/someone/Someone's tools/redline"
         let added = AgentSettings.adding(.codex, to: codexSettings, executable: executable)

@@ -50,23 +50,39 @@ enum HubProcess {
     /// scripts/build-hub-app.sh puts it by default, or wherever else Launch Services knows it by its
     /// identifier, such as /Applications.
     ///
-    /// Checks the disk.
+    /// With more than one copy, the newest build. Checks the disk.
     static func installedApp() -> URL? {
         let home = AgentSettings.homeDirectory().appending(path: "Applications/Redline.app")
-        if FileManager.default.fileExists(atPath: home.path) { return home }
-        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID)
-            .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+        return newestApp(among: [home] + NSWorkspace.shared.urlsForApplications(withBundleIdentifier: appBundleID))
     }
 
-    /// Starts the hub: the menu bar app when it's installed, else this command in its own
-    /// session, so it keeps running after the chat that started it closes, with nothing attached
-    /// to the chat's input and output.
-    static func startIfNeeded(_ paths: HubPaths) {
+    /// The copy whose program was built last.
+    ///
+    /// Every build has the same version, so a copy left in one folder by an earlier install would
+    /// otherwise be as likely to open as the one installed since in another. Copies in the Trash
+    /// and missing copies don't count.
+    static func newestApp(among copies: [URL]) -> URL? {
+        let dated = copies.compactMap { app -> (app: URL, builtAt: Date)? in
+            let program = app.appending(path: "Contents/MacOS/redline")
+            guard !app.standardizedFileURL.pathComponents.contains(".Trash"),
+                let builtAt = (try? FileManager.default.attributesOfItem(atPath: program.path))?[.modificationDate]
+                    as? Date
+            else { return nil }
+            return (app, builtAt)
+        }
+        return dated.max { $0.builtAt < $1.builtAt }?.app
+    }
+
+    /// Starts the hub, watching `apps` besides the open chats' apps: the menu bar app when it's
+    /// installed, else this command in its own session, so it keeps running after the chat that
+    /// started it closes, with nothing attached to the chat's input and output.
+    static func startIfNeeded(_ paths: HubPaths, apps: [String] = []) {
         guard running(paths) == nil else { return }
+        let appArguments = apps.flatMap { ["--app", $0] }
         if let app = installedApp() {
             let open = Process()
             open.executableURL = URL(filePath: "/usr/bin/open")
-            open.arguments = ["-g", app.path]
+            open.arguments = ["-g", app.path] + (apps.isEmpty ? [] : ["--args", "app"] + appArguments)
             do {
                 try open.run()
             } catch {
@@ -96,7 +112,7 @@ enum HubProcess {
             else { return }
         }
         var pid: pid_t = 0
-        let arguments = [executable, "hub"]
+        let arguments = [executable, "hub"] + appArguments
         var argv = arguments.map { strdup($0) } + [nil]
         defer {
             for argument in argv { free(argument) }

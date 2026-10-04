@@ -21,9 +21,18 @@ enum Routing {
         ReportListing.load(from: report)?.app?.sourceFile.map(Worktree.root(of:))
     }
 
+    /// The user's pick, saved with the report on the phone; nil when there's none, or when it names
+    /// an agent the hub doesn't send reports to.
+    static func pick(of report: URL) -> ReportListing.Pick? {
+        ReportListing.load(from: report)?.destination.flatMap { Agent(rawValue: $0.agent) == nil ? nil : $0 }
+    }
+
+    /// Where a report goes. `lastAgent` is the agent last used on the app: a new chat starts with
+    /// it while it can start one, else with the first agent that can.
     static func destination(
         of report: URL,
         bundleID: String,
+        lastAgent: String? = nil,
         list: (_ bundleID: String, _ sourceFile: String?) -> HubMessage.ChatList
     ) -> ReportDestination {
         // A listing without its app reads as if there were none, as it always has.
@@ -44,7 +53,10 @@ enum Routing {
         if here.count == 1, let chat = here.first, let agent = Agent(rawValue: chat.agent) {
             return .chat(agent, id: chat.id)
         }
-        if here.isEmpty, let agent = directory.agents.first.flatMap(Agent.init(rawValue:)) {
+        let startable = directory.newChats ?? directory.agents
+        if here.isEmpty,
+            let agent = (startable.first { $0 == lastAgent } ?? startable.first).flatMap(Agent.init(rawValue:))
+        {
             return .newChat(agent, folder: worktree, pick: nil)
         }
         return .undecided(

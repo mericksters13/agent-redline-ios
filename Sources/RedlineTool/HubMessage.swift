@@ -96,6 +96,8 @@ enum HubMessage {
         var worktree: String?
         /// The branch a new chat's worktree starts from, such as "main".
         var newChatBase: String? = nil
+        /// The agents whose command is on this Mac to start a new chat; nil for every agent.
+        var newChats: [String]? = nil
         /// Why the request was turned down, when it was.
         var refused: String?
     }
@@ -104,8 +106,18 @@ enum HubMessage {
     /// where the kit's ReportStore keeps its files.
     static let kitFolder = "Library/Application Support/Redline"
 
+    /// The kit's folder in a build from before the rename.
+    static let earlierKitFolder = "Library/Application Support/iOSAgenticDebuggingKit"
+
     /// Where the kit looks for the hub's address, inside an app's data container.
     static let addressPath = kitFolder + "/hub.json"
+
+    /// Where a build from before the rename looks for it.
+    ///
+    /// The hub leaves the address there as well, so such a build installed after the Mac tool is
+    /// updated still reaches the hub. A build with the new name removes that file when it moves its
+    /// old folder over.
+    static let earlierAddressPath = earlierKitFolder + "/hub.json"
 
     /// How every line is written: sorted keys, slashes as they are, ISO 8601 dates, as the kit's
     /// HubLink writes them.

@@ -38,12 +38,24 @@ struct ReportListing: Decodable {
             var identifier: String?
             var label: String?
             var role: String?
+
+            /// `Cell "Milestones" (today.list)`; nil for an element with no label or identifier.
+            var description: String? {
+                guard label != nil || identifier != nil else { return nil }
+                return [role, label.map { "\"\($0)\"" }, identifier.map { "(\($0))" }].compactMap { $0 }.joined(
+                    separator: " "
+                )
+            }
         }
 
         var number: Int?
         var title: String?
         var note: String?
         var element: Element?
+        /// The elements holding it, innermost first.
+        ///
+        /// Missing in reports from before they were saved.
+        var ancestors: [Element]?
         var screenTitle: String?
         var attachments: [String]?
     }

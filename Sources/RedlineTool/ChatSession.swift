@@ -77,42 +77,59 @@ final class ChatSession: Sendable {
     /// Takes the reports sent to this chat, as text with pictures named by path, for agents that
     /// get reports through hooks.
     ///
-    /// Nil when there's none.
-    func takeAddressed() -> String? {
+    /// Nil when there's none. The reports stay claimed by this process until the caller has
+    /// written the text out and calls `settle`.
+    func takeAddressed() -> (text: String, reports: [InboxReport])? {
         let chat = self.chat
         var texts: [String] = []
+        var taken: [InboxReport] = []
         for report in Inbox.reportsAddressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths) {
             guard case .claimed = Inbox.claim(report, for: chat) else { continue }
             texts.append(ReportContent.text(for: report))
-            handedOver(report)
+            taken.append(report)
         }
-        return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
+        return taken.isEmpty ? nil : (texts.joined(separator: "\n\n"), taken)
     }
 
-    /// Takes the reports waiting for this chat's apps, oldest first.
+    /// Takes the reports waiting for this chat's apps that were sent to it or sent nowhere, oldest
+    /// first.
     ///
-    /// Always takes at least one waiting report; takes more while their text and pictures fit in
-    /// `budget` bytes.
-    func take(budget: Int) -> (items: [ReportContent.Item], taken: Int, remaining: Int) {
+    /// Always takes at least one such report; takes more while their text and pictures fit in
+    /// `budget` bytes. The reports stay claimed by this process until the caller has written the
+    /// items out and calls `settle`.
+    func take(budget: Int) -> (items: [ReportContent.Item], reports: [InboxReport], remaining: Int) {
         let chat = self.chat
         var items: [ReportContent.Item] = []
         var used = 0
-        var taken = 0
+        var taken: [InboxReport] = []
         var lookedAt = 0
-        let waiting = Inbox.unclaimedReports(for: chat.bundleIDs, paths: paths)
+        let waiting = Inbox.takeableReports(by: chat, paths: paths)
         for report in waiting {
             // Another report's text, however long, must fit too.
-            if taken > 0, budget - used < ReportContent.longestText { break }
+            if !taken.isEmpty, budget - used < ReportContent.longestText { break }
             lookedAt += 1
             // Another chat may have taken it a moment ago.
             guard case .claimed = Inbox.claim(report, for: chat) else { continue }
             let content = ReportContent.items(for: report, budget: max(budget - used, 0))
-            handedOver(report)
             items += content.items
             used += content.bytes
-            taken += 1
+            taken.append(report)
         }
         return (items, taken, waiting.count - lookedAt)
+    }
+
+    /// Settles reports this process took: they're the chat's once what carries them was written
+    /// out (`isDelivered`); otherwise they're freed for the chat to take again.
+    static func settle(_ reports: [InboxReport], isDelivered: Bool) {
+        for report in reports {
+            do {
+                if isDelivered { try Inbox.handedOver(report) } else { try Inbox.release(report) }
+            } catch {
+                printError(
+                    "Couldn't settle report \(report.source.reportID) for the chat: \(error.localizedDescription)"
+                )
+            }
+        }
     }
 
     /// How long a chat that wasn't used most recently waits for the one that was to take a
@@ -146,7 +163,7 @@ final class ChatSession: Sendable {
             _ = waiter.signal.wait(timeout: .now() + Self.deferToRecentChat)
             if waiter.isCancelled { return false }
             // Still there: the more recent chat didn't take it.
-            if !Inbox.unclaimedReports(for: chat.bundleIDs, paths: paths).isEmpty { return true }
+            if !Inbox.takeableReports(by: chat, paths: paths).isEmpty { return true }
         }
     }
 
@@ -171,14 +188,14 @@ final class ChatSession: Sendable {
         }
     }
 
-    /// Waits until a report for this chat's apps is waiting, `timeout` passes or the waiter is
+    /// Waits until a report this chat may take is waiting, `timeout` passes or the waiter is
     /// cancelled.
     ///
     /// Woken by the inbox changing, not by checking on a timer. True when one is waiting.
     func waitForReport(timeout: TimeInterval?, waiter: Waiter) -> Bool {
         let chat = self.chat
         return wait(timeout: timeout, waiter: waiter) {
-            !Inbox.unclaimedReports(for: chat.bundleIDs, paths: self.paths).isEmpty
+            !Inbox.takeableReports(by: chat, paths: self.paths).isEmpty
         }
     }
 
@@ -219,17 +236,6 @@ final class ChatSession: Sendable {
             }
             // One report makes several inbox changes; one scan covers them all.
             while waiter.signal.wait(timeout: .now()) == .success {}
-        }
-    }
-
-    /// Notes that the chat has a report it claimed, so the claim stands for good.
-    private func handedOver(_ report: InboxReport) {
-        do {
-            try Inbox.handedOver(report)
-        } catch {
-            printError(
-                "Couldn't note that report \(report.source.reportID) was handed over: \(error.localizedDescription)"
-            )
         }
     }
 

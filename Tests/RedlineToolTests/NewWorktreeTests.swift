@@ -70,6 +70,18 @@ struct NewWorktreeTests {
         #expect(StartedChats.find("N2", paths: paths) == nil)
         try FileManager.default.removeItem(atPath: made)
         #expect(StartedChats.find("N1", paths: paths) == nil)
+        // Chats started for different picks that finish together are all remembered.
+        let paths = self.paths
+        DispatchQueue.concurrentPerform(iterations: 40) { index in
+            #expect(throws: Never.self) {
+                try StartedChats.remember(
+                    StartedChat(chat: "s-\(index)", folder: source, startedAt: .now),
+                    for: "P\(index)",
+                    paths: paths
+                )
+            }
+        }
+        #expect(StartedChats.all(paths).count == 41)
     }
 }
 #endif

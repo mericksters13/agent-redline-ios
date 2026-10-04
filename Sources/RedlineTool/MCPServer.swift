@@ -9,7 +9,9 @@ import Synchronization
 final class MCPServer: Sendable {
     let session: ChatSession
     /// Writes one response line; standard output unless a test passes its own.
-    private let write: @Sendable (Data) -> Void
+    ///
+    /// Throws when the line couldn't be written.
+    private let write: @Sendable (Data) throws -> Void
     /// Waits in progress, by request ID, so a cancel notification can stop one.
     private let waiters = Mutex<[String: ChatSession.Waiter]>([:])
     /// Answers every request except waits, one at a time, in order.
@@ -43,7 +45,7 @@ final class MCPServer: Sendable {
 
     init(
         session: ChatSession,
-        write: @escaping @Sendable (Data) -> Void = { try? FileHandle.standardOutput.write(contentsOf: $0) }
+        write: @escaping @Sendable (Data) throws -> Void = { try FileHandle.standardOutput.write(contentsOf: $0) }
     ) {
         self.session = session
         self.write = write
@@ -81,13 +83,21 @@ final class MCPServer: Sendable {
             Thread {
                 defer { self.inFlight.leave() }
                 defer { _ = self.waiters.withLock { $0.removeValue(forKey: key) } }
-                self.send(self.respond(to: request.message, waiter: waiter))
+                self.reply(self.respond(to: request.message, waiter: waiter))
             }.start()
             return
         }
         work.async(group: inFlight) {
-            self.send(self.respond(to: request.message))
+            self.reply(self.respond(to: request.message))
         }
+    }
+
+    /// Writes a response out.
+    ///
+    /// The reports it carries are the chat's once it's written; otherwise they're freed for the chat
+    /// to take again.
+    private func reply(_ response: (message: [String: Any], reports: [InboxReport])) {
+        ChatSession.settle(response.reports, isDelivered: send(response.message))
     }
 
     /// The chat closed its end: stops any waits, answers what's in flight, then unregisters.
@@ -112,41 +122,45 @@ final class MCPServer: Sendable {
         id is String ? "s:\(id)" : "n:\(id)"
     }
 
-    /// The response to one request. `waiter` stops a wait early; the server passes the one it
+    /// The response to one request, and the reports it hands over, which this process holds until
+    /// the response is written out. `waiter` stops a wait early; the server passes the one it
     /// registered for the request.
-    func respond(to message: [String: Any], waiter: ChatSession.Waiter = ChatSession.Waiter()) -> [String: Any] {
+    func respond(
+        to message: [String: Any],
+        waiter: ChatSession.Waiter = ChatSession.Waiter()
+    ) -> (message: [String: Any], reports: [InboxReport]) {
         let id = message["id"] ?? NSNull()
         let params = message["params"] as? [String: Any] ?? [:]
         switch message["method"] as? String {
         case "initialize":
             let client = (params["clientInfo"] as? [String: Any])?["name"] as? String
             session.register(agent: client ?? "unknown")
-            return response(
-                id: id,
-                result: [
-                    "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
-                    "capabilities": ["tools": [String: Any]()],
-                    "serverInfo": ["name": "redline", "version": version],
-                    "instructions": Self.instructions,
-                ]
-            )
+            let result: [String: Any] = [
+                "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
+                "capabilities": ["tools": [String: Any]()],
+                "serverInfo": ["name": "redline", "version": version],
+                "instructions": Self.instructions,
+            ]
+            return (response(id: id, result: result), [])
         case "ping":
-            return response(id: id, result: [String: Any]())
+            return (response(id: id, result: [String: Any]()), [])
         case "tools/list":
-            return response(id: id, result: ["tools": Self.tools])
+            return (response(id: id, result: ["tools": Self.tools]), [])
         case "tools/call":
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             switch params["name"] as? String {
             case "check_messages":
-                return response(id: id, result: takeReports())
+                let taken = takeReports()
+                return (response(id: id, result: taken.content), taken.reports)
             case "wait_for_message":
                 let seconds = (arguments["timeout_seconds"] as? NSNumber)?.doubleValue ?? Self.defaultWait
-                return response(id: id, result: wait(seconds: min(max(seconds, 1), Self.longestWait), waiter: waiter))
+                let taken = wait(seconds: min(max(seconds, 1), Self.longestWait), waiter: waiter)
+                return (response(id: id, result: taken.content), taken.reports)
             default:
-                return errorResponse(id: id, code: -32602, message: "Unknown tool")
+                return (errorResponse(id: id, code: -32602, message: "Unknown tool"), [])
             }
         default:
-            return errorResponse(id: id, code: -32601, message: "Method not found")
+            return (errorResponse(id: id, code: -32601, message: "Method not found"), [])
         }
     }
 
@@ -181,20 +195,22 @@ final class MCPServer: Sendable {
         ]
     }
 
-    private func takeReports() -> [String: Any] {
+    /// The reports waiting for the chat as a tool result, and the reports it carries.
+    private func takeReports() -> (content: [String: Any], reports: [InboxReport]) {
         session.touch()
         let chat = session.chat
         guard !chat.bundleIDs.isEmpty else {
-            return text(
+            let content = text(
                 """
                 No app found for this project: no PRODUCT_BUNDLE_IDENTIFIER in an Xcode project or project.yml under \(chat.folder). \
                 Add `--app <bundle ID>` to this MCP server's arguments.
                 """
             )
+            return (content, [])
         }
         let taken = session.take(budget: Self.budget)
-        guard taken.taken > 0 else {
-            return text("No reports waiting for \(chat.bundleIDs.joined(separator: ", ")).")
+        guard !taken.reports.isEmpty else {
+            return (text("No reports waiting for \(chat.bundleIDs.joined(separator: ", "))."), [])
         }
         var content = taken.items.map(Self.encode)
         if taken.remaining > 0 {
@@ -204,14 +220,17 @@ final class MCPServer: Sendable {
                     "\(taken.remaining) more \(taken.remaining == 1 ? "report is" : "reports are") waiting. Call check_messages again.",
             ])
         }
-        return ["content": content]
+        return (["content": content], taken.reports)
     }
 
     /// Runs on a thread of its own, started for this request.
-    private func wait(seconds: TimeInterval, waiter: ChatSession.Waiter) -> [String: Any] {
+    private func wait(
+        seconds: TimeInterval,
+        waiter: ChatSession.Waiter
+    ) -> (content: [String: Any], reports: [InboxReport]) {
         session.touch()
         guard session.waitForReport(timeout: seconds, waiter: waiter) else {
-            return text("No report arrived in \(Int(seconds)) seconds.")
+            return (text("No report arrived in \(Int(seconds)) seconds."), [])
         }
         return takeReports()
     }
@@ -228,11 +247,19 @@ final class MCPServer: Sendable {
         waiters.withLock { $0[Self.key(request)] }?.cancel()
     }
 
-    private func send(_ message: [String: Any]) {
+    /// Writes a message out.
+    ///
+    /// False when it couldn't be.
+    private func send(_ message: [String: Any]) -> Bool {
         guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) else {
-            return
+            return false
         }
-        outputQueue.sync { write(data + Data("\n".utf8)) }
+        do {
+            try outputQueue.sync { try write(data + Data("\n".utf8)) }
+            return true
+        } catch {
+            return false
+        }
     }
 
     private func response(id: Any, result: [String: Any]) -> [String: Any] {

@@ -163,8 +163,12 @@ struct NoteViewer: View {
     private func page(_ page: Page, isNear: Bool) -> some View {
         let number = page.number
         if isNear, let image = session.fullImage(for: page.annotation, at: page.index) {
+            // The zoom view is its own accessibility element, with Zoom in and Zoom out actions.
             ZoomableScreenshot(
                 image: image,
+                label: page.annotation.imageCount > 1
+                    ? "Image \(page.index + 1) of \(page.annotation.imageCount) for note \(number)"
+                    : "Screenshot for note \(number)",
                 onZoomChange: { isZoomed = $0 },
                 onTap: {
                     if isEditingNote {
@@ -174,15 +178,6 @@ struct NoteViewer: View {
                     }
                 }
             )
-            .accessibilityElement()
-            .accessibilityLabel(
-                page.annotation.imageCount > 1
-                    ? "Image \(page.index + 1) of \(page.annotation.imageCount) for note \(number)"
-                    : "Screenshot for note \(number)"
-            )
-            .accessibilityValue(isZoomed ? "Zoomed in" : "")
-            .accessibilityHint("Double-tap with two fingers to zoom")
-            .accessibilityAddTraits(.isImage)
         } else {
             Color.clear
         }
@@ -366,8 +361,11 @@ struct NoteViewer: View {
 /// A screenshot that can be pinched, double-tapped and dragged, built on the system
 /// scroll view so zooming, bouncing and handing a sideways swipe to the pager behave
 /// the way Photos does.
+///
+/// VoiceOver zooms through the element's actions.
 private struct ZoomableScreenshot: UIViewRepresentable {
     let image: UIImage
+    let label: String
     /// Reports whether the screenshot is zoomed in, so the details can step out of the way.
     let onZoomChange: (_ isZoomed: Bool) -> Void
     let onTap: () -> Void
@@ -387,12 +385,14 @@ private struct ZoomableScreenshot: UIViewRepresentable {
         view.addGestureRecognizer(double)
         view.addGestureRecognizer(single)
         view.show(image)
+        view.accessibilityLabel = label
         return view
     }
 
     func updateUIView(_ view: ZoomView, context: Context) {
         context.coordinator.onZoomChange = onZoomChange
         context.coordinator.onTap = onTap
+        view.accessibilityLabel = label
         if view.photo.image !== image { view.show(image) }
     }
 
@@ -409,8 +409,9 @@ private struct ZoomableScreenshot: UIViewRepresentable {
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { (scrollView as? ZoomView)?.photo }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            (scrollView as? ZoomView)?.centerPhoto()
-            let isZoomed = scrollView.zoomScale > scrollView.minimumZoomScale + 0.01
+            guard let view = scrollView as? ZoomView else { return }
+            view.centerPhoto()
+            let isZoomed = view.isZoomedIn
             guard isZoomed != wasZoomed else { return }
             wasZoomed = isZoomed
             onZoomChange(isZoomed)
@@ -420,23 +421,8 @@ private struct ZoomableScreenshot: UIViewRepresentable {
 
         @objc func doubleTapped(_ gesture: UITapGestureRecognizer) {
             guard let view = gesture.view as? ZoomView else { return }
-            if view.zoomScale > view.minimumZoomScale + 0.01 {
-                view.setZoomScale(view.minimumZoomScale, animated: true)
-            } else {
-                // Zoom into the point that was tapped rather than the middle.
-                let point = gesture.location(in: view.photo)
-                let scale = ZoomView.doubleTapScale
-                let size = CGSize(width: view.bounds.width / scale, height: view.bounds.height / scale)
-                view.zoom(
-                    to: CGRect(
-                        x: point.x - size.width / 2,
-                        y: point.y - size.height / 2,
-                        width: size.width,
-                        height: size.height
-                    ),
-                    animated: true
-                )
-            }
+            // Zoom into the point that was tapped rather than the middle.
+            view.toggleZoom(at: gesture.location(in: view.photo))
         }
     }
 
@@ -462,10 +448,52 @@ private struct ZoomableScreenshot: UIViewRepresentable {
             contentInsetAdjustmentBehavior = .never
             decelerationRate = .fast
             backgroundColor = .clear
+            isAccessibilityElement = true
+            accessibilityTraits = .image
         }
 
         @available(*, unavailable)
         required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        var isZoomedIn: Bool { zoomScale > minimumZoomScale + 0.01 }
+
+        func toggleZoom(at point: CGPoint) {
+            if isZoomedIn {
+                setZoomScale(minimumZoomScale, animated: true)
+            } else {
+                let scale = Self.doubleTapScale
+                let size = CGSize(width: bounds.width / scale, height: bounds.height / scale)
+                zoom(
+                    to: CGRect(
+                        x: point.x - size.width / 2,
+                        y: point.y - size.height / 2,
+                        width: size.width,
+                        height: size.height
+                    ),
+                    animated: true
+                )
+            }
+        }
+
+        override var accessibilityValue: String? {
+            get { isZoomedIn ? "Zoomed in" : nil }
+            set {}
+        }
+
+        /// The double-tap zoom gesture is out of reach under VoiceOver, so the same zoom is an action.
+        override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+            get {
+                let name = isZoomedIn ? "Zoom out" : "Zoom in"
+                return [
+                    UIAccessibilityCustomAction(name: name) { [weak self] _ in
+                        guard let self else { return false }
+                        toggleZoom(at: CGPoint(x: photo.bounds.midX, y: photo.bounds.midY))
+                        return true
+                    }
+                ]
+            }
+            set {}
+        }
 
         func show(_ image: UIImage) {
             photo.image = image
@@ -478,7 +506,7 @@ private struct ZoomableScreenshot: UIViewRepresentable {
             guard bounds.size != laidOutSize, bounds.width > 0, bounds.height > 0, let image = photo.image else {
                 // The system nudges a scroll view for the keyboard and doesn't always put it back.
                 // A screenshot that isn't zoomed belongs in the middle of the screen.
-                if zoomScale <= minimumZoomScale + 0.01, !isDragging, !isZooming { settleInCenter() }
+                if !isZoomedIn, !isDragging, !isZooming { settleInCenter() }
                 return
             }
             laidOutSize = bounds.size

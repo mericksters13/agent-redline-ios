@@ -95,8 +95,8 @@ struct ChatSessionTests {
         _ = try inboxReport("20261003-223449")
         let first = session(folder)
         let second = session(folder)
-        #expect(first.take(budget: 1_000_000).taken == 1)
-        #expect(second.take(budget: 1_000_000).taken == 0)
+        #expect(first.take(budget: 1_000_000).reports.count == 1)
+        #expect(second.take(budget: 1_000_000).reports.isEmpty)
         let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
         #expect(report.claim?.chat == first.chat.id)
     }
@@ -120,12 +120,110 @@ struct ChatSessionTests {
         #expect(Inbox.unclaimedReports(for: ["com.example.app"], paths: paths).count == 1)
 
         let chat = session(folder)
-        #expect(chat.take(budget: 1_000_000).taken == 1)
+        let taken = chat.take(budget: 1_000_000)
+        #expect(taken.reports.count == 1)
+        // Held by this process until what carries it is written out: if it quit first, the claim
+        // would be interrupted and the report taken again.
+        #expect(Inbox.claim(of: inbox)?.handingOverIn == getpid())
+        ChatSession.settle(taken.reports, isDelivered: true)
         let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
         #expect(report.claim?.chat == chat.chat.id)
         // Handed over: the claim stands for good, and no other chat takes the report.
         #expect(report.claim?.handingOverIn == nil)
-        #expect(session(folder).take(budget: 1_000_000).taken == 0)
+        #expect(session(folder).take(budget: 1_000_000).reports.isEmpty)
+    }
+
+    @Test func aProcessThatReusedTheHandOversPIDDoesntHoldTheReport() throws {
+        let folder = try project()
+        let inbox = try inboxReport("20261003-223449")
+        // This test's process stands in for a later process that got the crashed hand-over's PID: it
+        // started long after the claim was made.
+        let reused = Claim(
+            chat: "gone",
+            agent: "test",
+            folder: folder.path,
+            claimedAt: Date(timeIntervalSince1970: 0),
+            handingOverIn: getpid()
+        )
+        #expect(reused.isInterrupted)
+        try HubPaths.encoder.encode(reused).write(to: inbox.appending(path: Inbox.claimFile))
+        #expect(Inbox.unclaimedReports(for: ["com.example.app"], paths: paths).count == 1)
+        // The process that made the claim, still handing the report over, holds it.
+        let held = Claim(chat: "here", agent: "test", folder: folder.path, claimedAt: .now, handingOverIn: getpid())
+        #expect(!held.isInterrupted)
+    }
+
+    @Test func reportsWaitingForClaudeGoOnlyIfNoChatTookThemMeanwhile() throws {
+        let folder = try project()
+        try inboxReport("20261003-223449")
+        try inboxReport("20261003-223450")
+        let other = try inboxReport("20261003-223451", bundleID: "com.example.other")
+        let waited = Inbox.unclaimedReports(for: ["com.example.app", "com.example.other"], paths: paths)
+        #expect(waited.count == 3)
+        // While the claude command wasn't ready, a chat took the oldest and the other app's report was
+        // removed.
+        let chat = session(folder)
+        let taken = chat.take(budget: 1)
+        #expect(taken.reports.map(\.folder.lastPathComponent) == ["20261003-223449-00000001"])
+        ChatSession.settle(taken.reports, isDelivered: true)
+        try FileManager.default.removeItem(at: other)
+
+        let still = Handoff.stillWaiting(waited, paths: paths)
+        #expect(still.map(\.folder.lastPathComponent) == ["20261003-223450-00000001"])
+    }
+
+    @Test func aChatTakesOnlyReportsSentToItOrSentNowhere() throws {
+        let folder = try project()
+        let app = "com.example.app"
+        let nowhere = try inboxReport("20261003-223449")
+        let pickedForCodex = try inboxReport("20261003-223450")
+        let addressedToCodex = try inboxReport("20261003-223451")
+        let pickedForNewChat = try inboxReport("20261003-223452")
+        func pick(_ report: URL, _ destination: String) throws {
+            try #"{"app":{},"destination":\#(destination),"screens":[],"items":[]}"#.write(
+                to: report.appending(path: "report.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+        // Picked on the phone, before the hub has handed it over.
+        try pick(pickedForCodex, #"{"agent":"codex","chat":"c1"}"#)
+        try Inbox.setRecipient(ReportRecipient(chat: "codex-t1", agent: "codex", folder: ""), of: addressedToCodex)
+        try pick(pickedForNewChat, #"{"agent":"claude","newChat":"p1"}"#)
+        func claimant(_ report: URL) -> String? {
+            Inbox.reports(for: [app], paths: paths).first { $0.folder.lastPathComponent == report.lastPathComponent }?
+                .claim?.chat
+        }
+
+        let other = session(folder)
+        let taken = other.take(budget: 1_000_000)
+        #expect(taken.reports.count == 1 && taken.remaining == 0)
+        #expect(claimant(nowhere) == other.chat.id)
+        #expect(!other.waitForReport(timeout: 0.1, waiter: ChatSession.Waiter()))
+
+        // Each picked chat takes its own.
+        let picked = ChatSession(
+            paths: paths,
+            folder: folder,
+            extraApps: [],
+            agent: "codex",
+            id: "codex-c1",
+            startsHub: false
+        )
+        #expect(picked.take(budget: 1_000_000).reports.count == 1)
+        #expect(claimant(pickedForCodex) == "codex-c1")
+        let codex = ChatSession(
+            paths: paths,
+            folder: folder,
+            extraApps: [],
+            agent: "codex",
+            id: "codex-t1",
+            startsHub: false
+        )
+        #expect(codex.takeAddressed() != nil)
+        #expect(claimant(addressedToCodex) == "codex-t1")
+        // The new chat's report waits for the chat the hub starts.
+        #expect(claimant(pickedForNewChat) == nil)
     }
 
     @Test func aChatOnAnotherAppNeverGetsTheReport() throws {
@@ -137,7 +235,7 @@ struct ChatSessionTests {
             atomically: true,
             encoding: .utf8
         )
-        #expect(session(other).take(budget: 1_000_000).taken == 0)
+        #expect(session(other).take(budget: 1_000_000).reports.isEmpty)
     }
 
     @Test func theMoreRecentChatGetsTheReportEvenAfterEarlierChanges() async throws {
@@ -172,7 +270,7 @@ struct ChatSessionTests {
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { _ = recent.take(budget: 1_000_000) }
         let tookIt = await offPool { older.waitForRoutedReport(timeout: 2, waiter: waiter) }
         #expect(!tookIt)
-        #expect(older.take(budget: 1_000_000).taken == 0)
+        #expect(older.take(budget: 1_000_000).reports.isEmpty)
     }
 
     @Test func waitingReturnsWhenAReportArrives() async throws {
@@ -185,7 +283,7 @@ struct ChatSessionTests {
         #expect(await arrived)
         // Woken by the report arriving, long before the timeout.
         #expect(Date.now.timeIntervalSince(started) < 10)
-        #expect(chat.take(budget: 1_000_000).taken == 1)
+        #expect(chat.take(budget: 1_000_000).reports.count == 1)
         // Nothing more: a short wait ends with no report.
         #expect(await offPool { !chat.waitForReport(timeout: 0.2, waiter: ChatSession.Waiter()) })
     }
@@ -230,7 +328,7 @@ struct ChatSessionTests {
         )
         try inboxReport("20261003-223500")
         let taken = session(try project()).take(budget: ReportContent.longestText + 30)
-        #expect(taken.taken == 1)
+        #expect(taken.reports.count == 1)
         #expect(taken.remaining == 1)
     }
 }

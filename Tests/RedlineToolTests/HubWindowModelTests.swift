@@ -121,6 +121,16 @@ struct HubWindowModelTests {
         let claim = Claim(chat: "codex-c-1", agent: "codex", folder: "/repo/wt", claimedAt: delivered + 0.5)
         try HubPaths.encoder.encode(claim).write(to: folder.appending(path: Inbox.claimFile))
         #expect(!HubWindowModel.destination(of: folder, codexDatabase: nil).isWaiting)
+        // In the same millisecond, or dated a moment before the wait it came after, the claim still
+        // shows.
+        for offset in [0.0002, -0.01] {
+            let taken = Claim(chat: "codex-c-1", agent: "codex", folder: "/repo/wt", claimedAt: delivered + offset)
+            try HubPaths.encoder.encode(taken).write(to: folder.appending(path: Inbox.claimFile))
+            let destination = HubWindowModel.destination(of: folder, codexDatabase: nil)
+            #expect(destination.agent == "Codex")
+            #expect(destination.chat == "wt")
+            #expect(!destination.isWaiting)
+        }
         // Dates saved before milliseconds were kept still read.
         let older = Data(#"{"agent":"claude","chat":"c","claimedAt":"2026-10-04T13:31:12Z","folder":"/repo"}"#.utf8)
         #expect(
@@ -178,6 +188,110 @@ struct HubWindowModelTests {
         #expect(Routing.worktree(of: folder) == nil)
     }
 
+    @Test func aWaitSavedAfterAChatTookTheReportDoesntHideIt() throws {
+        // A chat whose wait woke when the report was filed took it before the hub decided.
+        let taken = try report("20261004-140000", at: .now)
+        try HubPaths.encoder.encode(Claim(chat: "claude-s-2", agent: "claude", folder: "/repo/wt", claimedAt: .now))
+            .write(to: taken.appending(path: Inbox.claimFile))
+        try ChatDelivery.save(
+            .init(agent: nil, chat: nil, title: "2 chats work in wt; pick one on the phone", kind: .waiting),
+            in: taken
+        )
+        try ChatDelivery.save(.init(agent: .codex, chat: "t-1", title: "Codex chat", kind: .nextMessage), in: taken)
+        #expect(ChatDelivery.load(from: taken) == nil)
+        let destination = HubWindowModel.destination(of: taken, codexDatabase: nil)
+        #expect(destination.chat == "wt")
+        #expect(!destination.isWaiting)
+
+        // A hand-over this process claimed and couldn't finish still says why the report waits.
+        let failed = try report("20261004-141000", at: .now)
+        let chat = ChatRecord(
+            id: "claude-s-3",
+            agent: "claude",
+            folder: "/repo/wt",
+            bundleIDs: ["com.example.app"],
+            pid: getpid(),
+            registeredAt: .now,
+            lastActiveAt: .now
+        )
+        let inbox = try #require(
+            Inbox.reports(for: ["com.example.app"], paths: paths).first {
+                $0.folder.lastPathComponent == failed.lastPathComponent
+            }
+        )
+        guard case .claimed = Inbox.claim(inbox, for: chat) else {
+            Issue.record("The report wasn't claimed")
+            return
+        }
+        try ChatDelivery.save(
+            .init(agent: .claude, chat: "s-3", title: "wt didn't take it", kind: .waiting),
+            in: failed
+        )
+        try Inbox.release(inbox)
+        #expect(HubWindowModel.destination(of: failed, codexDatabase: nil).chat == "wt didn't take it")
+        #expect(HubWindowModel.destination(of: failed, codexDatabase: nil).isWaiting)
+    }
+
+    @Test func aStoppingHubWaitsOnlyForTheReportsItIsHandingOver() throws {
+        let first = try report("20261004-150000", at: .now)
+        _ = try report("20261004-151000", at: .now)
+        let chat = ChatRecord(
+            id: "claude-s-4",
+            agent: "claude",
+            folder: "/repo/wt",
+            bundleIDs: ["com.example.app"],
+            pid: getpid(),
+            registeredAt: .now,
+            lastActiveAt: .now
+        )
+        #expect(Inbox.reportsHandedOver(by: getpid(), paths: paths) == 0)
+        let inbox = try #require(
+            Inbox.reports(for: ["com.example.app"], paths: paths).first {
+                $0.folder.lastPathComponent == first.lastPathComponent
+            }
+        )
+        guard case .claimed = Inbox.claim(inbox, for: chat) else {
+            Issue.record("The report wasn't claimed")
+            return
+        }
+        #expect(Inbox.reportsHandedOver(by: getpid(), paths: paths) == 1)
+        // Another process's hand-over isn't this one's to wait for.
+        #expect(Inbox.reportsHandedOver(by: getpid() + 1, paths: paths) == 0)
+        // Stopping waits until the chat has the report.
+        let hub = Hub(paths: paths, devicectl: Devicectl(executable: URL(filePath: "/usr/bin/false")), apps: [])
+        let handoff = Handoff(hub: hub)
+        let started = Date.now
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.6) { try? Inbox.handedOver(inbox) }
+        handoff.finish()
+        #expect(Date.now.timeIntervalSince(started) >= 0.6)
+        #expect(Inbox.reportsHandedOver(by: getpid(), paths: paths) == 0)
+        hub.flushWrites()
+        withExtendedLifetime(hub) {}
+    }
+
+    @Test func thePanelFitsOnShortScreens() {
+        #expect(HubPanel.largestContentHeight(screen: 1_400) == 720)
+        // On a short screen the header and footer stay on it.
+        #expect(HubPanel.largestContentHeight(screen: 640) == 480)
+        #expect(HubPanel.largestContentHeight(screen: nil) == 520)
+    }
+
+    @Test func theHeaderSaysWhereAppsReachTheHubOnlyWhileItCan() {
+        var status = HubStatus(
+            pid: 1,
+            startedAt: .now,
+            apps: [],
+            hosts: ["192.168.1.20", "mac.local"],
+            port: 8765,
+            phones: [],
+            simulatorContainers: 0
+        )
+        #expect(HubWindowModel.reach(status) == "Apps reach it at 192.168.1.20 · port 8765")
+        // The Mac left its network: the old address is gone.
+        status.hosts = []
+        #expect(HubWindowModel.reach(status) == "Not on a network, so apps can't reach it")
+    }
+
     @Test func phonesSayWhyTheyCantTakeReports() {
         func phone(_ state: PhoneState?, text: String = "") -> HubStatus.Phone {
             HubStatus.Phone(name: "P", udid: "U", state: state?.description ?? text, phoneState: state)
@@ -185,6 +299,7 @@ struct HubWindowModelTests {
         #expect(HubWindowModel.phoneState(phone(.ready(apps: ["com.example.app"]))) == "Ready")
         #expect(HubWindowModel.phoneState(phone(.unreachable(retryInSeconds: 30))) == "Not reachable")
         #expect(HubWindowModel.phoneState(phone(.noWatchedApps)) == "No watched app installed")
+        #expect(HubWindowModel.phoneState(phone(.macOffline)) == "Mac offline")
         #expect(
             PhoneState.unreachable(retryInSeconds: 30).description
                 == "Not reachable, trying again in 30 s or when a phone wakes"
@@ -233,6 +348,25 @@ struct HubWindowModelTests {
         #expect(HubWindowModel.picture(showing: 1, in: pictures) == folder.appending(path: "screen-1.jpg"))
         #expect(HubWindowModel.picture(showing: 2, in: pictures) == folder.appending(path: "note-2.jpg"))
         #expect(HubWindowModel.picture(showing: 3, in: pictures) == nil)
+    }
+
+    @Test func theViewerShowsOnlyPicturesInTheReportsOwnFolder() throws {
+        let folder = try report("20261004-130100", at: Date.now)
+        let secret = paths.inbox.appending(path: "secret.jpg")
+        try Data([0xFF, 0xD8]).write(to: secret)
+        try FileManager.default.createSymbolicLink(at: folder.appending(path: "link.jpg"), withDestinationURL: secret)
+        try FileManager.default.createDirectory(
+            at: folder.appending(path: "folder.jpg"),
+            withIntermediateDirectories: true
+        )
+        let escape = "../../secret.jpg"
+        #expect(FileManager.default.fileExists(atPath: folder.appending(path: escape).path))
+        let listing: [String: Any] = [
+            "screens": [["images": [["file": escape, "notes": [1]], ["file": "screen-1.jpg", "notes": [1]]]]],
+            "items": [["number": 1, "title": "History", "attachments": ["link.jpg", "folder.jpg", secret.path]]],
+        ]
+        try JSONSerialization.data(withJSONObject: listing).write(to: folder.appending(path: "report.json"))
+        #expect(HubWindowModel.pictures(in: folder).map(\.file) == [folder.appending(path: "screen-1.jpg")])
     }
 
     @Test func theViewerOpensTheChatAReportWentTo() throws {

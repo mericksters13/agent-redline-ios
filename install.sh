@@ -345,6 +345,10 @@ move_old_data() {
     REPORT="$DATA/install-report.txt"
     mv -f "$pending_log" "$LOG" 2>/dev/null || cat "$pending_log" >>"$LOG" 2>/dev/null
     rm -f "$pending_log" "$pending_report"
+    # The old name is left as a link to the new folder, as redline does when it moves the folder
+    # itself: an MCP server of the earlier version still serving an open chat knows only the old
+    # folder, and through the link it reads the same inbox and chat records as Redline's hub.
+    ln -s "$DATA" "$OLD_DATA" >>"$LOG" 2>&1 || true
     item "Done" "Moved the earlier version's reports and paired phones from $OLD_DATA to $DATA"
 }
 
@@ -534,9 +538,11 @@ install_command() {
 install_app() {
     local output start=""
     step "Building and installing Redline.app"
-    # With --no-start, a running Redline is stopped for the update and not opened again.
+    # With --no-start, a running Redline is stopped for the update and not opened again. The
+    # earlier version's app is left to move_old_data and remove_old_install, which stop it only
+    # once Redline is installed and move its data first.
     if $NO_START; then start="--no-start"; fi
-    if ! output="$(/bin/zsh "$SOURCE/scripts/build-hub-app.sh" "$HOME/Applications" ${start:+"$start"} 2>&1)"; then
+    if ! output="$(/bin/zsh "$SOURCE/scripts/build-hub-app.sh" "$HOME/Applications" --keep-earlier-app ${start:+"$start"} 2>&1)"; then
         printf '%s\n' "$output" >>"$LOG"
         show_log_errors
         stop "Building Redline.app failed. The full log is $LOG." "Fix the error above; an Xcode update or opening Xcode once often does."
@@ -596,7 +602,8 @@ remove_old_install() {
     fi
     if [ -n "$removed" ]; then item "Done" "Earlier version (Agentic Debugging): $removed"; fi
     # Moved only into a new folder (see install), so it stays when Redline's folder already existed.
-    if [ -d "$OLD_DATA" ]; then
+    # A link at the old name is what a move left behind.
+    if [ -d "$OLD_DATA" ] && [ ! -L "$OLD_DATA" ]; then
         item "Needs you" "Earlier version: its reports, paired phones and chats stay in $OLD_DATA, because $DATA already existed. Redline reads only $DATA." \
             "Pair your phone again from Redline's menu if it was paired with the earlier version." "Delete $OLD_DATA once you no longer need its reports."
     fi
@@ -964,7 +971,7 @@ uninstall() {
 
     rm -rf "$CACHE"
     item "Done" "Kept your reports in $DATA. Delete that folder to remove them."
-    if [ -d "$OLD_DATA" ]; then item "Done" "Kept the earlier version's reports in $OLD_DATA"; fi
+    if [ -d "$OLD_DATA" ] && [ ! -L "$OLD_DATA" ]; then item "Done" "Kept the earlier version's reports in $OLD_DATA"; fi
     if [ -e "$HOME/.codex/hooks.json.before-redline" ] || [ -e "$HOME/.claude/settings.json.before-redline" ]; then
         item "Done" "Kept the settings backups from Redline's first setup (the .before-redline files in ~/.codex and ~/.claude)"
     fi
