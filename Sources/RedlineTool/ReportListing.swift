@@ -74,14 +74,48 @@ struct ReportListing: Decodable {
             var identifier: String?
             var label: String?
             var role: String?
+
+            /// `Cell "Milestones" (today.list)`; nil for an element with no label or identifier.
+            var description: String? {
+                guard label != nil || identifier != nil else { return nil }
+                return [role, label.map { "\"\($0)\"" }, identifier.map { "(\($0))" }].compactMap { $0 }.joined(
+                    separator: " "
+                )
+            }
         }
 
         var number: Int?
         var title: String?
         var note: String?
         var element: Element?
+        /// The elements holding it, innermost first.
+        ///
+        /// Missing in reports from before they were saved.
+        var ancestors: [Element]?
         var screenTitle: String?
+        /// The snapshot that shows most of the note's outline.
+        var snapshot: String?
         var attachments: [String]?
+
+        private enum CodingKeys: String, CodingKey {
+            case number, title, note, element, ancestors, screenTitle, snapshot, attachments
+            /// The name version 1 of report.json used for `snapshot`.
+            case picture
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            number = try container.decodeIfPresent(Int.self, forKey: .number)
+            title = try container.decodeIfPresent(String.self, forKey: .title)
+            note = try container.decodeIfPresent(String.self, forKey: .note)
+            element = try container.decodeIfPresent(Element.self, forKey: .element)
+            ancestors = try container.decodeIfPresent([Element].self, forKey: .ancestors)
+            screenTitle = try container.decodeIfPresent(String.self, forKey: .screenTitle)
+            snapshot =
+                try container.decodeIfPresent(String.self, forKey: .snapshot)
+                ?? container.decodeIfPresent(String.self, forKey: .picture)
+            attachments = try container.decodeIfPresent([String].self, forKey: .attachments)
+        }
     }
 
     var app: App?

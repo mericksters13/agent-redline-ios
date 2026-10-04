@@ -43,8 +43,9 @@ extension Handoff {
 
     /// Runs a command in a folder and waits for it.
     ///
-    /// Throws when it can't start.
-    static func run(_ executable: String, arguments: [String], in folder: String) throws {
+    /// Throws when it can't start; returns whether it exited with status 0.
+    @discardableResult
+    static func run(_ executable: String, arguments: [String], in folder: String) throws -> Bool {
         let process = Process()
         process.executableURL = URL(filePath: executable)
         process.arguments = arguments
@@ -54,6 +55,7 @@ extension Handoff {
         process.standardError = FileHandle.nullDevice
         try process.run()
         process.waitUntilExit()
+        return process.terminationReason == .exit && process.terminationStatus == 0
     }
 
     /// Opens a chat where the user works with its agent: in the Claude or Codex app when it's

@@ -78,6 +78,14 @@ enum ReportSummary {
             }
             text += " (\(details.joined(separator: ", ")))"
         }
+        // The elements holding it, such as the row or card with the identifier, tell apart
+        // elements that share a label.
+        let inside = item.ancestors.compactMap { ancestor -> String? in
+            guard ancestor.label != nil || ancestor.identifier != nil else { return nil }
+            return [ancestor.role, ancestor.label.map { "\"\($0)\"" }, ancestor.identifier.map { "`\($0)`" }]
+                .compactMap { $0 }.joined(separator: " ")
+        }
+        if !inside.isEmpty { text += ", in " + inside.joined(separator: " in ") }
         if item.note.isEmpty {
             text += ". No note."
         } else {

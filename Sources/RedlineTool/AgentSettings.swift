@@ -86,7 +86,7 @@ enum AgentSettings {
     private static func isOurs(_ hook: Any, executable: String) -> Bool {
         guard let command = (hook as? [String: Any])?["command"] as? String else { return false }
         if command.hasPrefix("'\(executable.replacing("'", with: "'\\''"))' hook ") { return true }
-        guard command.hasPrefix("'"), let end = command.range(of: "' hook ") else { return false }
+        guard command.hasPrefix("'"), let end = command.range(of: "' hook ", options: .backwards) else { return false }
         let path = String(command[command.index(after: command.startIndex)..<end.lowerBound]).replacing(
             "'\\''",
             with: "'"

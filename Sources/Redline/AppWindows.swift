@@ -15,25 +15,41 @@ enum AppWindows {
             .sorted { $0.windowLevel < $1.windowLevel }
     }
 
-    /// Stops any scroll view that is still moving, at a valid resting offset.
-    static func stopScrolling(in windows: [UIWindow]) {
+    /// Every scroll view in `windows`.
+    static func scrollViews(in windows: [UIWindow]) -> [UIScrollView] {
+        var result: [UIScrollView] = []
         func visit(_ view: UIView) {
-            if let scrollView = view as? UIScrollView, scrollView.isDecelerating || scrollView.isDragging {
-                let inset = scrollView.adjustedContentInset
-                let offset = scrollView.contentOffset
-                let maxX = max(-inset.left, scrollView.contentSize.width - scrollView.bounds.width + inset.right)
-                let maxY = max(-inset.top, scrollView.contentSize.height - scrollView.bounds.height + inset.bottom)
-                scrollView.setContentOffset(
-                    CGPoint(
-                        x: min(max(offset.x, -inset.left), maxX),
-                        y: min(max(offset.y, -inset.top), maxY)
-                    ),
-                    animated: false
-                )
-            }
+            if let scrollView = view as? UIScrollView { result.append(scrollView) }
             for subview in view.subviews { visit(subview) }
         }
         for window in windows { visit(window) }
+        return result
+    }
+
+    /// Stops a scroll the user started that is still moving, at a valid resting offset.
+    static func stopScrolling(_ scrollViews: [UIScrollView]) {
+        for scrollView in scrollViews where scrollView.isDecelerating || scrollView.isDragging {
+            let inset = scrollView.adjustedContentInset
+            let offset = scrollView.contentOffset
+            let maxX = max(-inset.left, scrollView.contentSize.width - scrollView.bounds.width + inset.right)
+            let maxY = max(-inset.top, scrollView.contentSize.height - scrollView.bounds.height + inset.bottom)
+            scrollView.setContentOffset(
+                CGPoint(
+                    x: min(max(offset.x, -inset.left), maxX),
+                    y: min(max(offset.y, -inset.top), maxY)
+                ),
+                animated: false
+            )
+        }
+    }
+
+    /// Where each scroll view's content is drawn right now.
+    ///
+    /// A scroll the app animates itself, through `setContentOffset(_:animated:)`,
+    /// `scrollRectToVisible(_:animated:)` or an animation block, is neither dragging nor
+    /// decelerating, so motion shows only as this changing from one frame to the next.
+    static func scrollPositions(of scrollViews: [UIScrollView]) -> [CGPoint] {
+        scrollViews.map { $0.layer.presentation()?.bounds.origin ?? $0.contentOffset }
     }
 
     /// Pixels per point in every snapshot, whatever the screen size, so a saved one can

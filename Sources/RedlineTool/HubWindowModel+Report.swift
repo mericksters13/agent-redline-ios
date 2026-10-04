@@ -10,13 +10,17 @@ extension HubWindowModel {
         /// or the title of the note the snapshot is attached to.
         var title: String
         var notes: [Int]
+        /// The notes whose outline this snapshot shows most of, when a screen is split into parts.
+        var mainFor: [Int] = []
     }
 
     /// The report's snapshots in the order the agent gets them: each screen's snapshots, then the
     /// snapshots attached to notes.
     ///
-    /// Without a complete report.json, the folder's snapshots in name order, which for UUID names
-    /// says nothing about the report's order.
+    /// Only the files `ReportContent.snapshots(in:)` reads, so a name that leads out of the report's
+    /// folder, or a link to another file on the Mac, is left out. Without a complete report.json,
+    /// the folder's snapshots in name order, which for UUID names says nothing about the report's
+    /// order.
     nonisolated static func snapshots(in folder: URL) -> [ReportSnapshot] {
         let listing = ReportListing.load(from: folder)
         guard let screens = listing?.screens,
@@ -33,7 +37,11 @@ extension HubWindowModel {
             }).allPresent(),
             let items = listing?.items?.map({ item in
                 item.number.flatMap { number in
-                    item.title.flatMap { title in item.attachments.map { (number, item.screenTitle ?? title, $0) } }
+                    item.title.flatMap { title in
+                        item.attachments.map {
+                            (number: number, title: item.screenTitle ?? title, attachments: $0, snapshot: item.snapshot)
+                        }
+                    }
                 }
             }).allPresent()
         else {
@@ -41,18 +49,28 @@ extension HubWindowModel {
                 ReportSnapshot(file: $0, title: "Snapshot", notes: [])
             }
         }
+        func mainFor(_ file: String) -> [Int] { items.filter { $0.snapshot == file }.map(\.number).sorted() }
         let shown = shownSnapshots.flatMap { $0 }.map { title, file, notes in
-            ReportSnapshot(file: folder.appending(path: file), title: title, notes: notes)
+            ReportSnapshot(file: folder.appending(path: file), title: title, notes: notes, mainFor: mainFor(file))
         }
-        let attached = items.flatMap { number, title, attachments in
-            attachments.map { ReportSnapshot(file: folder.appending(path: $0), title: title, notes: [number]) }
+        let attached = items.flatMap { item in
+            item.attachments.map {
+                ReportSnapshot(
+                    file: folder.appending(path: $0),
+                    title: item.title,
+                    notes: [item.number],
+                    mainFor: item.snapshot == $0 ? [item.number] : []
+                )
+            }
         }
-        return (shown + attached).filter { FileManager.default.fileExists(atPath: $0.file.path) }
+        let safe = Set(ReportContent.snapshots(in: folder, listing: listing))
+        return (shown + attached).filter { safe.contains($0.file) }
     }
 
-    /// The first snapshot that shows a note.
+    /// The snapshot that shows most of a note's outline, as the report names it, or else the first
+    /// snapshot that shows the note.
     nonisolated static func snapshot(showing note: Int, in snapshots: [ReportSnapshot]) -> URL? {
-        snapshots.first { $0.notes.contains(note) }?.file
+        (snapshots.first { $0.mainFor.contains(note) } ?? snapshots.first { $0.notes.contains(note) })?.file
     }
 
     /// A chat a report went to, to open it again. `folder` is where that chat works, when known.
@@ -72,7 +90,7 @@ extension HubWindowModel {
     ///
     /// Nil when the report went to no chat.
     nonisolated static func chat(of report: URL) -> ChatLink? {
-        let claim = Inbox.claim(of: report).flatMap { $0.isInterrupted ? nil : $0 }
+        let claim = Inbox.activeClaim(of: report)
         let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
         if let delivery = ChatDelivery.load(from: report),
             !(delivery.isPending && claim.map { $0.claimedAt > delivery.deliveredAt } == true)

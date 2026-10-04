@@ -25,7 +25,7 @@ final class SimulatorWatcher: @unchecked Sendable {
     private var owners: [String: String] = [:]
     /// The watched apps' containers.
     private var watched: [String: String] = [:]
-    /// The folders the event stream covers: each container's kit folder where it exists.
+    /// The folders the event stream covers: each container's kit folders where they exist.
     private var roots: [String] = []
     private var names: [String: String] = [:]
     private var stream: FSEventStreamRef?
@@ -120,28 +120,44 @@ final class SimulatorWatcher: @unchecked Sendable {
             token: hub.issueToken(device: device, bundleID: bundleID),
             uploads: false
         )
-        let file = URL(filePath: container).appending(path: HubMessage.addressPath)
         let data = HubMessage.encode(address)
-        guard (try? Data(contentsOf: file)) != data else { return }
-        do {
-            try FileManager.default.createDirectory(
-                at: file.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try data.write(to: file, options: .atomic)
-        } catch {
-            hub.log(
-                "Couldn't leave the hub's address for \(bundleID) in simulator \(device): \(error.localizedDescription)"
-            )
+        for file in Self.addressFiles(in: container) where (try? Data(contentsOf: file)) != data {
+            do {
+                try FileManager.default.createDirectory(
+                    at: file.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try data.write(to: file, options: .atomic)
+            } catch {
+                hub.log(
+                    "Couldn't leave the hub's address for \(bundleID) in simulator \(device): \(error.localizedDescription)"
+                )
+            }
         }
     }
 
-    /// The kit's folder where it exists, so the app's own writes don't wake the hub; the whole
+    /// Where to leave the hub's address in a simulator app's folder: under the new name, and under
+    /// the old one while a build from before the rename has its folder there.
+    ///
+    /// Only then, so a renamed build, which removes that folder, doesn't get it back.
+    static func addressFiles(in container: String) -> [URL] {
+        let base = URL(filePath: container)
+        let earlier = base.appending(path: HubMessage.earlierAddressPath)
+        let earlierKit = earlier.deletingLastPathComponent().path(percentEncoded: false)
+        return [base.appending(path: HubMessage.addressPath)]
+            + (FileManager.default.fileExists(atPath: earlierKit) ? [earlier] : [])
+    }
+
+    /// The kit's folders where they exist, so the app's own writes don't wake the hub; the whole
     /// container until the kit has written anything.
-    private static func roots(for containers: [String]) -> [String] {
-        containers.map { container in
-            let kit = container + "/" + HubMessage.kitFolder
-            return FileManager.default.fileExists(atPath: kit) ? kit : container
+    ///
+    /// A build from before the rename keeps its reports under the old name, so that folder is
+    /// watched as well while it's there.
+    static func roots(for containers: [String]) -> [String] {
+        containers.flatMap { container in
+            let kits = [HubMessage.kitFolder, HubMessage.earlierKitFolder].map { container + "/" + $0 }
+                .filter { FileManager.default.fileExists(atPath: $0) }
+            return kits.isEmpty ? [container] : kits
         }.sorted()
     }
 
@@ -161,11 +177,17 @@ final class SimulatorWatcher: @unchecked Sendable {
             release: nil,
             copyDescription: nil
         )
-        let callback: FSEventStreamCallback = { _, info, count, paths, _, _ in
+        let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
             guard let info else { return }
             let watcher = Unmanaged<SimulatorWatcher>.fromOpaque(info).takeUnretainedValue()
             let changed = unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []
-            watcher.filesDidChange(at: Array(changed.prefix(count)))
+            // macOS dropped events or merged them into a folder: the paths don't name every change.
+            let incomplete = FSEventStreamEventFlags(
+                kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagUserDropped
+                    | kFSEventStreamEventFlagKernelDropped
+            )
+            let isIncomplete = (0..<count).contains { flags[$0] & incomplete != 0 }
+            watcher.filesDidChange(at: Array(changed.prefix(count)), isIncomplete: isIncomplete)
         }
         let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes)
         guard
@@ -188,28 +210,38 @@ final class SimulatorWatcher: @unchecked Sendable {
     }
 
     /// Runs on `queue`, called by the event stream.
-    private func filesDidChange(at paths: [String]) {
+    ///
+    /// When the events are `isIncomplete`, such as when macOS dropped some, every watched app's
+    /// reports are looked at, so none waits for the next unrelated change.
+    private func filesDidChange(at paths: [String], isIncomplete: Bool) {
         dispatchPrecondition(condition: .onQueue(queue))
+        if isIncomplete {
+            for container in watched.keys { takeNewReports(in: container) }
+            return
+        }
         for report in Set(paths.compactMap(SimulatorReportPath.parse)) {
-            take(reportID: report.reportID, in: report.container)
+            take(reportID: report.reportID, in: report.container, from: report.folder)
         }
     }
 
     private func takeNewReports(in container: String) {
-        let folder = URL(filePath: container).appending(path: ReportFolder.path, directoryHint: .isDirectory)
-        for id in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] {
-            take(reportID: id, in: container)
+        for reports in ReportFolder.paths {
+            let folder = URL(filePath: container).appending(path: reports, directoryHint: .isDirectory)
+            for id in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] {
+                take(reportID: id, in: container, from: reports)
+            }
         }
     }
 
-    private func take(reportID: String, in container: String) {
+    /// Takes a report from `reports`, one of the container's `ReportFolder.paths`.
+    private func take(reportID: String, in container: String, from reports: String) {
         dispatchPrecondition(condition: .onQueue(queue))
         guard let bundleID = watched[container],
-            let path = SimulatorReportPath.parse(container + "/" + ReportFolder.path + "/" + reportID + "/")
+            let path = SimulatorReportPath.parse(container + "/" + reports + "/" + reportID + "/")
         else { return }
         let files = FileManager.default
         let folder = URL(filePath: container).appending(
-            path: ReportFolder.path + "/" + reportID,
+            path: reports + "/" + reportID,
             directoryHint: .isDirectory
         )
         let entries = ((try? files.contentsOfDirectory(atPath: folder.path)) ?? []).map {
@@ -218,7 +250,6 @@ final class SimulatorWatcher: @unchecked Sendable {
             return ("\(reportID)/\(name)", attributes?[.modificationDate] as? Date)
         }
         let finished = ReportFolder.finishedReports(in: entries)
-        hub.startTrackingIfNeeded(device: path.device, bundleID: bundleID)
         if !hub.reportIDsToCopy(device: path.device, bundleID: bundleID, finished: finished).isEmpty {
             let source = ReportSource(
                 kind: .simulator,
@@ -229,7 +260,11 @@ final class SimulatorWatcher: @unchecked Sendable {
                 receivedAt: .now
             )
             do {
-                try hub.receive(source) { destination in try files.copyItem(at: folder, to: destination) }
+                try hub.receive(source) { destination in
+                    try files.copyItem(at: folder, to: destination)
+                    // The copy keeps links as links. Checked in the copy, which the app can't change.
+                    guard Self.holdsOnlyFilesAndFolders(destination) else { throw TakeError.specialFile }
+                }
             } catch {
                 // The hub logged why; the report isn't counted as delivered, so it's taken at the next look.
                 return
@@ -243,6 +278,38 @@ final class SimulatorWatcher: @unchecked Sendable {
         else { return }
         if !files.createFile(atPath: mark.path, contents: nil) {
             hub.log("Couldn't mark report \(reportID) of \(bundleID) in \(name(of: path.device)) as on the Mac")
+        }
+    }
+
+    /// Why a simulator report wasn't taken.
+    enum TakeError: Error, LocalizedError {
+        /// The report holds a link or another special file.
+        case specialFile
+
+        var errorDescription: String? {
+            switch self {
+            case .specialFile: "The report holds a link or another special file"
+            }
+        }
+    }
+
+    /// True when `item` is a folder of plain files and folders, or a plain file: no symbolic link,
+    /// hard link, device or pipe.
+    ///
+    /// A simulator app writes its report folder itself, so a link in it could lead the hub, or a
+    /// chat reading the report, to any file on the Mac.
+    static func holdsOnlyFilesAndFolders(_ item: URL) -> Bool {
+        var info = stat()
+        guard lstat(item.path(percentEncoded: false), &info) == 0 else { return false }
+        switch info.st_mode & S_IFMT {
+        case S_IFREG:
+            return info.st_nlink == 1
+        case S_IFDIR:
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: item.path(percentEncoded: false))
+            else { return false }
+            return names.allSatisfy { holdsOnlyFilesAndFolders(item.appending(path: $0)) }
+        default:
+            return false
         }
     }
 

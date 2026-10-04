@@ -4,6 +4,7 @@ import Darwin
 import Network
 import SwiftUI
 import Synchronization
+import SystemConfiguration
 
 /// Takes reports off paired phones and simulators and files them in the inbox.
 ///
@@ -12,9 +13,10 @@ import Synchronization
 /// saved.
 ///
 /// Thread safety: everything that changes while the hub runs is in `state`, a `Mutex`.
-/// `simulators`, `listener`, `handoff`, `chatsWatcher`, `discovery` and `pidLock` are written once
+/// `simulators`, `listener`, `handoff`, `chatsWatchers`, `discovery` and `pidLock` are written once
 /// in `start()`, before any source, queue or listener that reads them starts, and only read
-/// afterwards; `stop()` runs after `start()`. `logDescriptor` is used only on `writer`.
+/// afterwards; `stop()` runs after `start()`, once, under `isStopped`. `whenListenerFails` is set
+/// before `start()` and only read afterwards. `logDescriptor` is used only on `writer`.
 ///
 /// Lives for the whole process: PhoneLink, HubListener, SimulatorWatcher and Handoff hold it
 /// unowned.
@@ -25,7 +27,11 @@ final class Hub: @unchecked Sendable {
     private let fixedApps: [String]
     private let startedAt = Date.now
     private let state: Mutex<State>
-    private var chatsWatcher: DispatchSourceFileSystemObject?
+    private var chatsWatchers: [DispatchSourceFileSystemObject] = []
+    /// Claude Code's open chats.
+    ///
+    /// It runs no hooks, so its chats are found from its own files.
+    private let claudeChats: @Sendable () -> [ClaudeSessions.Session]
     private var simulators: SimulatorWatcher?
     private var listener: HubListener?
     private var handoff: Handoff?
@@ -46,6 +52,10 @@ final class Hub: @unchecked Sendable {
     /// Takes offers and files uploads for connections, which write up to `largestReport` bytes.
     private let inbox = DispatchQueue(label: "Redline.hub.inbox", qos: .userInitiated)
     private let network = NWPathMonitor()
+    /// True once `stop()` has run.
+    ///
+    /// Held while it runs, so a second call waits for the first.
+    private let isStopped = Mutex(false)
 
     private struct State {
         var currentApps: [String] = []
@@ -75,9 +85,6 @@ final class Hub: @unchecked Sendable {
         }
     }
 
-    /// A report finished up to this long before the hub first looked at its app still counts
-    /// as new: the phone's clock and the Mac's can disagree by a little.
-    static let firstLookMargin: TimeInterval = 120
     /// How often the hub looks for newly paired phones and newly installed apps.
     ///
     /// Changes to the Mac's network are noticed as they happen.
@@ -89,10 +96,16 @@ final class Hub: @unchecked Sendable {
     /// any given on the command line.
     var apps: [String] { state.withLock { $0.currentApps } }
 
-    init(paths: HubPaths, devicectl: Devicectl, apps: [String]) {
+    init(
+        paths: HubPaths,
+        devicectl: Devicectl,
+        apps: [String],
+        claudeChats: @escaping @Sendable () -> [ClaudeSessions.Session] = ClaudeSessions.openSessions
+    ) {
         self.paths = paths
         self.devicectl = devicectl
         fixedApps = apps
+        self.claudeChats = claudeChats
         state = Mutex(State())
         let sources = StoredFile.load([String: SourceState].self, from: paths.state, decoder: HubPaths.decoder) {
             log($0)
@@ -138,6 +151,8 @@ final class Hub: @unchecked Sendable {
         handoff?.handOverRecent()
         simulators?.rescan()
         listener?.start()
+        // A listener that failed at once has stopped the hub, and `whenListenerFails` says so.
+        guard !isStopped.withLock({ $0 }) else { return true }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: Self.discoveryInterval, leeway: .seconds(60))
         timer.setEventHandler { [weak self] in self?.discover(includingNewApps: true) }
@@ -152,31 +167,48 @@ final class Hub: @unchecked Sendable {
         return true
     }
 
-    /// Stops taking reports, lets queued writes land, and releases `hub.pid`.
+    /// Stops taking reports, lets the reports being handed over reach their chats and queued
+    /// writes land, then releases `hub.pid`.
+    ///
+    /// A hub that starts next, such as the menu bar app taking over, hands over again only what
+    /// this one gave back, so no report starts two chats. Called again, it waits for the first call
+    /// to finish. Parks the calling thread while hand-overs finish, which can take minutes: called
+    /// from a signal's queue, the panel's Quit off the main thread, or as the process ends.
     func stop() {
-        discovery?.cancel()
-        chatsWatcher?.cancel()
-        network.cancel()
-        listener?.stop()
-        simulators?.stop()
-        // A connection the listener took can still be filing a report: it finishes, with its
-        // delivered ID queued to write, and later uploads are turned down.
-        inbox.sync { state.withLock { $0.isStopping = true } }
-        log("Hub stopped")
-        // Queued writes land before the process exits.
-        flushWrites()
-        // The file goes first, then the lock, so no other hub ever reads this pid as running.
-        try? FileManager.default.removeItem(at: paths.pid)
-        if pidLock >= 0 { close(pidLock) }
-        pidLock = -1
+        isStopped.withLock { isStopped in
+            guard !isStopped else { return }
+            isStopped = true
+            discovery?.cancel()
+            for watcher in chatsWatchers { watcher.cancel() }
+            network.cancel()
+            listener?.stop()
+            // Before the simulator watcher: stopping it waits for a rescan under way, and hand-overs
+            // queued meanwhile, or reports that rescan finds, must not start new chats.
+            handoff?.finish()
+            simulators?.stop()
+            // A connection the listener took can still be filing a report: it finishes, with its
+            // delivered ID queued to write, and later uploads are turned down.
+            inbox.sync { state.withLock { $0.isStopping = true } }
+            log("Hub stopped")
+            // Queued writes land before the process exits.
+            flushWrites()
+            // The file goes first, then the lock, so no other hub ever reads this pid as running.
+            try? FileManager.default.removeItem(at: paths.pid)
+            if pidLock >= 0 { close(pidLock) }
+            pidLock = -1
+        }
     }
 
+    /// Set before `start()` by the menu bar app, which shows why the listener failed and then exits.
+    var whenListenerFails: (@Sendable (String) -> Void)?
+
     /// The hub can't take reports without its listener: it stops, so the next chat starts a new
-    /// one.
+    /// one, and exits, or first tells `whenListenerFails`.
     func listenerFailed(_ reason: String) {
         log(reason)
         stop()
-        exit(1)
+        guard let whenListenerFails else { exit(1) }
+        whenListenerFails(reason)
     }
 
     /// Waits until every file write queued so far has landed.
@@ -201,26 +233,36 @@ final class Hub: @unchecked Sendable {
         }
         forgetPhones(except: Set(paired.map(\.udid)))
         for phone in paired {
-            link(for: phone).update(hosts: hosts, port: HubListener.port, includingNewApps: includingNewApps)
+            let link = link(for: phone)
+            // Off every network, phones keep the address they have, which works again once the Mac
+            // is back on theirs; the new address follows as soon as the Mac has one.
+            if hosts.isEmpty {
+                link.macDidGoOffline()
+            } else {
+                link.update(hosts: hosts, port: HubListener.port, includingNewApps: includingNewApps)
+            }
         }
         writeStatus()
     }
 
-    /// A chat opening or closing changes the apps to take reports from.
+    /// A chat opening or closing changes the apps to take reports from: the hub's own chat
+    /// records, and the session files of Claude Code's chats.
     private func watchChats() {
         let folder = Chats.folder(paths)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let descriptor = open(folder.path, O_EVTONLY)
-        guard descriptor >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor,
-            eventMask: .write,
-            queue: queue
-        )
-        source.setEventHandler { [weak self] in self?.updateApps(isStarting: false) }
-        source.setCancelHandler { close(descriptor) }
-        source.resume()
-        chatsWatcher = source
+        for folder in [folder.path] + ClaudeSessions.configFolders.map({ $0 + "/sessions" }) {
+            let descriptor = open(folder, O_EVTONLY)
+            guard descriptor >= 0 else { continue }
+            let source = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: descriptor,
+                eventMask: .write,
+                queue: queue
+            )
+            source.setEventHandler { [weak self] in self?.updateApps(isStarting: false) }
+            source.setCancelHandler { close(descriptor) }
+            source.resume()
+            chatsWatchers.append(source)
+        }
     }
 
     /// Takes reports from the apps of the open chats and of chats before them, and the ones given on
@@ -230,6 +272,7 @@ final class Hub: @unchecked Sendable {
     /// can start a new chat. When they change after the start, looks for the new apps on phones and
     /// simulators.
     func updateApps(isStarting: Bool) {
+        noteClaudeChats()
         let open = Chats.removeClosedChats(paths).flatMap(\.bundleIDs)
         let apps = Array(Set(fixedApps + open + ProjectHistory.all(paths).keys)).sorted()
         let changed = state.withLock { state in
@@ -241,6 +284,31 @@ final class Hub: @unchecked Sendable {
         // New apps' simulator folders to watch and phones to give the address to; discovery
         // rescans the simulators too.
         queue.async { self.discover(includingNewApps: true) }
+    }
+
+    /// Notes the apps open Claude Code chats work on, so the hub watches them.
+    ///
+    /// Other agents' chats note theirs when they register. Only apps not noted yet are written.
+    private func noteClaudeChats() {
+        let known = ProjectHistory.all(paths)
+        for session in claudeChats() {
+            let new = ChatDirectory.apps.bundleIDs(in: session.folder).filter { known[$0] == nil }
+            guard !new.isEmpty else { continue }
+            let chat = ChatRecord(
+                id: ChatID.make(.claude, session.id),
+                agent: Agent.claude.rawValue,
+                folder: session.folder,
+                bundleIDs: new,
+                pid: getpid(),
+                registeredAt: .now,
+                lastActiveAt: session.updatedAt
+            )
+            do {
+                try ProjectHistory.note(chat, paths: paths)
+            } catch {
+                log("Couldn't note the apps of the Claude Code chat \(session.id): \(error.localizedDescription)")
+            }
+        }
     }
 
     private func link(for phone: Devicectl.Phone) -> PhoneLink {
@@ -312,7 +380,6 @@ final class Hub: @unchecked Sendable {
             return HubMessage.Answer(want: [], delivered: [], refused: "Report names")
         }
         let finished = offer.reports.map { FinishedReport(id: $0.id, finishedAt: $0.finishedAt) }
-        startTrackingIfNeeded(device: offer.device, bundleID: offer.bundleID)
         let want = reportIDsToCopy(device: offer.device, bundleID: offer.bundleID, finished: finished)
         log(
             "\(phoneName(offer.device)) offered \(offer.reports.count) of \(offer.bundleID)'s reports; \(want.isEmpty ? "the Mac has them all" : "taking \(want.count)")"
@@ -405,6 +472,9 @@ final class Hub: @unchecked Sendable {
     }
 
     /// A report bigger than this isn't taken: a phone screen's snapshot is about 100 KB.
+    ///
+    /// The app checks its reports against the same size, `ReportStore.largestReport`, before
+    /// sending.
     static let largestReport = 50_000_000
 
     private func phoneName(_ udid: String) -> String {
@@ -425,10 +495,14 @@ final class Hub: @unchecked Sendable {
         return zip(x, y).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
-    /// The Mac's addresses on its local networks, then its `.local` name, which keeps working
-    /// when the address changes.
+    /// The Mac's IPv4 addresses on its local networks, then its `.local` name, which keeps working
+    /// when the address changes and is the only way to reach the Mac on an IPv6-only network.
+    ///
+    /// None while no Wi-Fi or Ethernet link has an address, since phones can't reach the Mac by any
+    /// of them then.
     static func addresses() -> [String] {
         var found: [String] = []
+        var isOnNetwork = false
         var list: UnsafeMutablePointer<ifaddrs>?
         if getifaddrs(&list) == 0, let first = list {
             defer { freeifaddrs(list) }
@@ -438,8 +512,14 @@ final class Hub: @unchecked Sendable {
                 let name = String(cString: interface.ifa_name)
                 // Wi-Fi and Ethernet, not VPN tunnels or AirDrop's own links.
                 guard flags & IFF_UP != 0, flags & IFF_RUNNING != 0, flags & IFF_LOOPBACK == 0, name.hasPrefix("en"),
-                    let address = interface.ifa_addr, address.pointee.sa_family == UInt8(AF_INET)
+                    let address = interface.ifa_addr
                 else { continue }
+                if address.pointee.sa_family == UInt8(AF_INET6) {
+                    let ipv6 = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee.sin6_addr }
+                    if Self.isOnNetwork(ipv6) { isOnNetwork = true }
+                    continue
+                }
+                guard address.pointee.sa_family == UInt8(AF_INET) else { continue }
                 var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                 if getnameinfo(
                     address,
@@ -451,36 +531,33 @@ final class Hub: @unchecked Sendable {
                     NI_NUMERICHOST
                 ) == 0 {
                     found.append(String(decoding: host.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self))
+                    isOnNetwork = true
                 }
             }
         }
-        let name = ProcessInfo.processInfo.hostName
-        if name.hasSuffix(".local") { found.append(name) }
+        // The name the Mac answers to over Bonjour, as set in Sharing settings.
+        if isOnNetwork, let name = SCDynamicStoreCopyLocalHostName(nil) as String? { found.append("\(name).local") }
         return found
+    }
+
+    /// Whether an IPv6 address comes from a network rather than only from the link being up: every
+    /// active interface has a link-local address (fe80::/10), with or without a network.
+    static func isOnNetwork(_ address: in6_addr) -> Bool {
+        let bytes = withUnsafeBytes(of: address) { Array($0) }
+        let isLinkLocal = bytes[0] == 0xFE && bytes[1] & 0xC0 == 0x80
+        return !isLinkLocal && bytes != Array(repeating: 0, count: 16)
     }
 
     // MARK: - Delivery
 
-    /// Starts tracking one app on one device the first time the hub looks at it, and saves that.
-    ///
-    /// The first look only takes reports finished from about then on, so old ones aren't delivered
-    /// as new. That's the time of the first look itself: an app first seen hours after the hub
-    /// started has no reason to send the reports made before then.
-    func startTrackingIfNeeded(device: String, bundleID: String, now: Date = .now) {
-        state.withLock { state in
-            let key = Self.key(device: device, bundleID: bundleID)
-            guard state.sources[key] == nil else { return }
-            state.sources[key] = SourceState(since: now.addingTimeInterval(-Self.firstLookMargin))
-            queueWrite(.state, in: &state)
-        }
-    }
-
     /// The finished reports from one app on one device still to copy.
     ///
-    /// Changes nothing.
+    /// A phone offers only reports the Mac hasn't confirmed, and a simulator's reports without the
+    /// delivered mark are the same, so every one is taken, including those sent before this hub
+    /// first saw the app. Changes nothing.
     func reportIDsToCopy(device: String, bundleID: String, finished: [FinishedReport]) -> [String] {
         state.withLock {
-            $0.sources[Self.key(device: device, bundleID: bundleID)]?.reportIDsToCopy(from: finished) ?? []
+            ($0.sources[Self.key(device: device, bundleID: bundleID)] ?? SourceState()).reportIDsToCopy(from: finished)
         }
     }
 
@@ -552,7 +629,7 @@ final class Hub: @unchecked Sendable {
         }
         state.withLock { state in
             state.filing.remove(filingKey)
-            state.sources[key, default: SourceState(since: .now)].delivered.append(source.reportID)
+            state.sources[key, default: SourceState()].delivered.append(source.reportID)
             queueWrite(.state, in: &state)
         }
         log(

@@ -15,7 +15,9 @@ enum ReportContent {
     /// snapshots, then attachments.
     ///
     /// Without a report.json that lists them, the folder's snapshots in name order, which for
-    /// UUID names says nothing about the report's order.
+    /// UUID names says nothing about the report's order. Only regular files directly in the
+    /// report's folder: the phone or simulator wrote report.json, so a name that leads out of the
+    /// folder, or a link to another file on the Mac, is left out.
     static func snapshots(in folder: URL) -> [URL] {
         snapshots(in: folder, listing: ReportListing.load(from: folder))
     }
@@ -31,7 +33,14 @@ enum ReportContent {
             names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
                 .filter { $0.hasSuffix(".jpg") || $0.hasSuffix(".png") }.sorted()
         }
-        return names.map { folder.appending(path: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
+        return names.compactMap { file($0, in: folder) }.filter {
+            (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.type] as? FileAttributeType == .typeRegular
+        }
+    }
+
+    /// The file a report names, when the name is a plain file name in its folder.
+    private static func file(_ name: String, in folder: URL) -> URL? {
+        Hub.isSafeName(name) ? folder.appending(path: name) : nil
     }
 
     /// The report as an agent reads it in a chat: each snapshot's path, then, for an earlier state
@@ -39,8 +48,18 @@ enum ReportContent {
     /// notes on it, numbered like the outlines drawn in the snapshot, with the element each note is
     /// about.
     ///
-    /// Nothing else. Without a complete report.json, the header and report.md.
+    /// Nothing else. Without a complete report.json, the header and report.md. A long text is cut
+    /// at `longestText`, pointing to report.md for the rest, so it fits in a command's arguments
+    /// and a chat message.
     static func text(for report: InboxReport) -> String {
+        shortened(
+            fullText(for: report),
+            to: longestText,
+            rest: "\n\nThe rest is in \(report.folder.appending(path: "report.md").path)."
+        )
+    }
+
+    private static func fullText(for report: InboxReport) -> String {
         guard let listing = ReportListing.load(from: report.folder), let app = listing.app,
             let screens = listing.screens,
             let snapshots = screens.flatMap({ screen in
@@ -59,12 +78,14 @@ enum ReportContent {
         var blocks: [String] = []
         for snapshot in snapshots {
             let notes = snapshot.notes.compactMap { byNumber[$0] }.map(line)
-            let path = report.folder.appending(path: snapshot.file).path
-            blocks.append(([path] + [snapshot.detail].compactMap { $0 } + notes).joined(separator: "\n"))
+            let path = file(snapshot.file, in: report.folder)?.path
+            blocks.append(([path, snapshot.detail].compactMap { $0 } + notes).joined(separator: "\n"))
         }
         for item in items where !item.attachments.isEmpty {
             blocks.append(
-                (item.attachments.map { report.folder.appending(path: $0).path } + [line(item)]).joined(separator: "\n")
+                (item.attachments.compactMap { file($0, in: report.folder)?.path } + [line(item)]).joined(
+                    separator: "\n"
+                )
             )
         }
         return (["UI report from \(report.source.deviceName) · \(app.name ?? report.source.bundleID)"] + blocks).joined(
@@ -78,6 +99,8 @@ enum ReportContent {
         var title: String
         var note: String
         var element: ReportListing.Item.Element?
+        /// The elements holding it, innermost first.
+        var ancestors: [ReportListing.Item.Element]
         var attachments: [String]
 
         init?(_ item: ReportListing.Item) {
@@ -88,19 +111,25 @@ enum ReportContent {
             self.title = title
             self.note = note
             element = item.element
+            ancestors = item.ancestors ?? []
             self.attachments = attachments
         }
     }
 
-    /// "1. Log milestone (Button, today.milestones): This is ugly".
+    /// "1. Log milestone (Button, today.milestones), in Cell "Milestones" (today.list): This is
+    /// ugly".
+    ///
+    /// The elements holding it, innermost first, tell apart elements that share a label.
     private static func line(_ item: Note) -> String {
         let element = item.element
         let name = element?.label ?? element?.identifier ?? item.title
         let details = [element?.role, element?.identifier == name ? nil : element?.identifier].compactMap { $0 }.joined(
             separator: ", "
         )
+        let inside = item.ancestors.compactMap(\.description)
         let note = item.note.isEmpty ? "No note" : item.note
-        return "\(item.number). \(name)\(details.isEmpty ? "" : " (\(details))"): \(note)"
+        return "\(item.number). \(name)\(details.isEmpty ? "" : " (\(details))")"
+            + (inside.isEmpty ? "" : ", in " + inside.joined(separator: " in ")) + ": \(note)"
     }
 
     /// The most of a report's text a reply carries; the rest stays in its report.md.

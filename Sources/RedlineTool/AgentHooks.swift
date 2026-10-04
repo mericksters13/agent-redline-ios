@@ -35,7 +35,7 @@ enum AgentHooks {
     static func run(for agent: Agent, event: HookEvent, paths: HubPaths) -> Int32 {
         let input = HookInput(json: FileHandle.standardInput.readDataToEndOfFile())
         guard let input, ProcessInfo.processInfo.environment[startedByHub] == nil else {
-            return answer(for: event, text: nil)
+            return answer(for: event, taken: nil)
         }
         let id = ChatID.make(agent, input.chat)
         let folder = URL(filePath: input.folder)
@@ -49,26 +49,34 @@ enum AgentHooks {
             pid: AgentProcess.find()
         )
         // Not an app project: nothing to do, in every project the agent opens.
-        guard !session.chat.bundleIDs.isEmpty else { return answer(for: event, text: nil) }
+        guard !session.chat.bundleIDs.isEmpty else { return answer(for: event, taken: nil) }
 
         switch event {
         case .prompt:
-            session.touch()
-            return answer(for: event, text: session.takeAddressed())
+            // Registered, not just marked used: this is the only hook, so it's what notes the
+            // chat's apps and starts the hub.
+            session.register()
+            return answer(for: event, taken: session.takeAddressed())
         }
     }
 
-    /// Prints what the agent expects from this event, carrying `text` when there is any.
-    static func answer(for event: HookEvent, text: String?) -> Int32 {
-        if let output = output(for: event, text: text),
+    /// Prints what the agent expects from this event, carrying the reports taken when there are
+    /// any.
+    ///
+    /// They're the chat's only once the answer is written out; otherwise they're freed for the
+    /// chat's next message.
+    static func answer(for event: HookEvent, taken: (text: String, reports: [InboxReport])?) -> Int32 {
+        var isWritten = false
+        if let output = output(for: event, text: taken?.text),
             let data = try? JSONSerialization.data(
                 withJSONObject: output,
                 options: [.sortedKeys, .withoutEscapingSlashes]
             )
         {
             // An agent that stopped reading gets nothing; the hook still exits cleanly.
-            try? FileHandle.standardOutput.write(contentsOf: data + Data("\n".utf8))
+            isWritten = (try? FileHandle.standardOutput.write(contentsOf: data + Data("\n".utf8))) != nil
         }
+        if let taken { ChatSession.settle(taken.reports, isDelivered: isWritten) }
         return 0
     }
 

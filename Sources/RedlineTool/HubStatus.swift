@@ -8,6 +8,8 @@ enum PhoneState: Codable, Equatable, Sendable, CustomStringConvertible {
     /// The phone couldn't be reached; it's tried again after the delay or when a phone wakes.
     case unreachable(retryInSeconds: Int)
     case noWatchedApps
+    /// The Mac is off every network, so the phone can't reach it; it keeps the address it has.
+    case macOffline
 
     /// For `redline status` and the log.
     var description: String {
@@ -15,6 +17,7 @@ enum PhoneState: Codable, Equatable, Sendable, CustomStringConvertible {
         case .ready(let apps): "Ready for \(apps.joined(separator: ", "))"
         case .unreachable(let seconds): "Not reachable, trying again in \(seconds) s or when a phone wakes"
         case .noWatchedApps: "None of the watched apps installed"
+        case .macOffline: "Mac not on a network, so the phone can't reach it"
         }
     }
 
@@ -24,13 +27,14 @@ enum PhoneState: Codable, Equatable, Sendable, CustomStringConvertible {
         case .ready: "Ready"
         case .unreachable: "Not reachable"
         case .noWatchedApps: "No watched app installed"
+        case .macOffline: "Mac offline"
         }
     }
 
     var isReady: Bool {
         switch self {
         case .ready: true
-        case .unreachable, .noWatchedApps: false
+        case .unreachable, .noWatchedApps, .macOffline: false
         }
     }
 }

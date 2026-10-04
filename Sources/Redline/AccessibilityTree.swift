@@ -38,17 +38,20 @@ enum AccessibilityTree {
     /// Every element and named group under `roots`, in screen points: back to front, each
     /// parent before its children, with `parent` set to the enclosing one.
     ///
+    /// Frames are cut to the screen and to every enclosing view that clips, such as a scroll view,
+    /// so a row scrolled out of sight can't be picked over what covers it.
+    ///
     /// With `stopAtFirst`, the walk ends at the first element found, to tell whether there are any.
     static func elements(under roots: [UIView], screenBounds: CGRect, stopAtFirst: Bool = false) -> [ElementSnapshot] {
         var result: [ElementSnapshot] = []
         var visited = Set<ObjectIdentifier>()
 
-        func append(_ object: NSObject, isContainer: Bool, parent: Int?) -> Int? {
+        func append(_ object: NSObject, isContainer: Bool, parent: Int?, clip: CGRect) -> Int? {
             var frame = object.accessibilityFrame
             if frame.isEmpty, let view = object as? UIView, let window = view.window {
                 frame = view.convert(view.bounds, to: window.screen.coordinateSpace)
             }
-            frame = frame.intersection(screenBounds)
+            frame = frame.intersection(clip)
             guard !frame.isNull, !frame.isEmpty else { return nil }
             result.append(
                 ElementSnapshot(
@@ -66,51 +69,64 @@ enum AccessibilityTree {
             return result.count - 1
         }
 
-        func visit(_ object: NSObject, depth: Int, parent: Int?) {
+        func visit(_ object: NSObject, depth: Int, parent: Int?, clip: CGRect) {
             if stopAtFirst, !result.isEmpty { return }
             guard depth < 80, visited.insert(ObjectIdentifier(object)).inserted else { return }
             if let view = object as? UIView, view.isHidden || view.alpha < 0.01 { return }
 
+            var clip = clip
+            if let view = object as? UIView, view.clipsToBounds, let window = view.window {
+                clip = clip.intersection(view.convert(view.bounds, to: window.screen.coordinateSpace))
+                guard !clip.isNull, !clip.isEmpty else { return }
+            }
+
             var parent = parent
             if object.isAccessibilityElement {
-                parent = append(object, isContainer: false, parent: parent) ?? parent
+                parent = append(object, isContainer: false, parent: parent, clip: clip) ?? parent
             } else if identifier(of: object) != nil || object.accessibilityLabel?.nonEmpty != nil {
                 // Named groups let the note box step up from a leaf to its card or section.
-                parent = append(object, isContainer: true, parent: parent) ?? parent
+                parent = append(object, isContainer: true, parent: parent, clip: clip) ?? parent
             }
 
             if let children = object.accessibilityElements {
-                for case let child as NSObject in children { visit(child, depth: depth + 1, parent: parent) }
+                for case let child as NSObject in children {
+                    visit(child, depth: depth + 1, parent: parent, clip: clip)
+                }
             } else {
                 // SwiftUI hosting views expose their tree through the container methods.
                 let count = object.accessibilityElementCount()
                 if count > 0, count != NSNotFound {
                     for index in 0..<min(count, 500) {
                         if let child = object.accessibilityElement(at: index) as? NSObject {
-                            visit(child, depth: depth + 1, parent: parent)
+                            visit(child, depth: depth + 1, parent: parent, clip: clip)
                         }
                     }
                 }
             }
             if let view = object as? UIView {
-                for subview in view.subviews { visit(subview, depth: depth + 1, parent: parent) }
+                for subview in view.subviews { visit(subview, depth: depth + 1, parent: parent, clip: clip) }
             }
         }
 
-        for root in roots { visit(root, depth: 0, parent: nil) }
+        for root in roots { visit(root, depth: 0, parent: nil, clip: screenBounds) }
         return result
     }
 
     /// The screen the user is looking at: the navigation bar title, else the
     /// topmost header on screen (custom headers such as a large "Today"), else the
     /// selected tab, plus the view controller type.
+    ///
+    /// A sheet or full-screen cover is read alone, so it never takes the title of the screen it
+    /// covers; a translucent presentation takes the title of the screen still showing under it,
+    /// front first.
     static func screen(of window: UIWindow?, elements: [ElementSnapshot]) -> ScreenInfo {
         guard let window else { return ScreenInfo() }
-        let controller = topController(from: window.rootViewController)
+        let controller = topController(of: window)
+        let cover = coveringController(in: window)
         let title =
-            navigationBarTitle(in: window)
+            visibleRoots(of: window).reversed().lazy.compactMap(navigationBarTitle(in:)).first
             ?? ElementSelection.headerTitle(in: elements)
-            ?? selectedTabTitle(from: window.rootViewController)
+            ?? selectedTabTitle(from: cover ?? window.rootViewController)
             ?? controller?.navigationItem.title?.nonEmpty
             ?? controller?.title?.nonEmpty
         let typeName = controller.map {
@@ -119,16 +135,53 @@ enum AccessibilityTree {
         return ScreenInfo(title: title, viewController: typeName?.nonEmpty)
     }
 
+    /// The view controller showing the screen in `window`: the topmost presented one, or the
+    /// visible one inside navigation and tab controllers.
+    static func topController(of window: UIWindow?) -> UIViewController? {
+        topController(from: window?.rootViewController)
+    }
+
     // MARK: - Presented screens
 
-    /// A presented sheet or full-screen cover hides what's under it, so only its view is
-    /// read when one is up, along with anything drawn above it, such as a menu opened from it.
+    /// The views that make up what is on screen in `window`, back to front.
+    ///
+    /// A sheet or a full-screen cover hides what's under it, so reading starts again at its view,
+    /// along with anything drawn in the window above it, such as a menu opened from it. An
+    /// over-context, over-full-screen or custom presentation that keeps the presenting view leaves
+    /// that view showing unless its own view is opaque and covers the window, so both are read. An
+    /// open menu's empty presented controller hides nothing.
     private static func visibleRoots(of window: UIWindow) -> [UIView] {
-        guard let cover = coveringController(in: window)?.viewIfLoaded else { return [window] }
-        var top: UIView = cover
-        while let parent = top.superview, parent !== window { top = parent }
-        guard let index = window.subviews.firstIndex(of: top) else { return [cover] }
-        return [cover] + window.subviews[(index + 1)...]
+        var roots: [UIView] = [window]
+        var controller = window.rootViewController
+        while let presented = controller?.presentedViewController, !presented.isBeingDismissed {
+            controller = presented
+            guard let view = presented.viewIfLoaded, showsContent(presented) else { continue }
+            if hidesPresenter(presented, in: window) {
+                var top: UIView = view
+                while let parent = top.superview, parent !== window { top = parent }
+                let above = window.subviews.firstIndex(of: top).map { window.subviews[($0 + 1)...] } ?? []
+                roots = [view] + above
+            } else {
+                roots.append(view)
+            }
+        }
+        return roots
+    }
+
+    /// Whether a presentation hides the screen it was presented from.
+    private static func hidesPresenter(_ controller: UIViewController, in window: UIWindow) -> Bool {
+        switch controller.modalPresentationStyle {
+        case .overFullScreen, .overCurrentContext:
+            break
+        case .custom where controller.presentationController?.shouldRemovePresentersView == false:
+            break
+        default:
+            return true
+        }
+        guard let view = controller.viewIfLoaded else { return false }
+        let backgroundAlpha = view.backgroundColor?.resolvedColor(with: view.traitCollection).cgColor.alpha ?? 0
+        return backgroundAlpha > 0.99 && view.alpha > 0.99
+            && view.convert(view.bounds, to: window).contains(window.bounds)
     }
 
     /// The topmost presented controller that shows something of its own.

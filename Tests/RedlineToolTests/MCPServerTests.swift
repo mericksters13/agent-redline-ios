@@ -105,13 +105,13 @@ struct MCPServerTests {
         let initialized = server.respond(to: [
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": ["protocolVersion": "2025-06-18", "clientInfo": ["name": "claude-code"]],
-        ])
+        ]).message
         let result = initialized["result"] as? [String: Any]
         #expect((result?["serverInfo"] as? [String: Any])?["name"] as? String == "redline")
         #expect(Chats.removeClosedChats(paths).first?.agent == "claude-code")
 
         let tools =
-            (server.respond(to: ["jsonrpc": "2.0", "id": 2, "method": "tools/list"])["result"] as? [String: Any])?[
+            (server.respond(to: ["jsonrpc": "2.0", "id": 2, "method": "tools/list"]).message["result"] as? [String: Any])?[
                 "tools"
             ] as? [[String: Any]]
         #expect(tools?.compactMap { $0["name"] as? String } == ["check_messages", "wait_for_message"])
@@ -121,14 +121,32 @@ struct MCPServerTests {
             "jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": ["name": "check_messages", "arguments": [String: Any]()],
         ]
-        let content = ((server.respond(to: call)["result"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
+        let checked = server.respond(to: call)
+        let content = ((checked.message["result"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
         #expect(content.first?["type"] as? String == "text")
         #expect(content.count(where: { $0["type"] as? String == "image" }) == 2)
         #expect(content.first { $0["type"] as? String == "image" }?["mimeType"] as? String == "image/jpeg")
 
         // Taken: a second check finds nothing.
-        let again = ((server.respond(to: call)["result"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
+        #expect(checked.reports.count == 1)
+        let again =
+            ((server.respond(to: call).message["result"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
         #expect((again.first?["text"] as? String)?.hasPrefix("No reports waiting") == true)
+    }
+
+    @Test func aReportWhoseResponseCantBeWrittenIsFreedAgain() async throws {
+        struct Closed: Error {}
+        let server = MCPServer(session: session(try project())) { _ in throw Closed() }
+        try inboxReport("20261003-223449")
+        let call: [String: Any] = [
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": ["name": "check_messages", "arguments": [String: Any]()],
+        ]
+        server.receive(try line(call))
+        await offPool { server.finish() }
+        // The chat never got it, so it can take it again.
+        #expect(Inbox.unclaimedReports(for: ["com.example.app"], paths: paths).count == 1)
+        #expect(Inbox.claim(of: try #require(Inbox.reports(for: nil, paths: paths).first).folder) == nil)
     }
 
     @Test func aWaitStopsWhenCancelledAndNeverHoldsUpOtherRequests() async throws {
@@ -154,9 +172,9 @@ struct MCPServerTests {
         let server = MCPServer(session: session(try project())) { _ in }
         let tool = server.respond(to: [
             "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": ["name": "no_such_tool"],
-        ])
+        ]).message
         #expect((tool["error"] as? [String: Any])?["code"] as? Int == -32602)
-        let method = server.respond(to: ["jsonrpc": "2.0", "id": 2, "method": "no/such/method"])
+        let method = server.respond(to: ["jsonrpc": "2.0", "id": 2, "method": "no/such/method"]).message
         #expect((method["error"] as? [String: Any])?["code"] as? Int == -32601)
     }
 

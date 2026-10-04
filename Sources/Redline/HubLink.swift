@@ -115,7 +115,16 @@ enum HubLink {
         var worktree: String?
         /// The branch a new chat's worktree starts from, such as "main".
         var newChatBase: String? = nil
+        /// The agents that can start a new chat; nil, from an older Mac, for every agent.
+        var newChats: [String]? = nil
         var refused: String?
+
+        func startsNewChats(_ agent: String) -> Bool { newChats?.contains(agent) ?? true }
+
+        /// Some agent has an open chat or can start a new one, so there's something to pick.
+        var offersDestination: Bool {
+            agents.contains { agent in startsNewChats(agent) || chats.contains { $0.agent == agent } }
+        }
     }
 
     /// The agent's name as the user knows it.

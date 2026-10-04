@@ -2,19 +2,26 @@
 # Builds "Redline.app", the hub as a menu bar app, from this package and signs it for
 # local use. Installs it in ~/Applications unless a destination folder is given, and registers it
 # with Launch Services. A copy that is running is stopped to replace it and opened again. With
-# --no-start, it is neither opened again nor registered.
+# --no-start, it is neither opened again nor registered. The app from before the rename, "Agentic
+# Debugging.app", is replaced too, unless --keep-earlier-app is given.
 #
-#   scripts/build-hub-app.sh [destination folder] [--no-start]
+#   scripts/build-hub-app.sh [destination folder] [--no-start] [--keep-earlier-app]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 destination="$HOME/Applications"
 reopen=true
+replace_earlier=true
 for argument in "$@"; do
     case "$argument" in
         --no-start) reopen=false ;;
+        --keep-earlier-app) replace_earlier=false ;;
         *) destination="$argument" ;;
     esac
 done
+# Absolute, so the running copy's process, which Launch Services starts by its full path, matches
+# the checks below.
+mkdir -p "$destination"
+destination="$(cd "$destination" && pwd -P)"
 swift build -c release --product redline
 binary="$(swift build -c release --show-bin-path)/redline"
 # The same as `version` in Sources/RedlineTool/main.swift, which the MCP server reports.
@@ -59,26 +66,46 @@ else
     codesign --force --sign - "$staging"
     echo "Signed ad hoc"
 fi
-mkdir -p "$destination"
 # A running copy is stopped first and opened again after, unless --no-start was given: macOS may
 # not match a running app to a bundle replaced under it, and ask for permissions again. A stop
 # signal, not an AppleScript quit, which would need its own permission. The bundle is replaced
-# only once the old copy has exited, so the open below starts the new one: after about 15 seconds
-# the old copy is killed.
-# pgrep and pkill take a regular expression, so the path's special characters are escaped.
-processes="$(printf '%s' "$app/Contents/MacOS/" | sed 's/[][\.*^$+?(){}|]/\\&/g')"
+# only once the old copy has exited, so the open below starts the new one. Asked to stop, the app
+# first lets the reports it is handing over reach their chats, which can take minutes. One that
+# hasn't exited after about 15 seconds is killed only when it isn't handing a report over: killed
+# mid hand-over, the next hub would hand the report over again while the chat the old one started
+# still has it.
 running=false
-if pkill -TERM -f "$processes" 2>/dev/null; then
+stop_running_copy() {
+    local bundle="$1" inbox="$2" processes
+    # pgrep and pkill take a regular expression, so the path's special characters are escaped.
+    processes="$(printf '%s' "$bundle/Contents/MacOS/" | sed 's/[][\.*^$+?(){}|]/\\&/g')"
+    pkill -TERM -f "$processes" 2>/dev/null || return 0
     running=true
     for _ in {1..50}; do pgrep -f "$processes" >/dev/null || break; sleep 0.3; done
     if pgrep -f "$processes" >/dev/null; then
+        # A report being handed over has a claim naming the process handing it over.
+        for pid in $(pgrep -f "$processes"); do
+            if grep -rlsqE --include=claim.json "\"handingOverIn\" *: *$pid([^0-9]|\$)" "$inbox"; then
+                echo "The running copy of $bundle is handing a report over to its chat and quits once the chat has it; run this again then." >&2
+                exit 1
+            fi
+        done
         pkill -KILL -f "$processes" 2>/dev/null || true
         for _ in {1..20}; do pgrep -f "$processes" >/dev/null || break; sleep 0.1; done
     fi
     if pgrep -f "$processes" >/dev/null; then
-        echo "The running copy of $app did not exit; quit it and run this again." >&2
+        echo "The running copy of $bundle did not exit; quit it and run this again." >&2
         exit 1
     fi
+}
+stop_running_copy "$app" "$HOME/Library/Application Support/Redline/inbox"
+# The app from before the rename is replaced the same way. Its inbox is still under its own name
+# while it runs: the new app moves that folder when it starts. With --keep-earlier-app it is left
+# for the caller: the installer stops it, moves its folder and removes it in its own steps.
+if $replace_earlier; then
+    legacy="$destination/Agentic Debugging.app"
+    stop_running_copy "$legacy" "$HOME/Library/Application Support/iOSAgenticDebuggingKit/inbox"
+    rm -rf "$legacy"
 fi
 rm -rf "$app"
 mv "$staging" "$app"

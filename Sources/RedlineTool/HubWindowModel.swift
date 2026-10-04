@@ -120,10 +120,15 @@ final class HubWindowModel {
         if newDevices != devices { devices = newDevices }
         let newReports = state.reports
         if newReports != reports { reports = newReports }
-        let newReach =
-            state.status.hosts.first.map { "Apps reach it at \($0) · port \(state.status.port)" }
-            ?? "No local network"
+        let newReach = Self.reach(state.status)
         if newReach != reach { reach = newReach }
+    }
+
+    /// Where apps reach the hub, from its latest status: none once the Mac leaves its networks, so
+    /// the panel never shows an address apps can't use.
+    nonisolated static func reach(_ status: HubStatus) -> String {
+        guard let host = status.hosts.first else { return "Not on a network, so apps can't reach it" }
+        return "Apps reach it at \(host) · port \(status.port)"
     }
 
     /// Where refreshes read the inbox and run simctl, which block.
@@ -171,7 +176,11 @@ final class HubWindowModel {
     ) {
         let all = Inbox.reports(for: nil, paths: paths)
         let lastReport = Dictionary(all.map { ($0.source.device, $0.source.receivedAt) }, uniquingKeysWith: max)
-        let newest = all.sorted { $0.source.receivedAt > $1.source.receivedAt }.prefix(limit)
+        // Reports received in the same second keep their order: dates keep their milliseconds, and
+        // the folder breaks a tie.
+        let newest = all.sorted {
+            ($0.source.receivedAt, $0.folder.lastPathComponent) > ($1.source.receivedAt, $1.folder.lastPathComponent)
+        }.prefix(limit)
         let database = CodexThreads.newestDatabase()
         let rows = newest.map { report in
             let folder = report.folder
@@ -196,14 +205,16 @@ final class HubWindowModel {
     /// chat that took it through MCP or a hook.
     ///
     /// A report the hub left waiting, or set to go with a chat's next message, shows as waiting
-    /// until a chat takes it, and then shows that chat. A claim whose hand-over was interrupted doesn't count: the report
-    /// is free again, as `Inbox.unclaimedReports` has it.
+    /// until a chat takes it, and then shows that chat. No dates are compared: a wait is saved only
+    /// while no other chat holds the report, so a claim next to one always came after it. A claim
+    /// whose hand-over was interrupted doesn't count: the report is free again, as
+    /// `Inbox.unclaimedReports` has it.
     nonisolated static func destination(of folder: URL, codexDatabase: URL?) -> (
         agent: String, chat: String, isWaiting: Bool
     ) {
         let delivery = ChatDelivery.load(from: folder)
-        let claim = Inbox.claim(of: folder).flatMap { $0.isInterrupted ? nil : $0 }
-        if let delivery, !(delivery.isPending && claim.map { $0.claimedAt > delivery.deliveredAt } == true) {
+        let claim = Inbox.activeClaim(of: folder)
+        if let delivery, !(delivery.isPending && claim != nil) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             // A report set to go with a chat's next message isn't in that chat yet.
             let chat = delivery.kind == .nextMessage ? "\(delivery.title) (next message)" : delivery.title

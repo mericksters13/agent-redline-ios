@@ -13,7 +13,12 @@ struct HubTests {
     /// A hub that's never started: no listener, no simulators, no devicectl.
     private func hub() throws -> Hub {
         try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
-        return Hub(paths: paths, devicectl: Devicectl(executable: URL(filePath: "/usr/bin/true")), apps: [app])
+        return Hub(
+            paths: paths,
+            devicectl: Devicectl(executable: URL(filePath: "/usr/bin/true")),
+            apps: [app],
+            claudeChats: { [] }
+        )
     }
 
     private func offer(token: String, reports: [HubMessage.Offer.Report]) -> HubMessage.Offer {
@@ -62,7 +67,16 @@ struct HubTests {
         try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
         try Data("not json".utf8).write(to: paths.state)
         let hub = try hub()
-        hub.startTrackingIfNeeded(device: phone, bundleID: app)
+        // Filing a report saves the state.
+        let source = ReportSource(
+            kind: .phone,
+            device: phone,
+            deviceName: "Test iPhone",
+            bundleID: app,
+            reportID: "20261004-031600",
+            receivedAt: .now
+        )
+        try hub.receive(source) { try FileManager.default.createDirectory(at: $0, withIntermediateDirectories: true) }
         hub.flushWrites()
         let names = try FileManager.default.contentsOfDirectory(atPath: paths.hub.path)
         let aside = try #require(names.first { $0.hasPrefix("state-unreadable-") && $0.hasSuffix(".json") })
@@ -93,7 +107,6 @@ struct HubTests {
         let inbox = paths.inbox.appending(path: app)
         #expect(try FileManager.default.contentsOfDirectory(atPath: inbox.path).isEmpty)
         // Not counted as delivered, so it's offered again.
-        hub.startTrackingIfNeeded(device: phone, bundleID: app)
         #expect(
             hub.reportIDsToCopy(
                 device: phone,
@@ -124,15 +137,153 @@ struct HubTests {
         hub.flushWrites()
     }
 
-    @Test func aSourceFirstSeenLaterTakesOnlyReportsFromThen() throws {
+    @Test func reportsSentBeforeTheHubSetTheAppUpAreTakenNotJustSettled() throws {
         let hub = try hub()
-        let firstLook = Date.now.addingTimeInterval(3 * 3600)
-        let before = FinishedReport(id: "20261004-120000", finishedAt: firstLook.addingTimeInterval(-3600))
-        let fresh = FinishedReport(id: "20261004-145930", finishedAt: firstLook.addingTimeInterval(-30))
-        hub.startTrackingIfNeeded(device: phone, bundleID: app, now: firstLook)
-        #expect(hub.reportIDsToCopy(device: phone, bundleID: app, finished: [before, fresh]) == [fresh.id])
-        #expect(hub.settledReportIDs(device: phone, bundleID: app, finished: [before, fresh]) == [before.id])
+        let token = hub.issueToken(device: phone, bundleID: app)
+        // Sent a day before any Mac gave the app its address, offered now that one has.
+        let early = offer(
+            token: token,
+            reports: [.init(id: "20261003-120000", finishedAt: Date.now.addingTimeInterval(-86_400))]
+        )
+        let first = hub.answerNow(early)
+        #expect(first.want == ["20261003-120000"])
+        // Not confirmed until the hub has it.
+        #expect(first.delivered.isEmpty)
+        try hub.storeNow(
+            HubMessage.Upload(id: "20261003-120000", files: ["report.json": Data("{}".utf8)]),
+            offeredIn: early
+        )
+        #expect(hub.answerNow(early).delivered == ["20261003-120000"])
         hub.flushWrites()
+    }
+
+    @Test func reportsReceivedInTheSameSecondShowNewestFirst() throws {
+        let hub = try hub()
+        let second = Date(timeIntervalSince1970: 1_791_000_000)
+        // Named so that their names sort the other way from when they arrived.
+        for (id, offset) in [("b-first", 0.2), ("a-second", 0.7)] {
+            let source = ReportSource(
+                kind: .phone,
+                device: phone,
+                deviceName: "Test iPhone",
+                bundleID: app,
+                reportID: id,
+                receivedAt: second.addingTimeInterval(offset)
+            )
+            try hub.receive(source) {
+                try FileManager.default.createDirectory(at: $0, withIntermediateDirectories: true)
+            }
+        }
+        let rows = HubWindowModel.readReports(paths: paths).rows
+        #expect(rows.map(\.folder.lastPathComponent) == ["a-second-00000001", "b-first-00000001"])
+        hub.flushWrites()
+    }
+
+    @Test func anIPv6OnlyNetworkCountsAsANetwork() {
+        func ipv6(_ text: String) -> in6_addr {
+            var address = in6_addr()
+            #expect(inet_pton(AF_INET6, text, &address) == 1)
+            return address
+        }
+        #expect(Hub.isOnNetwork(ipv6("2001:db8::1")))
+        #expect(Hub.isOnNetwork(ipv6("fd12:3456:789a::1")))
+        // Every interface that's up has one of these, network or not.
+        #expect(!Hub.isOnNetwork(ipv6("fe80::1")))
+        #expect(!Hub.isOnNetwork(ipv6("febf::1")))
+        #expect(!Hub.isOnNetwork(ipv6("::")))
+        // On a network, the `.local` name is last, after any IPv4 address.
+        let hosts = Hub.addresses()
+        #expect(hosts.isEmpty || hosts.last?.hasSuffix(".local") == true)
+    }
+
+    @Test func chatsOpenTheNewestInstalledCopyOfTheMenuBarApp() throws {
+        func install(_ folder: String, builtAt date: Date) throws -> URL {
+            let app = paths.root.appending(path: "\(folder)/Redline.app", directoryHint: .isDirectory)
+            let program = app.appending(path: "Contents/MacOS/redline")
+            try FileManager.default.createDirectory(
+                at: program.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data().write(to: program)
+            try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: program.path)
+            return app
+        }
+        let home = try install("home/Applications", builtAt: Date.now.addingTimeInterval(-86_400))
+        let system = try install("Applications", builtAt: .now)
+        let trashed = try install(".Trash", builtAt: Date.now.addingTimeInterval(60))
+        let trashedOnAnotherVolume = try install(
+            "Volumes/External/.Trashes/501",
+            builtAt: Date.now.addingTimeInterval(120)
+        )
+        let missing = paths.root.appending(path: "Elsewhere/Redline.app", directoryHint: .isDirectory)
+        // Installed in ~/Applications first, then in /Applications: the later install opens.
+        #expect(HubProcess.newestApp(among: [home, system, trashed, trashedOnAnotherVolume, missing]) == system)
+        #expect(HubProcess.newestApp(among: [home, missing]) == home)
+        #expect(HubProcess.newestApp(among: [missing]) == nil)
+    }
+
+    @Test func anOpenClaudeChatsAppIsWatched() throws {
+        try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
+        let project = paths.root.appending(path: "claude-project", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try "targets:\n  App:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: com.example.claude\n"
+            .write(to: project.appending(path: "project.yml"), atomically: true, encoding: .utf8)
+        let session = ClaudeSessions.Session(id: "s1", folder: project.path, socket: "/tmp/none", updatedAt: .now)
+        let hub = Hub(
+            paths: paths,
+            devicectl: Devicectl(executable: URL(filePath: "/usr/bin/true")),
+            apps: [],
+            claudeChats: { [session] }
+        )
+        hub.updateApps(isStarting: true)
+        #expect(hub.apps == ["com.example.claude"])
+        // Claude Code runs no hooks: the app is noted for it, so it stays watched once the chat closes.
+        #expect(ProjectHistory.all(paths)["com.example.claude"]?.agent == "claude")
+    }
+
+    @Test func chatsNotingTheirAppsAtOnceKeepEachOthers() {
+        let paths = self.paths
+        // Each stands in for a chat's own process: the file lock is per open file, not per process.
+        DispatchQueue.concurrentPerform(iterations: 40) { index in
+            let chat = ChatRecord(
+                id: "c\(index)",
+                agent: "test",
+                folder: "/p\(index)",
+                bundleIDs: ["com.example.app\(index)"],
+                pid: getpid(),
+                registeredAt: .now,
+                lastActiveAt: .now
+            )
+            #expect(throws: Never.self) { try ProjectHistory.note(chat, paths: paths) }
+        }
+        #expect(ProjectHistory.all(paths).count == 40)
+    }
+
+    @Test func aSimulatorReportWithALinkIsNotTaken() throws {
+        let files = FileManager.default
+        let folder = paths.root.appending(path: "copied", directoryHint: .isDirectory)
+        try files.createDirectory(at: folder.appending(path: "draft"), withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: folder.appending(path: "report.json"))
+        try Data("# Hi".utf8).write(to: folder.appending(path: "draft/report.md"))
+        #expect(SimulatorWatcher.holdsOnlyFilesAndFolders(folder))
+        // A link to a file elsewhere on the Mac, at any depth.
+        try files.createSymbolicLink(
+            atPath: folder.appending(path: "draft/new-chat-output.jsonl").path,
+            withDestinationPath: "/etc/hosts"
+        )
+        #expect(!SimulatorWatcher.holdsOnlyFilesAndFolders(folder))
+        try files.removeItem(at: folder.appending(path: "draft/new-chat-output.jsonl"))
+        // A hard link shares the file it names, so writing to it writes there.
+        let outside = paths.root.appending(path: "outside.txt")
+        try Data("secret".utf8).write(to: outside)
+        try files.linkItem(at: outside, to: folder.appending(path: "report.md"))
+        #expect(!SimulatorWatcher.holdsOnlyFilesAndFolders(folder))
+        try files.removeItem(at: folder.appending(path: "report.md"))
+        #expect(SimulatorWatcher.holdsOnlyFilesAndFolders(folder))
+        // The report folder itself a link.
+        let linked = paths.root.appending(path: "linked")
+        try files.createSymbolicLink(at: linked, withDestinationURL: folder)
+        #expect(!SimulatorWatcher.holdsOnlyFilesAndFolders(linked))
     }
 
     @Test func aReportArrivingTwiceAtOnceIsFiledOnce() throws {
@@ -194,10 +345,11 @@ struct HubTests {
         let old = HubMessage.Offer.Report(id: "20261002-135144", finishedAt: Date.now.addingTimeInterval(-86_400))
         let new = HubMessage.Offer.Report(id: "20261004-031600", finishedAt: .now)
         let offered = offer(token: token, reports: [old, new])
+        // The old one was sent before this hub set the app up, and is still waiting for a Mac.
+        try hub.storeNow(HubMessage.Upload(id: old.id, files: ["report.json": Data("{}".utf8)]), offeredIn: offered)
         let answer = hub.answerNow(offered)
         #expect(answer.refused == nil)
         #expect(answer.want == ["20261004-031600"])
-        // From before the hub first looked: the app can stop offering it.
         #expect(answer.delivered == ["20261002-135144"])
 
         // Unsafe file names and reports without their report.json are turned down.

@@ -13,7 +13,8 @@ import Foundation
 /// - `hub/state.json`: which reports each phone and simulator app has already given
 /// - `hub/tokens.json`: the token each app on each phone was given; secret
 /// - `hub/started-chats.json`: the chats the hub started for the phone's "New chat" picks
-/// - `hub/projects.json`: the apps chats have worked on, which the hub keeps watching
+/// - `hub/projects.json`: the apps chats have worked on, which the hub keeps watching, with
+///   `hub/projects.lock` held while a chat adds its apps
 /// - `hub/status.json`, `hub/hub.pid`, `hub/hub.log` (and `hub/hub.log.1`): for `redline status`
 ///   and the panel; the hub holds a lock on `hub.pid` while it runs
 struct HubPaths: Sendable {
@@ -40,8 +41,7 @@ struct HubPaths: Sendable {
     /// How the hub and the chats write their JSON files: ISO 8601 dates, pretty-printed with
     /// sorted keys, so people can read them.
     ///
-    /// Dates keep their milliseconds: the menu bar panel orders a claim and a delivery saved in the
-    /// same second by them.
+    /// Dates keep their milliseconds, so reports received in the same second stay in order.
     static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .custom { date, encoder in
