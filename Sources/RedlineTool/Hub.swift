@@ -142,6 +142,9 @@ final class Hub: @unchecked Sendable {
         guard let pidFile = HubProcess.claim(paths) else { return false }
         self.pidFile = pidFile
         updateApps(starting: true)
+        // Before anything else, so the menu bar app taking over from this hub finds the apps
+        // it was given on the command line.
+        writeStatus()
         log(apps.isEmpty ? "Hub started; no chats open yet" : "Hub started for \(apps.joined(separator: ", "))")
         watchChats()
         handoff = Handoff(hub: self)

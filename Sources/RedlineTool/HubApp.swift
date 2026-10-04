@@ -91,6 +91,9 @@ final class HubWindowModel {
     private(set) var address = ""
     private let hub: Hub?
     private var timer: Timer?
+    /// True while a refresh is reading the inbox and simulators. A slow `simctl` makes the timer
+    /// skip a turn rather than start another, so an older refresh never overwrites a newer one.
+    @ObservationIgnored private var refreshing = false
 
     init(hub: Hub?) {
         self.hub = hub
@@ -111,6 +114,8 @@ final class HubWindowModel {
     }
 
     func refresh() {
+        guard !refreshing else { return }
+        refreshing = true
         let paths = hub?.paths ?? HubPaths.standard
         let status = hub?.statusSnapshot() ?? Self.savedStatus(paths)
         let watchedSimulators = hub?.watchedSimulators() ?? []
@@ -118,6 +123,7 @@ final class HubWindowModel {
             let (reports, last) = HubWindowModel.readReports(paths: paths)
             let booted = HubWindowModel.bootedSimulators().filter { watchedSimulators.contains($0.udid) }
             await MainActor.run {
+                self.refreshing = false
                 let phones = (status?.phones ?? []).map {
                     DeviceRow(id: $0.udid, name: $0.name, kind: $0.model ?? "iPhone", state: HubWindowModel.phoneState($0.state),
                               lastReport: last[$0.udid], active: $0.state.hasPrefix("Ready"))
@@ -127,7 +133,7 @@ final class HubWindowModel {
                 self.devices = phones.filter(\.active) + simulators + phones.filter { !$0.active }
                 self.reports = reports
                 ThumbnailCache.keep(Set(reports.compactMap(\.thumbnail)))
-                if let status { self.address = "\(status.hosts.first ?? "") · port \(status.port)" }
+                if let status, let host = status.hosts.first { self.address = "\(host) · port \(status.port)" }
             }
         }
     }
@@ -173,10 +179,13 @@ final class HubWindowModel {
 
     /// The agent and chat a report went to: what the hub saved when it delivered it, or the
     /// chat that took it through MCP or a hook. A report the hub left waiting, or set to go with
-    /// a chat's next message, shows the chat that took it once one has.
+    /// a chat's next message, shows the chat that took it once one has. A claim whose hand-over
+    /// was interrupted doesn't count: the report is free again, as `InboxQueue.waiting` has it.
     nonisolated static func destination(of folder: URL) -> (agent: String, chat: String, waiting: Bool) {
         let delivery = ReportDelivery.load(from: folder)
-        let claim = (try? Data(contentsOf: folder.appending(path: InboxQueue.claimFile))).flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
+        let claim = (try? Data(contentsOf: folder.appending(path: InboxQueue.claimFile)))
+            .flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
+            .flatMap { $0.isInterrupted ? nil : $0 }
         if let delivery, !(delivery.pending && claim.map { $0.claimedAt > delivery.at } == true) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             return (agent, delivery.title, delivery.kind == .waiting)
@@ -340,7 +349,12 @@ struct HubPanel: View {
 
     private var footer: some View {
         HStack {
-            Button("Open inbox") { NSWorkspace.shared.open(HubPaths.standard.inbox) }
+            Button("Open inbox") {
+                // Before the first report arrives the inbox doesn't exist yet.
+                let inbox = HubPaths.standard.inbox
+                try? FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+                NSWorkspace.shared.open(inbox)
+            }
             Spacer()
             Button("Quit") { NSApplication.shared.terminate(nil) }
         }
