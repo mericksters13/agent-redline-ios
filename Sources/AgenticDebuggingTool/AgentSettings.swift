@@ -22,27 +22,29 @@ enum AgentSettings {
         "'\(executable.replacingOccurrences(of: "'", with: "'\\''"))' hook \(agent.rawValue) \(event.rawValue)"
     }
 
-    /// This tool's hooks, by the agent's event name.
-    static func hooks(_ agent: Agent, executable: String) -> [(event: String, hooks: [[String: Any]])] {
+    /// This tool's hooks, by the agent's event name, with the matcher that limits them to
+    /// commands and MCP tools where an agent supports one.
+    static func hooks(_ agent: Agent, executable: String) -> [(event: String, matcher: String?, hooks: [[String: Any]])] {
         func hook(_ event: HookEvent, _ extra: [String: Any] = [:]) -> [String: Any] {
             var hook: [String: Any] = ["command": command(executable, agent, event)]
             if agent != .cursor { hook["type"] = "command" }
             return hook.merging(extra) { $1 }
         }
+        let tools = "Bash|mcp__.*"
         // A little longer than the hold, so the agent never cuts it short.
-        let holdTimeout = Int(AgentHooks.holdOpen) + 60
+        let stop = hook(.stop, agent == .cursor
+            ? ["timeout": Int(AgentHooks.holdOpen) + 60, "loop_limit": NSNull()]
+            : ["timeout": Int(AgentHooks.holdOpen) + 60, "statusMessage": "Waiting for phone reports"])
         switch agent {
         case .claude:
-            // Claude Code enforces a timeout even on a background hook; a week, renewed after every reply.
-            let wait = hook(.wait, ["asyncRewake": true, "timeout": 604_800])
-            return [("SessionStart", [hook(.start), wait]), ("UserPromptSubmit", [hook(.prompt)]), ("Stop", [wait]), ("SessionEnd", [hook(.end)])]
+            // Claude Code chats are reached through their own socket; only builds need noting.
+            return [("PostToolUse", tools, [hook(.built)])]
         case .codex:
-            return [("SessionStart", [hook(.start)]), ("UserPromptSubmit", [hook(.prompt)]),
-                    ("Stop", [hook(.stop, ["timeout": holdTimeout, "statusMessage": "Waiting for phone reports"])]),
-                    ("SessionEnd", [hook(.end)])]
+            return [("SessionStart", nil, [hook(.start)]), ("UserPromptSubmit", nil, [hook(.prompt)]), ("PostToolUse", tools, [hook(.built)]),
+                    ("Stop", nil, [stop]), ("SessionEnd", nil, [hook(.end)])]
         case .cursor:
-            return [("sessionStart", [hook(.start)]), ("beforeSubmitPrompt", [hook(.prompt)]),
-                    ("stop", [hook(.stop, ["timeout": holdTimeout, "loop_limit": NSNull()])]), ("sessionEnd", [hook(.end)])]
+            return [("sessionStart", nil, [hook(.start)]), ("beforeSubmitPrompt", nil, [hook(.prompt)]), ("afterShellExecution", nil, [hook(.built)]),
+                    ("afterMCPExecution", nil, [hook(.built)]), ("stop", nil, [stop]), ("sessionEnd", nil, [hook(.end)])]
         }
     }
 
@@ -55,10 +57,16 @@ enum AgentSettings {
     static func adding(_ agent: Agent, to settings: [String: Any], executable: String) -> [String: Any] {
         var settings = removing(agent, from: settings, executable: executable)
         var events = settings["hooks"] as? [String: Any] ?? [:]
-        for (event, hooks) in self.hooks(agent, executable: executable) {
+        for (event, matcher, hooks) in self.hooks(agent, executable: executable) {
             var entries = events[event] as? [Any] ?? []
             // Claude Code and Codex group hooks under a matcher; Cursor lists them directly.
-            entries += agent == .cursor ? hooks : [["hooks": hooks]]
+            if agent == .cursor {
+                entries += hooks
+            } else {
+                var group: [String: Any] = ["hooks": hooks]
+                if let matcher { group["matcher"] = matcher }
+                entries.append(group)
+            }
             events[event] = entries
         }
         settings["hooks"] = events

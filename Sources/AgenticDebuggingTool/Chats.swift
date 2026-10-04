@@ -129,9 +129,37 @@ enum ProjectHistory {
     }
 }
 
+/// The chat a report is for: the one that built the app it came from.
+struct Address: Codable, Equatable, Sendable {
+    var chat: String
+    var agent: String
+    var folder: String
+}
+
 /// The inbox as chats see it: reports waiting for an app, and claiming one so no other chat gets it.
 enum InboxQueue {
     static let claimFile = "claim.json"
+    static let addressFile = "to.json"
+
+    static func address(of report: URL) -> Address? {
+        (try? Data(contentsOf: report.appending(path: addressFile))).flatMap { try? Chats.decoder.decode(Address.self, from: $0) }
+    }
+
+    static func setAddress(_ address: Address, of report: URL) {
+        try? Chats.coder.encode(address).write(to: report.appending(path: addressFile), options: .atomic)
+    }
+
+    /// Reports for this chat that it hasn't taken yet, oldest first.
+    static func addressed(to chat: String, bundleIDs: [String], paths: HubPaths) -> [InboxReport] {
+        waiting(for: bundleIDs, paths: paths).filter { address(of: $0.folder)?.chat == chat }
+    }
+
+    /// Wakes chats waiting on an app's reports, after a report already in the inbox changed.
+    static func signal(_ bundleID: String, paths: HubPaths) {
+        let marker = paths.inbox.appending(path: "\(bundleID)/.changed-\(UUID().uuidString)")
+        FileManager.default.createFile(atPath: marker.path, contents: nil)
+        try? FileManager.default.removeItem(at: marker)
+    }
 
     /// Every report for these apps, oldest first.
     static func reports(for bundleIDs: [String], paths: HubPaths) -> [InboxReport] {

@@ -17,8 +17,8 @@ Usage:
       the one used most recently gets the report.
   agentic-debugging setup | remove
       Adds to (or removes from) Claude Code's, Codex's and Cursor's hook settings the hooks that
-      bring reports into a chat on an app project by themselves. Other hooks stay as they are.
-  agentic-debugging hook <claude | codex | cursor> <start | prompt | wait | stop | end>
+      note which chat built each app, so its reports go to that chat. Other hooks stay as they are.
+  agentic-debugging hook <claude | codex | cursor> <start | prompt | built | stop | end>
       Run by the agents' hooks, with the event's JSON on standard input.
   agentic-debugging hub [--app <bundle ID> ...]
       Takes reports from phones and simulators for the open chats' apps and files them in the inbox.
@@ -137,13 +137,13 @@ case "setup", "remove":
                 adding ? AgentSettings.adding(agent, to: $0, executable: executable) : AgentSettings.removing(agent, from: $0, executable: executable)
             }
             print("\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.file(agent).path)")
-            if adding, agent == .codex { print("  Codex runs new hooks only once you trust them: open /hooks in Codex and trust the four agentic-debugging hooks.") }
+            if adding, agent == .codex { print("  Codex runs new hooks only once you trust them: open /hooks in Codex and trust the five agentic-debugging hooks.") }
         } catch {
             print("\(agent.name): couldn't update \(AgentSettings.file(agent).path): \(error.localizedDescription)")
             failed = true
         }
     }
-    if adding { print("Chats opened from now on get reports for their project's apps by themselves.") }
+    if adding { print("Reports now go to the chat that built the app they came from.") }
     exit(failed ? 1 : 0)
 
 case "status":

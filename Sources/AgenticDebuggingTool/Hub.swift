@@ -341,6 +341,8 @@ final class Hub: @unchecked Sendable {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? encoder.encode(source).write(to: incoming.appending(path: "source.json"))
+        // Addressed before it's in the inbox, so a chat waiting for it sees it's for that chat.
+        let route = handoff?.address(incoming, source: source) ?? .unknown
         try? files.removeItem(at: destination)
         do {
             try files.moveItem(at: incoming, to: destination)
@@ -353,7 +355,7 @@ final class Hub: @unchecked Sendable {
             saveState()
         }
         log(String(format: "Received %@ from %@ (%@) in %.2f s", source.reportID, source.deviceName, source.bundleID, Date().timeIntervalSince(started)))
-        handoff?.reportFiled(destination, source: source)
+        handoff?.deliver(destination, source: source, to: route)
         return true
     }
 

@@ -48,14 +48,20 @@ final class ChatSession: @unchecked Sendable {
         save()
     }
 
-    /// Takes every report waiting for this chat's apps, as text with pictures named by path, for
-    /// agents that get reports through hooks. Nil when none is waiting.
-    func takeText() -> String? {
+    /// Takes the reports sent to this chat, as text with pictures named by path, for agents
+    /// that get reports through hooks. Nil when there's none.
+    func takeAddressed() -> String? {
         let chat = self.chat
-        let texts = InboxQueue.waiting(for: chat.bundleIDs, paths: paths)
+        let texts = InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths)
             .filter { InboxQueue.claim($0, for: chat) }
             .map(ReportContent.text(for:))
         return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
+    }
+
+    /// Waits until a report is sent to this chat, `timeout` passes or the waiter is cancelled.
+    func waitForAddressed(timeout: TimeInterval?, waiter: Waiter) -> Bool {
+        let chat = self.chat
+        return wait(timeout: timeout, waiter: waiter) { !InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: self.paths).isEmpty }
     }
 
     /// Takes the reports waiting for this chat's apps, oldest first. Always takes at least one
@@ -121,6 +127,11 @@ final class ChatSession: @unchecked Sendable {
     /// cancelled. Woken by the inbox changing, not by checking on a timer. True when one is waiting.
     func waitForReport(timeout: TimeInterval?, waiter: Waiter) -> Bool {
         let chat = self.chat
+        return wait(timeout: timeout, waiter: waiter) { !InboxQueue.waiting(for: chat.bundleIDs, paths: self.paths).isEmpty }
+    }
+
+    private func wait(timeout: TimeInterval?, waiter: Waiter, until ready: () -> Bool) -> Bool {
+        let chat = self.chat
         let deadline = timeout.map { Date().addingTimeInterval($0) }
         var sources: [DispatchSourceFileSystemObject] = []
         for bundleID in chat.bundleIDs {
@@ -136,7 +147,7 @@ final class ChatSession: @unchecked Sendable {
         }
         defer { sources.forEach { $0.cancel() } }
         while true {
-            if !InboxQueue.waiting(for: chat.bundleIDs, paths: paths).isEmpty { return true }
+            if ready() { return true }
             if waiter.isCancelled { return false }
             if let deadline {
                 let left = deadline.timeIntervalSinceNow

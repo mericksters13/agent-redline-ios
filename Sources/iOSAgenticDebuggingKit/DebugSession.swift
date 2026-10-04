@@ -1152,7 +1152,9 @@ extension Report.App {
             bundleIdentifier: Bundle.main.bundleIdentifier,
             name: (info["CFBundleDisplayName"] ?? info["CFBundleName"]) as? String,
             version: info["CFBundleShortVersionString"] as? String,
-            build: info["CFBundleVersion"] as? String
+            build: info["CFBundleVersion"] as? String,
+            buildIDs: BuildIdentity.ids(),
+            sourceFile: BuildIdentity.sourceFile
         )
     }
 }

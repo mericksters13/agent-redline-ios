@@ -19,16 +19,15 @@ enum Agent: String, CaseIterable, Sendable {
 
 /// The hook events this tool takes, as its hook settings name them.
 enum HookEvent: String, Sendable {
-    /// A chat opened: register it and tell the agent about reports.
+    /// A chat opened (Codex, Cursor): register it, so the hub knows it's open.
     case start
-    /// The user sent a message: the chat becomes the one used most recently, and gets any
-    /// report already waiting.
+    /// The user sent a message (Codex, Cursor): hand over reports sent to this chat.
     case prompt
-    /// Claude Code, in the background: wait for a report, then wake the chat with it, even
-    /// when it's idle.
-    case wait
-    /// Codex and Cursor, whose hooks can't wake an idle chat: when the agent finishes a reply,
-    /// keep the chat open for a while and continue it with a report that arrives.
+    /// A command or tool finished (every agent): if it built the app, note that this chat
+    /// built it, so reports from that build come here.
+    case built
+    /// The agent finished a reply (Codex, Cursor, whose hooks can't wake an idle chat): if
+    /// this chat builds the app, keep it open a while and continue it with a report sent to it.
     case stop
     /// The chat closed.
     case end
@@ -38,6 +37,14 @@ enum HookEvent: String, Sendable {
 struct HookInput: Equatable {
     var chat: String
     var folder: String
+    /// The command or tool that just finished, for the `built` event.
+    var tool = ""
+
+    /// The finished command or tool built an app, such as `xcodebuild` or an MCP build tool.
+    var ranABuild: Bool {
+        let tool = tool.lowercased()
+        return tool.contains("xcodebuild") || (tool.hasPrefix("mcp__") && tool.contains("build"))
+    }
 
     init?(_ agent: Agent, json: Data) {
         guard let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any] else { return nil }
@@ -53,6 +60,8 @@ struct HookInput: Equatable {
             chat = id
             folder = root
         }
+        let input = object["tool_input"] as? [String: Any]
+        tool = [object["tool_name"] as? String, input?["command"] as? String, object["command"] as? String].compactMap { $0 }.joined(separator: " ")
     }
 }
 
@@ -60,57 +69,53 @@ enum AgentHooks {
     /// Set for chats the hub starts itself. Their hooks stay out of the way: such a chat runs
     /// once and ends, and must not be held open or take other reports.
     static let startedByHub = "AGENTIC_DEBUGGING_STARTED_CHAT"
-    /// How long a Codex or Cursor chat stays open for reports after the agent replies.
+    /// How long a Codex or Cursor chat that builds the app stays open for reports after a reply.
     static let holdOpen: TimeInterval = 1800
 
     /// Runs one hook call and returns the exit code for the agent.
     static func run(_ agent: Agent, _ event: HookEvent, paths: HubPaths) -> Int32 {
         let input = HookInput(agent, json: FileHandle.standardInput.readDataToEndOfFile())
-        let startedByHub = ProcessInfo.processInfo.environment[startedByHub] != nil
-        guard let input else { return answer(agent, event, nil) }
-        let session = ChatSession(paths: paths, folder: URL(fileURLWithPath: input.folder), extraApps: [], agent: agent.rawValue,
-                                  id: "\(agent.rawValue)-\(input.chat)", pid: AgentProcess.find(agent, chat: input.chat))
+        guard let input, ProcessInfo.processInfo.environment[startedByHub] == nil else { return answer(agent, event, nil) }
+        let id = "\(agent.rawValue)-\(input.chat)"
+        let folder = URL(fileURLWithPath: input.folder)
+
+        if event == .built {
+            // Runs after every command, so it looks for a new build before reading the project.
+            let recorded = Builds.record(chat: id, agent: agent.rawValue, folder: input.folder, paths: paths, anyFolder: input.ranABuild) {
+                ProjectApps.bundleIDs(in: folder)
+            }
+            guard let build = recorded.last else { return 0 }
+            let session = ChatSession(paths: paths, folder: folder, extraApps: [build.bundleID], agent: agent.rawValue, id: id,
+                                      pid: AgentProcess.find(agent, chat: input.chat))
+            // Registered, so the hub takes this app's reports.
+            session.register()
+            ProjectHistory.note(session.chat, paths: paths)
+            return 0
+        }
+
+        let session = ChatSession(paths: paths, folder: folder, extraApps: [], agent: agent.rawValue, id: id,
+                                  pid: AgentProcess.find(agent, chat: input.chat))
         // Not an app project: nothing to do, in every project the agent opens.
         guard !session.chat.bundleIDs.isEmpty else { return answer(agent, event, nil) }
 
         switch event {
         case .start:
-            if !startedByHub {
-                session.register()
-                ProjectHistory.note(session.chat, paths: paths)
-            }
-            return answer(agent, event, startContext(apps: session.chat.bundleIDs))
+            session.register()
+            return answer(agent, event, nil)
 
         case .prompt:
-            guard !startedByHub else { return answer(agent, event, nil) }
             session.touch()
-            ProjectHistory.note(session.chat, paths: paths)
-            return answer(agent, event, session.takeText().map(reportPrompt))
-
-        case .wait:
-            guard !startedByHub, let lock = WaitLock(chat: session.chat.id, paths: paths) else { return 0 }
-            session.registerWaiting()
-            stopWhenChatCloses(session.chat.pid)
-            let waiter = ChatSession.Waiter()
-            while session.waitForRoutedReport(timeout: nil, waiter: waiter) {
-                guard let text = session.takeText() else { continue }
-                // Exit code 2 wakes the chat; Claude Code shows it standard error.
-                FileHandle.standardError.write(Data(reportPrompt(text).utf8))
-                withExtendedLifetime(lock) {}
-                return 2
-            }
-            return 0
+            return answer(agent, event, session.takeAddressed().map(reportPrompt))
 
         case .stop:
-            guard !startedByHub else { return answer(agent, event, nil) }
-            if let text = session.takeText() { return answer(agent, event, reportPrompt(text)) }
-            // Already held open by an earlier call for this chat.
-            guard let lock = WaitLock(chat: session.chat.id, paths: paths) else { return answer(agent, event, nil) }
+            if let text = session.takeAddressed() { return answer(agent, event, reportPrompt(text)) }
+            // Only a chat that built the app can be sent its reports; any other stops as usual.
+            guard Builds.madeBy(id, paths: paths), let lock = WaitLock(chat: id, paths: paths) else { return answer(agent, event, nil) }
             session.registerWaiting()
             let waiter = ChatSession.Waiter()
             let deadline = Date().addingTimeInterval(holdOpen)
-            while session.waitForRoutedReport(timeout: deadline.timeIntervalSinceNow, waiter: waiter) {
-                guard let text = session.takeText() else { continue }
+            while session.waitForAddressed(timeout: deadline.timeIntervalSinceNow, waiter: waiter) {
+                guard let text = session.takeAddressed() else { continue }
                 withExtendedLifetime(lock) {}
                 return answer(agent, event, reportPrompt(text))
             }
@@ -118,6 +123,9 @@ enum AgentHooks {
 
         case .end:
             session.unregister()
+            return 0
+
+        case .built:
             return 0
         }
     }
@@ -135,14 +143,10 @@ enum AgentHooks {
     static func output(_ agent: Agent, _ event: HookEvent, _ text: String?) -> [String: Any]? {
         switch (agent, event) {
         case (.cursor, .prompt):
-            // Cursor's prompt hook can't add text; a waiting report goes in at the next stop.
+            // Cursor's prompt hook can't add text; a report sent to the chat goes in at the next stop.
             return ["continue": true]
-        case (.cursor, .start):
-            return text.map { ["additional_context": $0] }
         case (.cursor, .stop):
             return text.map { ["followup_message": $0] }
-        case (_, .start):
-            return text.map { ["hookSpecificOutput": ["hookEventName": "SessionStart", "additionalContext": $0]] }
         case (_, .prompt):
             return text.map { ["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": $0]] }
         case (_, .stop):
@@ -152,34 +156,15 @@ enum AgentHooks {
         }
     }
 
-    static func startContext(apps: [String]) -> String {
-        """
-        This project builds \(apps.joined(separator: ", ")). The user sends UI reports about it from an iPhone or a simulator \
-        with iOSAgenticDebuggingKit, and they arrive in this chat by themselves. In a report, each note is about one element \
-        on screen, outlined and numbered the same way in the report's pictures, which are image files you can open.
-        """
-    }
-
     /// What the agent reads when a report arrives.
     static func reportPrompt(_ report: String) -> String {
         """
-        A UI report arrived from the user's device through iOSAgenticDebuggingKit. Open its pictures, find the code for each \
-        noted element by its identifier or label, then tell the user what you found and propose a fix before changing code.
+        A UI report arrived from the user's device through iOSAgenticDebuggingKit, from the build of the app this chat made. \
+        Open its pictures, find the code for each noted element by its identifier or label, then tell the user what you \
+        found and propose a fix before changing code.
 
         \(report)
         """
-    }
-
-    /// Ends this process when the chat's process ends, so no wait outlives its chat.
-    private static func stopWhenChatCloses(_ pid: Int32) {
-        let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global())
-        source.setEventHandler { exit(0) }
-        source.resume()
-        ChatProcessWatch.source = source
-    }
-
-    private enum ChatProcessWatch {
-        nonisolated(unsafe) static var source: DispatchSourceProcess?
     }
 }
 

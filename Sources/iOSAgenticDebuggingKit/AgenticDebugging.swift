@@ -9,9 +9,13 @@ public extension View {
     ///
     /// Nothing else is needed: no Info.plist keys, permissions or build settings.
     /// In release builds, including TestFlight, this returns the view unchanged.
-    func agenticDebugging() -> some View {
+    ///
+    /// - Parameter sourceFile: Leave it out. The compiler fills it in, and the Mac uses it to
+    ///   tell which project folder the app was built from.
+    func agenticDebugging(sourceFile: StaticString = #filePath) -> some View {
         #if AGENTIC_DEBUGGING && canImport(UIKit)
-        background(SceneHook().allowsHitTesting(false))
+        BuildIdentity.sourceFile = "\(sourceFile)"
+        return background(SceneHook().allowsHitTesting(false))
         #else
         self
         #endif

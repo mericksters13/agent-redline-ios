@@ -107,6 +107,10 @@ struct Report: Codable, Sendable {
         var name: String?
         var version: String?
         var build: String?
+        /// The running build's binary UUIDs, which the Mac matches to the chat that built it.
+        var buildIDs: [String]? = nil
+        /// The project file that attached the kit, naming the folder the app was built from.
+        var sourceFile: String? = nil
     }
 
     struct Device: Codable, Sendable {
