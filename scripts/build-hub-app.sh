@@ -50,5 +50,7 @@ if pkill -TERM -f "$app/Contents/MacOS/" 2>/dev/null; then
 fi
 rm -rf "$app"
 mv "$staging" "$app"
+# Registered with Launch Services, so chats find the app by its identifier in any folder.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" || true
 if $running; then open -g "$app"; fi
 echo "Built $app"

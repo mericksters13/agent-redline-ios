@@ -151,7 +151,8 @@ enum HubLink {
                 Log.hubLink.info("Couldn't reach the hub at \(host, privacy: .private)")
                 continue
             }
-            guard await line.send(request), let data = await line.read() else { return nil }
+            // Something else may answer at an old address; the hub may be at the next one.
+            guard await line.send(request), let data = await line.read() else { continue }
             do {
                 let list = try decode(ChatList.self, from: data)
                 if let refused = list.refused {
@@ -161,7 +162,7 @@ enum HubLink {
                 return list
             } catch {
                 Log.hubLink.error("Couldn't read the hub's chat list: \(error.localizedDescription, privacy: .public)")
-                return nil
+                continue
             }
         }
         return nil
@@ -227,6 +228,7 @@ enum HubLink {
             Log.hubLink.error("Couldn't write the offer: \(error.localizedDescription, privacy: .public)")
             return (.interrupted, [])
         }
+        var outcome = Outcome.unreachable
         for host in address.hosts {
             let line = Line(host: host, port: port)
             // Runs at the end of each pass, `continue` included, so a line that never opened is closed too.
@@ -235,13 +237,18 @@ enum HubLink {
                 Log.hubLink.info("Couldn't reach the hub at \(host, privacy: .private)")
                 continue
             }
-            guard await line.send(offer), let answerData = await line.read() else { return (.interrupted, []) }
+            // Something else may answer at an old address; the hub may be at the next one.
+            guard await line.send(offer), let answerData = await line.read() else {
+                outcome = .interrupted
+                continue
+            }
             let answer: Answer
             do {
                 answer = try decode(Answer.self, from: answerData)
             } catch {
                 Log.hubLink.error("Couldn't read the hub's answer: \(error.localizedDescription, privacy: .public)")
-                return (.interrupted, [])
+                outcome = .interrupted
+                continue
             }
             if let refused = answer.refused {
                 Log.hubLink.notice("The hub turned down the reports: \(refused, privacy: .public)")
@@ -273,7 +280,7 @@ enum HubLink {
             let offered = Set(reports.map(\.id))
             return (offered.isSubset(of: Set(delivered)) ? .delivered : .interrupted, delivered)
         }
-        return (.unreachable, [])
+        return (outcome, [])
     }
 
     /// A connection that sends and reads whole lines.

@@ -52,6 +52,12 @@ final class ChatSession: Sendable {
     func register(agent: String? = nil) {
         record.withLock { if let agent { $0.agent = agent } }
         guard !chat.bundleIDs.isEmpty else { return }
+        // Noted before the chat's file appears, so the hub sees both when it looks.
+        do {
+            try ProjectHistory.note(chat, paths: paths)
+        } catch {
+            printError("Couldn't note the chat's apps for the hub: \(error.localizedDescription)")
+        }
         save()
         if startsHub { HubProcess.startIfNeeded(paths) }
     }
@@ -78,6 +84,7 @@ final class ChatSession: Sendable {
         for report in Inbox.reportsAddressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths) {
             guard case .claimed = Inbox.claim(report, for: chat) else { continue }
             texts.append(ReportContent.text(for: report))
+            handedOver(report)
         }
         return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
     }
@@ -100,6 +107,7 @@ final class ChatSession: Sendable {
             // Another chat may have taken it a moment ago.
             guard case .claimed = Inbox.claim(report, for: chat) else { continue }
             let content = ReportContent.items(for: report, budget: max(budget - used, 0))
+            handedOver(report)
             items += content.items
             used += content.bytes
             taken += 1
@@ -211,6 +219,17 @@ final class ChatSession: Sendable {
             }
             // One report makes several inbox changes; one scan covers them all.
             while waiter.signal.wait(timeout: .now()) == .success {}
+        }
+    }
+
+    /// Notes that the chat has a report it claimed, so the claim stands for good.
+    private func handedOver(_ report: InboxReport) {
+        do {
+            try Inbox.handedOver(report)
+        } catch {
+            printError(
+                "Couldn't note that report \(report.source.reportID) was handed over: \(error.localizedDescription)"
+            )
         }
     }
 

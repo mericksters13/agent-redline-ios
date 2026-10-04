@@ -211,7 +211,7 @@ case "setup", "remove":
             try AgentSettings.update(agent) {
                 adding
                     ? AgentSettings.adding(agent, to: $0, executable: executable)
-                    : AgentSettings.removing(agent, from: $0)
+                    : AgentSettings.removing(agent, from: $0, executable: executable)
             }
             print(
                 "\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.fileURL(for: agent).path)"

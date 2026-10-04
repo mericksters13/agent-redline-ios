@@ -87,6 +87,33 @@ struct ChatSessionTests {
         #expect(report.claim?.chat == first.chat.id)
     }
 
+    @Test func aReportAnInterruptedHandOverClaimedIsFreeAgain() throws {
+        let folder = try project()
+        let inbox = try inboxReport("20261003-223449")
+        // A process that has ended stands in for a chat's server that crashed mid hand-over.
+        let ended = Process()
+        ended.executableURL = URL(filePath: "/usr/bin/true")
+        try ended.run()
+        ended.waitUntilExit()
+        let stranded = Claim(
+            chat: "gone",
+            agent: "test",
+            folder: folder.path,
+            claimedAt: .now,
+            handingOverIn: ended.processIdentifier
+        )
+        try HubPaths.encoder.encode(stranded).write(to: inbox.appending(path: Inbox.claimFile))
+        #expect(Inbox.unclaimedReports(for: ["com.example.app"], paths: paths).count == 1)
+
+        let chat = session(folder)
+        #expect(chat.take(budget: 1_000_000).taken == 1)
+        let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
+        #expect(report.claim?.chat == chat.chat.id)
+        // Handed over: the claim stands for good, and no other chat takes the report.
+        #expect(report.claim?.handingOverIn == nil)
+        #expect(session(folder).take(budget: 1_000_000).taken == 0)
+    }
+
     @Test func aChatOnAnotherAppNeverGetsTheReport() throws {
         _ = try inboxReport("20261003-223449")
         let other = root.appending(path: "Other", directoryHint: .isDirectory)

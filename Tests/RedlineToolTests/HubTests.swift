@@ -35,6 +35,18 @@ struct HubTests {
         #expect(Hub.constantTimeEquals("", ""))
     }
 
+    @Test func anAppStaysWatchedAfterItsLastChatCloses() throws {
+        let hub = try hub()
+        let other = "com.example.other"
+        let chat = ChatSession(paths: paths, folder: paths.root, extraApps: [other], agent: "test", startsHub: false)
+        chat.register()
+        hub.updateApps(isStarting: true)
+        #expect(hub.apps.contains(other))
+        chat.unregister()
+        hub.updateApps(isStarting: true)
+        #expect(hub.apps.contains(other))
+    }
+
     @Test func aTokenOutlivesTheHub() throws {
         let first = try hub()
         let token = first.issueToken(device: phone, bundleID: app)

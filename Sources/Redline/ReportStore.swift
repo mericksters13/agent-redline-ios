@@ -12,7 +12,7 @@ import Foundation
 ///   It is written in this order, and the order is load-bearing:
 ///   1. `beginReport` moves the draft into `reports/<id>/draft`.
 ///   2. The report's pictures are written beside it.
-///   3. `report.json`, then `report.md`, are written.
+///   3. `report.md`, then `report.json`, are written.
 ///   4. `reports/<id>/draft` is removed.
 ///
 ///   A report is finished once `report.json` exists and `draft/` is gone; the Mac takes only
@@ -24,9 +24,42 @@ import Foundation
 struct ReportStore: Sendable {
     let root: URL
 
-    static let standard = ReportStore(
-        root: URL.applicationSupportDirectory.appending(path: "Redline", directoryHint: .isDirectory)
-    )
+    static let standard: ReportStore = {
+        let store = ReportStore(
+            root: URL.applicationSupportDirectory.appending(path: "Redline", directoryHint: .isDirectory)
+        )
+        store.moveFromOldName()
+        return store
+    }()
+
+    /// Moves what an earlier version kept under its old name, iOSAgenticDebuggingKit, here, so the
+    /// draft and the reports the Mac hasn't collected carry over a rebuild with the new name.
+    ///
+    /// The hub may already have left its address here, so each item moves on its own, and only
+    /// when nothing of that name is here yet.
+    func moveFromOldName() {
+        let old = root.deletingLastPathComponent()
+            .appending(path: "iOSAgenticDebuggingKit", directoryHint: .isDirectory)
+        let files = FileManager.default
+        guard files.fileExists(atPath: old.path(percentEncoded: false)) else { return }
+        try? files.createDirectory(at: root, withIntermediateDirectories: true)
+        func move(from source: URL, to destination: URL) {
+            for item in (try? files.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)) ?? [] {
+                let target = destination.appending(path: item.lastPathComponent)
+                if !files.fileExists(atPath: target.path(percentEncoded: false)) {
+                    try? files.moveItem(at: item, to: target)
+                }
+            }
+        }
+        move(from: old, to: root)
+        // Reports were already here: the old ones join them, each in its own folder.
+        move(from: old.appending(path: "reports"), to: reportsDirectory)
+        // An older hub address is the only thing left that a newer one replaces. The folders go
+        // only when empty (rmdir), so anything else left stays where it is.
+        try? files.removeItem(at: old.appending(path: "hub.json"))
+        rmdir(old.appending(path: "reports").path(percentEncoded: false))
+        rmdir(old.path(percentEncoded: false))
+    }
 
     var draftDirectory: URL { root.appending(path: "draft", directoryHint: .isDirectory) }
     var reportsDirectory: URL { root.appending(path: "reports", directoryHint: .isDirectory) }
@@ -98,27 +131,44 @@ struct ReportStore: Sendable {
     /// Starts a report: moves the whole draft into a new report folder, so new notes go into a
     /// fresh draft while the report's pictures are drawn from the old one.
     ///
-    /// Returns the report's id, its folder and where the draft now is.
+    /// If the move fails, the draft stays as it was and no report folder is left behind. Returns
+    /// the report's id, its folder and where the draft now is.
     func beginReport(date: Date) throws -> (id: String, folder: URL, draft: URL) {
         let files = FileManager.default
         let stamp = Self.timestampFormatter.string(from: date)
+        try files.createDirectory(at: reportsDirectory, withIntermediateDirectories: true)
+
+        // Creating the folder itself fails when it exists, so two reports in the same second, or a
+        // clock set back, get their own folders instead of sharing one.
         var id = stamp
-        var suffix = 2
-        while files.fileExists(atPath: reportsDirectory.appending(path: id).path(percentEncoded: false)) {
-            id = stamp + "-\(suffix)"
-            suffix += 1
+        var folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+        var attempt = 1
+        while true {
+            do {
+                try files.createDirectory(at: folder, withIntermediateDirectories: false)
+                break
+            } catch CocoaError.fileWriteFileExists where attempt < 100 {
+                attempt += 1
+                id = "\(stamp)-\(attempt)"
+                folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
+            }
         }
-        let folder = reportsDirectory.appending(path: id, directoryHint: .isDirectory)
         let draft = folder.appending(path: "draft", directoryHint: .isDirectory)
-        try files.createDirectory(at: folder, withIntermediateDirectories: true)
-        try files.moveItem(at: draftDirectory, to: draft)
+        do {
+            try files.moveItem(at: draftDirectory, to: draft)
+        } catch {
+            try? files.removeItem(at: folder)
+            throw error
+        }
         return (id, folder, draft)
     }
 
-    /// Finishes a report: writes `report.json` and `report.md` and removes the old draft.
+    /// Finishes a report: writes `report.md` and `report.json` and removes the old draft.
+    ///
+    /// `report.json` goes last, so a report is listed as sent only once it is complete.
     func finishReport(_ report: Report, in folder: URL) throws {
-        try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)
         try Data(ReportSummary.markdown(report).utf8).write(to: folder.appending(path: "report.md"), options: .atomic)
+        try Self.encoder.encode(report).write(to: folder.appending(path: "report.json"), options: .atomic)
         do {
             try FileManager.default.removeItem(at: folder.appending(path: "draft"))
         } catch {

@@ -43,12 +43,25 @@ struct AgentSettingsTests {
         // Run again, nothing changes.
         #expect(try sortedJSON(AgentSettings.adding(.codex, to: added, executable: executable)) == sortedJSON(added))
         // Removed, the file is as it was.
-        #expect(try sortedJSON(AgentSettings.removing(.codex, from: added)) == sortedJSON(codexSettings))
+        #expect(
+            try sortedJSON(AgentSettings.removing(.codex, from: added, executable: executable))
+                == sortedJSON(codexSettings)
+        )
         // A command of another tool that happens to have a hook subcommand stays.
         let other: [String: Any] = [
             "hooks": ["Stop": [["hooks": [["type": "command", "command": "'/opt/bin/other' hook stop"]]]]]
         ]
-        #expect(try sortedJSON(AgentSettings.removing(.codex, from: other)) == sortedJSON(other))
+        #expect(
+            try sortedJSON(AgentSettings.removing(.codex, from: other, executable: executable)) == sortedJSON(other)
+        )
+        // Nor does another tool's command that is also named redline, in another folder.
+        let namesake: [String: Any] = [
+            "hooks": ["Stop": [["hooks": [["type": "command", "command": "'/opt/bin/redline' hook codex stop"]]]]]
+        ]
+        #expect(
+            try sortedJSON(AgentSettings.removing(.codex, from: namesake, executable: executable))
+                == sortedJSON(namesake)
+        )
     }
 
     @Test func settingsThatDontChangeAreNotWritten() throws {
@@ -76,7 +89,10 @@ struct AgentSettingsTests {
             commands(added, "UserPromptSubmit") == ["'/Users/someone/Someone'\\''s tools/redline' hook codex prompt"]
         )
         // Recognized as this tool's, so removing gives back the settings as they were.
-        #expect(try sortedJSON(AgentSettings.removing(.codex, from: added)) == sortedJSON(codexSettings))
+        #expect(
+            try sortedJSON(AgentSettings.removing(.codex, from: added, executable: executable))
+                == sortedJSON(codexSettings)
+        )
         // And a second setup replaces it rather than adding another.
         #expect(
             commands(AgentSettings.adding(.codex, to: added, executable: executable), "UserPromptSubmit").count == 1
