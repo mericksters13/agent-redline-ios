@@ -74,8 +74,14 @@ struct CodexAppTests {
         #expect(input?.first?["text"] as? String == "A report")
         #expect(input?.last?["type"] as? String == "localImage")
         #expect(input?.last?["path"] as? String == picture.path)
-        // The app's question to every client was answered: this client handles nothing.
-        #expect(requests.contains { $0["type"] as? String == "client-discovery-response" && ($0["response"] as? [String: Any])?["canHandle"] as? Bool == false })
+        // The app's question to every client was answered: this client handles nothing. The
+        // stand-in reads the answer on its own thread, so give it a moment.
+        func answered() -> Bool {
+            app.requests().contains { $0["type"] as? String == "client-discovery-response" && ($0["response"] as? [String: Any])?["canHandle"] as? Bool == false }
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while !answered(), Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+        #expect(answered())
     }
 
     @Test func aChatNoWindowHasOpenIsReported() throws {

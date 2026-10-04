@@ -31,19 +31,22 @@ enum AgentSettings {
             return hook.merging(extra) { $1 }
         }
         let tools = "Bash|mcp__.*"
-        // A little longer than the hold, so the agent never cuts it short.
-        let stop = hook(.stop, ["timeout": Int(AgentHooks.holdOpen) + 60, "loop_limit": NSNull()])
+        // Claude Code and Codex show the status message while the hook runs, and Codex names the
+        // hook by it when asking the user to trust it.
+        let built = hook(.built, agent == .cursor ? [:] : ["statusMessage": "Note app builds for phone reports"])
         switch agent {
         case .claude:
             // Claude Code chats are reached through their own socket; only builds need noting.
-            return [("PostToolUse", tools, [hook(.built)])]
+            return [("PostToolUse", tools, [built])]
         case .codex:
-            // Codex chats get reports through the Codex app, which wakes them; no stop hook holds them open.
-            return [("SessionStart", nil, [hook(.start)]), ("UserPromptSubmit", nil, [hook(.prompt)]), ("PostToolUse", tools, [hook(.built)]),
-                    ("SessionEnd", nil, [hook(.end)])]
+            // Codex chats are reached through the Codex app. The message hook is the safety net
+            // for when the app doesn't take a report.
+            return [("PostToolUse", tools, [built]), ("UserPromptSubmit", nil, [hook(.prompt, ["statusMessage": "Check for phone reports"])])]
         case .cursor:
-            return [("sessionStart", nil, [hook(.start)]), ("beforeSubmitPrompt", nil, [hook(.prompt)]), ("afterShellExecution", nil, [hook(.built)]),
-                    ("afterMCPExecution", nil, [hook(.built)]), ("stop", nil, [stop]), ("sessionEnd", nil, [hook(.end)])]
+            // A little longer than the hold, so Cursor never cuts it short.
+            let stop = hook(.stop, ["timeout": Int(AgentHooks.holdOpen) + 60, "loop_limit": NSNull()])
+            return [("sessionStart", nil, [hook(.start)]), ("beforeSubmitPrompt", nil, [hook(.prompt)]), ("afterShellExecution", nil, [built]),
+                    ("afterMCPExecution", nil, [built]), ("stop", nil, [stop]), ("sessionEnd", nil, [hook(.end)])]
         }
     }
 

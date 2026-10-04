@@ -32,9 +32,9 @@ struct AgentHookTests {
         // Codex chats are woken through the Codex app: no stop hook holds them open.
         #expect(commands(added, "Stop") == ["node hook.mjs"])
         #expect(commands(added, "PostToolUse") == ["node hook.mjs", "'\(executable)' hook codex built"])
-        #expect(commands(added, "SessionStart") == ["'\(executable)' hook codex start"])
         #expect(commands(added, "UserPromptSubmit") == ["'\(executable)' hook codex prompt"])
-        #expect(commands(added, "SessionEnd") == ["'\(executable)' hook codex end"])
+        // Two hooks for Codex: noting builds, and the message safety net.
+        #expect((added["hooks"] as? [String: Any])?.keys.sorted() == ["PostToolUse", "Stop", "UserPromptSubmit"])
         // Run again, nothing changes.
         #expect(json(AgentSettings.adding(.codex, to: added, executable: executable)) == json(added))
         // Removed, the file is as it was.

@@ -137,7 +137,7 @@ case "setup", "remove":
                 adding ? AgentSettings.adding(agent, to: $0, executable: executable) : AgentSettings.removing(agent, from: $0, executable: executable)
             }
             print("\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.file(agent).path)")
-            if adding, agent == .codex { print("  Codex runs new hooks only once you trust them: open /hooks in Codex and trust the four agentic-debugging hooks.") }
+            if adding, agent == .codex { print("  Codex runs new hooks only once you trust them: open /hooks in Codex and trust \"Note app builds for phone reports\" and \"Check for phone reports\".") }
         } catch {
             print("\(agent.name): couldn't update \(AgentSettings.file(agent).path): \(error.localizedDescription)")
             failed = true
