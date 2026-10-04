@@ -21,7 +21,10 @@ func rounded(_ rect: CGRect, _ radius: CGFloat) -> CGPath {
 }
 
 func circle(_ center: CGPoint, _ radius: CGFloat) -> CGPath {
-    CGPath(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2), transform: nil)
+    CGPath(
+        ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2),
+        transform: nil
+    )
 }
 
 /// The macOS icon shape on the standard 1024 point grid.
@@ -66,7 +69,13 @@ func draw(_ context: CGContext, pixels: CGFloat, small: Bool) {
     context.saveGState()
     context.addPath(squircle(body))
     context.clip()
-    guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [gray(0.17), gray(0.02)] as CFArray, locations: [0, 1]) else {
+    guard
+        let gradient = CGGradient(
+            colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+            colors: [gray(0.17), gray(0.02)] as CFArray,
+            locations: [0, 1]
+        )
+    else {
         fatalError("Couldn't make the body's gradient")
     }
     context.drawLinearGradient(gradient, start: CGPoint(x: 512, y: 100), end: CGPoint(x: 512, y: 924), options: [])
@@ -95,9 +104,13 @@ func draw(_ context: CGContext, pixels: CGFloat, small: Bool) {
     fill(circle(badge.center, badge.radius), red)
     guard !small else { return }
     let base = NSFont.systemFont(ofSize: badge.radius * 1.3, weight: .bold)
-    let font = NSFont(descriptor: base.fontDescriptor.withDesign(.rounded) ?? base.fontDescriptor, size: base.pointSize) ?? base
+    let font =
+        NSFont(descriptor: base.fontDescriptor.withDesign(.rounded) ?? base.fontDescriptor, size: base.pointSize)
+        ?? base
     let number = NSAttributedString(string: "1", attributes: [.font: font, .foregroundColor: NSColor.white])
-    number.draw(at: CGPoint(x: badge.center.x - number.size().width / 2, y: badge.center.y + font.capHeight / 2 - font.ascender))
+    number.draw(
+        at: CGPoint(x: badge.center.x - number.size().width / 2, y: badge.center.y + font.capHeight / 2 - font.ascender)
+    )
 }
 
 let sizes: [(name: String, pixels: Int)] = [
@@ -105,9 +118,20 @@ let sizes: [(name: String, pixels: Int)] = [
     ("128x128@2x", 256), ("256x256", 256), ("256x256@2x", 512), ("512x512", 512), ("512x512@2x", 1024),
 ]
 for size in sizes {
-    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size.pixels, pixelsHigh: size.pixels, bitsPerSample: 8,
-                                     samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
-          let context = NSGraphicsContext(bitmapImageRep: rep)?.cgContext
+    guard
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: size.pixels,
+            pixelsHigh: size.pixels,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ),
+        let context = NSGraphicsContext(bitmapImageRep: rep)?.cgContext
     else { fatalError("Couldn't make a \(size.pixels)-pixel bitmap") }
     let scale = CGFloat(size.pixels) / 1024
     context.translateBy(x: 0, y: CGFloat(size.pixels))
@@ -116,6 +140,8 @@ for size in sizes {
     NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
     draw(context, pixels: CGFloat(size.pixels), small: size.pixels <= 64)
     NSGraphicsContext.restoreGraphicsState()
-    guard let png = rep.representation(using: .png, properties: [:]) else { fatalError("Couldn't encode icon_\(size.name).png") }
+    guard let png = rep.representation(using: .png, properties: [:]) else {
+        fatalError("Couldn't encode icon_\(size.name).png")
+    }
     try png.write(to: folder.appending(path: "icon_\(size.name).png"))
 }
