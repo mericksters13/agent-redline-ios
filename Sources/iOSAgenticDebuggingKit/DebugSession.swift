@@ -485,7 +485,7 @@ final class DebugSession {
 
     /// Opens the full-screen viewer on a note from the notes list.
     func openViewer(_ annotation: Annotation) {
-        guard mode == .tray else { return }
+        guard mode == .tray, annotations.contains(where: { $0.id == annotation.id }) else { return }
         viewerID = annotation.id
         setMode(.viewer)
     }
