@@ -44,6 +44,15 @@ final class SimulatorWatcher: @unchecked Sendable {
         }
     }
 
+    /// The simulators with a watched app installed, from their containers' paths.
+    var simulatorIDs: Set<String> {
+        let containers = queue.sync { Array(watched.keys) }
+        return Set(containers.compactMap { path in
+            let parts = path.split(separator: "/")
+            return parts.firstIndex(of: "Devices").flatMap { parts.indices.contains($0 + 1) ? String(parts[$0 + 1]) : nil }
+        })
+    }
+
     func stop() {
         queue.sync {
             if let stream {

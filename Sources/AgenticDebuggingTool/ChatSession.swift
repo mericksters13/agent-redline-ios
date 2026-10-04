@@ -187,8 +187,22 @@ enum HubProcess {
 
     /// Starts the hub in its own session, so it keeps running after the chat that started it
     /// closes, with nothing attached to the chat's input and output.
+    /// The menu bar app, which is the hub, when it's installed.
+    static var app: URL? {
+        let app = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications/Agentic Debugging.app")
+        return FileManager.default.fileExists(atPath: app.path) ? app : nil
+    }
+
     static func startIfNeeded(_ paths: HubPaths) {
-        guard running(paths) == nil, let executable = Bundle.main.executablePath else { return }
+        guard running(paths) == nil else { return }
+        if let app {
+            let open = Process()
+            open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            open.arguments = ["-g", app.path]
+            try? open.run()
+            return
+        }
+        guard let executable = Bundle.main.executablePath else { return }
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }

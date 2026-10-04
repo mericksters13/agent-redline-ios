@@ -108,6 +108,24 @@ enum CodexThreads {
         return newest.map { folder.appending(path: $0) }
     }
 
+    /// A Codex chat's title.
+    static func title(of thread: String, in database: URL? = database) -> String? {
+        guard let database else { return nil }
+        var connection: OpaquePointer?
+        guard sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(connection)
+            return nil
+        }
+        defer { sqlite3_close(connection) }
+        var statement: OpaquePointer?
+        let query = "SELECT COALESCE(NULLIF(name, ''), NULLIF(title, ''), SUBSTR(first_user_message, 1, 60)) FROM threads WHERE id = ?"
+        guard sqlite3_prepare_v2(connection, query, -1, &statement, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, thread, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return sqlite3_column_text(statement, 0).map { String(cString: $0) }
+    }
+
     /// Chats the user had, used in the last `days`, newest first: not archived, and not the
     /// reviews, subagents and automations Codex runs on its own.
     static func recent(days: Double = 14, in database: URL? = database) -> [Thread] {

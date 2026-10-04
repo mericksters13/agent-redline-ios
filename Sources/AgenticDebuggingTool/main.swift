@@ -1,4 +1,5 @@
 #if os(macOS)
+import AppKit
 import Foundation
 
 /// `agentic-debugging`: the Mac side of iOSAgenticDebuggingKit. It takes reports off paired
@@ -23,6 +24,9 @@ Usage:
   agentic-debugging hub [--app <bundle ID> ...]
       Takes reports from phones and simulators for the open chats' apps and files them in the inbox.
       Chats start it when it isn't running.
+  agentic-debugging app
+      The hub as a menu bar app, showing the active devices and the reports sent. Opening the
+      app bundle does the same.
   agentic-debugging status
       Shows what the hub is doing and what's in the inbox.
 
@@ -53,10 +57,29 @@ struct ChatOptions {
     }
 }
 
-let arguments = Array(CommandLine.arguments.dropFirst())
+var arguments = Array(CommandLine.arguments.dropFirst())
 let paths = HubPaths.standard
+// Opened as an app bundle, it's the menu bar app.
+if arguments.isEmpty, Bundle.main.bundleURL.pathExtension == "app" { arguments = ["app"] }
 
 switch arguments.first {
+case "app":
+    // The menu bar app is the hub: one process. A hub already running steps aside.
+    if let running = HubProcess.running(paths), running != getpid() {
+        kill(running, SIGTERM)
+        for _ in 0..<20 where HubProcess.running(paths) != nil { usleep(100_000) }
+    }
+    guard let devicectl = Devicectl.locate() else {
+        print("Couldn't find devicectl. Install Xcode and select it with xcode-select.")
+        exit(1)
+    }
+    let hub = Hub(paths: paths, devicectl: devicectl, apps: [])
+    hub.start()
+    stopOnSignals { hub.stop() }
+    HubAppContext.hub = hub
+    NSApplication.shared.setActivationPolicy(.accessory)
+    HubMenuBarApp.main()
+
 case "hub":
     let options = ChatOptions(arguments.dropFirst())
     if let running = HubProcess.running(paths) {

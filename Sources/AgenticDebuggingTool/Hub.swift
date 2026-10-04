@@ -375,12 +375,22 @@ final class Hub: @unchecked Sendable {
         writeStatus()
     }
 
-    func writeStatus() {
+    /// What the hub is doing now, as `status` and the menu bar panel show it.
+    func statusSnapshot() -> HubStatus {
         let containers = simulators?.containerCount ?? 0
-        let status = lock.withLock {
+        return lock.withLock {
             HubStatus(pid: getpid(), startedAt: startedAt, apps: currentApps, hosts: hosts, port: HubListener.port,
                       phones: phoneStates.values.sorted { $0.name < $1.name }, simulatorContainers: containers)
         }
+    }
+
+    /// The simulators with a watched app installed.
+    func watchedSimulators() -> Set<String> {
+        simulators?.simulatorIDs ?? []
+    }
+
+    func writeStatus() {
+        let status = statusSnapshot()
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

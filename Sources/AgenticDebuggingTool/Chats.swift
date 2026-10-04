@@ -195,4 +195,41 @@ enum InboxQueue {
         return data.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) } == data.count
     }
 }
+/// Where the hub sent a report, saved next to it so the hub's window shows exactly what
+/// happened: the agent, its chat and the chat's title.
+struct ReportDelivery: Codable, Equatable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        /// Put into an open chat.
+        case sent
+        /// A chat the hub started for it.
+        case newChat
+        /// Waiting for the chat's next message or reply.
+        case nextMessage
+        /// Waiting in the inbox; `title` says why.
+        case waiting
+    }
+
+    var agent: String?
+    var chat: String?
+    var title: String
+    var kind: Kind
+    var at = Date()
+
+    init(agent: Agent?, chat: String?, title: String, kind: Kind) {
+        self.agent = agent?.rawValue
+        self.chat = chat
+        self.title = title
+        self.kind = kind
+    }
+
+    static let file = "delivery.json"
+
+    static func save(_ delivery: ReportDelivery, in report: URL) {
+        try? Chats.coder.encode(delivery).write(to: report.appending(path: file), options: .atomic)
+    }
+
+    static func load(from report: URL) -> ReportDelivery? {
+        (try? Data(contentsOf: report.appending(path: file))).flatMap { try? Chats.decoder.decode(ReportDelivery.self, from: $0) }
+    }
+}
 #endif
