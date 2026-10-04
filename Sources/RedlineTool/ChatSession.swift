@@ -238,7 +238,8 @@ final class ChatSession: Sendable {
     private func save() {
         var chat = self.chat
         if let saved = Chats.record(chat.id, paths: paths) {
-            chat.registeredAt = saved.registeredAt
+            // The first registration of this process: the hub checks the PID against it.
+            if saved.pid == chat.pid { chat.registeredAt = saved.registeredAt }
             if chat.waiter == nil { chat.waiter = saved.waiter }
         }
         do {

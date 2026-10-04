@@ -8,7 +8,7 @@ import Foundation
 /// reports themselves, so nothing runs while the phone is quiet.
 ///
 /// Thread safety: `address`, `given`, `missing`, `recheck`, `retryDelay`, `retryAt` and
-/// `lastWakeTry` are read and written only on `queue`.
+/// `lastWakeTry` and `isUnpaired` are read and written only on `queue`.
 final class PhoneLink: @unchecked Sendable {
     let phone: Devicectl.Phone
     private unowned let hub: Hub
@@ -30,6 +30,8 @@ final class PhoneLink: @unchecked Sendable {
     ///
     /// One wake is often announced on more than one network interface, and should lead to one try.
     private var lastWakeTry = Date.distantPast
+    /// Set once the phone is no longer paired: the link stops trying and stops reporting.
+    private var isUnpaired = false
 
     static let firstRetry: TimeInterval = 30
     /// The longest wait between tries, for a phone whose waking isn't announced, such as one
@@ -74,9 +76,19 @@ final class PhoneLink: @unchecked Sendable {
         }
     }
 
+    /// The phone is no longer paired: the link stops trying, and `done` runs once a try in progress
+    /// has finished, so nothing it reports comes after.
+    func unpair(then done: @escaping @Sendable () -> Void) {
+        queue.async {
+            self.isUnpaired = true
+            self.retryAt = nil
+            done()
+        }
+    }
+
     private func giveAddress() {
         dispatchPrecondition(condition: .onQueue(queue))
-        guard let address else { return }
+        guard !isUnpaired, let address else { return }
         retryAt = nil
         var unreachable = false
         // Read once: an app added during this pass waits for the next one.

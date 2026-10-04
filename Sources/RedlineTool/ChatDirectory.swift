@@ -12,8 +12,13 @@ enum ChatDirectory {
     static func agents() -> [Agent] {
         Agent.allCases.filter { agent in
             switch agent {
+            // The claude command starts new chats; open chats are found wherever Claude Code keeps
+            // them.
             case .claude:
-                FileManager.default.fileExists(atPath: URL.homeDirectory.appending(path: ".claude/sessions").path)
+                AgentCommand.locate(.claude) != nil
+                    || ClaudeSessions.configFolders.contains {
+                        FileManager.default.fileExists(atPath: URL(filePath: $0).appending(path: "sessions").path)
+                    }
             case .codex: AgentCommand.locate(.codex) != nil
             }
         }

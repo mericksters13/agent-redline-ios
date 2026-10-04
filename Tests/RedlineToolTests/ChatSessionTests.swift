@@ -76,6 +76,20 @@ struct ChatSessionTests {
         #expect(Chats.removeClosedChats(paths).isEmpty)
     }
 
+    @Test func aPIDTakenByALaterProcessDoesNotKeepAChatOpen() throws {
+        let started = try #require(Chats.startTime(of: getpid()))
+        #expect(started <= Date.now)
+        #expect(Chats.isRunning(getpid(), since: Date.now))
+        // Registered before this process started: the chat's process is gone and its PID reused.
+        #expect(!Chats.isRunning(getpid(), since: started.addingTimeInterval(-60)))
+
+        var chat = session(try project()).chat
+        chat.registeredAt = started.addingTimeInterval(-60)
+        try Chats.register(chat, paths: paths)
+        #expect(Chats.removeClosedChats(paths).isEmpty)
+        #expect(Chats.record(chat.id, paths: paths) == nil)
+    }
+
     @Test func onlyOneChatTakesAReport() throws {
         let folder = try project()
         _ = try inboxReport("20261003-223449")

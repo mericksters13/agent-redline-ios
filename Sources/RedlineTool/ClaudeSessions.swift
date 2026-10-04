@@ -20,11 +20,8 @@ enum ClaudeSessions {
 
     /// The interactive chats that are still running.
     static func openSessions() -> [Session] {
-        let folders = [
-            ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], URL.homeDirectory.appending(path: ".claude").path,
-        ].compactMap { $0 }
         var sessions: [Session] = []
-        for folder in Set(folders) {
+        for folder in configFolders {
             let files =
                 (try? FileManager.default.contentsOfDirectory(
                     at: URL(filePath: folder).appending(path: "sessions"),
@@ -36,6 +33,17 @@ enum ClaudeSessions {
             }
         }
         return sessions
+    }
+
+    /// Where Claude Code keeps its chats: the configured folder, and the default one.
+    static var configFolders: Set<String> {
+        Set(
+            [
+                ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"],
+                URL.homeDirectory.appending(path: ".claude").path,
+            ]
+            .compactMap { $0 }
+        )
     }
 
     /// One session file, as Claude Code writes it.
@@ -58,8 +66,11 @@ enum ClaudeSessions {
     static func session(from data: Data) -> Session? {
         guard let file = try? decoder.decode(SessionFile.self, from: data),
             let id = file.sessionId, let folder = file.cwd, let socket = file.messagingSocketPath, let pid = file.pid,
-            file.kind == "interactive", Chats.isRunning(pid)
+            file.kind == "interactive"
         else { return nil }
+        // A process that started after the chat did only reuses the chat's PID.
+        let started = file.startedAt.map { Date(timeIntervalSince1970: $0 / 1000) }
+        guard started.map({ Chats.isRunning(pid, since: $0) }) ?? Chats.isRunning(pid) else { return nil }
         let updated = file.updatedAt ?? file.startedAt ?? 0
         return Session(
             id: id,

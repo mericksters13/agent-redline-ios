@@ -129,6 +129,22 @@ struct HubWindowModelTests {
         )
     }
 
+    @Test func aReportForAChatsNextMessageShowsAsNotThereYet() throws {
+        let folder = try report("20261004-135000", at: Date.now)
+        try ChatDelivery.save(
+            .init(agent: .codex, chat: "t-1", title: "Fix the chart", kind: .nextMessage),
+            in: folder
+        )
+        let pending = HubWindowModel.destination(of: folder, codexDatabase: nil)
+        #expect(pending.agent == "Codex")
+        #expect(pending.chat == "Fix the chart (next message)")
+        #expect(pending.isWaiting)
+        // Once the chat's hook takes it, it's in the chat.
+        try HubPaths.encoder.encode(Claim(chat: "codex-t-1", agent: "codex", folder: "", claimedAt: .now + 1))
+            .write(to: folder.appending(path: Inbox.claimFile))
+        #expect(!HubWindowModel.destination(of: folder, codexDatabase: nil).isWaiting)
+    }
+
     @Test func aClaimWhoseHandOverWasInterruptedLeavesTheReportWaiting() throws {
         let folder = try report("20261004-134000", at: Date.now)
         let ended = Process()
@@ -265,6 +281,46 @@ struct HubWindowModelTests {
         let later = try #require(HubWindowModel.chat(of: waiting))
         #expect(later.agent == .claude && later.id == "s-2" && later.folder == "/repo")
         #expect(HubWindowModel.chat(of: try report("20261004-140500", at: Date.now)) == nil)
+    }
+
+    @Test func theViewerOpensTheSameChatTheReportRowNames() throws {
+        let ended = Process()
+        ended.executableURL = URL(filePath: "/usr/bin/true")
+        try ended.run()
+        ended.waitUntilExit()
+        let delivered = Date(timeIntervalSince1970: 1_791_120_000)
+        let later = delivered.addingTimeInterval(60)
+
+        // The hub exited after claiming the report but before handing it over: no chat has it.
+        let stranded = try report("20261004-141000", at: Date.now)
+        try HubPaths.encoder.encode(
+            Claim(
+                chat: "claude-gone",
+                agent: "claude",
+                folder: "/repo",
+                claimedAt: later,
+                handingOverIn: ended.processIdentifier
+            )
+        )
+        .write(to: stranded.appending(path: Inbox.claimFile))
+        #expect(HubWindowModel.destination(of: stranded, codexDatabase: nil).isWaiting)
+        #expect(HubWindowModel.chat(of: stranded) == nil)
+
+        // The same, after the hub had left it waiting.
+        var waiting = ChatDelivery(agent: nil, chat: nil, title: "Waiting for claude auth login", kind: .waiting)
+        waiting.deliveredAt = delivered
+        try ChatDelivery.save(waiting, in: stranded)
+        #expect(HubWindowModel.destination(of: stranded, codexDatabase: nil).isWaiting)
+        #expect(HubWindowModel.chat(of: stranded) == nil)
+
+        // Left waiting, then taken by a chat: the row and the viewer both name that chat.
+        let taken = try report("20261004-141100", at: Date.now)
+        try ChatDelivery.save(waiting, in: taken)
+        try HubPaths.encoder.encode(Claim(chat: "codex-t-3", agent: "codex", folder: "/repo", claimedAt: later))
+            .write(to: taken.appending(path: Inbox.claimFile))
+        #expect(!HubWindowModel.destination(of: taken, codexDatabase: nil).isWaiting)
+        let chat = try #require(HubWindowModel.chat(of: taken))
+        #expect(chat.agent == .codex && chat.id == "t-3" && chat.folder == "/repo")
     }
 }
 #endif

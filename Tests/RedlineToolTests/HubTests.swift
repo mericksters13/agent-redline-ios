@@ -105,6 +105,36 @@ struct HubTests {
         hub.flushWrites()
     }
 
+    @Test func aPhoneNoLongerPairedLeavesTheStatus() async throws {
+        let hub = try hub()
+        let kept = Devicectl.Phone(udid: phone, name: "Test iPhone", model: "iPhone 17 Pro")
+        let unpaired = Devicectl.Phone(udid: "00000000-0000000000000002", name: "Old iPhone", model: "iPhone 15")
+        hub.phoneDidChange(kept, state: .ready(apps: [app]))
+        hub.phoneDidChange(unpaired, state: .ready(apps: [app]))
+        hub.forgetPhones(except: [phone])
+        #expect(hub.statusSnapshot().phones.map(\.udid) == [phone])
+
+        // A link whose phone was unpaired stops trying, and so never reports the phone again.
+        let link = PhoneLink(phone: unpaired, hub: hub)
+        await withCheckedContinuation { done in link.unpair { done.resume() } }
+        link.update(hosts: ["192.168.1.2"], port: 47361, includingNewApps: true)
+        link.phoneDidWake()
+        await withCheckedContinuation { done in link.unpair { done.resume() } }
+        #expect(hub.statusSnapshot().phones.map(\.udid) == [phone])
+        hub.flushWrites()
+    }
+
+    @Test func aSourceFirstSeenLaterTakesOnlyReportsFromThen() throws {
+        let hub = try hub()
+        let firstLook = Date.now.addingTimeInterval(3 * 3600)
+        let before = FinishedReport(id: "20261004-120000", finishedAt: firstLook.addingTimeInterval(-3600))
+        let fresh = FinishedReport(id: "20261004-145930", finishedAt: firstLook.addingTimeInterval(-30))
+        hub.startTrackingIfNeeded(device: phone, bundleID: app, now: firstLook)
+        #expect(hub.reportIDsToCopy(device: phone, bundleID: app, finished: [before, fresh]) == [fresh.id])
+        #expect(hub.settledReportIDs(device: phone, bundleID: app, finished: [before, fresh]) == [before.id])
+        hub.flushWrites()
+    }
+
     @Test func aReportArrivingTwiceAtOnceIsFiledOnce() throws {
         let hub = try hub()
         let source = ReportSource(
