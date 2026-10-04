@@ -3,8 +3,10 @@ import AppKit
 import Foundation
 import UserNotifications
 
-/// `redline`: the Mac side of Redline. It takes reports off paired
-/// phones and simulators and keeps them in an inbox on the Mac for agent chats.
+// `redline`: the Mac side of Redline. It takes reports off paired phones and simulators and
+// keeps them in an inbox on the Mac for agent chats.
+
+/// The help text printed for `redline` with no or unknown arguments.
 let usage = """
 Usage:
   redline mcp [--project <folder>] [--app <bundle ID> ...]
@@ -253,6 +255,7 @@ func printReports(_ session: ChatSession, isQuietWhenNone: Bool = false) -> Bool
     return true
 }
 
+/// Prints what the hub is doing and what's in the inbox, for `redline status`.
 func printStatus(_ paths: HubPaths) {
     let decoder = HubPaths.decoder
     if let pid = HubProcess.running(paths) {

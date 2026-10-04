@@ -1,7 +1,6 @@
 #if os(macOS)
 import Foundation
 import Network
-import Synchronization
 
 /// Where apps send their reports: an offer, the hub's answer, the reports it asked for, and its
 /// reply, one line of JSON each, over the local network.
@@ -21,6 +20,7 @@ final class HubListener: @unchecked Sendable {
         self.hub = hub
     }
 
+    /// Listens on `port` and watches for waking phones.
     func start() {
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
@@ -47,6 +47,7 @@ final class HubListener: @unchecked Sendable {
         watchForWakingPhones()
     }
 
+    /// Stops listening and watching.
     func stop() {
         listener?.cancel()
         browser?.cancel()
@@ -201,66 +202,6 @@ final class HubListener: @unchecked Sendable {
                 }
             }
         }
-    }
-}
-
-/// Resumes a continuation once, whichever of several callbacks comes first, and cancels its
-/// timeout when it does.
-final class Once<T: Sendable>: Sendable {
-    private struct Waiting {
-        var continuation: CheckedContinuation<T, Never>?
-        var timeout: DispatchWorkItem?
-    }
-
-    private let waiting = Mutex(Waiting())
-
-    func set(_ continuation: CheckedContinuation<T, Never>) {
-        waiting.withLock { $0.continuation = continuation }
-    }
-
-    /// Resumes with `value` after `seconds`, unless something resumes first.
-    func timeout(after seconds: TimeInterval, on queue: DispatchQueue, with value: T) {
-        waiting.withLock { waiting in
-            guard waiting.continuation != nil else { return }
-            let item = DispatchWorkItem { self.resume(value) }
-            waiting.timeout = item
-            queue.asyncAfter(deadline: .now() + seconds, execute: item)
-        }
-    }
-
-    func resume(_ value: T) {
-        let waiting = waiting.withLock { waiting in
-            defer { waiting = Waiting() }
-            return waiting
-        }
-        waiting.timeout?.cancel()
-        waiting.continuation?.resume(returning: value)
-    }
-}
-
-/// The bytes read from a connection, taken a line at a time. Each byte is looked at once for a
-/// newline, however many pieces a long line arrives in.
-struct LineBuffer {
-    private var bytes = Data()
-    /// How far the search for a newline has got.
-    private var scanned = 0
-
-    var count: Int { bytes.count }
-
-    mutating func append(_ data: Data) {
-        bytes.append(data)
-    }
-
-    /// The next line, without its newline; nil until one is complete.
-    mutating func takeLine() -> Data? {
-        guard let newline = bytes[(bytes.startIndex + scanned)...].firstIndex(of: UInt8(ascii: "\n")) else {
-            scanned = bytes.count
-            return nil
-        }
-        let line = Data(bytes[bytes.startIndex..<newline])
-        bytes = Data(bytes[(newline + 1)...])
-        scanned = 0
-        return line
     }
 }
 #endif

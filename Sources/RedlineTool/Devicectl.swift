@@ -1,5 +1,6 @@
 #if os(macOS)
-import Foundation
+import AppKit
+import SwiftUI
 
 /// Xcode's command-line tool for paired devices. Every call starts a short-lived process and
 /// reads its JSON result.
@@ -15,6 +16,7 @@ struct Devicectl: Sendable {
         return Devicectl(executable: URL(filePath: path))
     }
 
+    /// A paired iPhone or iPad.
     struct Phone: Equatable, Sendable {
         var udid: String
         var name: String
@@ -53,6 +55,7 @@ struct Devicectl: Sendable {
         case unreachable
     }
 
+    /// Whether the app is on the phone.
     func installation(of bundleID: String, on udid: String) -> Installation {
         struct Response: Decodable {
             struct Result: Decodable { var apps: [App] }
@@ -90,6 +93,7 @@ struct Devicectl: Sendable {
 
     private static let decoder = JSONDecoder()
 
+    /// Why a devicectl call gave nothing to read.
     enum DevicectlError: Error {
         case failed(status: Int32)
     }

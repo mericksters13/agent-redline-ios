@@ -1,156 +1,9 @@
 #if os(macOS)
-import Foundation
+import AppKit
+import Darwin
 import Network
+import SwiftUI
 import Synchronization
-
-/// Where the tool keeps things on the Mac.
-///
-/// - `inbox/<bundle ID>/<report>/`: reports taken off phones and simulators. Each holds the
-///   report's own files (`report.json`, `report.md`, pictures) and the hub's: `source.json`
-///   (where it came from), `claim.json` (the chat that took it), `to.json` (the chat it's
-///   addressed to), `delivery.json` (where the hub sent it), and for a chat the hub started,
-///   `new-chat-output.jsonl` and `answer.md`. A report is filled under `.incoming-<name>` and
-///   renamed into place whole.
-/// - `hub/chats/<chat>.json`: the open chats, written by their MCP copies, hooks and waits
-/// - `hub/state.json`: which reports each phone and simulator app has already given
-/// - `hub/tokens.json`: the token each app on each phone was given; secret
-/// - `hub/started-chats.json`: the chats the hub started for the phone's "New chat" picks
-/// - `hub/status.json`, `hub/hub.pid`, `hub/hub.log` (and `hub/hub.log.1`): for `redline status`
-///   and the panel; the hub holds a lock on `hub.pid` while it runs
-struct HubPaths: Sendable {
-    let root: URL
-
-    static let standard = HubPaths(root: URL.applicationSupportDirectory.appending(path: "Redline", directoryHint: .isDirectory))
-
-    var inbox: URL { root.appending(path: "inbox", directoryHint: .isDirectory) }
-    var hub: URL { root.appending(path: "hub", directoryHint: .isDirectory) }
-    var state: URL { hub.appending(path: "state.json") }
-    var status: URL { hub.appending(path: "status.json") }
-    var pid: URL { hub.appending(path: "hub.pid") }
-    var log: URL { hub.appending(path: "hub.log") }
-    /// The token each app on each phone was given; secret, readable only by the user.
-    var tokens: URL { hub.appending(path: "tokens.json") }
-
-    /// How the hub and the chats write their JSON files: ISO 8601 dates, pretty-printed with
-    /// sorted keys, so people can read them.
-    static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
-    }()
-
-    static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
-}
-
-/// Reading the hub's own files, where a missing file is normal and any other failure isn't.
-enum StoredFile {
-    /// The file's contents, or nil when it doesn't exist. Any other failure, such as a file the
-    /// user can't read, throws, so it's never mistaken for an empty one and written over.
-    static func read(_ url: URL) throws -> Data? {
-        do {
-            return try Data(contentsOf: url)
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
-            return nil
-        }
-    }
-
-    /// Moves a file that can't be read or decoded out of the way, so starting fresh doesn't
-    /// write over what might still be recovered. Returns where it went.
-    @discardableResult
-    static func moveAside(_ url: URL) -> URL? {
-        let stamp = Date.now.formatted(.iso8601).replacing(":", with: "-")
-        let aside = url.deletingLastPathComponent().appending(path: "\(url.lastPathComponent).unreadable-\(stamp)")
-        return (try? FileManager.default.moveItem(at: url, to: aside)) == nil ? nil : aside
-    }
-
-    /// The decoded file; nil when it doesn't exist. A file that can't be read or decoded is
-    /// moved aside, with `report` told why, and treated as missing.
-    static func load<T: Decodable>(_ type: T.Type, from url: URL, decoder: JSONDecoder, report: (String) -> Void) -> T? {
-        do {
-            guard let data = try read(url) else { return nil }
-            return try decoder.decode(type, from: data)
-        } catch {
-            let aside = moveAside(url)
-            report("Couldn't read \(url.path): \(error.localizedDescription). \(aside.map { "Moved it to \($0.lastPathComponent); starting fresh" } ?? "Starting fresh").")
-            return nil
-        }
-    }
-}
-
-/// Where a report came from, saved next to it in the inbox.
-struct ReportSource: Codable, Sendable {
-    enum Kind: String, Codable, Sendable { case phone, simulator }
-
-    var kind: Kind
-    /// The phone's or simulator's UDID.
-    var device: String
-    var deviceName: String
-    var bundleID: String
-    var reportID: String
-    var receivedAt: Date
-}
-
-/// Where a paired phone stands, as the hub and the panel show it.
-enum PhoneState: Codable, Equatable, Sendable, CustomStringConvertible {
-    /// The watched apps on it have the hub's address.
-    case ready(apps: [String])
-    /// The phone couldn't be reached; it's tried again after the delay or when a phone wakes.
-    case unreachable(retryInSeconds: Int)
-    case noWatchedApps
-
-    /// For `redline status` and the log.
-    var description: String {
-        switch self {
-        case .ready(let apps): "Ready for \(apps.joined(separator: ", "))"
-        case .unreachable(let seconds): "Not reachable, trying again in \(seconds) s or when a phone wakes"
-        case .noWatchedApps: "None of the watched apps installed"
-        }
-    }
-
-    /// For the panel.
-    var shortDescription: String {
-        switch self {
-        case .ready: "Ready"
-        case .unreachable: "Not reachable"
-        case .noWatchedApps: "No watched app installed"
-        }
-    }
-
-    var isReady: Bool {
-        switch self {
-        case .ready: true
-        case .unreachable, .noWatchedApps: false
-        }
-    }
-}
-
-/// What the hub tells `redline status`.
-struct HubStatus: Codable, Sendable {
-    struct Phone: Codable, Equatable, Sendable {
-        var name: String
-        var udid: String
-        var state: String
-        /// "iPhone 17 Pro": tells apart phones with the same name.
-        var model: String? = nil
-        /// The state as a value, for the panel. `state` stays the text, which a `redline status`
-        /// of an earlier version reads; nil in a status.json an earlier hub wrote.
-        var phoneState: PhoneState? = nil
-    }
-
-    var pid: Int32
-    var startedAt: Date
-    var apps: [String]
-    /// Where apps reach the hub.
-    var hosts: [String]
-    var port: UInt16
-    var phones: [Phone]
-    var simulatorContainers: Int
-}
 
 /// Takes reports off paired phones and simulators and files them in the inbox. An app on a
 /// phone offers its reports over the local network and the hub copies them over Xcode's device
@@ -238,6 +91,8 @@ final class Hub: @unchecked Sendable {
         }
     }
 
+    // MARK: - Lifecycle
+
     /// Starts taking reports. False when another hub holds the lock on `hub.pid`, or it can't
     /// be taken; then nothing starts.
     @discardableResult
@@ -277,6 +132,7 @@ final class Hub: @unchecked Sendable {
         return true
     }
 
+    /// Stops taking reports, lets queued writes land, and releases `hub.pid`.
     func stop() {
         discovery?.cancel()
         chatsWatcher?.cancel()
@@ -296,6 +152,8 @@ final class Hub: @unchecked Sendable {
     func flushWrites() {
         writer.sync {}
     }
+
+    // MARK: - Discovery
 
     /// Gives every paired phone's watched apps the hub's current address. `includingNewApps` also
     /// looks again for newly paired phones' apps and simulator apps installed since the last look.
@@ -329,6 +187,8 @@ final class Hub: @unchecked Sendable {
         chatsWatcher = source
     }
 
+    /// Takes reports from the open chats' apps and the ones given on the command line. When
+    /// they change after the start, looks for the new apps on phones and simulators.
     func updateApps(isStarting: Bool) {
         let apps = Array(Set(fixedApps + Chats.removeClosedChats(paths).flatMap(\.bundleIDs))).sorted()
         let changed = state.withLock { state in
@@ -442,24 +302,28 @@ final class Hub: @unchecked Sendable {
     // Connections are served from Swift tasks, which must never block their thread: these run
     // the blocking work above on the hub's own queues and resume when it's done.
 
+    /// `answerNow`, on the inbox queue.
     func answer(_ offer: HubMessage.Offer) async -> HubMessage.Answer {
         await withCheckedContinuation { continuation in
             inbox.async { continuation.resume(returning: self.answerNow(offer)) }
         }
     }
 
+    /// `chatsNow`, on the directory queue.
     func chats(_ request: HubMessage.ChatsRequest) async -> HubMessage.ChatList {
         await withCheckedContinuation { continuation in
             directory.async { continuation.resume(returning: self.chatsNow(request)) }
         }
     }
 
+    /// `storeNow`, on the inbox queue.
     func store(_ upload: HubMessage.Upload, offeredIn offer: HubMessage.Offer) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             inbox.async { continuation.resume(with: Result { try self.storeNow(upload, offeredIn: offer) }) }
         }
     }
 
+    /// `settledReportIDs`, on the inbox queue, after the uploads before it.
     func settledReportIDs(device: String, bundleID: String, finished: [FinishedReport]) async -> [String] {
         await withCheckedContinuation { continuation in
             inbox.async { continuation.resume(returning: self.settledReportIDs(device: device, bundleID: bundleID, finished: finished)) }
@@ -573,6 +437,7 @@ final class Hub: @unchecked Sendable {
 
     // MARK: - Status
 
+    /// Records where a phone stands, for the panel and `redline status`.
     func phoneDidChange(_ phone: Devicectl.Phone, state phoneState: PhoneState) {
         let phone = HubStatus.Phone(name: phone.name, udid: phone.udid, state: phoneState.description, model: phone.model.isEmpty ? nil : phone.model,
                                     phoneState: phoneState)
@@ -645,6 +510,7 @@ final class Hub: @unchecked Sendable {
 
     // MARK: - Logging
 
+    /// Writes a line, with the time, to standard output and hub.log.
     func log(_ message: String) {
         let line = Data("\(Date.now.formatted(.iso8601)) \(message)\n".utf8)
         try? FileHandle.standardOutput.write(contentsOf: line)

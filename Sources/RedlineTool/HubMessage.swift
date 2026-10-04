@@ -19,6 +19,7 @@ enum HubMessage {
         var uploads: Bool? = nil
     }
 
+    /// Sent first by the app: the reports the Mac hasn't confirmed, with the token it was given.
     struct Offer: Codable, Equatable, Sendable {
         struct Report: Codable, Equatable, Sendable {
             var id: String
@@ -31,6 +32,7 @@ enum HubMessage {
         var reports: [Report]
     }
 
+    /// The hub's answer to an offer.
     struct Answer: Codable, Equatable, Sendable {
         /// Reports to send now.
         var want: [String]
@@ -40,12 +42,14 @@ enum HubMessage {
         var refused: String?
     }
 
+    /// Sent by the app for each report the hub wants, after the answer.
     struct Upload: Codable, Equatable, Sendable {
         var id: String
         /// File name to contents, base64 in the line.
         var files: [String: Data]
     }
 
+    /// The hub's last line: the offered reports the app can stop offering.
     struct Reply: Codable, Equatable, Sendable {
         var delivered: [String]
     }
@@ -81,6 +85,7 @@ enum HubMessage {
         }
     }
 
+    /// The hub's answer to a question about chats.
     struct ChatList: Codable, Equatable, Sendable {
         /// The agents on this Mac reports can go to, in the order to show them.
         var agents: [String]
@@ -141,82 +146,6 @@ enum HubMessage {
         case .none: error.localizedDescription
         @unknown default: error.localizedDescription
         }
-    }
-}
-
-/// A report the kit has finished drawing.
-struct FinishedReport: Equatable {
-    var id: String
-    /// When its `report.json` was written.
-    var finishedAt: Date?
-}
-
-/// Where the kit keeps sent reports, inside an app's data container.
-enum ReportFolder {
-    static let path = HubMessage.kitFolder + "/reports"
-
-    /// The finished reports among paths relative to the reports folder. A report is finished
-    /// once its `report.json` is written and the draft it was drawn from is gone.
-    static func finishedReports(in entries: [(path: String, modified: Date?)]) -> [FinishedReport] {
-        var written: [String: FinishedReport] = [:]
-        var drawing = Set<String>()
-        for entry in entries {
-            let parts = entry.path.split(separator: "/")
-            guard parts.count >= 2 else { continue }
-            let id = String(parts[0])
-            if parts.count == 2, parts[1] == "report.json" { written[id] = FinishedReport(id: id, finishedAt: entry.modified) }
-            if parts[1] == "draft" { drawing.insert(id) }
-        }
-        return written.values.filter { !drawing.contains($0.id) }.sorted { $0.id < $1.id }
-    }
-}
-
-/// What the hub has taken from one app on one phone or simulator.
-struct SourceState: Codable, Equatable {
-    /// Reports finished before this were there before the hub first looked, and stay where they are.
-    var since: Date
-    var delivered: [String] = []
-
-    /// The finished reports still to copy.
-    func reportIDsToCopy(from finished: [FinishedReport]) -> [String] {
-        let done = Set(delivered)
-        return finished.filter { report in
-            !done.contains(report.id) && !isOld(report)
-        }.map(\.id)
-    }
-
-    /// The offered reports the app can stop offering: copied, or there before the hub first looked.
-    func settledReportIDs(in finished: [FinishedReport]) -> [String] {
-        let done = Set(delivered)
-        return finished.filter { done.contains($0.id) || isOld($0) }.map(\.id)
-    }
-
-    private func isOld(_ report: FinishedReport) -> Bool {
-        report.finishedAt.map { $0 < since } ?? false
-    }
-}
-
-/// A report folder inside a simulator app's data container, found from the path of a file in it.
-struct SimulatorReportPath: Hashable {
-    /// The app's data container.
-    var container: String
-    /// The simulator's UDID.
-    var device: String
-    var reportID: String
-
-    static func parse(_ path: String) -> SimulatorReportPath? {
-        guard let marker = path.range(of: "/" + ReportFolder.path + "/") else { return nil }
-        let container = String(path[..<marker.lowerBound])
-        guard let id = path[marker.upperBound...].split(separator: "/").first.map(String.init), !id.isEmpty else { return nil }
-        guard let device = device(ofContainer: container) else { return nil }
-        return SimulatorReportPath(container: container, device: device, reportID: id)
-    }
-
-    /// The simulator an app's data container belongs to, from the container's path.
-    static func device(ofContainer container: String) -> String? {
-        let parts = container.split(separator: "/")
-        guard let devices = parts.lastIndex(of: "Devices"), devices + 1 < parts.count else { return nil }
-        return String(parts[devices + 1])
     }
 }
 #endif

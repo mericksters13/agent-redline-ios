@@ -2,130 +2,6 @@
 import AppKit
 import SwiftUI
 
-extension HubWindowModel {
-    /// A picture as the agent gets it, with the numbered outlines already drawn in, and the
-    /// notes it shows.
-    struct Picture: Equatable, Sendable {
-        var file: URL
-        /// The screen's title, or the title of the note the picture is attached to.
-        var title: String
-        var notes: [Int]
-    }
-
-    /// The report's pictures in the order the agent gets them: each screen's pictures, then the
-    /// pictures attached to notes.
-    nonisolated static func pictures(in folder: URL) -> [Picture] {
-        let listing = ReportListing.load(from: folder)
-        guard let screens = listing?.screens,
-              let images = screens.map({ screen in screen.images.map { image in image.notes.map { (screen.title, image.file, $0) } }.allPresent() }).allPresent(),
-              let items = listing?.items?.map({ item in
-                  item.number.flatMap { number in item.title.flatMap { title in item.attachments.map { (number, item.screenTitle ?? title, $0) } } }
-              }).allPresent()
-        else {
-            return ReportContent.pictures(in: folder).map { Picture(file: $0, title: $0.deletingPathExtension().lastPathComponent, notes: []) }
-        }
-        let shown = images.flatMap { $0 }.map { title, file, notes in Picture(file: folder.appending(path: file), title: title ?? "Screen", notes: notes) }
-        let attached = items.flatMap { number, title, attachments in
-            attachments.map { Picture(file: folder.appending(path: $0), title: title, notes: [number]) }
-        }
-        return (shown + attached).filter { FileManager.default.fileExists(atPath: $0.file.path) }
-    }
-
-    /// The first picture that shows a note.
-    nonisolated static func picture(showing note: Int, in pictures: [Picture]) -> URL? {
-        pictures.first { $0.notes.contains(note) }?.file
-    }
-
-    /// A chat a report went to, to open it again. `folder` is where that chat works, when known.
-    struct ChatLink: Equatable, Sendable {
-        var agent: Agent
-        var id: String
-        var folder: String?
-    }
-
-    /// The chat a report went to: from what the hub saved when it delivered the report, or else
-    /// the chat that took it. Nil when the report went to no chat.
-    nonisolated static func chat(of report: URL) -> ChatLink? {
-        let claim = (try? Data(contentsOf: report.appending(path: Inbox.claimFile))).flatMap { try? HubPaths.decoder.decode(Claim.self, from: $0) }
-        let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
-        if let delivery = ReportDelivery.load(from: report) {
-            guard delivery.kind != .waiting, let agent = delivery.agent.flatMap(Agent.init(rawValue:)),
-                  let id = delivery.chat
-            else { return nil }
-            return ChatLink(agent: agent, id: id, folder: folder)
-        }
-        guard let claim, let agent = Agent(rawValue: claim.agent) else { return nil }
-        if let id = ChatID.agentID(of: claim.chat, agent: agent) {
-            return ChatLink(agent: agent, id: id, folder: folder)
-        }
-        // A chat the hub started: its ID is in what the agent's command printed.
-        if ChatID.isStarted(claim.chat),
-           let output = try? String(contentsOf: report.appending(path: Inbox.newChatOutputFile), encoding: .utf8),
-           let started = AgentCommand.startedChat(agent, in: output), !started.didFail {
-            return ChatLink(agent: agent, id: started.chat, folder: folder)
-        }
-        return nil
-    }
-}
-
-/// One window per report, opened from the panel.
-@MainActor
-enum ReportWindows {
-    private struct OpenWindow {
-        var window: NSWindow
-        var observer: any NSObjectProtocol
-    }
-
-    private static var windows: [URL: OpenWindow] = [:]
-    /// Where the next new window goes, so each opens below and right of the last, not on top of it.
-    private static var cascadePoint = NSPoint.zero
-    /// Reports whose files are being read before their window shows; a second click waits for it.
-    private static var loading: [URL: Task<Void, Never>] = [:]
-
-    /// Opens the report's window, or brings it forward, in front of the other apps: Redline is
-    /// a menu bar app, so it isn't active when the panel is clicked. An open window reads the
-    /// report again, since it may have gone to a chat since it opened. The report's files are
-    /// read off the main actor first.
-    static func show(_ report: HubWindowModel.ReportRow) {
-        let folder = report.folder
-        guard loading[folder] == nil else { return }
-        loading[folder] = Task {
-            let contents = await ReportViewer.load(folder)
-            loading[folder] = nil
-            present(report, contents)
-        }
-    }
-
-    private static func present(_ report: HubWindowModel.ReportRow, _ contents: ReportViewer.Contents) {
-        defer { NSApp.activate() }
-        if let window = windows[report.folder]?.window {
-            window.title = ReportViewer.title(of: report)
-            (window.contentViewController as? NSHostingController<ReportViewer>)?.rootView = ReportViewer(report: report, contents: contents)
-            window.makeKeyAndOrderFront(nil)
-            return
-        }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 720),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.title = ReportViewer.title(of: report)
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = .black
-        window.contentViewController = NSHostingController(rootView: ReportViewer(report: report, contents: contents))
-        if windows.isEmpty { window.center() }
-        cascadePoint = window.cascadeTopLeft(from: cascadePoint)
-        let folder = report.folder
-        // queue: .main delivers on the main thread.
-        let observer = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
-            MainActor.assumeIsolated {
-                if let observer = windows[folder]?.observer { NotificationCenter.default.removeObserver(observer) }
-                windows[folder] = nil
-            }
-        }
-        windows[folder] = OpenWindow(window: window, observer: observer)
-        window.makeKeyAndOrderFront(nil)
-    }
-}
-
 /// A report as the agent got it: its pictures, with the numbered outlines drawn in, and its
 /// notes. Clicking a note brings the picture that shows it into view.
 struct ReportViewer: View {
@@ -158,6 +34,7 @@ struct ReportViewer: View {
         }
     }
 
+    /// The report window's title.
     static func title(of report: HubWindowModel.ReportRow) -> String {
         "Redline · \(report.device) · \(report.receivedAt.formatted(date: .abbreviated, time: .shortened))"
     }
@@ -303,7 +180,7 @@ struct ReportViewer: View {
 
 /// One of the viewer's pictures, as tall as `height`, decoded off the main actor. A placeholder
 /// of a phone screen's shape shows until it's ready.
-struct PictureImage: View {
+private struct PictureImage: View {
     let file: URL
     let height: CGFloat
     @State private var image: NSImage?
@@ -324,7 +201,7 @@ struct PictureImage: View {
 }
 
 /// The viewer's buttons: white on black for the main one, gray for the other.
-struct ViewerButtonStyle: ButtonStyle {
+private struct ViewerButtonStyle: ButtonStyle {
     let isProminent: Bool
 
     func makeBody(configuration: Configuration) -> some View {

@@ -2,18 +2,6 @@
 import Darwin
 import Foundation
 
-/// The agents reports go to: Claude Code and Codex.
-enum Agent: String, CaseIterable, Sendable {
-    case claude, codex
-
-    var name: String {
-        switch self {
-        case .claude: "Claude Code"
-        case .codex: "Codex"
-        }
-    }
-}
-
 /// The hook events this tool takes, as its hook settings name them.
 enum HookEvent: String, Sendable {
     /// The user sent a message (Codex): hand over reports sent to this chat.
@@ -34,6 +22,8 @@ struct HookInput: Equatable {
     }
 }
 
+/// What `redline hook <agent> <event>` does: hands reports addressed to the chat over in the
+/// agent's own words.
 enum AgentHooks {
     /// Set for chats the hub starts itself. Their hooks stay out of the way: such a chat runs
     /// once and ends, and must not take other reports.
@@ -76,7 +66,7 @@ enum AgentHooks {
 }
 
 /// Finds the process a chat lives in, from a hook that runs as its child.
-enum AgentProcess {
+private enum AgentProcess {
     /// The nearest ancestor that isn't a shell started to run the hook.
     static func find() -> Int32 {
         var pid = getppid()

@@ -40,6 +40,8 @@ final class MCPServer: Sendable {
         self.write = write
     }
 
+    // MARK: - Requests
+
     /// Reads requests until the chat closes its end, then unregisters the chat.
     func run() {
         while let line = readLine(strippingNewline: true) {
@@ -155,7 +157,7 @@ final class MCPServer: Sendable {
         ],
     ] }
 
-    func takeReports() -> [String: Any] {
+    private func takeReports() -> [String: Any] {
         session.touch()
         let chat = session.chat
         guard !chat.bundleIDs.isEmpty else {
@@ -176,7 +178,7 @@ final class MCPServer: Sendable {
     }
 
     /// Runs on a thread of its own, started for this request.
-    func wait(seconds: TimeInterval, waiter: ChatSession.Waiter) -> [String: Any] {
+    private func wait(seconds: TimeInterval, waiter: ChatSession.Waiter) -> [String: Any] {
         session.touch()
         guard session.waitForReport(timeout: seconds, waiter: waiter) else {
             return text("No report arrived in \(Int(seconds)) seconds.")
@@ -211,7 +213,7 @@ final class MCPServer: Sendable {
         ["content": [["type": "text", "text": string]]]
     }
 
-    static func encode(_ item: ReportContent.Item) -> [String: Any] {
+    private static func encode(_ item: ReportContent.Item) -> [String: Any] {
         switch item {
         case .text(let string):
             ["type": "text", "text": string]

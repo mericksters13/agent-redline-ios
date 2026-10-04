@@ -1,9 +1,11 @@
 #if os(macOS)
+import Darwin
 import Foundation
 
 /// Adds this tool's hooks to each agent's user hook settings, keeping every other hook there,
 /// and takes them out again. Running it twice changes nothing.
 enum AgentSettings {
+    /// The agent's user hook settings file.
     static func fileURL(for agent: Agent) -> URL {
         let home = URL.homeDirectory
         switch agent {
@@ -17,7 +19,7 @@ enum AgentSettings {
         FileManager.default.fileExists(atPath: fileURL(for: agent).deletingLastPathComponent().path)
     }
 
-    static func command(running executable: String, agent: Agent, event: HookEvent) -> String {
+    private static func command(running executable: String, agent: Agent, event: HookEvent) -> String {
         "'\(executable.replacing("'", with: "'\\''"))' hook \(agent.rawValue) \(event.rawValue)"
     }
 
@@ -40,9 +42,9 @@ enum AgentSettings {
 
     /// The tool's command name. A hook that runs it, from any folder, is a copy of this tool's,
     /// such as one from before a move.
-    static let commandName = "redline"
+    private static let commandName = "redline"
 
-    static func isOurs(_ hook: Any) -> Bool {
+    private static func isOurs(_ hook: Any) -> Bool {
         guard let command = (hook as? [String: Any])?["command"] as? String, command.hasPrefix("'"),
               let end = command.range(of: "' hook ") else { return false }
         let path = String(command[command.index(after: command.startIndex)..<end.lowerBound]).replacing("'\\''", with: "'")

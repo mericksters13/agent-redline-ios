@@ -1,43 +1,8 @@
 #if os(macOS)
-import Foundation
+import AppKit
+import Darwin
+import SwiftUI
 import UserNotifications
-
-/// Where a report goes.
-enum ReportDestination: Equatable {
-    /// An open chat: the one the user picked on the phone, or the only chat working in the
-    /// worktree the app was built from.
-    case chat(Agent, id: String)
-    /// A new chat, in a worktree of its own made from the one the app was built from: picked on
-    /// the phone, or because no chat works there. `pick` names the phone's "New chat" pick: the
-    /// first report with it starts the chat, later ones go to that chat.
-    case newChat(Agent, folder: String, pick: String?)
-    /// Nothing says where: several chats work in the worktree and none was picked, or the
-    /// report doesn't say where the app was built. It waits in the inbox.
-    case undecided(reason: String)
-}
-
-enum Routing {
-    static func worktree(of report: URL) -> String? {
-        ReportListing.load(from: report)?.app?.sourceFile.map(Worktree.root(of:))
-    }
-
-    static func destination(of report: URL, bundleID: String, list: (_ bundleID: String, _ sourceFile: String?) -> HubMessage.ChatList) -> ReportDestination {
-        // A listing without its app reads as if there were none, as it always has.
-        let listing = ReportListing.load(from: report).flatMap { $0.app == nil ? nil : $0 }
-        let worktree = listing?.app?.sourceFile.map(Worktree.root(of:))
-        if let pick = listing?.destination, let agent = Agent(rawValue: pick.agent) {
-            if let chat = pick.chat { return .chat(agent, id: chat) }
-            guard let worktree else { return .undecided(reason: "The report doesn't say which worktree the app was built from") }
-            return .newChat(agent, folder: worktree, pick: pick.newChat)
-        }
-        guard let worktree else { return .undecided(reason: "The report doesn't say which worktree the app was built from") }
-        let directory = list(bundleID, listing?.app?.sourceFile)
-        let here = directory.chats.filter(\.isSameWorktree)
-        if here.count == 1, let chat = here.first, let agent = Agent(rawValue: chat.agent) { return .chat(agent, id: chat.id) }
-        if here.isEmpty, let agent = directory.agents.first.flatMap(Agent.init(rawValue:)) { return .newChat(agent, folder: worktree, pick: nil) }
-        return .undecided(reason: "\(here.count) chats work in \(URL(filePath: worktree).lastPathComponent); pick one on the phone")
-    }
-}
 
 /// Sends each report where the user picked on the phone, or else to the chat working in the
 /// worktree the app was built from. A Claude Code chat gets it through its socket, which
@@ -52,6 +17,9 @@ final class Handoff: Sendable {
         self.hub = hub
     }
 
+    // MARK: - Delivery
+
+    /// Delivers a report the hub just filed, unless a chat took it already.
     func reportDidArrive(at folder: URL, source: ReportSource) {
         queue.async { [self] in
             // A chat may have taken it already, through MCP or a hook.
@@ -147,6 +115,8 @@ final class Handoff: Sendable {
         "Report from \(source.deviceName)"
     }
 
+    // MARK: - Claude Code
+
     /// Puts the report into a Claude Code chat through its socket. If the chat closed, a new
     /// one starts in the worktree.
     private func sendToClaude(_ report: InboxReport, session id: String, worktree: String?) {
@@ -176,6 +146,8 @@ final class Handoff: Sendable {
             Self.notify(title: Self.reportTitle(source), message: "The Claude Code chat \(name) didn't take it. It waits in the inbox.")
         }
     }
+
+    // MARK: - Codex
 
     /// Starts a turn with the report, pictures attached, in a Codex chat. A chat no Codex window
     /// has open is opened first. If the app can't take it, the chat's own hook hands it over
@@ -213,100 +185,6 @@ final class Handoff: Sendable {
         hub.log("The Codex app didn't take report \(source.reportID) (\(outcome)); it goes in with the chat's next message")
         record(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread, in: CodexThreads.newestDatabase()) ?? "Codex chat", kind: .nextMessage), for: report)
         Self.notify(title: Self.reportTitle(source), message: "Goes to the Codex chat with your next message there.")
-    }
-
-    /// Opens a terminal window in `folder` running `command`, with `arguments` and then `last`,
-    /// through a `.command` file: it opens in the user's terminal and needs no permission to
-    /// control one. `last` goes through a file, so no quoting can break it.
-    static func openTerminal(in folder: String, running command: String, arguments: [String] = [], with last: String) throws {
-        let scripts = URL(filePath: folder).appending(path: ".redline", directoryHint: .isDirectory)
-        let name = "chat-\(UUID().uuidString.prefix(8))"
-        let lastFile = scripts.appending(path: "\(name).txt")
-        let script = scripts.appending(path: "\(name).command")
-        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
-        let ignore = scripts.appending(path: ".gitignore")
-        if !FileManager.default.fileExists(atPath: ignore.path) { try "*\n".write(to: ignore, atomically: true, encoding: .utf8) }
-        try last.write(to: lastFile, atomically: true, encoding: .utf8)
-        try terminalScript(folder: folder, command: command, arguments: arguments, lastFile: lastFile.path).write(to: script, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-        try openURL(script.path)
-    }
-
-    /// The script a terminal runs: into the folder, read the last argument from its file, remove
-    /// the file and the script, then run the command.
-    static func terminalScript(folder: String, command: String, arguments: [String], lastFile: String) -> String {
-        func quoted(_ text: String) -> String { "'" + text.replacing("'", with: "'\\''") + "'" }
-        return [
-            "#!/bin/zsh",
-            "cd \(quoted(folder)) || exit 1",
-            "last=\"$(cat \(quoted(lastFile)))\"",
-            "rm -f \(quoted(lastFile)) \"$0\"",
-            "exec \(([command] + arguments).map(quoted).joined(separator: " ")) \"$last\"",
-        ].joined(separator: "\n") + "\n"
-    }
-
-    /// Runs a command in a folder and waits for it. Throws when it can't start.
-    static func run(_ executable: String, arguments: [String], in folder: String) throws {
-        let process = Process()
-        process.executableURL = URL(filePath: executable)
-        process.arguments = arguments
-        process.currentDirectoryURL = URL(filePath: folder)
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-    }
-
-    /// Opens a chat where the user works with its agent: in the Claude or Codex app when it's
-    /// installed, else in a terminal window in `folder` that resumes it. Throws when it can't.
-    static func openChat(_ agent: Agent, id: String, in folder: String) throws {
-        if let link = appLink(agent, id: id) {
-            try openURL(link)
-            return
-        }
-        guard let command = AgentCommand.locate(agent) else { throw OpenError.agentNotFound(agent) }
-        let resume = switch agent {
-        case .codex: ["resume"]
-        case .claude: ["--resume"]
-        }
-        try openTerminal(in: folder, running: command.path, arguments: resume, with: id)
-    }
-
-    enum OpenError: Error, LocalizedError {
-        case agentNotFound(Agent)
-
-        var errorDescription: String? {
-            switch self {
-            case .agentNotFound(let agent): "Neither \(agent.name)'s app nor its command is installed"
-            }
-        }
-    }
-
-    /// The link that opens a chat in its agent's app, when the app is installed. The Claude
-    /// app's link is the one `claude --desktop --resume` opens: the app takes the chat over from
-    /// the claude command.
-    static func appLink(_ agent: Agent, id: String, isClaudeAppInstalled: Bool = AgentCommand.isClaudeAppInstalled(),
-                        isCodexAppInstalled: Bool = AgentCommand.isCodexAppInstalled()) -> String? {
-        switch agent {
-        case .claude:
-            guard isClaudeAppInstalled else { return nil }
-            var link = URLComponents(string: "claude://resume")
-            link?.queryItems = [URLQueryItem(name: "session", value: id)]
-            return link?.string
-        case .codex:
-            guard isCodexAppInstalled else { return nil }
-            return "codex://threads/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)"
-        }
-    }
-
-    /// Opens a link or file with /usr/bin/open and waits for it. Throws when open can't start.
-    private static func openURL(_ link: String) throws {
-        let open = Process()
-        open.executableURL = URL(filePath: "/usr/bin/open")
-        open.arguments = [link]
-        try open.run()
-        open.waitUntilExit()
     }
 
     /// Opens a Claude Code chat the claude command made: in the desktop app with
@@ -361,6 +239,8 @@ final class Handoff: Sendable {
         record(.init(agent: .claude, chat: nil, title: "Waiting for claude auth login", kind: .waiting), for: report)
         Self.notify(title: Self.reportTitle(source), message: "To start new Claude Code chats, run claude auth login once in Terminal. The report waits until then.")
     }
+
+    // MARK: - New chats
 
     /// Starts a chat with the report, in a worktree of its own made from `folder`, the worktree
     /// the app was built from. `pick` is the phone's "New chat" pick, remembered with the new chat.
@@ -478,6 +358,8 @@ final class Handoff: Sendable {
         URL(filePath: path).lastPathComponent
     }
 
+    // MARK: - Notifications
+
     /// Shows a notification. Inside Redline.app it comes from Redline; the bare command has no
     /// app of its own, so it goes through osascript.
     static func notify(title: String, message: String) {
@@ -497,87 +379,5 @@ final class Handoff: Sendable {
         // A notification that can't be shown is left out; the log says what happened.
         try? process.run()
     }
-}
-
-/// Starting a chat with each agent from the command line. Each runs without permission to
-/// change files, so the chat can only look and propose.
-enum AgentCommand {
-    /// Claude's desktop app, where new Claude Code chats open, is installed. Checks the disk.
-    static func isClaudeAppInstalled() -> Bool {
-        FileManager.default.fileExists(atPath: "/Applications/Claude.app")
-    }
-
-    /// Codex's desktop app, inside the ChatGPT app or on its own, is installed. Checks the disk.
-    static func isCodexAppInstalled() -> Bool {
-        ["/Applications/ChatGPT.app/Contents/Resources/codex-cli", "/Applications/Codex.app"].contains { FileManager.default.fileExists(atPath: $0) }
-    }
-
-    static func locate(_ agent: Agent) -> URL? {
-        let home = URL.homeDirectory.path
-        let candidates: [String]
-        switch agent {
-        case .claude:
-            candidates = ["\(home)/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
-        case .codex:
-            // The copy inside the ChatGPT app comes first: it updates with the app.
-            candidates = ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
-                          "/Applications/Codex.app/Contents/Resources/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex", "\(home)/.local/bin/codex"]
-        }
-        return candidates.first(where: FileManager.default.isExecutableFile(atPath:)).map(URL.init(fileURLWithPath:))
-    }
-
-    static func arguments(_ agent: Agent, folder: String, prompt: String, pictures: [URL] = []) -> [String] {
-        switch agent {
-        case .claude:
-            ["-p", prompt, "--permission-mode", "plan", "--output-format", "json"]
-        // Pictures go in with the prompt; "--" ends them, so the prompt isn't read as one.
-        case .codex:
-            ["exec", "-C", folder, "--sandbox", "read-only", "--skip-git-repo-check", "--json"]
-                + pictures.flatMap { ["-i", $0.path] } + ["--", prompt]
-        }
-    }
-
-    /// What a command line run printed about the chat it started.
-    struct StartedChatOutput: Equatable {
-        var chat: String
-        /// The chat's answer, when the run gives one.
-        var answer: String?
-        /// The run reported an error.
-        var didFail: Bool
-    }
-
-    /// The chat a command line run started, from `codex exec --json`'s first event or the
-    /// result `claude -p --output-format json` prints.
-    static func startedChat(_ agent: Agent, in output: String) -> StartedChatOutput? {
-        for line in output.split(separator: "\n") {
-            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
-            switch agent {
-            case .codex:
-                if object["type"] as? String == "thread.started", let thread = object["thread_id"] as? String {
-                    return StartedChatOutput(chat: thread, answer: nil, didFail: false)
-                }
-            case .claude:
-                if let session = object["session_id"] as? String ?? object["chatId"] as? String {
-                    return StartedChatOutput(chat: session, answer: object["result"] as? String, didFail: object["is_error"] as? Bool ?? false)
-                }
-            }
-        }
-        return nil
-    }
-
-    /// Why a run failed, in the agent's own words where it gives them.
-    static func failure(in output: String) -> String {
-        for line in output.split(separator: "\n").reversed() {
-            if let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] {
-                if let result = object["result"] as? String, !result.isEmpty { return result }
-                if let error = (object["error"] as? [String: Any])?["message"] as? String ?? object["message"] as? String { return error }
-                continue
-            }
-            let text = line.trimmingCharacters(in: .whitespaces)
-            if !text.isEmpty { return String(text.prefix(200)) }
-        }
-        return "It stopped without saying why"
-    }
-
 }
 #endif
