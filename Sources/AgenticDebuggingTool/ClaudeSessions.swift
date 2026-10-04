@@ -16,6 +16,17 @@ enum ClaudeSessions {
         var isIdle: Bool
         /// The chat's name in Claude Code, when it has one.
         var title: String? = nil
+        /// Where it runs: `claude-desktop` for the desktop app, `cli` in a terminal.
+        var entrypoint: String? = nil
+    }
+
+    /// Where the user uses Claude Code: wherever their most recent chat runs, or the desktop app
+    /// when it's installed and there's no chat to go by.
+    static func usesDesktopApp() -> Bool {
+        if let latest = open().max(by: { $0.updatedAt < $1.updatedAt }), let entrypoint = latest.entrypoint {
+            return entrypoint == "claude-desktop"
+        }
+        return FileManager.default.fileExists(atPath: "/Applications/Claude.app")
     }
 
     /// The interactive chats that are still running.
@@ -40,7 +51,8 @@ enum ClaudeSessions {
         else { return nil }
         let updated = (object["updatedAt"] as? Double) ?? (object["startedAt"] as? Double) ?? 0
         return Session(id: id, folder: folder, socket: socket, updatedAt: Date(timeIntervalSince1970: updated / 1000),
-                       isIdle: object["status"] as? String == "idle", title: object["name"] as? String)
+                       isIdle: object["status"] as? String == "idle", title: object["name"] as? String,
+                       entrypoint: object["entrypoint"] as? String)
     }
 
     /// The line a chat's socket takes: one message, as if typed by another of the user's chats.

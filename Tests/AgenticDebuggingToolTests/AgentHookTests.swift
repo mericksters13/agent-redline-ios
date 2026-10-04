@@ -239,6 +239,28 @@ struct AgentHookTests {
         #expect(AgentCommand.arguments(.codex, folder: "/w", prompt: "p", pictures: [URL(fileURLWithPath: "/a.jpg")]).suffix(4) == ["-i", "/a.jpg", "--", "p"])
     }
 
+    @Test func aTerminalChatStartsWithTheReportWhateverTheFolderIsCalled() throws {
+        let folder = root.appending(path: "Mark's worktree", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let lastFile = folder.appending(path: "last.txt")
+        try "A report: it's \"broken\" $HOME".write(to: lastFile, atomically: true, encoding: .utf8)
+        // Run with printf in place of the agent, to see exactly what it would get.
+        let script = Handoff.terminalScript(folder: folder.path, command: "/usr/bin/printf", arguments: ["%s|%s", "resume"], lastFile: lastFile.path)
+        let file = root.appending(path: "run.command")
+        try script.write(to: file, atomically: true, encoding: .utf8)
+        let shell = Process()
+        shell.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        shell.arguments = [file.path]
+        let pipe = Pipe()
+        shell.standardOutput = pipe
+        try shell.run()
+        shell.waitUntilExit()
+        #expect(String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "resume|A report: it's \"broken\" $HOME")
+        // The script and the argument's file are gone once it runs.
+        #expect(!FileManager.default.fileExists(atPath: lastFile.path))
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
     @Test func codexChatsLeaveOutWhatCodexRunsOnItsOwn() throws {
         let database = root.appending(path: "state_5.sqlite")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

@@ -172,6 +172,42 @@ final class Handoff: @unchecked Sendable {
         Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Codex chat with your next message there.")
     }
 
+    /// Opens a terminal window in `folder` running `command`, with `arguments` and then `last`,
+    /// through a `.command` file: it opens in the user's terminal and needs no permission to
+    /// control one. `last` goes through a file, so no quoting can break it.
+    @discardableResult
+    static func openTerminal(in folder: String, running command: String, arguments: [String] = [], with last: String) -> Bool {
+        let scripts = URL(fileURLWithPath: folder).appending(path: ".agentic-debugging", directoryHint: .isDirectory)
+        let name = "chat-\(UUID().uuidString.prefix(8))"
+        let lastFile = scripts.appending(path: "\(name).txt")
+        let script = scripts.appending(path: "\(name).command")
+        do {
+            try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+            let ignore = scripts.appending(path: ".gitignore")
+            if !FileManager.default.fileExists(atPath: ignore.path) { try "*\n".write(to: ignore, atomically: true, encoding: .utf8) }
+            try last.write(to: lastFile, atomically: true, encoding: .utf8)
+            try terminalScript(folder: folder, command: command, arguments: arguments, lastFile: lastFile.path).write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        } catch {
+            return false
+        }
+        open(script.path)
+        return true
+    }
+
+    /// The script a terminal runs: into the folder, read the last argument from its file, remove
+    /// the file and the script, then run the command.
+    static func terminalScript(folder: String, command: String, arguments: [String], lastFile: String) -> String {
+        func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        return [
+            "#!/bin/zsh",
+            "cd \(quoted(folder)) || exit 1",
+            "last=\"$(cat \(quoted(lastFile)))\"",
+            "rm -f \(quoted(lastFile)) \"$0\"",
+            "exec \(([command] + arguments).map(quoted).joined(separator: " ")) \"$last\"",
+        ].joined(separator: "\n") + "\n"
+    }
+
     private static func open(_ link: String) {
         let open = Process()
         open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
@@ -180,11 +216,12 @@ final class Handoff: @unchecked Sendable {
         open.waitUntilExit()
     }
 
-    /// Opens a new Claude Code chat in the desktop app, in a worktree of its own from main, with
-    /// the report filled in and the report's files copied into the worktree so the chat can read
-    /// them without asking. The desktop app doesn't let anything send for the user: the user
-    /// presses Return. Once the chat starts, it's remembered for the pick, and later reports go
-    /// straight into it.
+    /// Opens a new Claude Code chat wherever the user uses Claude Code, in a worktree of its own
+    /// from main, with the report's files copied into the worktree so the chat reads them
+    /// without asking. In the desktop app the report is filled in and the user presses Return:
+    /// the app doesn't send for anyone. In a terminal, `claude` starts with the report as its
+    /// first message. Once the chat starts, it's remembered for the pick, and later reports go
+    /// straight into it, the same way in both.
     private func openClaudeChat(in folder: String, for report: InboxReport, pick: String?) {
         let source = report.source
         guard let worktree = NewWorktree.create(from: folder, name: "report-\(source.reportID)", agent: .claude) else {
@@ -199,15 +236,25 @@ final class Handoff: @unchecked Sendable {
         let prompt = "A UI report arrived from the user's \(source.kind == .phone ? "iPhone" : "simulator") through iOSAgenticDebuggingKit. "
             + "It's in \(copy ?? report.folder.path): read report.md there and open the pictures it lists. "
             + "Find the code for each noted element by its identifier or label, then tell me what you found and propose a fix before changing code."
-        var link = URLComponents()
-        link.scheme = "claude"
-        link.host = "code"
-        link.path = "/new"
-        link.queryItems = [URLQueryItem(name: "folder", value: worktree), URLQueryItem(name: "q", value: prompt)]
-        guard let url = link.url?.absoluteString else { return }
-        Self.open(url)
-        hub.log("Opened a new Claude Code chat in \(worktree) for report \(source.reportID), waiting for the user to send it")
-        Self.notify(title: "Report from \(source.deviceName)", message: "A new Claude Code chat is open with the report. Press Return to send it.")
+        if ClaudeSessions.usesDesktopApp() {
+            var link = URLComponents()
+            link.scheme = "claude"
+            link.host = "code"
+            link.path = "/new"
+            link.queryItems = [URLQueryItem(name: "folder", value: worktree), URLQueryItem(name: "q", value: prompt)]
+            guard let url = link.url?.absoluteString else { return }
+            Self.open(url)
+            hub.log("Opened a new Claude Code chat in the desktop app in \(worktree) for report \(source.reportID), waiting for the user to send it")
+            Self.notify(title: "Report from \(source.deviceName)", message: "A new Claude Code chat is open with the report. Press Return to send it.")
+        } else {
+            guard let claude = AgentCommand.locate(.claude), Self.openTerminal(in: worktree, running: claude.path, with: prompt) else {
+                try? FileManager.default.removeItem(at: report.folder.appending(path: InboxQueue.claimFile))
+                hub.log("Couldn't open a terminal for a new Claude Code chat for report \(source.reportID); it waits in the inbox")
+                return
+            }
+            hub.log("Opened a new Claude Code chat in a terminal in \(worktree) for report \(source.reportID)")
+            Self.notify(title: "Report from \(source.deviceName)", message: "A new Claude Code chat is looking into it in Terminal.")
+        }
         // The chat exists once the user sends; later reports go to it.
         let paths = hub.paths
         queue.async {
@@ -282,8 +329,12 @@ final class Handoff: @unchecked Sendable {
                 try? answer.write(to: report.folder.appending(path: "answer.md"), atomically: true, encoding: .utf8)
             }
             if agent == .codex {
-                // Shown in the Codex app, where the user carries on.
-                Handoff.open("codex://threads/\(started.chat)")
+                // Shown where the user carries on: the Codex app, or a terminal without it.
+                if AgentCommand.hasCodexApp {
+                    Handoff.open("codex://threads/\(started.chat)")
+                } else {
+                    Handoff.openTerminal(in: workFolder, running: executable.path, arguments: ["resume"], with: started.chat)
+                }
                 hub.log("The Codex chat \(started.chat) in \(workFolder) looked into report \(source.reportID)")
                 Handoff.notify(title: "Codex looked into a report", message: "Opened in Codex, in worktree \(place).")
             } else {
@@ -320,6 +371,11 @@ final class Handoff: @unchecked Sendable {
 /// Starting a chat with each agent from the command line. Each runs without permission to
 /// change files, so the chat can only look and propose.
 enum AgentCommand {
+    /// Codex's desktop app, inside the ChatGPT app or on its own.
+    static var hasCodexApp: Bool {
+        ["/Applications/ChatGPT.app/Contents/Resources/codex-cli", "/Applications/Codex.app"].contains { FileManager.default.fileExists(atPath: $0) }
+    }
+
     static func locate(_ agent: Agent) -> URL? {
         let home = NSHomeDirectory()
         let candidates: [String]
