@@ -126,6 +126,8 @@ final class Hub: @unchecked Sendable {
         let listener = HubListener(hub: self)
         listener.start()
         self.listener = listener
+        // A listener that failed at once has stopped the hub, and `whenListenerFails` says so.
+        guard stopping.withLock({ !stopped }) else { return true }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: Self.discoveryInterval, leeway: .seconds(60))
         timer.setEventHandler { [weak self] in self?.discover(rediscover: true) }
@@ -160,11 +162,16 @@ final class Hub: @unchecked Sendable {
         log("Hub stopped")
     }
 
-    /// The hub can't take reports without its listener: it stops, so the next chat starts a new one.
+    /// Set before `start` by the menu bar app, which shows why the listener failed and then exits.
+    var whenListenerFails: (@Sendable (String) -> Void)?
+
+    /// The hub can't take reports without its listener: it stops, so the next chat starts a new
+    /// one, and exits, or first tells `whenListenerFails`.
     func listenerFailed(_ reason: String) {
         log(reason)
         stop()
-        exit(1)
+        guard let whenListenerFails else { exit(1) }
+        whenListenerFails(reason)
     }
 
     /// Gives every paired phone's watched apps the hub's current address. `rediscover` also

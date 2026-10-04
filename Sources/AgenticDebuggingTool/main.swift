@@ -87,20 +87,24 @@ case "app":
             }
             // A hub from before fixedApps was saved lists them only among all its apps.
             keptApps = status.fixedApps ?? status.apps
-            // A hub stopping in the middle of handing a report over would leave it to be handed
-            // over again, so the app first waits for the hub to finish the hand-overs under way.
-            // A hub also finishes any it starts meanwhile before it stops, and the PID file stays
-            // locked until it has; one that hasn't stopped in 30 seconds and isn't handing a
-            // report over is ended, which frees the lock at once.
+            // Asked to stop, the hub takes no more reports and starts no more hand-overs at once,
+            // then lets the hand-overs under way reach their chats before it lets go of the PID
+            // file. One that hasn't stopped in 30 seconds and isn't handing a report over is
+            // ended, which frees the lock at once. One still handing a report over is never
+            // ended, or the report would be handed over twice; a new chat can take minutes to
+            // look into a report, so instead of waiting out of sight the app says why it can't
+            // start yet, and the hub stops on its own once its reports are handed over.
             print("Waiting for the hub (pid \(running)) to stop")
-            while HubProcess.running(paths) == running, InboxQueue.handingOver(by: running, paths: paths) > 0 {
-                usleep(500_000)
-            }
-            if HubProcess.running(paths) == running { kill(running, SIGTERM) }
+            kill(running, SIGTERM)
             tries = 0
             var killedAt: Int?
             while HubProcess.running(paths) == running {
-                if killedAt == nil, tries >= 300, InboxQueue.handingOver(by: running, paths: paths) == 0 {
+                if killedAt == nil, tries >= 300 {
+                    let handingOver = InboxQueue.handingOver(by: running, paths: paths)
+                    guard handingOver == 0 else {
+                        let reports = handingOver == 1 ? "the report it's handing over reaches its chat" : "the \(handingOver) reports it's handing over reach their chats"
+                        failToStart("The hub that was running (pid \(running)) stops once \(reports). Open Agentic Debugging again then.")
+                    }
                     kill(running, SIGKILL)
                     killedAt = tries
                 }
@@ -111,6 +115,11 @@ case "app":
         }
     }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: keptApps)
+    // The listener can fail after the hub has started, such as when another process has the
+    // port; the app then says so before it exits, rather than vanish.
+    hub.whenListenerFails = { reason in
+        DispatchQueue.main.async { failToStart("\(reason). Phones and simulators can't send reports without it.") }
+    }
     guard hub.start() else {
         failToStart("A hub is already running (pid \(HubProcess.running(paths).map(String.init) ?? "unknown")) and didn't stop.")
     }
