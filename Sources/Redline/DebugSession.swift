@@ -107,6 +107,9 @@ final class DebugSession {
     var nextNumber: Int { annotations.count + 1 }
 
     @ObservationIgnored private var window: OverlayWindow?
+    /// The project file that attached the kit. It names the worktree the app was built from,
+    /// and keys the destination the user picked. Set once, when the overlay is installed.
+    @ObservationIgnored private var sourceFile: String?
     @ObservationIgnored private var elements: [ElementSnapshot] = []
     @ObservationIgnored private var screenshot: UIImage?
     /// The main scroll view's position when the screen was read.
@@ -137,8 +140,12 @@ final class DebugSession {
 
     // MARK: - Install
 
-    func install(in scene: UIWindowScene) {
+    /// Installs the overlay in `scene`. Only the first call does anything: the overlay lives in
+    /// one scene, and the first attachment's source file is the one reports carry.
+    func install(in scene: UIWindowScene, sourceFile: String) {
         guard window == nil else { return }
+        self.sourceFile = sourceFile
+        destination = savedDestination()
         AccessibilityTree.enableAutomation()
 
         let window = OverlayWindow(windowScene: scene)
@@ -668,7 +675,8 @@ final class DebugSession {
 
     /// Where reports from this build go, as the user picked. Kept per worktree the app was built
     /// from, so a build from another worktree starts with that worktree's chat.
-    private(set) var destination: Report.Destination? = DebugSession.savedDestination()
+    /// Loaded when the overlay is installed, once the source file that keys it is known.
+    private(set) var destination: Report.Destination?
     private(set) var chatList: ChatListState = .loading
     /// The agent whose chats the picker shows.
     var pickerAgent: String?
@@ -681,11 +689,11 @@ final class DebugSession {
     /// The hub has set this app up, so there are chats to pick from.
     var canPickDestination: Bool { store.hubAddress() != nil }
 
-    private static var destinationKey: String {
-        "RedlineDestination|" + (BuildIdentity.sourceFile ?? Bundle.main.bundleIdentifier ?? "")
+    private var destinationKey: String {
+        "RedlineDestination|" + (sourceFile ?? Bundle.main.bundleIdentifier ?? "")
     }
 
-    private static func savedDestination() -> Report.Destination? {
+    private func savedDestination() -> Report.Destination? {
         UserDefaults.standard.data(forKey: destinationKey).flatMap { try? JSONDecoder().decode(Report.Destination.self, from: $0) }
     }
 
@@ -703,7 +711,7 @@ final class DebugSession {
         }
         // The first time, iOS asks about local network access before the hub can answer.
         let patience: TimeInterval = UserDefaults.standard.bool(forKey: Self.hubReachedKey) ? 8 : 60
-        let sourceFile = BuildIdentity.sourceFile
+        let sourceFile = sourceFile
         Task {
             let list = await HubLink.chats(bundleID: bundleID, address: address, sourceFile: sourceFile, patience: patience)
             guard mode == .destination else { return }
@@ -742,7 +750,7 @@ final class DebugSession {
     func confirmDestination() {
         if let choice = pickerChoice {
             destination = choice
-            if let data = try? JSONEncoder().encode(choice) { UserDefaults.standard.set(data, forKey: Self.destinationKey) }
+            if let data = try? JSONEncoder().encode(choice) { UserDefaults.standard.set(data, forKey: destinationKey) }
         }
         let thenSend = sendsAfterPicking
         sendsAfterPicking = false
@@ -787,7 +795,7 @@ final class DebugSession {
         }
         let destination = destination
         let input = ReportBuilder.Input(
-            id: started.id, date: date, app: .current, device: .current,
+            id: started.id, date: date, app: .current(sourceFile: sourceFile), device: .current,
             annotations: annotations, screens: screens, draft: started.draft, folder: started.folder,
             destination: destination
         )
@@ -1261,14 +1269,15 @@ final class DebugSession {
 }
 
 extension Report.App {
-    static var current: Report.App {
+    /// This app, built from the project that holds `sourceFile`.
+    static func current(sourceFile: String?) -> Report.App {
         let info = Bundle.main.infoDictionary ?? [:]
         return Report.App(
             bundleIdentifier: Bundle.main.bundleIdentifier,
             name: (info["CFBundleDisplayName"] ?? info["CFBundleName"]) as? String,
             version: info["CFBundleShortVersionString"] as? String,
             build: info["CFBundleVersion"] as? String,
-            sourceFile: BuildIdentity.sourceFile
+            sourceFile: sourceFile
         )
     }
 }

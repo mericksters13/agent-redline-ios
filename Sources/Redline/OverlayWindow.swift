@@ -30,14 +30,27 @@ final class OverlayWindow: UIWindow {
 
 /// Finds the window scene the app's root view lives in and installs Redline there.
 struct SceneHook: UIViewRepresentable {
-    func makeUIView(context: Context) -> HookView { HookView() }
+    /// The project file that attached the kit, filled in by the compiler at the call site.
+    let sourceFile: StaticString
+
+    func makeUIView(context: Context) -> HookView { HookView(sourceFile: "\(sourceFile)") }
     func updateUIView(_ uiView: HookView, context: Context) {}
 
     final class HookView: UIView {
+        private let sourceFile: String
+
+        init(sourceFile: String) {
+            self.sourceFile = sourceFile
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
         override func didMoveToWindow() {
             super.didMoveToWindow()
             guard let window, !(window is OverlayWindow), let scene = window.windowScene else { return }
-            DebugSession.shared.install(in: scene)
+            DebugSession.shared.install(in: scene, sourceFile: sourceFile)
         }
     }
 }
