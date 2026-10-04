@@ -150,6 +150,14 @@ enum ReportBuilder {
         var destination: Report.Destination? = nil
     }
 
+    /// A picture that couldn't be read or encoded. Building stops so the draft is restored
+    /// and can be sent again, instead of sending a report with the picture left out.
+    struct PictureFailed: LocalizedError, Equatable {
+        var file: String
+
+        var errorDescription: String? { "Couldn't make the picture \(file)" }
+    }
+
     static func build(_ input: Input) throws -> Report {
         let scale = ReportRenderer.sendScale
         let numbers = Dictionary(uniqueKeysWithValues: input.annotations.enumerated().map { ($1.id, $0 + 1) })
@@ -210,7 +218,7 @@ enum ReportBuilder {
                 for (partIndex, rows) in parts.enumerated() {
                     let file = partIndex == 0 ? "\(base).jpg" : "\(base)-part-\(partIndex + 1).jpg"
                     let image = ReportRenderer.render(plan, pictures: images, outlines: outlines, rows: rows, scale: scale)
-                    guard let data = ReportRenderer.jpeg(image) else { continue }
+                    guard let data = ReportRenderer.jpeg(image) else { throw PictureFailed(file: file) }
                     try data.write(to: input.folder.appending(path: file), options: .atomic)
                     files.append(file)
                     let shown = CGRect(x: 0, y: rows.lowerBound, width: plan.size.width, height: rows.upperBound - rows.lowerBound)
@@ -246,12 +254,12 @@ enum ReportBuilder {
             guard let number = numbers[annotation.id] else { continue }
             var files: [String] = []
             for (index, name) in annotation.screenshots.enumerated() {
-                guard let image = UIImage(contentsOfFile: input.draft.appending(path: name).path) else { continue }
+                let file = annotation.screenshots.count == 1 ? "note-\(number).jpg" : "note-\(number)-\(index + 1).jpg"
+                guard let image = UIImage(contentsOfFile: input.draft.appending(path: name).path) else { throw PictureFailed(file: file) }
                 // Captures of the app's own screen are sent at the same size as screen pictures.
                 let pointWidth = image.size.width * image.scale / 2
                 let sized = annotation.kind == .photo ? image : ReportRenderer.shrunk(image, maxPixels: (pointWidth * scale).rounded())
-                guard let data = ReportRenderer.jpeg(sized) else { continue }
-                let file = annotation.screenshots.count == 1 ? "note-\(number).jpg" : "note-\(number)-\(index + 1).jpg"
+                guard let data = ReportRenderer.jpeg(sized) else { throw PictureFailed(file: file) }
                 try data.write(to: input.folder.appending(path: file), options: .atomic)
                 files.append(file)
             }
