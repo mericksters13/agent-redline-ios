@@ -98,7 +98,7 @@ import UIKit  // No guard: this file compiles into every host app's Release buil
 ```swift
 // Do (inside #if REDLINE)
 guard let handle = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW),
-      let symbol = dlsym(handle, "AXSSetAutomationEnabled") ?? dlsym(handle, "_AXSSetAutomationEnabled")
+    let symbol = dlsym(handle, "AXSSetAutomationEnabled") ?? dlsym(handle, "_AXSSetAutomationEnabled")
 else { return }
 
 // Don't
@@ -219,7 +219,7 @@ Point at what is wrong in a running app and send it to the agent chat that built
 
 ## Overview
 
-Attach ``SwiftUI/View/redline(sourceFile:)`` once, at the root view. ...
+Attach ``SwiftUICore/View/redline(sourceFile:)`` once, at the root view. ...
 ```
 
 ```text
@@ -1230,7 +1230,11 @@ func makeRow() -> AnyView { AnyView(row) }
 
 ```swift
 // Do
-.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { islandHeight = $0 }  // Local @State.
+.onGeometryChange(for: CGFloat.self) {
+    $0.size.height
+} action: {
+    islandHeight = $0  // Local @State.
+}
 
 // Don't
 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.attachAnchor = $0 }  // Observed.
@@ -1298,7 +1302,9 @@ withAnimation(.spring(duration: 0.4, bounce: 0.2)) { self.suggestion = suggestio
 
 ```swift
 // Do
-Button { NSWorkspace.shared.open(report.folder) } label: {
+Button {
+    NSWorkspace.shared.open(report.folder)
+} label: {
     ReportRowContent(report: report)
 }
 .buttonStyle(.plain)
@@ -1456,8 +1462,12 @@ window.makeKeyAndVisible()  // Takes key status and keyboard focus from the host
 
 ```swift
 // Do
-MenuBarExtra { HubPanel(model: model) } label: { Image(nsImage: MenuBarIcon.image) }
-    .menuBarExtraStyle(.window)
+MenuBarExtra {
+    HubPanel(model: model)
+} label: {
+    Image(nsImage: MenuBarIcon.image)
+}
+.menuBarExtraStyle(.window)
 // In HubPanel:
 .preferredColorScheme(.dark)
 
@@ -2146,7 +2156,7 @@ var canPickDestination: Bool { store.hubAddress() != nil }  // Disk read and dec
 guard let element = selected, let screenshot else { return }
 
 guard let reply = connection.response(to: hello),
-      let client = reply["result"] as? [String: Any]
+    let client = reply["result"] as? [String: Any]
 else { return .failed("The Codex app didn't answer") }
 
 // Don't
@@ -2250,7 +2260,7 @@ if let handle = try? FileHandle(forWritingTo: paths.log) { ... }                
 
 **Rule:** Format with swift-format using a `.swift-format` file at the repo root, and fail CI when `swift format lint --strict` fails.
 
-**Why:** Only a tool keeps the mechanics the same for every contributor. swift-format ships with the toolchain, so it adds no dependency. The checked-in `.swift-format` is the toolchain's default configuration (`swift format dump-configuration`) with these values changed:
+**Why:** Only a tool keeps the mechanics the same for every contributor. swift-format ships with the toolchain, so it adds no dependency. The checked-in `.swift-format` is the toolchain's default configuration (`swift format dump-configuration`) with these values set. The two trailing-comma values are the defaults, kept explicit for T5:
 
 ```json
 {
@@ -2271,13 +2281,13 @@ if let handle = try? FileHandle(forWritingTo: paths.log) { ... }                
 }
 ```
 
-Run `swift format --in-place --recursive Sources Tests Package.swift` before you commit.
+Run `swift format --in-place --recursive Sources Tests scripts Package.swift` before you commit.
 
 ```text
 Don't: leave formatting to each contributor's Xcode settings and argue about spacing in review.
 ```
 
-**Check:** `.swift-format` exists. CI runs `swift format lint --strict --recursive --parallel Sources Tests Package.swift` and it exits 0. A pull request that changes `.swift-format` states why.
+**Check:** `.swift-format` exists. CI runs `swift format lint --strict --recursive --parallel Sources Tests scripts Package.swift` and it exits 0. A pull request that changes `.swift-format` states why.
 
 **Source:** <https://github.com/swiftlang/swift-format#included-in-the-swift-toolchain>; <https://github.com/swiftlang/swift-format/blob/main/Documentation/Configuration.md>
 
@@ -2348,7 +2358,8 @@ guard let screenshot else { return }
 var inbox: URL { root.appending(path: "inbox", directoryHint: .isDirectory) }
 
 if let entry = known.withLock({ $0[folder] }),
-   Date.now.timeIntervalSince(entry.at) < Self.keepFor {
+    Date.now.timeIntervalSince(entry.at) < Self.keepFor
+{
     return entry.ids
 }
 
@@ -2831,18 +2842,22 @@ Don't: check only that the Debug build works, and trust #if for the rest.
 
 ```swift
 // Do
-annotations.append(Annotation(
-    id: id,
-    createdAt: .now,
-    note: note
-))
+annotations.append(
+    Annotation(
+        id: id,
+        createdAt: .now,
+        note: note
+    )
+)
 
 // Don't
-annotations.append(Annotation(
-    id: id,
-    createdAt: .now,
-    note: note,  // A trailing comma in an argument list needs Swift 6.1.
-))
+annotations.append(
+    Annotation(
+        id: id,
+        createdAt: .now,
+        note: note,  // A trailing comma in an argument list needs Swift 6.1.
+    )
+)
 @Test func `snaps to the nearest edge`() { }  // Needs Swift 6.2.
 ```
 
@@ -2902,7 +2917,7 @@ let debugOnly: [SwiftSetting] = [.define("REDLINE", .when(configuration: .debug)
 
 ```sh
 # Do
-swift format lint --strict --recursive --parallel Sources Tests Package.swift
+swift format lint --strict --recursive --parallel Sources Tests scripts Package.swift
 swift build -Xswiftc -warnings-as-errors
 swift test
 swift test --sanitize=thread --filter RedlineToolTests

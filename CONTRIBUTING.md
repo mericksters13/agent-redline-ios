@@ -16,10 +16,13 @@ The package has three parts:
 ## Build and test
 
 ```sh
-swift build
+swift build -Xswiftc -warnings-as-errors
 swift test
+swift test --sanitize=thread --filter RedlineToolTests
 swift build -c release --product redline
 ```
+
+Run the kit's tests in debug, the default. `swift test -c release` builds an empty kit test target and runs nothing.
 
 `swift test` runs on the Mac, without a simulator. It covers the kit's platform-independent logic, the Mac tool, and contract tests that check the Mac reads exactly what the kit writes.
 
@@ -47,6 +50,18 @@ strings .build/xcode/Build/Products/Debug-iphonesimulator/Redline.o | grep -c AX
 strings .build/xcode/Build/Products/Release-iphonesimulator/Redline.o | grep -c AXSSetAutomationEnabled  # 0
 ```
 
+Build the documentation, which must finish with no warnings:
+
+```sh
+xcodebuild docbuild -scheme Redline -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/xcode
+```
+
+If your change touches `redline(sourceFile:)` or how the kit records file paths, build a host app in Release and confirm its binary holds no path from your Mac:
+
+```sh
+strings -a <Release host app binary> | grep "$HOME"    # nothing
+```
+
 A simulator run does not prove how gestures, haptics or the accessibility tree behave on a phone. If your change touches those, check it on a device and say so in the pull request.
 
 ## Format
@@ -54,8 +69,8 @@ A simulator run does not prove how gestures, haptics or the accessibility tree b
 The repository has a `.swift-format` configuration, and the formatter ships with the Swift toolchain. Before you commit:
 
 ```sh
-swift format --in-place --recursive Sources Tests Package.swift
-swift format lint --strict --recursive Sources Tests Package.swift
+swift format --in-place --recursive Sources Tests scripts Package.swift
+swift format lint --strict --recursive --parallel Sources Tests scripts Package.swift
 ```
 
 The lint must print nothing.
@@ -75,6 +90,6 @@ Redline runs inside other people's apps, so a few rules are strict:
 ## Pull requests
 
 - Keep each pull request to one change, and stage only the files it needs.
-- Run `git diff --check`, the build and test commands, the iOS builds and the format lint before you open it.
+- Run `git diff --check`, the build and test commands, the iOS builds, the documentation build and the format lint before you open it.
 - Say what you checked and how, including any device checks and, for performance work, the numbers you measured.
 - A change to the messages between the phone and the Mac, or to `report.json`, keeps older versions readable: rename a field only with a `CodingKeys` entry that keeps the old key, and extend the contract tests in `Tests/RedlineToolTests/KitContractTests.swift`.
