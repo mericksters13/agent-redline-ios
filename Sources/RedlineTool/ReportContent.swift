@@ -10,24 +10,33 @@ enum ReportContent {
     }
 
     /// The pictures a report refers to, in the order its summary lists them: each screen's
-    /// pictures, then attachments. Only regular files directly in the report's folder: the
+    /// pictures, then each note's own pictures. Only regular files directly in the report's folder: the
     /// phone or simulator wrote report.json, so a name that leads out of the folder, or a link
     /// to another file on the Mac, is left out.
     static func pictures(in folder: URL) -> [URL] {
         struct Listing: Decodable {
             struct Screen: Decodable { struct Picture: Decodable { var file: String }; var images: [Picture] }
-            struct Item: Decodable { var attachments: [String] }
+            struct Item: Decodable { var picture: String?; var attachments: [String] }
             var screens: [Screen]
             var items: [Item]
         }
         let listed = (try? Data(contentsOf: folder.appending(path: "report.json")))
             .flatMap { try? JSONDecoder().decode(Listing.self, from: $0) }
-            .map { $0.screens.flatMap { $0.images.map(\.file) } + $0.items.flatMap(\.attachments) }
+            .map { listing in
+                let screenPictures = listing.screens.flatMap { $0.images.map(\.file) }
+                return screenPictures + listing.items.flatMap { ownPictures(picture: $0.picture, attachments: $0.attachments, screenPictures: screenPictures) }
+            }
         let names = listed ?? ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
             .filter { $0.hasSuffix(".jpg") || $0.hasSuffix(".png") }.sorted()
         return names.compactMap { file($0, in: folder) }.filter {
             (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.type] as? FileAttributeType == .typeRegular
         }
+    }
+
+    /// A note's pictures that aren't a screen's: its attachments, and the picture of an element
+    /// note made before notes on one screen shared its picture.
+    private static func ownPictures(picture: String?, attachments: [String], screenPictures: [String]) -> [String] {
+        (picture.map { screenPictures.contains($0) ? [] : [$0] } ?? []) + attachments
     }
 
     /// The file a report names, when the name is a plain file name in its folder.
@@ -49,12 +58,15 @@ enum ReportContent {
         else { return header(for: report) + "\n" + summary(of: report).trimmingCharacters(in: .whitespacesAndNewlines) }
         let items = Dictionary(listing.items.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
         var blocks: [String] = []
-        for image in listing.screens.flatMap(\.images) {
+        let screenPictures = listing.screens.flatMap(\.images)
+        for image in screenPictures {
             let notes = image.notes.compactMap { items[$0] }.map(line)
             blocks.append(([file(image.file, in: report.folder)?.path].compactMap { $0 } + notes).joined(separator: "\n"))
         }
-        for item in listing.items where !item.attachments.isEmpty {
-            blocks.append((item.attachments.compactMap { file($0, in: report.folder)?.path } + [line(item)]).joined(separator: "\n"))
+        for item in listing.items {
+            let own = ownPictures(picture: item.picture, attachments: item.attachments, screenPictures: screenPictures.map(\.file))
+            guard !own.isEmpty else { continue }
+            blocks.append((own.compactMap { file($0, in: report.folder)?.path } + [line(item)]).joined(separator: "\n"))
         }
         let app = listing.app.name ?? report.source.bundleID
         return (["UI report from \(report.source.deviceName) · \(app)"] + blocks).joined(separator: "\n\n")
@@ -98,6 +110,8 @@ enum ReportContent {
             var title: String
             var note: String
             var element: Element?
+            /// The picture its outline is drawn on.
+            var picture: String?
             /// The elements holding it, innermost first. Missing in reports from before they were saved.
             var ancestors: [Element]?
             var attachments: [String]

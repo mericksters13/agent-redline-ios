@@ -4,8 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 destination="${1:-$HOME/Applications}"
-# Absolute, so the running copy's process, which Launch Services starts by its full path, matches
-# the checks below.
+# Absolute, so Launch Services registers and opens the app by its full path.
 mkdir -p "$destination"
 destination="$(cd "$destination" && pwd -P)"
 swift build -c release --product redline
@@ -47,33 +46,36 @@ codesign --force --sign "${identity:--}" "$staging"
 # handing over reach their chats, which can take minutes. One that hasn't exited after about 15
 # seconds is killed only when it isn't handing a report over: killed mid hand-over, the next hub
 # would hand the report over again while the chat the old one started still has it.
+# Any installed copy is matched, not only the one in this destination: the copy running from an
+# earlier destination holds the hub's lock, so the new one could not start while it runs.
 running=false
-stop_running_copy() {
-    local bundle="$1" inbox="$2"
-    pkill -TERM -f "$bundle/Contents/MacOS/" 2>/dev/null || return 0
+stop_running_copies() {
+    local name="$1" inbox="$2"
+    local copies="/$name.app/Contents/MacOS/"
+    pkill -TERM -f "$copies" 2>/dev/null || return 0
     running=true
-    for _ in {1..50}; do pgrep -f "$bundle/Contents/MacOS/" >/dev/null || break; sleep 0.3; done
-    if pgrep -f "$bundle/Contents/MacOS/" >/dev/null; then
+    for _ in {1..50}; do pgrep -f "$copies" >/dev/null || break; sleep 0.3; done
+    if pgrep -f "$copies" >/dev/null; then
         # A report being handed over has a claim naming the process handing it over.
-        for pid in $(pgrep -f "$bundle/Contents/MacOS/"); do
+        for pid in $(pgrep -f "$copies"); do
             if grep -rlsqE --include=claim.json "\"handingOverIn\" *: *$pid([^0-9]|\$)" "$inbox"; then
-                echo "The running copy of $bundle is handing a report over to its chat and quits once the chat has it; run this again then." >&2
+                echo "The running copy of $name is handing a report over to its chat and quits once the chat has it; run this again then." >&2
                 exit 1
             fi
         done
-        pkill -KILL -f "$bundle/Contents/MacOS/" 2>/dev/null || true
-        for _ in {1..20}; do pgrep -f "$bundle/Contents/MacOS/" >/dev/null || break; sleep 0.1; done
+        pkill -KILL -f "$copies" 2>/dev/null || true
+        for _ in {1..20}; do pgrep -f "$copies" >/dev/null || break; sleep 0.1; done
     fi
-    if pgrep -f "$bundle/Contents/MacOS/" >/dev/null; then
-        echo "The running copy of $bundle did not exit; quit it and run this again." >&2
+    if pgrep -f "$copies" >/dev/null; then
+        echo "The running copy of $name did not exit; quit it and run this again." >&2
         exit 1
     fi
 }
-stop_running_copy "$app" "$HOME/Library/Application Support/Redline/inbox"
-# The app from before the rename is replaced the same way. Its inbox is still under its own name
+stop_running_copies "Redline" "$HOME/Library/Application Support/Redline/inbox"
+# The app from before the rename is stopped the same way. Its inbox is still under its own name
 # while it runs: the new app moves that folder when it starts.
+stop_running_copies "Agentic Debugging" "$HOME/Library/Application Support/iOSAgenticDebuggingKit/inbox"
 legacy="$destination/Agentic Debugging.app"
-stop_running_copy "$legacy" "$HOME/Library/Application Support/iOSAgenticDebuggingKit/inbox"
 rm -rf "$legacy"
 rm -rf "$app"
 mv "$staging" "$app"
