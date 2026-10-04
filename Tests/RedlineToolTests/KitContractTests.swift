@@ -126,6 +126,15 @@ struct KitContractTests {
         #expect(kitList.worktree == "wt" && kitList.newChatBase == "main" && kitList.refused == nil)
     }
 
+    @Test func theKitKeepsOnlyPicksOfAgentsTheMacSendsTo() {
+        #expect(Report.Destination.supportedAgents == Set(Agent.allCases.map(\.rawValue)))
+        for agent in Agent.allCases {
+            #expect(Report.Destination(agent: agent.rawValue, chat: "c-1", title: "Fix it").isForSupportedAgent)
+        }
+        // A pick saved by an earlier version for an agent no longer supported is forgotten.
+        #expect(!Report.Destination(agent: "cursor", chat: "c-1", title: "Fix it").isForSupportedAgent)
+    }
+
     @Test func theKitsFoldersAreWhereTheMacLooks() {
         let store = ReportStore(root: URL(filePath: "/container/Library/Application Support/Redline"))
         #expect(store.hubAddressFile.path == "/container/" + HubMessage.addressPath)

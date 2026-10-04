@@ -106,6 +106,12 @@ enum Inbox {
         return claim
     }
 
+    /// The chat that took a report and still has it: nil when none has, or when its hand-over was
+    /// interrupted and the report is free again, as `unclaimedReports(for:paths:)` has it.
+    static func activeClaim(of report: URL) -> Claim? {
+        claim(of: report).flatMap { $0.isInterrupted ? nil : $0 }
+    }
+
     /// Records where the chat that took a report works, once that is known: a chat the hub starts
     /// takes the report before its worktree exists, and is resumed from the worktree.
     static func moveClaim(of report: URL, to folder: String) throws {

@@ -930,16 +930,24 @@ final class DebugSession {
 
     /// The pick saved for this build.
     ///
-    /// One that can't be read is forgotten, so the picker opens again.
+    /// One that can't be read, or that names an agent the Mac no longer sends reports to, is
+    /// forgotten, so the picker opens again.
     private func savedDestination() -> Report.Destination? {
         guard let data = UserDefaults.standard.data(forKey: destinationKey) else { return nil }
+        let saved: Report.Destination
         do {
-            return try Self.destinationDecoder.decode(Report.Destination.self, from: data)
+            saved = try Self.destinationDecoder.decode(Report.Destination.self, from: data)
         } catch {
             logger.error("Couldn't read the saved destination: \(error.localizedDescription, privacy: .public)")
             UserDefaults.standard.removeObject(forKey: destinationKey)
             return nil
         }
+        guard saved.isForSupportedAgent else {
+            logger.notice("Forgot the saved destination: reports no longer go to \(saved.agent, privacy: .public)")
+            UserDefaults.standard.removeObject(forKey: destinationKey)
+            return nil
+        }
+        return saved
     }
 
     /// Opens the picker and asks the Mac for its chats. `thenSend` when opened from Send.

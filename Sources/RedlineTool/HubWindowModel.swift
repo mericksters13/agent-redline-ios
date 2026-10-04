@@ -202,7 +202,7 @@ final class HubWindowModel {
         agent: String, chat: String, isWaiting: Bool
     ) {
         let delivery = ChatDelivery.load(from: folder)
-        let claim = Inbox.claim(of: folder).flatMap { $0.isInterrupted ? nil : $0 }
+        let claim = Inbox.activeClaim(of: folder)
         if let delivery, !(delivery.isPending && claim.map { $0.claimedAt > delivery.deliveredAt } == true) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             // A report set to go with a chat's next message isn't in that chat yet.

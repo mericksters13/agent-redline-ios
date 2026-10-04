@@ -47,6 +47,36 @@ struct InboxTests {
         }
     }
 
+    @Test func aReportWhoseHandOverWasInterruptedIsFreeAgain() throws {
+        let folder = try inboxReport("20261004-120300")
+        // No chat took it yet.
+        #expect(Inbox.activeClaim(of: folder) == nil)
+        // A process that took it and ended before the chat had it, such as a hook that crashed.
+        let ended = Process()
+        ended.executableURL = URL(filePath: "/usr/bin/true")
+        try ended.run()
+        ended.waitUntilExit()
+        let claimFile = folder.appending(path: Inbox.claimFile)
+        var claim = Claim(
+            chat: "codex-A",
+            agent: "codex",
+            folder: "/w",
+            claimedAt: .now,
+            handingOverIn: ended.processIdentifier
+        )
+        try HubPaths.encoder.encode(claim).write(to: claimFile)
+        #expect(Inbox.activeClaim(of: folder) == nil)
+        #expect(Inbox.unclaimedReports(for: ["com.example.app"], paths: paths).map(\.folder) == [folder])
+        // One this process is still handing over, and one the chat has, are taken.
+        claim.handingOverIn = getpid()
+        try HubPaths.encoder.encode(claim).write(to: claimFile)
+        #expect(Inbox.activeClaim(of: folder)?.chat == "codex-A")
+        claim.handingOverIn = nil
+        try HubPaths.encoder.encode(claim).write(to: claimFile)
+        #expect(Inbox.activeClaim(of: folder)?.chat == "codex-A")
+        #expect(Inbox.unclaimedReports(for: ["com.example.app"], paths: paths).isEmpty)
+    }
+
     @Test func onlyTheAddressedChatTakesAReport() throws {
         let folder = root.appending(path: "App", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

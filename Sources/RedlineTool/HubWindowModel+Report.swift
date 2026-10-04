@@ -60,7 +60,7 @@ extension HubWindowModel {
     ///
     /// Nil when the report went to no chat.
     nonisolated static func chat(of report: URL) -> ChatLink? {
-        let claim = Inbox.claim(of: report).flatMap { $0.isInterrupted ? nil : $0 }
+        let claim = Inbox.activeClaim(of: report)
         let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
         if let delivery = ChatDelivery.load(from: report),
             !(delivery.isPending && claim.map { $0.claimedAt > delivery.deliveredAt } == true)

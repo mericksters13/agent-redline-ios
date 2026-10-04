@@ -29,8 +29,9 @@ final class Handoff: Sendable {
     /// Delivers a report the hub just filed, unless a chat took it already.
     func reportDidArrive(at folder: URL, source: ReportSource) {
         queue.async { [self] in
-            // A chat may have taken it already, through MCP or a hook.
-            guard Inbox.claim(of: folder) == nil else { return }
+            // A chat may have taken it already, through MCP or a hook. One whose hand-over was
+            // interrupted doesn't have it, so the report goes on; delivering replaces that claim.
+            guard Inbox.activeClaim(of: folder) == nil else { return }
             deliver(InboxReport(folder: folder, source: source, claim: nil))
         }
     }

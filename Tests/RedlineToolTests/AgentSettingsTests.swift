@@ -82,6 +82,44 @@ struct AgentSettingsTests {
         #expect(try Data(contentsOf: file) == original)
     }
 
+    @Test func hooksFromBeforeTheRenameAreReplacedAndRemoved() throws {
+        // Installed as agentic-debugging, from a folder with an apostrophe, before the rename.
+        let old = AgentSettings.adding(
+            .codex,
+            to: codexSettings,
+            executable: "/Users/someone/Someone's tools/agentic-debugging"
+        )
+        var settings = old
+        var events = try #require(settings["hooks"] as? [String: Any])
+        events["SessionStart"] = [
+            [
+                "hooks": [
+                    ["type": "command", "command": "'/Users/someone/.local/bin/agentic-debugging' hook codex start"]
+                ]
+            ]
+        ]
+        settings["hooks"] = events
+        // Setup replaces them rather than adding a second hook.
+        let added = AgentSettings.adding(.codex, to: settings, executable: executable)
+        #expect(commands(added, "UserPromptSubmit") == ["'\(executable)' hook codex prompt"])
+        #expect(commands(added, "SessionStart").isEmpty)
+        // Remove takes them out too.
+        #expect(
+            try sortedJSON(AgentSettings.removing(.codex, from: settings, executable: executable))
+                == sortedJSON(codexSettings)
+        )
+        // A command under the old name with other arguments isn't one of them.
+        let lookalike: [String: Any] = [
+            "hooks": [
+                "Stop": [["hooks": [["type": "command", "command": "'/opt/bin/agentic-debugging' hook stop --all"]]]]
+            ]
+        ]
+        #expect(
+            try sortedJSON(AgentSettings.removing(.codex, from: lookalike, executable: executable))
+                == sortedJSON(lookalike)
+        )
+    }
+
     @Test func aHookFromAFolderWithAnApostropheIsStillRecognized() throws {
         let executable = "/Users/someone/Someone's tools/redline"
         let added = AgentSettings.adding(.codex, to: codexSettings, executable: executable)

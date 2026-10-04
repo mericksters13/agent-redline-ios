@@ -45,13 +45,30 @@ enum AgentSettings {
         }
     }
 
-    /// This tool's hook: one that runs this executable.
+    /// This tool's hook: one that runs this executable, or one the tool installed under its name
+    /// before the rename, `agentic-debugging`, from any folder, with exactly the arguments of one of
+    /// that version's hooks.
     ///
     /// A command of another tool, even one also named `redline` in another folder, is never taken for
     /// it.
     private static func isOurs(_ hook: Any, executable: String) -> Bool {
         guard let command = (hook as? [String: Any])?["command"] as? String else { return false }
-        return command.hasPrefix("'\(executable.replacing("'", with: "'\\''"))' hook ")
+        return command.hasPrefix("'\(executable.replacing("'", with: "'\\''"))' hook ") || isFromBeforeRename(command)
+    }
+
+    /// The agents whose settings this tool changes, and every event its hooks ran for before the
+    /// rename.
+    private static let agentsBeforeRename: Set<Substring> = ["claude", "codex"]
+    private static let eventsBeforeRename: Set<Substring> = ["start", "prompt", "stop", "end"]
+
+    /// A hook command the tool wrote before the rename:
+    /// `'<folder>/agentic-debugging' hook <agent> <event>`.
+    private static func isFromBeforeRename(_ command: String) -> Bool {
+        guard command.hasPrefix("'"), let end = command.range(of: "' hook ", options: .backwards) else { return false }
+        let path = command[command.index(after: command.startIndex)..<end.lowerBound].replacing("'\\''", with: "'")
+        let words = command[end.upperBound...].split(separator: " ", omittingEmptySubsequences: false)
+        return URL(filePath: String(path)).lastPathComponent == "agentic-debugging" && words.count == 2
+            && agentsBeforeRename.contains(words[0]) && eventsBeforeRename.contains(words[1])
     }
 
     /// The settings with this tool's hooks in place, replacing any older copy of them.

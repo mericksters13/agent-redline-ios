@@ -58,15 +58,16 @@ enum HubProcess {
             .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
-    /// Starts the hub: the menu bar app when it's installed, else this command in its own
-    /// session, so it keeps running after the chat that started it closes, with nothing attached
-    /// to the chat's input and output.
-    static func startIfNeeded(_ paths: HubPaths) {
+    /// Starts the hub, watching `apps` besides the open chats' apps: the menu bar app when it's
+    /// installed, else this command in its own session, so it keeps running after the chat that
+    /// started it closes, with nothing attached to the chat's input and output.
+    static func startIfNeeded(_ paths: HubPaths, apps: [String] = []) {
         guard running(paths) == nil else { return }
+        let appArguments = apps.flatMap { ["--app", $0] }
         if let app = installedApp() {
             let open = Process()
             open.executableURL = URL(filePath: "/usr/bin/open")
-            open.arguments = ["-g", app.path]
+            open.arguments = ["-g", app.path] + (apps.isEmpty ? [] : ["--args", "app"] + appArguments)
             do {
                 try open.run()
             } catch {
@@ -96,7 +97,7 @@ enum HubProcess {
             else { return }
         }
         var pid: pid_t = 0
-        let arguments = [executable, "hub"]
+        let arguments = [executable, "hub"] + appArguments
         var argv = arguments.map { strdup($0) } + [nil]
         defer {
             for argument in argv { free(argument) }
