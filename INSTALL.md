@@ -1,39 +1,43 @@
 # Installing Redline: instructions for coding agents
 
-This file is for a coding agent, such as Claude Code or Codex, that a user asked to "install Redline and add it to this app". Follow the steps in order. The user's own guide is the [README](README.md).
+This file is for a coding agent, such as Claude Code or Codex, that a user asked to "install Redline and add it to this app". Follow the steps in order. The user's own guide is the [README](https://github.com/mericksters13/agent-redline-ios#readme).
 
 Redline has two parts: a Mac side (the `redline` command and the `Redline.app` menu bar app) that one installer sets up, and a Swift package, `Redline`, that goes into the user's iOS app with one line, `.redline()`.
 
 ## Rules
 
 - **Never ask for, type or handle credentials.** Signing in the `claude` command (`claude auth login`) and trusting the Codex hook are the user's to do. List them for the user at the end.
-- **Never run `sudo`.** When the installer stops with a `sudo` command, give that command to the user, and run the installer again after they say it is done.
-- **Don't run the installer as root**, and don't pass it `--no-start`: that option is for tests and CI.
+- **Never run `sudo`.** When the installer stops with a `sudo` command, give that command to the user, then have them run the installer again.
+- **If you do run the installer** at the user's request, don't run it as root, and don't pass it `--no-start`: that option is for tests and CI.
 - **Change only what these steps name** in the user's project: the package dependency and the `.redline()` line. No Info.plist keys, permissions, build settings or build phases are needed.
 
-## 1. Run the installer
+## 1. Hand the user the Mac installer
 
-Run one of these from any folder. They run the same installer. `--no-input` makes sure it never waits for an answer: it lists what needs the user instead (it turns this on by itself when it sees Claude Code, Codex or CI, but pass it anyway).
+Don't run the installer yourself. It downloads and runs code that changes the Mac outside the project, which agent safety checks (Claude Code's auto mode, Codex's sandbox) block or stop to ask about. It's the one step the user takes.
 
-```sh
-npx --yes agent-redline-ios@latest --no-input
-```
+Once you've read this guide and found the app (step 2), your first message, before you change anything, says in a few lines:
 
-If `npx` is not installed, or npm can't find the package yet, download the script first and then run it. Don't pipe curl into bash: if the download fails, bash runs an empty script and exits 0, and you would think Redline is installed.
+- what you'll change in their project: the `Redline` package on the app target and `.redline()` on the root view;
+- the one command for them to run in their own terminal, for the Mac side:
 
-```sh
-(f="$(mktemp)" && trap 'rm -f "$f"' EXIT && curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "$f" && /bin/bash "$f" --no-input)
-```
+  ```sh
+  npx agent-redline-ios
+  ```
 
-(`npx --yes github:mericksters13/agent-redline-ios --no-input` also works.)
+  It installs the `redline` command and the Redline menu bar app, and connects Claude Code and Codex. It builds from source with Xcode, so the first run takes a few minutes, and it ends with a checklist. `npx` needs Node.js 18 or later; without it, give them this instead, which downloads the same installer and runs it only when the download worked:
 
-What to expect:
+  ```sh
+  (f="$(mktemp)" && trap 'rm -f "$f"' EXIT && curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "$f" && bash "$f")
+  ```
 
-- It builds Redline from source with Xcode, which takes a few minutes the first time and can take longer than a command timeout allows (Claude Code stops a foreground command after 10 minutes at most). Run it in the background, wait for it to exit, and then check the result: in Claude Code, use the Bash tool's `run_in_background` and wait for the notice that it finished; in Codex, raise the command timeout to 20 minutes or more.
-- It writes outside the project: `~/.local/bin/redline`, `~/Applications/Redline.app`, `~/Library/LaunchAgents/com.agentredline.hub.plist`, `~/.zprofile` (one line, only when `~/.local/bin` is not on `PATH`), `~/.claude.json` (through `claude mcp add`), `~/.codex/hooks.json`, `~/Library/Caches/Redline` and `~/Library/Application Support/Redline`. If your sandbox blocks writes outside the project, ask the user to allow the command outside the sandbox, or to run it in their terminal and tell you when it has finished.
-- It ends with a checklist marked Done, Needs you or Skipped, under the heading `Redline install checklist`. The same checklist is saved in `~/Library/Application Support/Redline/install-report.txt`, whose first line ends with the date and time of the run. When it updates the earlier version, Agentic Debugging, and stops before its data has moved, the checklist is in `~/Library/Caches/Redline/install-report.txt` instead.
-- **It worked** when the command exited with status 0 **and** printed `Redline install checklist`, or, if you lost the output, when `install-report.txt` starts with `Redline install checklist` and today's date. Exit status 0 alone is not enough. Items marked Needs you don't mean it failed.
-- **It stopped** when the status is anything else, or the report starts with `Redline is not installed.`: the Stopped line names the problem and the one fix. Give the user the fix (for example `sudo xcodebuild -license accept`), wait until they have done it, and run the same command again.
+Then carry on with steps 2 to 5 while they run it.
+
+If the user asks you to run it anyway, run `npx --yes agent-redline-ios@latest --no-input` in the background (it can take longer than a foreground command may run) and wait for it to exit.
+
+**Checking it finished.** The installer writes `~/Library/Application Support/Redline/install-report.txt`. An install that stops while replacing the earlier version, Agentic Debugging, writes it to `~/Library/Caches/Redline/install-report.txt` instead, so check both and use the newer. A report counts only when the file was modified after you handed over the command: compare its modification time, to the second (`stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' <file>`), with the time you sent your message. An older report is from an earlier run, so the user still has to run the installer.
+
+- It worked when the report starts with `Redline install checklist`. Items marked Needs you don't mean it failed.
+- It stopped when the report starts with `Redline is not installed.`: the Stopped line names the problem and its one fix, such as `sudo xcodebuild -license accept`. Give the user that fix and ask them to run the installer again.
 
 ## 2. Find the app's project
 
@@ -147,7 +151,7 @@ If the project has its own build instructions (a Makefile, a script, or rules in
 
 End with a short message that gives:
 
-1. Every **Needs you** item from the installer's checklist, with its exact command or click. These are typically:
+1. Every **Needs you** item from the installer's checklist (`install-report.txt`), with its exact command or click. These are typically:
    - `claude auth login` (or `claude update`), when the `claude` command isn't signed in or is too old for the Claude app.
    - In Codex, open `/hooks` and trust "Report delivery".
    - Open a new terminal window, when the installer added `~/.local/bin` to `PATH`.
@@ -155,6 +159,6 @@ End with a short message that gives:
 3. Run the Debug build on a paired iPhone or a simulator. On an iPhone, allow the local network prompt the first time.
 4. Tap the floating Redline button, tap an element, write a note and tap Send. The first time, pick this chat in Send to.
 
-If the installer stopped and the user hasn't fixed it yet, say that first, with the fix.
+If the user hasn't run the installer yet, or it stopped, say that first, with the command or the fix.
 
-To remove Redline later: `npx --yes agent-redline-ios@latest uninstall`, or download the script as in step 1 and run it with `uninstall`. Saved reports stay in `~/Library/Application Support/Redline`.
+To remove Redline later, the user runs `npx agent-redline-ios uninstall`. Saved reports stay in `~/Library/Application Support/Redline`.
