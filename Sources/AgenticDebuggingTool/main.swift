@@ -221,8 +221,9 @@ case "setup", "remove":
     let adding = arguments.first == "setup"
     var failed = false
     // New Claude Code chats need the claude command signed in. Without it, the other agents
-    // still get their hooks, and setup reports the failure at the end.
-    if adding, AgentSettings.isPresent(.claude) || AgentCommand.hasClaudeApp {
+    // still get their hooks, and setup reports the failure at the end. An installed claude
+    // command counts too: the hub offers new Claude chats whenever it finds one.
+    if adding, AgentSettings.isPresent(.claude) || AgentCommand.hasClaudeApp || AgentCommand.locate(.claude) != nil {
         if ClaudeCLI.prepare() {
             print("Claude Code: the claude command is signed in and ready to start new chats.")
         } else {
