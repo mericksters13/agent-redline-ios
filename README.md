@@ -16,7 +16,7 @@ The agent gets a snapshot of each screen with the elements you noted outlined in
   </picture>
 </p>
 
-Version 0.1.0, early development. Works with Claude Code and Codex only. The Agents section in the menu bar panel, the Built from line in Send to and the SwiftUI hint described below are on `main` and not yet in a release.
+Version 0.1.1, early development. Works with Claude Code and Codex only.
 
 ## How it works
 
@@ -72,7 +72,7 @@ When the Codex app takes a report, the snapshots come attached. Claude Code open
 ## Requirements
 
 - A Mac with macOS 15 or later.
-- Xcode 16 or later (so far tested only with Xcode 27).
+- Xcode 16 or later.
 - A SwiftUI app that targets iOS 18 or later.
 - An Xcode project or XcodeGen `project.yml` in the folder your chat works in. Redline reads the app's bundle ID from it.
 - Claude Code, Codex, or both. Claude Code also needs the `claude` command installed and signed in (see [After installing](#after-installing)).
@@ -134,12 +134,12 @@ The first time Redline runs, macOS asks whether it may show notifications. If yo
 
 If your agent installed Redline from the prompt above, it has done this already.
 
-1. **Add the package.** In Xcode, choose File > Add Package Dependencies and enter `https://github.com/mericksters13/agent-redline-ios.git`. Choose Up to Next Major Version from `0.1.0`, and add the `Redline` library to your app target.
+1. **Add the package.** In Xcode, choose File > Add Package Dependencies and enter `https://github.com/mericksters13/agent-redline-ios.git`. Choose Up to Next Minor Version from `0.1.1`, and add the `Redline` library to your app target.
 
    In a `Package.swift`, the dependency is:
 
    ```swift
-   .package(url: "https://github.com/mericksters13/agent-redline-ios.git", from: "0.1.0")
+   .package(url: "https://github.com/mericksters13/agent-redline-ios.git", .upToNextMinor(from: "0.1.1"))
    // in the app target's dependencies:
    .product(name: "Redline", package: "agent-redline-ios")
    ```
@@ -213,7 +213,7 @@ When a report reaches the Mac, it goes to the chat you picked in Send to. With n
 - **No chat works there:** Redline starts a new chat.
 - **Several chats work there, or the worktree isn't on this Mac**, such as for a build made on another Mac: the report waits in the inbox until a chat takes it (see [Troubleshooting](#troubleshooting)).
 
-**New chats.** Redline makes a git worktree from your repository's main branch, on a branch named `report/<report ID>`, and starts the chat there. A new Codex chat first looks into the report in a read-only sandbox, then opens in the Codex app. A new Claude Code chat starts in plan mode, then opens in the Claude app, where it gets the report. Without the agent's app, the chat opens in Terminal. Redline sets no permission mode when it opens a Claude Code chat, so the chat may not stay in plan mode.
+**New chats.** Redline makes a git worktree from your repository's main branch, on a branch named `report/<report ID>`, and starts the chat there. A new Codex chat first looks into the report in a read-only sandbox, then opens in the Codex app. A new Claude Code chat opens in the Claude app and gets the report there, with your usual permission settings. Without the agent's app, the chat opens in Terminal.
 
 - A new chat starts from main, not from your build's branch. When the build's worktree isn't on main, the picker says so under New chat, such as "Built from feature/growth-card. A new chat starts from main." If the bug is only on that branch, pick that branch's chat instead.
 - With no pick, the new chat uses the agent you last used for this app, or else the first agent that can start one. When you pick New chat, you choose the agent, and later reports with that pick go to the same chat. Picking New chat again starts another.

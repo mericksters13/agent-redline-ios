@@ -26,7 +26,7 @@ destination="$(cd "$destination" && pwd -P)"
 swift build -c release --product redline
 binary="$(swift build -c release --show-bin-path)/redline"
 # The same as `version` in Sources/RedlineTool/main.swift, which the MCP server reports.
-version="0.1.0"
+version="0.1.1"
 app="$destination/Redline.app"
 # One temporary folder for the bundle being built and its icon, removed however the script ends.
 work="$(mktemp -d)"

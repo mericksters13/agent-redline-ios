@@ -8,7 +8,7 @@ import UserNotifications
 
 /// The tool's version, which the MCP server reports. scripts/build-hub-app.sh writes the same
 /// into the app bundle.
-let version = "0.1.0"
+let version = "0.1.1"
 
 /// The help text printed for `redline` with no or unknown arguments.
 let usage = """
