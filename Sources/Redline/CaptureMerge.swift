@@ -231,15 +231,20 @@ enum CaptureMerge {
         }
         let ratio = CGFloat(image.width) / capture.size.width
         let newRatio = CGFloat(newImage.width) / newCapture.size.width
-        // Live content in either capture, from the element's top left corner.
-        let live =
-            capture.elements.filter { $0.updatesFrequently == true }.map {
-                $0.frame.offsetBy(dx: -frame.minX, dy: -frame.minY)
-            }
-            + newCapture.elements.filter { $0.updatesFrequently == true }.map {
-                $0.frame.offsetBy(dx: -newFrame.minX, dy: -newFrame.minY)
-            }
-        let inElement = live.filter { $0.intersects(CGRect(origin: .zero, size: frame.size)) }
+        // Live content in each capture, from the element's top left corner.
+        let oldLive = capture.elements.filter { $0.updatesFrequently == true }.map {
+            $0.frame.offsetBy(dx: -frame.minX, dy: -frame.minY)
+        }
+        let newLive = newCapture.elements.filter { $0.updatesFrequently == true }.map {
+            $0.frame.offsetBy(dx: -newFrame.minX, dy: -newFrame.minY)
+        }
+        // An element that is live as a whole, like a running timer, has nothing else to compare,
+        // and its size may change with its content, from 9:59 to 10:00.
+        func covers(_ live: [CGRect], _ size: CGSize) -> Bool {
+            live.contains { $0.insetBy(dx: -1, dy: -1).contains(CGRect(origin: .zero, size: size)) }
+        }
+        if covers(oldLive, frame.size) || covers(newLive, newFrame.size) { return true }
+        let inElement = (oldLive + newLive).filter { $0.intersects(CGRect(origin: .zero, size: frame.size)) }
         return SnapshotComparison.differingPixels(
             image,
             in: pixels(frame, ratio: ratio),

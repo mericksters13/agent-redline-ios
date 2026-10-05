@@ -249,6 +249,26 @@ struct CaptureMergeTests {
         #expect(draft.snapshots == [[1, 2]])
     }
 
+    @Test func aLiveElementThatChangesSizeIsNotANewState() throws {
+        // A note on the spinner itself, which widens between captures, like a timer going from
+        // 9:59 to 10:00.
+        let first = GrowthScreen(segment: .length, spinnerPhase: 0)
+        let later = GrowthScreen(segment: .length, spinnerPhase: 3)
+        var widened = capture(later)
+        let index = try #require(widened.elements.firstIndex { $0.updatesFrequently == true })
+        widened.elements[index].frame.size.width += 4
+        #expect(
+            CaptureMerge.looksIdentical(
+                GrowthScreen.spinner,
+                in: try first.image(),
+                of: capture(first),
+                as: widened.elements[index].frame,
+                in: try later.image(),
+                of: widened
+            )
+        )
+    }
+
     /// A caret isn't an element, so it can't be told from a changed character.
     ///
     /// The note keeps the snapshot it was made on: an extra snapshot costs less than a note shown on
