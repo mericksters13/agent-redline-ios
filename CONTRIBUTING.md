@@ -101,15 +101,12 @@ Redline runs inside other people's apps, so a few rules are strict:
 
 ## Releasing
 
-The npm package `agent-redline-ios` is published by the "Publish to npm" workflow
-(`.github/workflows/publish-npm.yml`) through npm trusted publishing, so there is no npm token to
-keep. To release:
+Releases are published by the "Publish to npm" workflow (`.github/workflows/publish-npm.yml`), through npm trusted publishing, so there is no npm token to keep. To release:
 
 1. Set the new version in `package.json`, in `version` in `Sources/RedlineTool/main.swift` and in `scripts/build-hub-app.sh`, move the Unreleased entries in [CHANGELOG.md](CHANGELOG.md) under it, and merge that into `main`.
-2. Publish a GitHub release whose tag is that version, such as `0.1.1`, without a `v`.
+2. In the repository's Actions tab, open "Publish to npm" and click Run workflow on `main`.
 
-The workflow checks that the tag matches the version, then publishes with a provenance record.
-A version can't be published twice, so a mistake means a new version.
+The workflow checks the version agrees in all three files, tags `main` with it (such as `0.1.1`, without a `v`), publishes a GitHub release with that version's CHANGELOG section, and publishes the package with a provenance record. Publishing a GitHub release by hand also works: the workflow then checks the tag matches the version and publishes the package. A version can't be published twice, so a mistake means a new version.
 
 ## Pull requests
 
