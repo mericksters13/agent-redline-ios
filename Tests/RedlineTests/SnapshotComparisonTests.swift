@@ -174,6 +174,18 @@ struct SnapshotComparisonTests {
         #expect(SnapshotComparison.differingPixels(first, in: card, later, in: card, ignoring: [spinner]) == 0)
     }
 
+    @Test func anEvenShiftStillCountsWithMostOfTheElementLeftOut() throws {
+        // A plain dark element moves 5 levels: under the tolerance for each pixel, over it for the
+        // average. Leaving three quarters of it out must not water the average down.
+        let element = CGRect(x: 100, y: 100, width: 200, height: 200)
+        let before = try snapshot(bars: [], mark: element, markGray: 0.2)
+        let after = try snapshot(bars: [], mark: element, markGray: 0.22)
+        let area = CGRect(x: 100, y: 500, width: 200, height: 200)
+        let ignored = [CGRect(x: 0, y: 0, width: 200, height: 100), CGRect(x: 0, y: 50, width: 200, height: 100)]
+        #expect(SnapshotComparison.differingPixels(before, in: area, after, in: area) == .max)
+        #expect(SnapshotComparison.differingPixels(before, in: area, after, in: area, ignoring: ignored) == .max)
+    }
+
     @Test func areasThatCannotBeComparedChange() throws {
         let weight = try GrowthScreen(segment: .weight).image()
         // Outside the capture, and cut off by its edge in only one of the two.

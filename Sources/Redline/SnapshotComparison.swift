@@ -91,7 +91,8 @@ enum SnapshotComparison {
         var y = plane(1)
         guard draw(first, into: x, masking: masks), draw(second, into: y, masking: masks) else { return .max }
         if memcmp(x.data, y.data, planeSize) == 0 { return 0 }
-        if isEvenlyShifted(&x, &y) { return .max }
+        let shownPixels = width * height - maskedPixels(masks, width: width, height: height)
+        if isEvenlyShifted(&x, &y, over: shownPixels) { return .max }
         var xRange = (darkest: plane(2), lightest: plane(3))
         var yRange = (darkest: plane(4), lightest: plane(5))
         var scratch = plane(6)
@@ -220,13 +221,36 @@ enum SnapshotComparison {
     }
 
     /// Whether the average red, green or blue level moved by more than `evenShift`.
-    private static func isEvenlyShifted(_ x: inout vImage_Buffer, _ y: inout vImage_Buffer) -> Bool {
-        guard let first = averageLevels(&x), let second = averageLevels(&y) else { return true }
+    ///
+    /// The average is over the `shownPixels` pixels left after the parts to leave out. Those are
+    /// black in both copies, so they add nothing to the totals, but counting them would water a
+    /// shift down.
+    private static func isEvenlyShifted(_ x: inout vImage_Buffer, _ y: inout vImage_Buffer, over shownPixels: Int)
+        -> Bool
+    {
+        guard shownPixels > 0, let first = averageLevels(&x, over: shownPixels),
+            let second = averageLevels(&y, over: shownPixels)
+        else { return true }
         return zip(first, second).prefix(3).contains { abs($0 - $1) > evenShift }
     }
 
-    /// The average level of each of the four channels, from Accelerate's histograms.
-    private static func averageLevels(_ plane: inout vImage_Buffer) -> [Double]? {
+    /// How many pixels of a plane the parts to leave out cover, counting overlaps once.
+    private static func maskedPixels(_ masks: [CGRect], width: Int, height: Int) -> Int {
+        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        let parts = masks.map { $0.intersection(bounds) }.filter { !$0.isNull && !$0.isEmpty }
+        guard parts.count > 1 else { return parts.first.map { Int($0.width) * Int($0.height) } ?? 0 }
+        var isMasked = [Bool](repeating: false, count: width * height)
+        for part in parts {
+            for row in Int(part.minY)..<Int(part.maxY) {
+                for column in Int(part.minX)..<Int(part.maxX) { isMasked[row * width + column] = true }
+            }
+        }
+        return isMasked.count { $0 }
+    }
+
+    /// The average level of each of the four channels over `pixelCount` pixels, from Accelerate's
+    /// histograms.
+    private static func averageLevels(_ plane: inout vImage_Buffer, over pixelCount: Int) -> [Double]? {
         // Four histograms of 256 levels, one after the other.
         var counts = [vImagePixelCount](repeating: 0, count: 4 * 256)
         let isDone = counts.withUnsafeMutableBufferPointer { histograms -> Bool in
@@ -236,11 +260,10 @@ enum SnapshotComparison {
                 == kvImageNoError
         }
         guard isDone else { return nil }
-        let pixelCount = Double(plane.width * plane.height)
         return (0..<4).map { channel in
             var total = 0.0
             for level in 0..<256 { total += Double(level) * Double(counts[channel * 256 + level]) }
-            return total / pixelCount
+            return total / Double(pixelCount)
         }
     }
 
