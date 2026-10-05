@@ -69,6 +69,35 @@ struct ChatSessionTests {
         ChatSession(paths: paths, folder: folder, extraApps: [], agent: "test", startsHub: false)
     }
 
+    /// A process waiting on the record lock while another removes the chat locks the file that
+    /// replaces it, the one later processes lock too, not the removed one.
+    @Test func theRecordLockFollowsALockFileRemovedWhileWaiting() async throws {
+        try FileManager.default.createDirectory(at: Chats.folder(paths), withIntermediateDirectories: true)
+        let path = Chats.recordLock("claude-1", paths: paths).path
+        let removed = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        try #require(removed >= 0)
+        #expect(flock(removed, LOCK_EX) == 0)
+        var removedFile = stat()
+        #expect(fstat(removed, &removedFile) == 0)
+        let paths = self.paths
+        let waiting = DispatchSemaphore(value: 0)
+        async let locked: ino_t? = offPool {
+            waiting.signal()
+            return Chats.withRecordLock("claude-1", paths: paths) {
+                var file = stat()
+                return stat(path, &file) == 0 ? file.st_ino : nil
+            }
+        }
+        await offPool {
+            waiting.wait()
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        unlink(path)
+        close(removed)
+        let lockedFile = try #require(await locked)
+        #expect(lockedFile != removedFile.st_ino)
+    }
+
     @Test func aChatOutsideAnAppProjectStaysOut() throws {
         let notes = root.appending(path: "Notes", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)

@@ -254,22 +254,21 @@ final class ChatSession: Sendable {
     /// the same chat: each hook runs in its own process.
     ///
     /// One process at a time reads and rewrites the record, so none drops the waiter another just
-    /// saved. The lock is released when the descriptor closes.
+    /// saved.
     private func save() {
         var chat = self.chat
         try? FileManager.default.createDirectory(at: Chats.folder(paths), withIntermediateDirectories: true)
-        let lock = open(Chats.recordLock(chat.id, paths: paths).path, O_RDWR | O_CREAT, 0o600)
-        if lock >= 0 { flock(lock, LOCK_EX) }
-        defer { if lock >= 0 { close(lock) } }
-        if let saved = Chats.record(chat.id, paths: paths) {
-            // The first registration of this process: the hub checks the PID against it.
-            if saved.pid == chat.pid { chat.registeredAt = saved.registeredAt }
-            if chat.waiter == nil { chat.waiter = saved.waiter }
-        }
-        do {
-            try Chats.register(chat, paths: paths)
-        } catch {
-            printError("Couldn't register the chat: \(error.localizedDescription)")
+        Chats.withRecordLock(chat.id, paths: paths) {
+            if let saved = Chats.record(chat.id, paths: paths) {
+                // The first registration of this process: the hub checks the PID against it.
+                if saved.pid == chat.pid { chat.registeredAt = saved.registeredAt }
+                if chat.waiter == nil { chat.waiter = saved.waiter }
+            }
+            do {
+                try Chats.register(chat, paths: paths)
+            } catch {
+                printError("Couldn't register the chat: \(error.localizedDescription)")
+            }
         }
     }
 }

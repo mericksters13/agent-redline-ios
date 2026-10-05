@@ -76,15 +76,42 @@ enum Chats {
     }
 
     /// Removes the chat's record and its locks; already gone is fine.
+    ///
+    /// Done holding the record lock, so it never removes the lock file under a process saving the
+    /// record.
     static func unregister(_ id: String, paths: HubPaths) {
-        try? FileManager.default.removeItem(at: folder(paths).appending(path: "\(id).json"))
-        try? FileManager.default.removeItem(at: folder(paths).appending(path: "\(id).lock"))
-        try? FileManager.default.removeItem(at: recordLock(id, paths: paths))
+        withRecordLock(id, paths: paths) {
+            try? FileManager.default.removeItem(at: folder(paths).appending(path: "\(id).json"))
+            try? FileManager.default.removeItem(at: folder(paths).appending(path: "\(id).lock"))
+            try? FileManager.default.removeItem(at: recordLock(id, paths: paths))
+        }
     }
 
     /// Held while a process reads and rewrites a chat's record.
     static func recordLock(_ id: String, paths: HubPaths) -> URL {
         folder(paths).appending(path: "\(id).record.lock")
+    }
+
+    /// Runs `body` holding the chat's record lock, so one process at a time reads and rewrites or
+    /// removes the record.
+    ///
+    /// When the lock file was removed while this process waited for it, the lock it got is on a
+    /// file no other process opens, so it locks the file at the path again. Runs `body` unlocked
+    /// when the lock file can't be opened, such as when the folder is gone.
+    static func withRecordLock<T>(_ id: String, paths: HubPaths, _ body: () -> T) -> T {
+        let path = recordLock(id, paths: paths).path
+        while true {
+            let lock = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+            guard lock >= 0 else { return body() }
+            defer { close(lock) }
+            flock(lock, LOCK_EX)
+            var held = stat()
+            var current = stat()
+            guard fstat(lock, &held) == 0, stat(path, &current) == 0,
+                held.st_dev == current.st_dev, held.st_ino == current.st_ino
+            else { continue }
+            return body()
+        }
     }
 
     /// The chat's saved record, if it has one.
