@@ -146,7 +146,7 @@ struct HubTests {
         #expect(called() == 1)
     }
 
-    @Test func anIPv6OnlyNetworkCountsAsANetwork() {
+    @Test func onlyNetworkAddressesCountAsANetwork() {
         func ipv6(_ text: String) -> in6_addr {
             var address = in6_addr()
             #expect(inet_pton(AF_INET6, text, &address) == 1)
@@ -158,6 +158,16 @@ struct HubTests {
         #expect(!Hub.isOnNetwork(ipv6("fe80::1")))
         #expect(!Hub.isOnNetwork(ipv6("febf::1")))
         #expect(!Hub.isOnNetwork(ipv6("::")))
+        func ipv4(_ text: String) -> in_addr {
+            var address = in_addr()
+            #expect(inet_pton(AF_INET, text, &address) == 1)
+            return address
+        }
+        #expect(Hub.isOnNetwork(ipv4("192.168.1.2")))
+        #expect(Hub.isOnNetwork(ipv4("10.0.0.5")))
+        // Self-assigned when no DHCP server answers: phones on the Wi-Fi can't reach it.
+        #expect(!Hub.isOnNetwork(ipv4("169.254.10.20")))
+        #expect(!Hub.isOnNetwork(ipv4("0.0.0.0")))
         // On a network, the `.local` name is last, after any IPv4 address.
         let hosts = Hub.addresses()
         #expect(hosts.isEmpty || hosts.last?.hasSuffix(".local") == true)
