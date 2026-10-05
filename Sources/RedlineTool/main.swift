@@ -99,7 +99,16 @@ case .blocked(let reason):
         break
     }
 }
-if let movedApps, !["app", "hub"].contains(arguments.first) { HubProcess.startIfNeeded(paths, apps: movedApps) }
+if let movedApps, !["app", "hub"].contains(arguments.first) {
+    HubProcess.startIfNeeded(paths, apps: movedApps)
+    // The hub starts in the background. Give it a few seconds to claim the PID file and save its
+    // status before the command goes on, so a chat registering next doesn't start a second hub
+    // without these apps, and status doesn't say the hub isn't running while it starts.
+    for _ in 0..<50 {
+        if let pid = HubProcess.running(paths), HubWindowModel.savedStatus(paths)?.pid == pid { break }
+        usleep(100_000)
+    }
+}
 
 switch arguments.first {
 case "app":
@@ -290,14 +299,6 @@ case "setup", "remove":
     exit(failed ? 1 : 0)
 
 case "status":
-    // Right after the folder moved, this version's hub is still starting. Give it a few seconds
-    // to claim the PID file and save its status, so this doesn't say it isn't running.
-    if movedApps != nil {
-        for _ in 0..<50 {
-            if let pid = HubProcess.running(paths), HubWindowModel.savedStatus(paths)?.pid == pid { break }
-            usleep(100_000)
-        }
-    }
     printStatus(paths)
 
 default:
