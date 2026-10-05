@@ -52,11 +52,13 @@ codesign --force --sign "${identity:--}" "$staging"
 # seconds is killed only when it isn't handing a report over: killed mid hand-over, the next hub
 # would hand the report over again while the chat the old one started still has it.
 # Any installed copy is matched, not only the one in this destination: the copy running from an
-# earlier destination holds the hub's lock, so the new one could not start while it runs.
+# earlier destination holds the hub's lock, so the new one could not start while it runs. The
+# match is the bundle's own executable path, so another app that happens to share the bundle
+# name is left alone.
 running=false
 stop_running_copies() {
-    local name="$1" inbox="$2"
-    local copies="/$name.app/Contents/MacOS/"
+    local name="$1" executable="$2" inbox="$3"
+    local copies="/$name\\.app/Contents/MacOS/$executable( |\$)"
     pkill -TERM -f "$copies" 2>/dev/null || return 0
     running=true
     for _ in {1..50}; do pgrep -f "$copies" >/dev/null || break; sleep 0.3; done
@@ -76,10 +78,10 @@ stop_running_copies() {
         exit 1
     fi
 }
-stop_running_copies "Redline" "$HOME/Library/Application Support/Redline/inbox"
+stop_running_copies "Redline" "redline" "$HOME/Library/Application Support/Redline/inbox"
 # The app from before the rename is stopped the same way. Its inbox is still under its own name
 # while it runs: the new app moves that folder when it starts.
-stop_running_copies "Agentic Debugging" "$HOME/Library/Application Support/iOSAgenticDebuggingKit/inbox"
+stop_running_copies "Agentic Debugging" "agentic-debugging" "$HOME/Library/Application Support/iOSAgenticDebuggingKit/inbox"
 legacy="$destination/Agentic Debugging.app"
 rm -rf "$legacy"
 rm -rf "$app"
