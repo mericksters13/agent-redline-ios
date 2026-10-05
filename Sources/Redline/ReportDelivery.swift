@@ -21,8 +21,8 @@ enum ReportDelivery {
     ///
     /// One attempt at a time: each holds its reports' files in memory, up to 50 MB, so a send while
     /// the app's return is still delivering waits for it, then sends whatever is left. Nil when
-    /// there's nothing to send, or no bundle ID to send it as. Runs off the main actor. Add
-    /// @concurrent when the tools version reaches 6.2.
+    /// there's nothing to send, or no bundle ID to send it as. Runs off the main actor.
+    @concurrent
     static func deliver(from store: ReportStore, bundleID: String?, patience: TimeInterval) async -> HubLink.Outcome? {
         await deliveries.run { await deliverNow(from: store, bundleID: bundleID, patience: patience) }
     }

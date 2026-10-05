@@ -5,7 +5,7 @@ Thanks for helping. This page covers what you need to build, test and send a cha
 ## What you need
 
 - A Mac with macOS 15 or later.
-- Xcode 16 or later. The package uses Swift tools version 6.0, so code must also compile with Swift 6.0 (Xcode 16.0); newer syntax such as trailing commas in argument lists or `@concurrent` is off limits.
+- Xcode 26 or later. The package uses Swift tools version 6.2, so code must also compile with Swift 6.2 (Xcode 26.0); newer syntax such as module selectors (`Module::name`) is off limits.
 
 The package has three parts:
 

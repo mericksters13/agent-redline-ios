@@ -72,7 +72,7 @@ When the Codex app takes a report, the snapshots come attached. Claude Code open
 ## Requirements
 
 - A Mac with macOS 15 or later.
-- Xcode 16 or later.
+- Xcode 26 or later.
 - A SwiftUI app that targets iOS 18 or later.
 - An Xcode project or XcodeGen `project.yml` in the folder your chat works in. Redline reads the app's bundle ID from it.
 - Claude Code, Codex, or both. Claude Code also needs the `claude` command installed and signed in (see [After installing](#after-installing)).

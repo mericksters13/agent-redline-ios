@@ -170,8 +170,7 @@ final class HubWindowModel {
     private nonisolated static let loader = DispatchQueue(label: "Redline.panel.loader", qos: .userInitiated)
 
     /// Runs off the main actor.
-    ///
-    /// Add @concurrent when the tools version reaches 6.2.
+    @concurrent
     nonisolated static func loadState(hub: Hub) async -> HubState {
         await withCheckedContinuation { continuation in
             loader.async {

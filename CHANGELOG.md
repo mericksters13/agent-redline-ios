@@ -4,6 +4,10 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Changed
+
+- Redline now needs Xcode 26 or later (Swift 6.2); Xcode 16 couldn't build it. The installer stops on an older Swift and says how to fix it.
+
 ## [0.1.1] - 2026-10-05
 
 ### Added
