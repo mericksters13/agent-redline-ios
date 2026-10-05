@@ -19,9 +19,36 @@ enum ReportDelivery {
     /// Sends every report the Mac hasn't confirmed to its hub, notes the ones it now has, and
     /// records how it went.
     ///
-    /// Nil when there's nothing to send, or no bundle ID to send it as. Runs off the main actor.
-    /// Add @concurrent when the tools version reaches 6.2.
+    /// One attempt at a time: each holds its reports' files in memory, up to 50 MB, so a send while
+    /// the app's return is still delivering waits for it, then sends whatever is left. Nil when
+    /// there's nothing to send, or no bundle ID to send it as. Runs off the main actor. Add
+    /// @concurrent when the tools version reaches 6.2.
     static func deliver(from store: ReportStore, bundleID: String?, patience: TimeInterval) async -> HubLink.Outcome? {
+        await deliveries.run { await deliverNow(from: store, bundleID: bundleID, patience: patience) }
+    }
+
+    private static let deliveries = DeliveryLine()
+
+    /// Runs deliveries one after another, in the order they were asked for.
+    private actor DeliveryLine {
+        private var last: Task<HubLink.Outcome?, Never>?
+
+        func run(_ work: @escaping @Sendable () async -> HubLink.Outcome?) async -> HubLink.Outcome? {
+            let previous = last
+            let next = Task {
+                _ = await previous?.value
+                return await work()
+            }
+            last = next
+            return await next.value
+        }
+    }
+
+    private static func deliverNow(
+        from store: ReportStore,
+        bundleID: String?,
+        patience: TimeInterval
+    ) async -> HubLink.Outcome? {
         guard let bundleID else { return nil }
         let reports = store.undeliveredReports()
         guard !reports.isEmpty else { return nil }

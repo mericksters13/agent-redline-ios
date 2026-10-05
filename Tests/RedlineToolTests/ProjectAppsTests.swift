@@ -261,6 +261,17 @@ struct ProjectAppsTests {
         )
     }
 
+    @Test func commentedOutBundleIDsDontCount() {
+        let spec = """
+            targets:
+              App:
+                settings:
+                  # PRODUCT_BUNDLE_IDENTIFIER: com.example.old
+                  PRODUCT_BUNDLE_IDENTIFIER: com.example.app # was com.example.older
+            """
+        #expect(ProjectApps.bundleIDs(inSettings: spec) == ["com.example.app"])
+    }
+
     @Test func aProjectsAppIsFoundInItsXcodeProject() throws {
         #expect(ProjectApps.bundleIDs(in: try project()) == ["com.example.app"])
     }

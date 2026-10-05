@@ -59,7 +59,7 @@ final class HubListener: @unchecked Sendable {
 
     private func serve(_ lines: Lines) async {
         guard await lines.open() else { return }
-        guard let first = await lines.read() else { return }
+        guard let first = await lines.read(limit: Lines.longestGreeting) else { return }
         let hello: HubMessage.Hello
         do {
             hello = try HubMessage.decode(HubMessage.Hello.self, from: first)
@@ -74,7 +74,7 @@ final class HubListener: @unchecked Sendable {
         let nonces = HubMessage.Nonces(app: hello.nonce, hub: HubMessage.nonce())
         let challenge = hub.challenge(hello, nonce: nonces.hub)
         guard await lines.send(HubMessage.encode(challenge)), challenge.refused == nil,
-            let second = await lines.read()
+            let second = await lines.read(limit: Lines.longestGreeting)
         else { return }
         // Before sending, the app asks where a report can go. An offer has no kind.
         if let request = try? HubMessage.decode(HubMessage.ChatsRequest.self, from: second), request.kind == "chats" {
@@ -150,6 +150,11 @@ final class HubListener: @unchecked Sendable {
 
         /// The longest line taken: one report, its snapshots encoded in the line.
         static let longestLine = Hub.largestReport * 4 / 3 + 65_536
+        /// The longest line taken before the app has proven it holds its token: a hello, an offer
+        /// listing reports by name, or a question about chats.
+        ///
+        /// Whoever connects can send it.
+        static let longestGreeting = 1 << 20
         /// How long a read waits with nothing received before it gives up.
         static let idleTimeout: TimeInterval = 60
 
@@ -192,12 +197,12 @@ final class HubListener: @unchecked Sendable {
             }
         }
 
-        /// The next line, without its newline; nil when the connection ends, the line is too long, or
-        /// `idleTimeout` passes with nothing received.
+        /// The next line, without its newline; nil when the connection ends, the line is longer than
+        /// `limit`, or `idleTimeout` passes with nothing received.
         ///
         /// A large report on a slow network keeps arriving well past `idleTimeout`, so only a stalled
         /// connection runs out.
-        func read() async -> Data? {
+        func read(limit: Int = Lines.longestLine) async -> Data? {
             let once = Once<Data?>()
             return await withTaskCancellationHandler {
                 await withCheckedContinuation { continuation in
@@ -205,7 +210,7 @@ final class HubListener: @unchecked Sendable {
                     queue.async {
                         if let line = self.buffer.takeLine() { return once.resume(line) }
                         once.timeout(after: Self.idleTimeout, on: self.queue, with: nil)
-                        self.receive(once)
+                        self.receive(once, limit: limit)
                     }
                 }
             } onCancel: {
@@ -217,19 +222,19 @@ final class HubListener: @unchecked Sendable {
             connection.cancel()
         }
 
-        private func receive(_ once: Once<Data?>) {
+        private func receive(_ once: Once<Data?>, limit: Int) {
             connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) {
                 [self] data, _, isComplete, error in
                 queue.async {
                     if let data { self.buffer.append(data) }
                     if let line = self.buffer.takeLine() {
                         once.resume(line)
-                    } else if isComplete || error != nil || self.buffer.count > Self.longestLine {
+                    } else if isComplete || error != nil || self.buffer.count > limit {
                         once.resume(nil)
                     } else {
                         // More of the line arrived: the wait starts over.
                         if data?.isEmpty == false { once.timeout(after: Self.idleTimeout, on: self.queue, with: nil) }
-                        self.receive(once)
+                        self.receive(once, limit: limit)
                     }
                 }
             }

@@ -568,8 +568,8 @@ final class Hub: @unchecked Sendable {
     /// The Mac's IPv4 addresses on its local networks, then its `.local` name, which keeps working
     /// when the address changes and is the only way to reach the Mac on an IPv6-only network.
     ///
-    /// None while no Wi-Fi or Ethernet link has an address, since phones can't reach the Mac by any
-    /// of them then.
+    /// None while no Wi-Fi or Ethernet link has a network address, only self-assigned ones, since
+    /// phones can't reach the Mac by any of them then.
     static func addresses() -> [String] {
         var found: [String] = []
         var isOnNetwork = false
@@ -590,6 +590,8 @@ final class Hub: @unchecked Sendable {
                     continue
                 }
                 guard address.pointee.sa_family == UInt8(AF_INET) else { continue }
+                let ipv4 = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr }
+                guard Self.isOnNetwork(ipv4) else { continue }
                 var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                 if getnameinfo(
                     address,
@@ -616,6 +618,14 @@ final class Hub: @unchecked Sendable {
         let bytes = withUnsafeBytes(of: address) { Array($0) }
         let isLinkLocal = bytes[0] == 0xFE && bytes[1] & 0xC0 == 0x80
         return !isLinkLocal && bytes != Array(repeating: 0, count: 16)
+    }
+
+    /// Whether an IPv4 address comes from a network: a self-assigned one (169.254/16), such as
+    /// on Ethernet with no DHCP server, can't be reached from a phone on the local Wi-Fi.
+    static func isOnNetwork(_ address: in_addr) -> Bool {
+        let bytes = withUnsafeBytes(of: address) { Array($0) }
+        let isLinkLocal = bytes[0] == 169 && bytes[1] == 254
+        return !isLinkLocal && bytes != [0, 0, 0, 0]
     }
 
     // MARK: - Delivery

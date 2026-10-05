@@ -281,6 +281,9 @@ enum ProjectApps {
         var found = Set<String>()
         for line in text.split(whereSeparator: \.isNewline) {
             guard let key = line.range(of: "PRODUCT_BUNDLE_IDENTIFIER") else { continue }
+            // Commented out: `# PRODUCT_BUNDLE_IDENTIFIER: ...` in YAML, `// ...` elsewhere.
+            let before = line[..<key.lowerBound]
+            if before.contains("#") || before.contains("//") { continue }
             var value = line[key.upperBound...].drop { $0 == " " || $0 == "=" || $0 == ":" || $0 == "\t" }
             value = value.prefix { $0 != ";" && $0 != "#" }
             let id = value.trimmingCharacters(in: CharacterSet(charactersIn: " \t\"'"))
