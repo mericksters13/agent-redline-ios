@@ -260,6 +260,9 @@ final class HubWindowModel {
     }
 
     /// Simulators that are booted, from `simctl`.
+    ///
+    /// None when `simctl` fails or takes longer than 10 seconds, so a stalled CoreSimulator can't
+    /// hold up every later refresh of the panel.
     nonisolated static func fetchBootedSimulators() -> [(udid: String, name: String)] {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/xcrun")
@@ -269,8 +272,10 @@ final class HubWindowModel {
         process.standardError = FileHandle.nullDevice
         // Without Xcode's simctl there are no simulators to show.
         guard (try? process.run()) != nil else { return [] }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10) { if process.isRunning { process.terminate() } }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return [] }
         struct List: Decodable {
             struct Device: Decodable {
                 var udid: String

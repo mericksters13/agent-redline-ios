@@ -355,6 +355,24 @@ struct HubWindowModelTests {
         #expect(HubWindowModel.snapshot(showing: 3, in: snapshots) == nil)
     }
 
+    @Test func theViewerShowsTheOwnSnapshotOfAnOlderElementNote() throws {
+        let folder = try report("20261004-130075", at: Date.now)
+        // Before notes on one screen shared a picture, an element note kept its own in `picture`.
+        let listing: [String: Any] = [
+            "screens": [["title": "Today", "images": [["file": "screen-1.jpg", "notes": [1]]]]],
+            "items": [
+                ["number": 1, "title": "List", "picture": "screen-1.jpg", "attachments": [String]()],
+                ["number": 2, "title": "Log milestone", "picture": "note-2.jpg", "attachments": [String]()],
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: listing).write(to: folder.appending(path: "report.json"))
+        try Data([0xFF, 0xD8]).write(to: folder.appending(path: "note-2.jpg"))
+        let snapshots = HubWindowModel.snapshots(in: folder)
+        #expect(snapshots.map(\.file) == ReportContent.snapshots(in: folder))
+        #expect(snapshots.map(\.mainFor) == [[1], [2]])
+        #expect(HubWindowModel.snapshot(showing: 2, in: snapshots) == folder.appending(path: "note-2.jpg"))
+    }
+
     @Test func aNoteOnASplitScreenScrollsToThePartThatShowsMostOfIt() throws {
         let folder = try report("20261004-130050", at: Date.now)
         let parts = ["\(UUID().uuidString).jpg", "\(UUID().uuidString).jpg"]

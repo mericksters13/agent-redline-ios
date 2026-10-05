@@ -197,10 +197,10 @@ final class DebugSession {
     @ObservationIgnored private var trayReturnMode = Mode.idle
     /// Where Cancel or Add on the note card goes back to.
     @ObservationIgnored private var notingReturnMode = Mode.picking
-    /// Notes added since pick mode opened.
+    /// Notes added since pick mode opened on the screen showing now.
     ///
-    /// The app can't move while the debugger takes every touch, so these are on the current
-    /// screen even when it has no title.
+    /// The user can't move the app while the debugger takes every touch, so these are on the
+    /// current screen even when it has no title, until a read finds another screen.
     @ObservationIgnored private var notesThisVisit: Set<UUID> = []
     /// The view controller showing the screen that was last read.
     @ObservationIgnored private weak var screenController: UIViewController?
@@ -233,6 +233,10 @@ final class DebugSession {
     @ObservationIgnored private var suggestionTimer: Task<Void, Never>?
     /// True while a finger is down in pick mode.
     @ObservationIgnored private var isTouchDown = false
+    /// Waits for scrolling to settle after pick mode opens, then reads the screen; nil once read.
+    @ObservationIgnored private var settling: Task<Void, Never>?
+    /// The latest touch made while `settling` runs, replayed against its read.
+    @ObservationIgnored private var settlingTouch: (point: CGPoint, isLifted: Bool)?
     @ObservationIgnored private let store = ReportStore.standard
     @ObservationIgnored private let selectionFeedback = UISelectionFeedbackGenerator()
     @ObservationIgnored private let logger = Log.session
@@ -397,7 +401,9 @@ final class DebugSession {
         notesThisVisit = []
         setMode(.picking)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        Task {
+        settling?.cancel()
+        settlingTouch = nil
+        settling = Task {
             try? await Task.sleep(for: .milliseconds(60))
             var positions = AppWindows.scrollPositions(of: scrollViews)
             for _ in 0..<27 where !Task.isCancelled && mode == .picking {
@@ -406,13 +412,27 @@ final class DebugSession {
                 if next == positions { break }
                 positions = next
             }
-            guard !Task.isCancelled, mode == .picking else { return }
-            readScreen()
+            guard !Task.isCancelled else { return }
+            settling = nil
+            guard mode == .picking else { return }
+            // A touch made while the screen settled picks from this read, not a moving one.
+            let touch = settlingTouch
+            settlingTouch = nil
+            if let touch, touch.isLifted {
+                finishHover(at: touch.point)
+            } else if let touch {
+                hover(at: touch.point)
+            } else {
+                readScreen()
+            }
         }
     }
 
     func exitPicking() {
         guard mode == .picking || mode == .tray else { return }
+        settling?.cancel()
+        settling = nil
+        settlingTouch = nil
         levels = []
         markers = []
         elements = []
@@ -422,6 +442,10 @@ final class DebugSession {
 
     func hover(at point: CGPoint) {
         guard mode == .picking else { return }
+        if settling != nil {
+            settlingTouch = (point, false)
+            return
+        }
         if !isTouchDown {
             // Each new touch reads the screen again, so positions, saved-note markers
             // and the report snapshot match what is on screen right now.
@@ -438,6 +462,10 @@ final class DebugSession {
     }
 
     func finishHover(at point: CGPoint) {
+        if mode == .picking, settling != nil {
+            settlingTouch = (point, true)
+            return
+        }
         hover(at: point)
         isTouchDown = false
         guard selected != nil else {
@@ -622,7 +650,7 @@ final class DebugSession {
 
     /// Opens the full-screen viewer on a note from the notes list.
     func openViewer(_ annotation: Annotation) {
-        guard mode == .tray else { return }
+        guard mode == .tray, annotations.contains(where: { $0.id == annotation.id }) else { return }
         viewerID = annotation.id
         setMode(.viewer)
     }
@@ -1644,7 +1672,8 @@ final class DebugSession {
         noteError = nil
         isAwaitingKeyboard = keyboardTop == .infinity
         setMode(.noting)
-        // A hardware keyboard never shows the on-screen one; stop waiting for it.
+        // A hardware keyboard never shows the on-screen one; stop waiting for it. Only this card's
+        // wait may end it, not one left from a card closed moments ago.
         keyboardWait?.cancel()
         keyboardWait = Task {
             try? await Task.sleep(for: .seconds(0.8))
@@ -1765,9 +1794,16 @@ final class DebugSession {
         // Found once and shared: finding them walks a presented sheet's tree.
         let roots = AccessibilityTree.visibleRoots(in: appWindows)
         let screenWindow = appWindows.first(where: \.isKeyWindow) ?? appWindows.last
+        let previousController = screenController
+        let previousScreen = screen
         elements = AccessibilityTree.elements(under: roots, screenBounds: window.bounds)
         screen = AccessibilityTree.screen(of: screenWindow, elements: elements)
         screenController = AccessibilityTree.topController(of: screenWindow)
+        // The app can still move on by itself, after a timer or a network response. Notes
+        // made before that belong to the screen it left, so a new visit starts.
+        if screenController !== previousController || screen != previousScreen {
+            notesThisVisit = []
+        }
         screenImage = AppWindows.screenshot(of: appWindows, bounds: window.bounds)
         scrollState = AppWindows.mainScrollState(under: roots, screenBounds: window.bounds)
         readSize = window.bounds.size
@@ -1776,10 +1812,10 @@ final class DebugSession {
 
     /// Markers go on notes made on this screen.
     ///
-    /// Notes added since pick mode opened always count, since the app can't move while the
-    /// debugger takes every touch. An earlier note counts only when it was taken on the very view
-    /// controller showing now, with the same title: two SwiftUI destinations can share a title and
-    /// a hosting controller type, and one untitled controller can show several screens in turn.
+    /// Notes added since pick mode opened count while the screen read is the same one they
+    /// were made on. An earlier note counts only when it was taken on the very view controller
+    /// showing now, with the same title: two SwiftUI destinations can share a title and a
+    /// hosting controller type, and one untitled controller can show several screens in turn.
     /// Notes from an earlier launch get no marker, since nothing ties them to a screen open now.
     private func refreshMarkers() {
         let found = annotations.enumerated().compactMap { index, annotation -> Marker? in

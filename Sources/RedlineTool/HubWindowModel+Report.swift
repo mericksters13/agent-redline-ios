@@ -14,8 +14,8 @@ extension HubWindowModel {
         var mainFor: [Int] = []
     }
 
-    /// The report's snapshots in the order the agent gets them: each screen's snapshots, then the
-    /// snapshots attached to notes.
+    /// The report's snapshots in the order the agent gets them: each screen's snapshots, then each
+    /// note's own snapshots, including the picture of an element note from an older report.
     ///
     /// Only the files `ReportContent.snapshots(in:)` reads, so a name that leads out of the report's
     /// folder, or a link to another file on the Mac, is left out. Without a complete report.json,
@@ -50,11 +50,17 @@ extension HubWindowModel {
             }
         }
         func mainFor(_ file: String) -> [Int] { items.filter { $0.snapshot == file }.map(\.number).sorted() }
-        let shown = shownSnapshots.flatMap { $0 }.map { title, file, notes in
+        let screenSnapshots = shownSnapshots.flatMap { $0 }
+        let shown = screenSnapshots.map { title, file, notes in
             ReportSnapshot(file: folder.appending(path: file), title: title, notes: notes, mainFor: mainFor(file))
         }
+        let screenFiles = screenSnapshots.map { _, file, _ in file }
         let attached = items.flatMap { item in
-            item.attachments.map {
+            ReportContent.ownSnapshots(
+                snapshot: item.snapshot,
+                attachments: item.attachments,
+                screenSnapshots: screenFiles
+            ).map {
                 ReportSnapshot(
                     file: folder.appending(path: $0),
                     title: item.title,

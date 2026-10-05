@@ -16,6 +16,11 @@ enum ClaudeSessions {
         var updatedAt: Date
         /// The chat's name in Claude Code, when it has one.
         var title: String? = nil
+        /// Started in a tab of the Claude app.
+        ///
+        /// A chat the app took over from the claude command has a tab named after it instead:
+        /// "local_" and the chat's id.
+        var isAppTab = false
     }
 
     /// The interactive chats that are still running.
@@ -56,6 +61,7 @@ enum ClaudeSessions {
         var pid: Int32?
         var kind: String?
         var name: String?
+        var hostSessionId: String?
         var updatedAt: Double?
         var startedAt: Double?
     }
@@ -77,7 +83,8 @@ enum ClaudeSessions {
             folder: folder,
             socket: socket,
             updatedAt: Date(timeIntervalSince1970: updated / 1000),
-            title: file.name
+            title: file.name,
+            isAppTab: file.hostSessionId.map { $0 != "local_\(id)" } ?? false
         )
     }
 

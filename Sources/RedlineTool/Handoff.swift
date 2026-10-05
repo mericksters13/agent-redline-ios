@@ -373,32 +373,34 @@ final class Handoff: Sendable {
             return
         }
         let hasApp = AgentCommand.isClaudeAppInstalled()
-        do {
-            if hasApp {
-                // claude --desktop refuses to run without a terminal; script gives it one.
-                try Self.run(
-                    "/usr/bin/script",
-                    arguments: ["-q", "/dev/null", claude.path, "--desktop", "--resume", id],
-                    in: folder
-                )
-            } else {
-                try Self.openTerminal(in: folder, running: claude.path, arguments: ["--resume"], with: id)
-            }
-            hub.log("Opened the Claude Code chat \(id) in \(hasApp ? "the Claude app" : "a terminal"), in \(folder)")
-        } catch {
-            // The report still goes in below: through the socket if the chat opens anyway, else
-            // with the claude command.
-            hub.log(
-                "Couldn't open the Claude Code chat \(id) in \(hasApp ? "the Claude app" : "a terminal"): \(error.localizedDescription)"
-            )
-        }
         let place = Self.folderName(folder)
         let kind: ChatDelivery.Kind = isReopening ? .sent : .newChat
         let title = isReopening ? place : "New chat in \(place)"
-        // Off the handoff queue: waiting for the chat, and the claude command after it, can take
-        // minutes, and other reports go on meanwhile. `pickSettled` goes back to the queue.
+        // Off the handoff queue: opening the chat, waiting for it, and the claude command after
+        // it can take minutes, and other reports go on meanwhile. `pickSettled` goes back to the queue.
         DispatchQueue.global(qos: .utility).async { [self] in
             defer { pickSettled(pick) }
+            do {
+                if hasApp {
+                    // claude --desktop refuses to run without a terminal; script gives it one.
+                    try Self.run(
+                        "/usr/bin/script",
+                        arguments: ["-q", "/dev/null", claude.path, "--desktop", "--resume", id],
+                        in: folder
+                    )
+                } else {
+                    try Self.openTerminal(in: folder, running: claude.path, arguments: ["--resume"], with: id)
+                }
+                hub.log(
+                    "Opened the Claude Code chat \(id) in \(hasApp ? "the Claude app" : "a terminal"), in \(folder)"
+                )
+            } catch {
+                // The report still goes in below: through the socket if the chat opens anyway, else
+                // with the claude command.
+                hub.log(
+                    "Couldn't open the Claude Code chat \(id) in \(hasApp ? "the Claude app" : "a terminal"): \(error.localizedDescription)"
+                )
+            }
             for _ in 0..<60 {
                 if let session = ClaudeSessions.openSessions().first(where: { $0.id == id }),
                     ClaudeSessions.send(text, to: session)

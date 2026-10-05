@@ -12,7 +12,7 @@ enum ReportContent {
     }
 
     /// The snapshots a report refers to, in the order its summary lists them: each screen's
-    /// snapshots, then attachments.
+    /// snapshots, then each note's own snapshots.
     ///
     /// Without a report.json that lists them, the folder's snapshots in name order, which for
     /// UUID names says nothing about the report's order. Only regular files directly in the
@@ -28,7 +28,12 @@ enum ReportContent {
         if let listing, let screens = listing.screens, let items = listing.items,
             let attachments = items.map(\.attachments).allPresent()
         {
-            names = screens.flatMap { $0.snapshots.map(\.file) } + attachments.flatMap { $0 }
+            let screenSnapshots = screens.flatMap { $0.snapshots.map(\.file) }
+            names =
+                screenSnapshots
+                + zip(items, attachments).flatMap { item, attachments in
+                    ownSnapshots(snapshot: item.snapshot, attachments: attachments, screenSnapshots: screenSnapshots)
+                }
         } else {
             names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
                 .filter { $0.hasSuffix(".jpg") || $0.hasSuffix(".png") }.sorted()
@@ -36,6 +41,12 @@ enum ReportContent {
         return names.compactMap { file($0, in: folder) }.filter {
             (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.type] as? FileAttributeType == .typeRegular
         }
+    }
+
+    /// A note's snapshots that aren't a screen's: its attachments, and the picture of an element
+    /// note made before notes on one screen shared its snapshot.
+    static func ownSnapshots(snapshot: String?, attachments: [String], screenSnapshots: [String]) -> [String] {
+        (snapshot.map { screenSnapshots.contains($0) ? [] : [$0] } ?? []) + attachments
     }
 
     /// The file a report names, when the name is a plain file name in its folder.
@@ -81,11 +92,16 @@ enum ReportContent {
             let path = file(snapshot.file, in: report.folder)?.path
             blocks.append(([path, snapshot.detail].compactMap { $0 } + notes).joined(separator: "\n"))
         }
-        for item in items where !item.attachments.isEmpty {
+        let screenSnapshots = snapshots.map(\.file)
+        for item in items {
+            let own = ownSnapshots(
+                snapshot: item.snapshot,
+                attachments: item.attachments,
+                screenSnapshots: screenSnapshots
+            )
+            guard !own.isEmpty else { continue }
             blocks.append(
-                (item.attachments.compactMap { file($0, in: report.folder)?.path } + [line(item)]).joined(
-                    separator: "\n"
-                )
+                (own.compactMap { file($0, in: report.folder)?.path } + [line(item)]).joined(separator: "\n")
             )
         }
         return (["UI report from \(report.source.deviceName) · \(app.name ?? report.source.bundleID)"] + blocks).joined(
@@ -101,6 +117,8 @@ enum ReportContent {
         var element: ReportListing.Item.Element?
         /// The elements holding it, innermost first.
         var ancestors: [ReportListing.Item.Element]
+        /// The snapshot its outline is drawn on.
+        var snapshot: String?
         var attachments: [String]
 
         init?(_ item: ReportListing.Item) {
@@ -112,6 +130,7 @@ enum ReportContent {
             self.note = note
             element = item.element
             ancestors = item.ancestors ?? []
+            snapshot = item.snapshot
             self.attachments = attachments
         }
     }

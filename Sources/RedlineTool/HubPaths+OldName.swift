@@ -25,15 +25,16 @@ extension HubPaths {
     /// Only while nothing is at `paths` yet.
     ///
     /// A hub of the earlier version that is still running knows only the old folder, so it's asked
-    /// to stop first. If it doesn't stop within 3 seconds, such as while it hands a report over,
-    /// nothing moves and the result says why. Only a process holding the old `hub.pid` lock is that
-    /// hub, so a pid left by a hub that crashed, and since reused, is never signaled.
+    /// to stop first. If it hasn't said within 5 seconds which apps it watches, or doesn't stop
+    /// within 3 more, such as while it hands a report over, nothing moves and the result says why.
+    /// Only a process holding the old `hub.pid` lock is that hub, so a pid left by a hub that
+    /// crashed, and since reused, is never signaled.
     ///
     /// The old name is left as a link to the new folder: an MCP server of the earlier version still
     /// serving an open chat knows only the old folder, and through the link it keeps reading the
     /// same inbox and chat records as this version's hub.
     ///
-    /// Parks the main thread for up to 3 seconds while an earlier hub stops; called once, as the
+    /// Parks the main thread for up to 8 seconds while an earlier hub stops; called once, as the
     /// command starts.
     @MainActor
     static func moveFromOldName(to paths: HubPaths) -> OldFolderMove {
@@ -47,10 +48,25 @@ extension HubPaths {
         var stoppedHub = false
         var fixedApps: [String] = []
         if let running = HubProcess.running(old), running != getpid() {
-            // Read before it stops: the apps it was given on the command line. A hub from before
-            // fixedApps was saved lists them only among all its apps.
-            if let status = savedStatus(old), status.pid == running { fixedApps = status.fixedApps ?? status.apps }
-            kill(running, SIGTERM)
+            // Read before it stops: the apps it was given on the command line. A hub saves its
+            // status, with those apps, as it starts; give one starting now a moment. One that
+            // doesn't say which apps it watches is left running, as the app's takeover leaves
+            // one, so its apps aren't silently dropped.
+            var status = savedStatus(old)
+            for _ in 0..<50 where status?.pid != running && HubProcess.running(old) == running {
+                usleep(100_000)
+                status = savedStatus(old)
+            }
+            if HubProcess.running(old) == running {
+                guard let status, status.pid == running else {
+                    return .blocked(
+                        "The hub of an earlier version (pid \(running)) didn't say which apps it watches, so it was left running and its folder can't move to Redline's yet. Run redline again in a moment, or stop that hub first."
+                    )
+                }
+                // A hub from before fixedApps was saved lists them only among all its apps.
+                fixedApps = status.fixedApps ?? status.apps
+                kill(running, SIGTERM)
+            }
             for _ in 0..<30 where HubProcess.running(old) != nil { usleep(100_000) }
             guard HubProcess.running(old) == nil else {
                 return .blocked(
