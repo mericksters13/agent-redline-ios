@@ -290,6 +290,14 @@ case "setup", "remove":
     exit(failed ? 1 : 0)
 
 case "status":
+    // Right after the folder moved, this version's hub is still starting. Give it a few seconds
+    // to claim the PID file and save its status, so this doesn't say it isn't running.
+    if movedApps != nil {
+        for _ in 0..<50 {
+            if let pid = HubProcess.running(paths), HubWindowModel.savedStatus(paths)?.pid == pid { break }
+            usleep(100_000)
+        }
+    }
     printStatus(paths)
 
 default:
