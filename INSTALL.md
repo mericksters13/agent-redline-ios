@@ -1,6 +1,6 @@
 # Installing Redline: instructions for coding agents
 
-This file is for a coding agent, such as Claude Code or Codex, that a user asked to "install Redline and add it to this app". Follow the steps in order. The user's own guide is the [README](README.md).
+This file is for a coding agent, such as Claude Code or Codex, that a user asked to "install Redline and add it to this app". Follow the steps in order. The user's own guide is the [README](https://github.com/mericksters13/agent-redline-ios#readme).
 
 Redline has two parts: a Mac side (the `redline` command and the `Redline.app` menu bar app) that one installer sets up, and a Swift package, `Redline`, that goes into the user's iOS app with one line, `.redline()`.
 
@@ -15,7 +15,7 @@ Redline has two parts: a Mac side (the `redline` command and the `Redline.app` m
 
 Don't run the installer yourself. It downloads and runs code that changes the Mac outside the project, which agent safety checks (Claude Code's auto mode, Codex's sandbox) block or stop to ask about. It's the one step the user takes.
 
-Your first message, before any other action, says in a few lines:
+Once you've read this guide and found the app (step 2), your first message, before you change anything, says in a few lines:
 
 - what you'll change in their project: the `Redline` package on the app target and `.redline()` on the root view;
 - the one command for them to run in their own terminal, for the Mac side:
@@ -30,7 +30,7 @@ Then carry on with steps 2 to 5 while they run it.
 
 If the user asks you to run it anyway, run `npx --yes agent-redline-ios@latest --no-input` in the background (it can take longer than a foreground command may run) and wait for it to exit.
 
-**Checking it finished.** It worked when `~/Library/Application Support/Redline/install-report.txt` starts with `Redline install checklist` and today's date. Items marked Needs you don't mean it failed. It stopped when that file starts with `Redline is not installed.`: the Stopped line names the problem and its one fix, such as `sudo xcodebuild -license accept`. Give the user that fix and ask them to run the installer again.
+**Checking it finished.** The installer writes `~/Library/Application Support/Redline/install-report.txt`, whose first line ends with the date and time of the run. It worked when that line starts with `Redline install checklist` and its time is after you handed over the command; an older report is from an earlier run, so the user still has to run it. Items marked Needs you don't mean it failed. It stopped when that file starts with `Redline is not installed.`: the Stopped line names the problem and its one fix, such as `sudo xcodebuild -license accept`. Give the user that fix and ask them to run the installer again.
 
 ## 2. Find the app's project
 
