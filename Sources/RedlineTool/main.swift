@@ -179,7 +179,7 @@ case "app":
     }
     // Before the hub starts: once its status is written, the menu bar app opening next can ask
     // it to stop, and a hub without these handlers would be ended without letting go of its
-    // hand-overs.
+    // hand-overs. A stop asked for while the hub starts waits until it has started.
     stopOnSignals { hub.stop() }
     guard hub.start() else {
         failToStart("A hub is already running (pid \(HubProcess.running(paths).map(String.init) ?? "unknown")) and didn't stop.")

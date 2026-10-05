@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import SwiftUI
+import Synchronization
 
 /// The hub as a menu bar app: the same process takes reports off phones and simulators, and
 /// its menu bar panel shows the devices that are active and the reports sent, with where each
@@ -122,6 +123,7 @@ final class HubWindowModel {
         let watchedSimulators = hub?.watchedSimulators() ?? []
         Task.detached(priority: .userInitiated) {
             let (reports, last) = HubWindowModel.readReports(paths: paths)
+            ThumbnailCache.update(Set(reports.compactMap(\.thumbnail)))
             let booted = HubWindowModel.bootedSimulators().filter { watchedSimulators.contains($0.udid) }
             await MainActor.run {
                 self.refreshing = false
@@ -133,7 +135,6 @@ final class HubWindowModel {
                 // Ready phones and running simulators first, then paired phones that can't take reports now.
                 self.devices = phones.filter(\.active) + simulators + phones.filter { !$0.active }
                 self.reports = reports
-                ThumbnailCache.keep(Set(reports.compactMap(\.thumbnail)))
                 self.address = HubWindowModel.reach(status)
             }
         }
@@ -161,26 +162,39 @@ final class HubWindowModel {
         (try? Data(contentsOf: paths.status)).flatMap { try? Chats.decoder.decode(HubStatus.self, from: $0) }
     }
 
+    /// The sources of the reports in the inbox, by folder. A report's folder appears in the
+    /// inbox with its source.json, which never changes after, so the panel refreshing every two
+    /// seconds reads only the reports that are new since it last looked.
+    private nonisolated static let knownSources = Mutex<[URL: ReportSource]>([:])
+
     /// The newest reports in the inbox, with where each went, and when each device last sent
     /// one, from every report in the inbox rather than only those shown.
     nonisolated static func readReports(paths: HubPaths, limit: Int = 30) -> (rows: [ReportRow], lastReport: [String: Date]) {
         let files = FileManager.default
-        // Only source.json for every report; the rest only for the newest, which are shown.
+        // Only source.json for every report, and only once for each; the rest only for the
+        // newest, which are shown.
+        let known = knownSources.withLock { $0 }
         var found: [(folder: URL, source: ReportSource)] = []
         for app in (try? files.contentsOfDirectory(atPath: paths.inbox.path)) ?? [] where !app.hasPrefix(".") {
             let appFolder = paths.inbox.appending(path: app, directoryHint: .isDirectory)
             for name in (try? files.contentsOfDirectory(atPath: appFolder.path)) ?? [] where !name.hasPrefix(".") {
                 let folder = appFolder.appending(path: name, directoryHint: .isDirectory)
+                if let source = known[folder] {
+                    found.append((folder, source))
+                    continue
+                }
                 guard let data = try? Data(contentsOf: folder.appending(path: "source.json")),
                       let source = try? Chats.decoder.decode(ReportSource.self, from: data)
                 else { continue }
                 found.append((folder, source))
             }
         }
+        knownSources.withLock { $0 = Dictionary(found, uniquingKeysWith: { first, _ in first }) }
         let lastReport = Dictionary(found.map { ($0.source.device, $0.source.receivedAt) }, uniquingKeysWith: max)
-        let rows = found.sorted {
-            ($0.source.receivedAt, $0.folder.lastPathComponent) > ($1.source.receivedAt, $1.folder.lastPathComponent)
-        }.prefix(limit).map { folder, source in
+        // By the folder's name next, read once for each rather than at every comparison.
+        let rows = found.map { ($0.folder, $0.source, $0.folder.lastPathComponent) }.sorted {
+            ($0.1.receivedAt, $0.2) > ($1.1.receivedAt, $1.2)
+        }.prefix(limit).map { folder, source, _ in
             let (agent, chat, waiting) = destination(of: folder)
             return ReportRow(id: folder.path, folder: folder, device: source.deviceName, receivedAt: source.receivedAt,
                              agent: agent, chat: chat, waiting: waiting,
@@ -480,14 +494,14 @@ struct NoteNumber: View {
     }
 }
 
-/// A report's first screenshot, small, read off the disk once.
+/// A report's first screenshot, small, made once by `ThumbnailCache`.
 struct Thumbnail: View {
     let url: URL?
 
     var body: some View {
         Group {
             if let url, let image = ThumbnailCache.image(for: url) {
-                Image(nsImage: image).resizable().scaledToFill()
+                Image(decorative: image, scale: 1).resizable().scaledToFill()
             } else {
                 Color.white.opacity(0.08)
             }
@@ -499,27 +513,34 @@ struct Thumbnail: View {
 }
 
 /// Thumbnails of the reports the panel lists, and no others: the hub runs for days, and
-/// reports that leave the list let go of theirs.
-@MainActor
+/// reports that leave the list let go of theirs. They're made off the main thread as the panel
+/// refreshes, before the rows that show them, so opening the panel never waits on pictures.
 enum ThumbnailCache {
-    private static var images: [URL: NSImage] = [:]
+    private static let images = Mutex<[URL: CGImage]>([:])
 
-    /// Drops the thumbnails of reports no longer listed.
-    static func keep(_ urls: Set<URL>) {
-        images = images.filter { urls.contains($0.key) }
+    /// Makes the thumbnails of the listed reports that aren't made yet, and drops those of
+    /// reports no longer listed. Reads and decodes pictures, so not on the main thread.
+    static func update(_ urls: Set<URL>) {
+        let missing = images.withLock { images in
+            images = images.filter { urls.contains($0.key) }
+            return urls.subtracting(images.keys)
+        }
+        var made: [URL: CGImage] = [:]
+        for url in missing {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                      kCGImageSourceCreateThumbnailFromImageAlways: true,
+                      kCGImageSourceThumbnailMaxPixelSize: 240,
+                  ] as CFDictionary)
+            else { continue }
+            made[url] = thumbnail
+        }
+        images.withLock { $0.merge(made) { $1 } }
     }
 
-    static func image(for url: URL) -> NSImage? {
-        if let image = images[url] { return image }
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                  kCGImageSourceCreateThumbnailFromImageAlways: true,
-                  kCGImageSourceThumbnailMaxPixelSize: 240,
-              ] as CFDictionary)
-        else { return nil }
-        let image = NSImage(cgImage: thumbnail, size: NSSize(width: thumbnail.width, height: thumbnail.height))
-        images[url] = image
-        return image
+    /// The thumbnail made for a picture, if it's made yet.
+    static func image(for url: URL) -> CGImage? {
+        images.withLock { $0[url] }
     }
 }
 #endif
