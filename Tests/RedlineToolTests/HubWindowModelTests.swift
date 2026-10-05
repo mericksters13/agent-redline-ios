@@ -512,6 +512,20 @@ struct HubWindowModelTests {
         #expect(!HubWindowModel.destination(of: taken, codexDatabase: nil).isWaiting)
         let chat = try #require(HubWindowModel.chat(of: taken))
         #expect(chat.agent == .codex && chat.id == "t-3" && chat.folder == "/repo")
+        // In the same millisecond, or dated a moment before the wait it came after, the claim still wins.
+        for offset in [0.0002, -0.01] {
+            try HubPaths.encoder.encode(
+                Claim(
+                    chat: "codex-t-3",
+                    agent: "codex",
+                    folder: "/repo",
+                    claimedAt: delivered.addingTimeInterval(offset)
+                )
+            )
+            .write(to: taken.appending(path: Inbox.claimFile))
+            #expect(!HubWindowModel.destination(of: taken, codexDatabase: nil).isWaiting)
+            #expect(HubWindowModel.chat(of: taken)?.id == "t-3")
+        }
     }
 }
 #endif

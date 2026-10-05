@@ -305,7 +305,13 @@ struct AttachmentPicker: View {
         }
     }
 
-    /// Off the main thread and in parallel: reading and shrinking a large photo takes long enough
+    /// How many chosen photos are read and shrunk at once.
+    ///
+    /// Each holds its whole original file in memory while it's shrunk, and a RAW original can be
+    /// tens of megabytes.
+    nonisolated private static let concurrentLoads = 2
+
+    /// Off the main thread, a few at a time: reading and shrinking a large photo takes long enough
     /// to stall the UI.
     ///
     /// Keeps the order they were chosen in. One that can't be loaded is left out; the note box says
@@ -313,7 +319,9 @@ struct AttachmentPicker: View {
     /// 6.2.
     nonisolated private static func images(from items: [PhotosPickerItem]) async -> [UIImage] {
         await withTaskGroup(of: (index: Int, image: UIImage?).self) { group in
+            var loaded = [UIImage?](repeating: nil, count: items.count)
             for (index, item) in items.enumerated() {
+                if index >= concurrentLoads, let done = await group.next() { loaded[done.index] = done.image }
                 group.addTask {
                     do {
                         guard let data = try await item.loadTransferable(type: Data.self) else {
@@ -329,7 +337,6 @@ struct AttachmentPicker: View {
                     }
                 }
             }
-            var loaded = [UIImage?](repeating: nil, count: items.count)
             for await (index, image) in group { loaded[index] = image }
             return loaded.compactMap { $0 }
         }

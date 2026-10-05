@@ -157,7 +157,7 @@ enum ReportContent {
     static let longestText = 50_000
 
     /// The report's items, with snapshots attached while `budget` bytes allow; the rest are named by
-    /// path.
+    /// path while that fits, then counted in one line.
     ///
     /// Returns the items and the bytes of text and snapshots they hold.
     static func items(for report: InboxReport, budget: Int) -> (items: [Item], bytes: Int) {
@@ -173,19 +173,32 @@ enum ReportContent {
         )
         var items: [Item] = [.text(text)]
         var used = text.utf8.count
+        var unnamed = 0
         for snapshot in snapshots {
-            guard let data = try? Data(contentsOf: snapshot) else { continue }
-            if used + data.count > budget {
-                items.append(
-                    .text(
-                        "\(snapshot.lastPathComponent) isn't attached, to keep this reply small. Open it at \(snapshot.path)."
-                    )
-                )
+            // Mapped rather than read: the command line names snapshots by path and never reads
+            // their bytes, so a backlog of large reports doesn't fill memory.
+            guard let data = try? Data(contentsOf: snapshot, options: .mappedIfSafe) else { continue }
+            let label = snapshot.lastPathComponent + ":"
+            if used + label.utf8.count + data.count > budget {
+                let notice =
+                    "\(snapshot.lastPathComponent) isn't attached, to keep this reply small. Open it at \(snapshot.path)."
+                guard used + notice.utf8.count <= budget else {
+                    unnamed += 1
+                    continue
+                }
+                items.append(.text(notice))
+                used += notice.utf8.count
                 continue
             }
-            items.append(.text(snapshot.lastPathComponent + ":"))
+            items.append(.text(label))
             items.append(.image(file: snapshot, data: data))
-            used += data.count
+            used += label.utf8.count + data.count
+        }
+        if unnamed > 0 {
+            let notice =
+                "\(unnamed) more \(unnamed == 1 ? "snapshot isn't" : "snapshots aren't") attached, to keep this reply small. Open them in \(report.folder.path)."
+            items.append(.text(notice))
+            used += notice.utf8.count
         }
         return (items, used)
     }
