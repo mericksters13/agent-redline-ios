@@ -327,11 +327,13 @@ struct ReportStore: Sendable {
                         try Self.decoder.decode([ScreenRecord].self, from: $0)
                     } ?? []
                 try reclaimPictures(from: folder)
-                // Screens first, as when a note is added: a listed screen no note uses is harmless.
+                // Both lists are read before either is written, so a draft that can't be read is
+                // left as it is. Screens are saved first, as when a note is added: a listed screen no
+                // note uses is harmless.
+                let draft = try loadDraft()
                 let currentScreens = try loadScreens()
                 let screenIDs = Set(currentScreens.map(\.id))
                 try saveScreens(screens.filter { !screenIDs.contains($0.id) } + currentScreens)
-                let draft = try loadDraft()
                 let noteIDs = Set(draft.map(\.id))
                 try saveDraft(annotations.filter { !noteIDs.contains($0.id) } + draft)
                 discardReport(folder)

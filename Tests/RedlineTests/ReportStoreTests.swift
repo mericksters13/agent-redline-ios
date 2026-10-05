@@ -597,5 +597,26 @@ struct ReportStoreTests {
         #expect(try store.loadDraft() == [latest])
         #expect(FileManager.default.fileExists(atPath: started.draft.path(percentEncoded: false)))
     }
+
+    @Test func aDraftThatCantBeReadKeepsItsScreensThroughRecovery() throws {
+        defer { removeStore() }
+        let screen = ScreenRecord(id: UUID(), info: ScreenInfo(title: "Today", viewController: "Home"), captures: [])
+        try store.saveScreens([screen])
+        try store.saveDraft([annotation("Cut off")])
+        let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        // The draft made since: its screens can be read, its notes can't.
+        let current = ScreenRecord(
+            id: UUID(),
+            info: ScreenInfo(title: "Settings", viewController: "Root"),
+            captures: []
+        )
+        try store.saveScreens([current])
+        try Data("not json".utf8).write(to: store.draftFile)
+        let screensBefore = try Data(contentsOf: store.screensFile)
+
+        store.recoverInterruptedReports()
+        #expect(try Data(contentsOf: store.screensFile) == screensBefore)
+        #expect(FileManager.default.fileExists(atPath: started.draft.path(percentEncoded: false)))
+    }
 }
 #endif
