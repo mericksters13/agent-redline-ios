@@ -206,10 +206,13 @@ case "app":
     hub.whenListenerFails = { reason in
         Task { @MainActor in failToStart("\(reason). Phones and simulators can't send reports without it.") }
     }
+    // Before the hub starts: once its status is written, the menu bar app opening next can ask
+    // it to stop, and a hub without these handlers would be ended without letting go of its
+    // hand-overs.
+    stopOnSignals { hub.stop() }
     guard hub.start() else {
         failToStart("Another hub is running and didn't stop. Quit it, then open Redline again.")
     }
-    stopOnSignals { hub.stop() }
     HubAppContext.hub = hub
     // Report notifications come from Redline; macOS asks the user once.
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
@@ -224,11 +227,12 @@ case "hub":
     }
     guard let devicectl = hubDevicectl else { exit(1) }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: unique(options.apps + (movedApps ?? [])))
+    // Before the hub starts, for the same reason as in the menu bar app.
+    stopOnSignals { hub.stop() }
     guard hub.start() else {
         print("A hub is already running\(HubProcess.running(paths).map { " (pid \($0))" } ?? "").")
         exit(1)
     }
-    stopOnSignals { hub.stop() }
     dispatchMain()
 
 case "mcp":
@@ -298,7 +302,9 @@ case "setup", "remove":
         exit(64)
     }
     // First: new Claude Code chats need the claude command signed in. What's still missing is
-    // printed for the user, and setup goes on.
+    // printed for the user, and setup goes on, so the other agents still get their hooks. It
+    // doesn't fail setup: the exit status says whether a settings file couldn't be updated, which
+    // the installer reads, and the installer checks the claude command on its own.
     if adding, AgentSettings.isPresent(.claude) || AgentCommand.isClaudeAppInstalled(),
         ClaudeCLI.prepare(isAsking: options.isEmpty && isatty(STDIN_FILENO) != 0)
     {
@@ -360,6 +366,14 @@ case "setup", "remove":
     exit(failed ? 1 : 0)
 
 case "status":
+    // Right after the folder moved, this version's hub is still starting. Give it a few seconds
+    // to take the lock on `hub.pid` and save its status, so this doesn't say it isn't running.
+    if movedApps != nil {
+        for _ in 0..<50 {
+            if let pid = HubProcess.running(paths), savedStatus(paths)?.pid == pid { break }
+            usleep(100_000)
+        }
+    }
     printStatus(paths)
 
 default:

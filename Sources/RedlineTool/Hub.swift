@@ -15,7 +15,8 @@ import SystemConfiguration
 /// Thread safety: everything that changes while the hub runs is in `state`, a `Mutex`, apart from
 /// `chatsWatchers`, which has its own. `simulators`, `listener`, `handoff`, `discovery` and
 /// `pidLock` are written once in `start()`, before any source, queue or listener that reads them
-/// starts, and only read afterwards; `stop()` runs after `start()`, once, under `isStopped`.
+/// starts, and only read afterwards; `stop()` runs once, under `isStopped`, and leaves `hub.pid`
+/// alone unless `start()` took the lock.
 /// `whenListenerFails` is set before `start()` and only read afterwards. `logDescriptor` is used
 /// only on `writer`.
 ///
@@ -176,8 +177,10 @@ final class Hub: @unchecked Sendable {
     ///
     /// A hub that starts next, such as the menu bar app taking over, hands over again only what
     /// this one gave back, so no report starts two chats. Called again, it waits for the first call
-    /// to finish. Parks the calling thread while hand-overs finish, which can take minutes: called
-    /// from a signal's queue, the panel's Quit off the main thread, or as the process ends.
+    /// to finish. A hub that never took the lock on `hub.pid`, because another hub runs, leaves
+    /// that hub's file alone. Parks the calling thread while hand-overs finish, which can take
+    /// minutes: called from a signal's queue, the panel's Quit off the main thread, or as the
+    /// process ends.
     func stop() {
         isStopped.withLock { isStopped in
             guard !isStopped else { return }
@@ -196,12 +199,14 @@ final class Hub: @unchecked Sendable {
             // A connection the listener took can still be filing a report: it finishes, with its
             // delivered ID queued to write, and later uploads are turned down.
             inbox.sync { state.withLock { $0.isStopping = true } }
-            log("Hub stopped")
+            let heldLock = pidLock >= 0
+            if heldLock { log("Hub stopped") }
             // Queued writes land before the process exits.
             flushWrites()
+            guard heldLock else { return }
             // The file goes first, then the lock, so no other hub ever reads this pid as running.
             try? FileManager.default.removeItem(at: paths.pid)
-            if pidLock >= 0 { close(pidLock) }
+            close(pidLock)
             pidLock = -1
         }
     }

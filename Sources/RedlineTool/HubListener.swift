@@ -133,6 +133,8 @@ final class HubListener: @unchecked Sendable {
 
         /// The longest line taken: one report, its snapshots encoded in the line.
         static let longestLine = Hub.largestReport * 4 / 3 + 65_536
+        /// How long a read waits with nothing received before it gives up.
+        static let idleTimeout: TimeInterval = 60
 
         init(connection: NWConnection) {
             self.connection = connection
@@ -173,8 +175,11 @@ final class HubListener: @unchecked Sendable {
             }
         }
 
-        /// The next line, without its newline; nil when the connection ends, the line is too
-        /// long, or 60 seconds pass.
+        /// The next line, without its newline; nil when the connection ends, the line is too long, or
+        /// `idleTimeout` passes with nothing received.
+        ///
+        /// A large report on a slow network keeps arriving well past `idleTimeout`, so only a stalled
+        /// connection runs out.
         func read() async -> Data? {
             let once = Once<Data?>()
             return await withTaskCancellationHandler {
@@ -182,7 +187,7 @@ final class HubListener: @unchecked Sendable {
                     once.set(continuation)
                     queue.async {
                         if let line = self.buffer.takeLine() { return once.resume(line) }
-                        once.timeout(after: 60, on: self.queue, with: nil)
+                        once.timeout(after: Self.idleTimeout, on: self.queue, with: nil)
                         self.receive(once)
                     }
                 }
@@ -205,6 +210,8 @@ final class HubListener: @unchecked Sendable {
                     } else if isComplete || error != nil || self.buffer.count > Self.longestLine {
                         once.resume(nil)
                     } else {
+                        // More of the line arrived: the wait starts over.
+                        if data?.isEmpty == false { once.timeout(after: Self.idleTimeout, on: self.queue, with: nil) }
                         self.receive(once)
                     }
                 }

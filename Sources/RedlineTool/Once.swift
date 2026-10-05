@@ -17,9 +17,12 @@ final class Once<T: Sendable>: Sendable {
     }
 
     /// Resumes with `value` after `seconds`, unless something resumes first.
+    ///
+    /// Called again, it replaces the timeout before, so the wait starts over.
     func timeout(after seconds: TimeInterval, on queue: DispatchQueue, with value: T) {
         waiting.withLock { waiting in
             guard waiting.continuation != nil else { return }
+            waiting.timeout?.cancel()
             let item = DispatchWorkItem { self.resume(value) }
             waiting.timeout = item
             queue.asyncAfter(deadline: .now() + seconds, execute: item)
