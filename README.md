@@ -280,7 +280,7 @@ An agent asked to add Redline to your app does these steps for you, following [I
 
 That is all: no Info.plist keys, permissions, build settings or build phases. You don't need `#if DEBUG` around the call; in Release builds, `.redline()` returns the view unchanged.
 
-On a physical iPhone, iOS asks once whether the app may find devices on the local network, the first time it talks to the Mac. Allow it, or reports can't reach the Mac.
+On a physical iPhone, iOS asks once whether the app may find devices on the local network, the first time it talks to the Mac. Allow it, or reports can't reach the Mac. The prompt uses iOS's standard wording; an app may add `NSLocalNetworkUsageDescription` to its Info.plist to explain it in its own words, but doesn't need to.
 
 ## Send your first report
 
