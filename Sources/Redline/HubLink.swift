@@ -335,8 +335,8 @@ enum HubLink {
     /// Delivers the reports the Mac hasn't confirmed. `patience` is how long to wait for the
     /// connection, which includes iOS asking about local network access the first time.
     ///
-    /// Returns how it went and the reports the Mac now has. Runs off the main actor. Add
-    /// @concurrent when the tools version reaches 6.2.
+    /// Returns how it went and the reports the Mac now has. Runs off the main actor.
+    @concurrent
     static func deliver(
         _ reports: [OfferedReport],
         bundleID: String,

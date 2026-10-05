@@ -70,7 +70,7 @@ When a report goes through the Codex app, its snapshots arrive as attachments. C
 ## Requirements
 
 - A Mac with macOS 15 or later.
-- Xcode 16 or later.
+- Xcode 26 or later.
 - A SwiftUI app target with a deployment target of iOS 18 or later.
 - An Xcode project or XcodeGen `project.yml` in your session's working directory. Redline reads the bundle IDs from it.
 - Claude Code, Codex, or both. Claude Code also needs the `claude` command installed and signed in (see [After installing](#after-installing)).

@@ -16,7 +16,8 @@ enum Thumbnails {
 
     /// The snapshot at `url`, no more than `maxPixels` on its longer side.
     ///
-    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    /// Runs off the main actor.
+    @concurrent
     static func load(_ url: URL, maxPixels: Int) async -> NSImage? {
         let key = "\(maxPixels):\(url.path)"
         if let image = cache.object(forKey: key as NSString) { return image }
