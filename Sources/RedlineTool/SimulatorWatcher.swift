@@ -55,11 +55,12 @@ final class SimulatorWatcher: @unchecked Sendable {
         }
     }
 
-    /// The simulators these containers are in, from their paths.
+    /// The simulators these containers are in, from their paths: the folder after the last
+    /// `Devices`, so a home folder or user named `Devices` doesn't count.
     static func simulatorIDs(of containers: [String]) -> Set<String> {
         Set(containers.compactMap { path in
             let parts = path.split(separator: "/")
-            return parts.firstIndex(of: "Devices").flatMap { parts.indices.contains($0 + 1) ? String(parts[$0 + 1]) : nil }
+            return parts.lastIndex(of: "Devices").flatMap { parts.indices.contains($0 + 1) ? String(parts[$0 + 1]) : nil }
         })
     }
 

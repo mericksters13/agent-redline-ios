@@ -162,6 +162,9 @@ enum HubLink {
                         files: @Sendable (String) -> [String: Data], patience: TimeInterval) async -> (outcome: Outcome, delivered: [String]) {
         guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return (.refused, []) }
         let offer = Offer(device: address.device, bundleID: bundleID, token: token, reports: reports)
+        // Whatever answers is only trusted with the reports it was offered: an ID it makes up
+        // could name a folder outside the reports folder.
+        let offered = Set(reports.map(\.id))
         var outcome = Outcome.unreachable
         for host in address.hosts {
             let line = Line(host: host, port: port)
@@ -172,15 +175,15 @@ enum HubLink {
                 outcome = .interrupted
                 continue
             }
-            if answer.refused != nil { return (.refused, answer.delivered) }
-            var delivered = answer.delivered
+            var delivered = answer.delivered.filter(offered.contains)
+            if answer.refused != nil { return (.refused, delivered) }
             guard !answer.want.isEmpty else { return (.delivered, delivered) }
+            guard Set(answer.want).isSubset(of: offered) else { return (.refused, delivered) }
             for id in answer.want {
                 guard await line.send(encode(Upload(id: id, files: files(id)))) else { return (.interrupted, delivered) }
             }
             guard let replyData = await line.read(), let reply = decode(Reply.self, from: replyData) else { return (.interrupted, delivered) }
-            delivered += reply.delivered
-            let offered = Set(reports.map(\.id))
+            delivered += reply.delivered.filter(offered.contains)
             return (offered.isSubset(of: Set(delivered)) ? .delivered : .interrupted, delivered)
         }
         return (outcome, [])
