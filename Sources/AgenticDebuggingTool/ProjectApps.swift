@@ -58,7 +58,7 @@ enum ProjectApps {
                 if let sdk = settings["SDKROOT"], ["watchos", "appletvos", "macosx", "xros"].contains(sdk) { continue }
                 // The app on a device and in the simulator, which can each have their own ID.
                 for sdk in ["iphoneos", "iphonesimulator"] {
-                    let resolved = ProjectApps.settings(settings, sdk: sdk)
+                    let resolved = ProjectApps.settings(settings, sdk: sdk, configuration: configuration["name"] as? String ?? "")
                     if let id = resolved["PRODUCT_BUNDLE_IDENTIFIER"].flatMap({ expand($0, with: resolved) }), isLiteral(id) { found.insert(id) }
                 }
             }
@@ -111,9 +111,9 @@ enum ProjectApps {
         }
     }
 
-    /// The settings in an `.xcconfig` file and the files it includes. Settings for one SDK or
-    /// architecture only, such as `KEY[sdk=iphoneos*]`, keep their condition in the key for
-    /// `settings(_:sdk:)` to apply.
+    /// The settings in an `.xcconfig` file and the files it includes. Settings for one SDK,
+    /// configuration or architecture only, such as `KEY[sdk=iphoneos*]`, keep their condition in
+    /// the key for `settings(_:sdk:configuration:)` to apply.
     static func xcconfigSettings(at file: URL, depth: Int = 0) -> [String: String] {
         guard depth < 8, let text = try? String(contentsOf: file, encoding: .utf8) else { return [:] }
         var settings: [String: String] = [:]
@@ -162,10 +162,11 @@ enum ProjectApps {
         return settings
     }
 
-    /// The settings as Xcode applies them when building for `sdk`, such as `iphoneos`: a setting
-    /// for that SDK only, such as `KEY[sdk=iphoneos*]`, over the setting for every SDK. Settings
-    /// with other conditions, such as an architecture, are left out.
-    static func settings(_ settings: [String: String], sdk: String) -> [String: String] {
+    /// The settings as Xcode applies them when building `configuration`, such as `Debug`, for
+    /// `sdk`, such as `iphoneos`: a setting for that SDK or configuration only, such as
+    /// `KEY[sdk=iphoneos*]` or `KEY[config=Debug]`, over the setting for every one. Settings with
+    /// other conditions, such as an architecture, are left out.
+    static func settings(_ settings: [String: String], sdk: String, configuration: String = "") -> [String: String] {
         var resolved = settings.filter { !$0.key.contains("[") }
         for (key, value) in settings {
             guard let open = key.firstIndex(of: "["), key.hasSuffix("]") else { continue }
@@ -173,7 +174,12 @@ enum ProjectApps {
             let applies = conditions.allSatisfy { condition in
                 let parts = condition.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
                 guard parts.count == 2 else { return false }
-                return parts[1] == "*" || (parts[0] == "sdk" && fnmatch(parts[1], sdk, 0) == 0)
+                switch parts[0] {
+                case _ where parts[1] == "*": return true
+                case "sdk": return fnmatch(parts[1], sdk, 0) == 0
+                case "config": return fnmatch(parts[1], configuration, 0) == 0
+                default: return false
+                }
             }
             guard applies else { continue }
             let name = key[..<open].trimmingCharacters(in: .whitespaces)

@@ -161,6 +161,36 @@ struct ChatTests {
                                                       "com.example.plain"])
     }
 
+    @Test func bundleIDsSetForOneConfigurationOnlyAreFound() throws {
+        let folder = root.appending(path: "PerConfiguration", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder.appending(path: "App.xcodeproj"), withIntermediateDirectories: true)
+        try """
+        PRODUCT_BUNDLE_IDENTIFIER[config=Debug] = com.example.debug
+        PRODUCT_BUNDLE_IDENTIFIER[config=Release][sdk=iphoneos*] = com.example.release
+        PRODUCT_BUNDLE_IDENTIFIER[config=Beta] = com.example.beta
+        """.write(to: folder.appending(path: "App.xcconfig"), atomically: true, encoding: .utf8)
+        try """
+        // !$*UTF8*$!
+        {
+          archiveVersion = 1;
+          rootObject = P1;
+          objects = {
+            P1 = {isa = PBXProject; mainGroup = G1; buildConfigurationList = L0; };
+            L0 = {isa = XCConfigurationList; buildConfigurations = (C0); };
+            C0 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {}; };
+            G1 = {isa = PBXGroup; sourceTree = "<group>"; children = (F1); };
+            F1 = {isa = PBXFileReference; path = App.xcconfig; sourceTree = "<group>"; };
+            T1 = {isa = PBXNativeTarget; name = App; productType = "com.apple.product-type.application"; buildConfigurationList = L1; };
+            L1 = {isa = XCConfigurationList; buildConfigurations = (C1, C2); };
+            C1 = {isa = XCBuildConfiguration; name = Debug; baseConfigurationReference = F1; buildSettings = {}; };
+            C2 = {isa = XCBuildConfiguration; name = Release; baseConfigurationReference = F1; buildSettings = {}; };
+          };
+        }
+        """.write(to: folder.appending(path: "App.xcodeproj/project.pbxproj"), atomically: true, encoding: .utf8)
+        // Each configuration the target has gets its own ID; one it doesn't have adds nothing.
+        #expect(ProjectApps.bundleIDs(in: folder) == ["com.example.debug", "com.example.release"])
+    }
+
     @Test func inheritedSettingsKeepTheValueFromTheLevelBelow() throws {
         let folder = root.appending(path: "Inherited", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder.appending(path: "App.xcodeproj"), withIntermediateDirectories: true)

@@ -470,5 +470,26 @@ struct AgentHookTests {
         ChatSession.settle(taken.reports, delivered: false)
         #expect(builder.takeAddressed()?.reports.count == 1)
     }
+
+    @Test func aHookAnswerCarriesOnlyWhatFitsAndLeavesTheRestWaiting() throws {
+        let folder = root.appending(path: "App", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let chat = ChatSession(paths: paths, folder: folder, extraApps: ["com.example.app"], agent: "codex", id: "codex-A", startsHub: false)
+        let address = Address(chat: "codex-A", agent: "codex", folder: folder.path)
+        let first = try inboxReport("20261004-120000", address: address)
+        let second = try inboxReport("20261004-120100", address: address)
+        // Both fit in the usual budget.
+        let both = try #require(chat.takeAddressed())
+        #expect(both.reports.count == 2)
+        ChatSession.settle(both.reports, delivered: false)
+
+        // With room for one, the oldest goes and the next waits for the chat's next hook.
+        let budget = ReportContent.text(for: both.reports[0]).utf8.count
+        let one = try #require(chat.takeAddressed(budget: budget))
+        #expect(one.reports.map(\.folder.lastPathComponent) == [first.lastPathComponent])
+        let next = try #require(chat.takeAddressed(budget: budget))
+        #expect(next.reports.map(\.folder.lastPathComponent) == [second.lastPathComponent])
+        #expect(chat.takeAddressed() == nil)
+    }
 }
 #endif

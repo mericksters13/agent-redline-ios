@@ -50,15 +50,30 @@ final class ChatSession: @unchecked Sendable {
         save()
     }
 
-    /// Takes the reports sent to this chat, as text with pictures named by path, for agents
-    /// that get reports through hooks. Nil when there's none. The reports stay claimed by this
-    /// process until the caller has written the text out and calls `settle`.
-    func takeAddressed() -> (text: String, reports: [InboxReport])? {
+    /// The most text one hook answer carries: two reports of the longest text. Reports past it
+    /// wait for the chat's next hook.
+    static let hookBudget = 2 * ReportContent.longestText
+
+    /// Takes the reports sent to this chat, oldest first, as text with pictures named by path,
+    /// for agents that get reports through hooks. Always takes at least one; takes more while
+    /// their text fits in `budget` bytes. Nil when there's none. The reports stay claimed by
+    /// this process until the caller has written the text out and calls `settle`.
+    func takeAddressed(budget: Int = hookBudget) -> (text: String, reports: [InboxReport])? {
         let chat = self.chat
-        let reports = InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths)
-            .filter { InboxQueue.claim($0, for: chat) }
-        guard !reports.isEmpty else { return nil }
-        return (reports.map(ReportContent.text(for:)).joined(separator: "\n\n"), reports)
+        var texts: [String] = []
+        var used = 0
+        var taken: [InboxReport] = []
+        for report in InboxQueue.addressed(to: chat.id, bundleIDs: chat.bundleIDs, paths: paths) {
+            let text = ReportContent.text(for: report)
+            if !taken.isEmpty, used + text.utf8.count > budget { break }
+            // Another of the chat's hooks may have taken it a moment ago.
+            guard InboxQueue.claim(report, for: chat) else { continue }
+            texts.append(text)
+            used += text.utf8.count
+            taken.append(report)
+        }
+        guard !taken.isEmpty else { return nil }
+        return (texts.joined(separator: "\n\n"), taken)
     }
 
     /// Settles reports this process took: they're the chat's once what carries them was

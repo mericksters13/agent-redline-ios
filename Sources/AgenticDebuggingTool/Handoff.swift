@@ -231,8 +231,9 @@ final class Handoff: @unchecked Sendable {
                 Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Codex chat, with its pictures.")
                 return
             }
-            InboxQueue.release(report)
+            // Addressed before the claim goes, so no other chat on the app can take it between.
             InboxQueue.setAddress(Address(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
+            InboxQueue.release(report)
             hub.log("The Codex app didn't take report \(source.reportID) (\(outcome)); it goes in with the chat's next message")
             Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Codex chat with your next message there.")
         }
