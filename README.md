@@ -4,9 +4,7 @@
 
 # Redline
 
-Redline lets you point at UI in a Debug build of your iOS app, on an iPhone or in a simulator, write a note, and send it to the Claude Code or Codex chat working on that app. It is how a designer redlines a screen, done on the running app.
-
-The agent gets a snapshot of each screen with the elements you noted outlined in red and numbered, plus each element's accessibility label, role and identifier, so it can find the view in your code. Redline replaces taking a screenshot, moving it to the Mac, pasting it into a chat and describing which button you mean.
+Redline is a SwiftUI annotation tool for agentic iOS development. Add `.redline()` to your root view, run a Debug build on a device or simulator, and tap elements to annotate them. Reports route to your Claude Code or Codex session, optionally matched by worktree. Each snapshot carries the annotation plus every element's accessibility label, role, and identifier. Your agent resolves views in source instead of inferring them from contextless pixels.
 
 <p align="center">
   <picture>
