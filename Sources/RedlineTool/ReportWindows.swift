@@ -42,6 +42,7 @@ enum ReportWindows {
                 report: report,
                 contents: contents
             )
+            if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
             return
         }

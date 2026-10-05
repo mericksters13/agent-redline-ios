@@ -133,7 +133,9 @@ case "app":
     // What the app needs was checked first, so a hub that works is never stopped for one that can't
     // start.
     guard let devicectl = hubDevicectl else { exit(1) }
-    var keptApps = (ChatOptions.parse(arguments.dropFirst())?.apps ?? []) + (movedApps ?? [])
+    let given = arguments.dropFirst()
+    let givenApps = zip(given, given.dropFirst()).filter { $0.0 == "--app" }.map(\.1)
+    var keptApps = givenApps + (movedApps ?? [])
     if let running = HubProcess.running(paths), running != getpid() {
         // A hub saves its status, with those apps, as it starts; give one starting now a moment.
         var status = savedStatus(paths)

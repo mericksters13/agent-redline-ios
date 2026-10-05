@@ -111,6 +111,31 @@ struct AgentSettingsTests {
         }
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
         #expect(try Data(contentsOf: file) == original)
+        // A missing file stays missing.
+        let missing = root.appending(path: "missing.json")
+        try AgentSettings.update(missing) { AgentSettings.adding(.claude, to: $0, executable: executable) }
+        #expect(!FileManager.default.fileExists(atPath: missing.path))
+    }
+
+    @Test func claudeHooksFromBeforeTheRenameAreRemovedBySetup() throws {
+        // Claude Code needs no hooks now, but setup still takes out the ones the old version added.
+        let old: [String: Any] = [
+            "model": "opus",
+            "hooks": [
+                "SessionStart": [
+                    [
+                        "hooks": [
+                            [
+                                "type": "command",
+                                "command": "'/Users/someone/.local/bin/agentic-debugging' hook claude start",
+                            ]
+                        ]
+                    ]
+                ]
+            ],
+        ]
+        let added = AgentSettings.adding(.claude, to: old, executable: executable)
+        #expect(try sortedJSON(added) == sortedJSON(["model": "opus"]))
     }
 
     @Test func hooksFromBeforeTheRenameAreReplacedAndRemoved() throws {

@@ -134,13 +134,26 @@ struct ReportContentTests {
         let folder = try inboxReport("20261003-223449", pictureBytes: 600)
         #expect(ReportContent.pictures(in: folder).map(\.lastPathComponent) == ["screen-1.jpg", "note-2.jpg"])
         let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
-        let content = ReportContent.items(for: report, budget: 1_200)
+        // Room for the summary, the first picture with its label and a line about the second.
+        guard case .text(let alone) = ReportContent.items(for: report, budget: 0).items[0] else {
+            Issue.record("No summary first")
+            return
+        }
+        let budget = alone.utf8.count + "screen-1.jpg:".utf8.count + 600 + 400
+        let content = ReportContent.items(for: report, budget: budget)
         // The summary, then the first picture; the second doesn't fit and is named by path.
         guard case .text(let summary) = content.items[0] else {
             Issue.record("No summary first")
             return
         }
-        #expect(content.bytes == summary.utf8.count + 600)
+        // Every label and notice counts against the budget, as well as the pictures.
+        let counted = content.items.reduce(0) { total, item in
+            switch item {
+            case .text(let text): total + text.utf8.count
+            case .image(_, let data): total + data.count
+            }
+        }
+        #expect(content.bytes == counted && counted <= budget)
         #expect(summary.contains("from Test iPhone (iPhone)"))
         #expect(summary.contains("1. **Milk stash**: Test."))
         #expect(
@@ -153,6 +166,19 @@ struct ReportContentTests {
                 if case .text(let text) = $0 { text.contains("note-2.jpg isn't attached") } else { false }
             }
         )
+    }
+
+    @Test func picturesThatCantBeNamedWithinTheBudgetAreCountedInOneLine() throws {
+        try inboxReport("20261003-223449", pictureBytes: 600)
+        let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
+        let content = ReportContent.items(for: report, budget: 1)
+        // The summary always goes; no picture or notice of its own fits after it.
+        #expect(content.items.count == 2)
+        guard case .text(let last) = content.items[1] else {
+            Issue.record("No count last")
+            return
+        }
+        #expect(last.hasPrefix("2 more pictures aren't attached"))
     }
 
     @Test func aLongPastedNoteIsCutToTheLongestText() throws {
@@ -171,7 +197,9 @@ struct ReportContentTests {
         #expect(summary.utf8.count <= ReportContent.longestText)
         #expect(summary.hasSuffix("The rest is in \(folder.path)/report.md."))
         // The text counts toward the budget, with both pictures.
-        #expect(content.bytes == summary.utf8.count + 20)
+        #expect(
+            content.bytes == summary.utf8.count + "screen-1.jpg:".utf8.count + "note-2.jpg:".utf8.count + 20
+        )
     }
 }
 #endif
