@@ -153,7 +153,6 @@ There are three ways in, and all three run the same installer, [`install.sh`](in
    npx agent-redline-ios
    ```
 
-   If npm can't find the package yet, run it from GitHub: `npx github:mericksters13/agent-redline-ios`.
 
 3. **curl:**
 
