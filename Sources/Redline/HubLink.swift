@@ -237,6 +237,9 @@ enum HubLink {
             Log.hubLink.error("Couldn't write the offer: \(error.localizedDescription, privacy: .public)")
             return (.interrupted, [])
         }
+        // Whatever answers is only trusted with the reports it was offered: an ID it makes up
+        // could name a folder outside the reports folder.
+        let offered = Set(reports.map(\.id))
         var outcome = Outcome.unreachable
         for host in address.hosts {
             let line = Line(host: host, port: port)
@@ -259,12 +262,16 @@ enum HubLink {
                 outcome = .interrupted
                 continue
             }
+            var delivered = answer.delivered.filter(offered.contains)
             if let refused = answer.refused {
                 Log.hubLink.notice("The hub turned down the reports: \(refused, privacy: .public)")
-                return (.refused, answer.delivered)
+                return (.refused, delivered)
             }
-            var delivered = answer.delivered
             guard !answer.wanted.isEmpty else { return (.delivered, delivered) }
+            guard Set(answer.wanted).isSubset(of: offered) else {
+                Log.hubLink.error("The hub asked for a report it wasn't offered")
+                return (.refused, delivered)
+            }
             for id in answer.wanted {
                 let upload: Data
                 do {
@@ -285,8 +292,7 @@ enum HubLink {
                 Log.hubLink.error("Couldn't read the hub's reply: \(error.localizedDescription, privacy: .public)")
                 return (.interrupted, delivered)
             }
-            delivered += reply.delivered
-            let offered = Set(reports.map(\.id))
+            delivered += reply.delivered.filter(offered.contains)
             return (offered.isSubset(of: Set(delivered)) ? .delivered : .interrupted, delivered)
         }
         return (outcome, [])

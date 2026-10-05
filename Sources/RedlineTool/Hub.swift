@@ -15,8 +15,9 @@ import SystemConfiguration
 /// Thread safety: everything that changes while the hub runs is in `state`, a `Mutex`, apart from
 /// `chatsWatchers`, which has its own. `simulators`, `listener`, `handoff`, `discovery` and
 /// `pidLock` are written once in `start()`, before any source, queue or listener that reads them
-/// starts, and only read afterwards; `stop()` runs once, under `isStopped`, and leaves `hub.pid`
-/// alone unless `start()` took the lock.
+/// starts, and only read afterwards; `start()` and `stop()` run under `lifecycle`, so a stop
+/// waits for a start under way, and `stop()` runs once and leaves `hub.pid` alone unless
+/// `start()` took the lock.
 /// `whenListenerFails` is set before `start()` and only read afterwards. `logDescriptor` is used
 /// only on `writer`.
 ///
@@ -57,10 +58,15 @@ final class Hub: @unchecked Sendable {
     /// Takes offers and files uploads for connections, which write up to `largestReport` bytes.
     private let inbox = DispatchQueue(label: "Redline.hub.inbox", qos: .userInitiated)
     private let network = NWPathMonitor()
-    /// True once `stop()` has run.
+    /// Held while the hub starts and while it stops.
     ///
-    /// Held while it runs, so a second call waits for the first.
-    private let isStopped = Mutex(false)
+    /// A stop asked for while the hub starts, such as by the menu bar app taking over as soon as
+    /// the status is written, waits until everything it has to stop exists. A recursive lock
+    /// rather than a `Mutex`: a listener that fails at once stops the hub from inside `start()`,
+    /// on the same thread.
+    private let lifecycle = NSRecursiveLock()
+    /// True once `stop()` has run; only touched under `lifecycle`.
+    private var isStopped = false
 
     private struct State {
         var currentApps: [String] = []
@@ -130,6 +136,8 @@ final class Hub: @unchecked Sendable {
     /// starts.
     @discardableResult
     func start() -> Bool {
+        lifecycle.lock()
+        defer { lifecycle.unlock() }
         try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
         guard let pidLock = HubProcess.lock(paths) else {
             log(
@@ -157,7 +165,7 @@ final class Hub: @unchecked Sendable {
         simulators?.rescan()
         listener?.start()
         // A listener that failed at once has stopped the hub, and `whenListenerFails` says so.
-        guard !isStopped.withLock({ $0 }) else { return true }
+        guard !isStopped else { return true }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: Self.discoveryInterval, leeway: .seconds(60))
         timer.setEventHandler { [weak self] in self?.discover(includingNewApps: true) }
@@ -182,7 +190,7 @@ final class Hub: @unchecked Sendable {
     /// minutes: called from a signal's queue, the panel's Quit off the main thread, or as the
     /// process ends.
     func stop() {
-        isStopped.withLock { isStopped in
+        lifecycle.withLock {
             guard !isStopped else { return }
             isStopped = true
             discovery?.cancel()

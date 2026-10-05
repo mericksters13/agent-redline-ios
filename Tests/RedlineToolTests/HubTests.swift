@@ -179,6 +179,33 @@ struct HubTests {
         hub.flushWrites()
     }
 
+    /// Sources already read are kept between refreshes; a report filed since still shows.
+    @Test func aRefreshListsReportsFiledSinceTheLastOne() throws {
+        let hub = try hub()
+        func file(_ id: String) throws {
+            let source = ReportSource(
+                kind: .phone,
+                device: phone,
+                deviceName: "Test iPhone",
+                bundleID: app,
+                reportID: id,
+                receivedAt: Date()
+            )
+            try hub.receive(source) {
+                try FileManager.default.createDirectory(at: $0, withIntermediateDirectories: true)
+            }
+        }
+        try file("first")
+        #expect(HubWindowModel.readReports(paths: paths).rows.map(\.folder.lastPathComponent) == ["first-00000001"])
+        try file("second")
+        #expect(
+            HubWindowModel.readReports(paths: paths).rows.map(\.folder.lastPathComponent) == [
+                "second-00000001", "first-00000001",
+            ]
+        )
+        hub.flushWrites()
+    }
+
     @Test func anIPv6OnlyNetworkCountsAsANetwork() {
         func ipv6(_ text: String) -> in6_addr {
             var address = in6_addr()

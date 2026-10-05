@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import Synchronization
 
 /// What the panel shows, read from the hub and its inbox.
 @MainActor
@@ -167,19 +168,44 @@ final class HubWindowModel {
         return state
     }
 
+    /// The sources of the reports in the inbox, by folder.
+    ///
+    /// A report's folder appears in the inbox with its source.json, which never changes after, so
+    /// the panel refreshing every two seconds reads only the reports that are new since it last
+    /// looked.
+    private nonisolated static let knownSources = Mutex<[URL: ReportSource]>([:])
+
     /// The newest reports in the inbox, with where each went, and when each device last sent one,
     /// from every report in the inbox rather than only those shown.
     ///
-    /// Only the newest `limit` are read beyond their source.json.
+    /// Only the newest `limit` are read beyond their source.json, and each source.json only once.
     nonisolated static func readReports(paths: HubPaths, limit: Int = 30) -> (
         rows: [ReportRow], lastReport: [String: Date]
     ) {
-        let all = Inbox.reports(for: nil, paths: paths)
+        let files = FileManager.default
+        let known = knownSources.withLock { $0 }
+        var all: [(folder: URL, source: ReportSource)] = []
+        for app in (try? files.contentsOfDirectory(atPath: paths.inbox.path)) ?? [] where !app.hasPrefix(".") {
+            let appFolder = paths.inbox.appending(path: app, directoryHint: .isDirectory)
+            for name in (try? files.contentsOfDirectory(atPath: appFolder.path)) ?? [] where !name.hasPrefix(".") {
+                let folder = appFolder.appending(path: name, directoryHint: .isDirectory)
+                if let source = known[folder] {
+                    all.append((folder, source))
+                    continue
+                }
+                // A folder without its source.json isn't a filed report.
+                guard let data = try? Data(contentsOf: folder.appending(path: Inbox.sourceFile)),
+                    let source = try? HubPaths.decoder.decode(ReportSource.self, from: data)
+                else { continue }
+                all.append((folder, source))
+            }
+        }
+        knownSources.withLock { $0 = Dictionary(all, uniquingKeysWith: { first, _ in first }) }
         let lastReport = Dictionary(all.map { ($0.source.device, $0.source.receivedAt) }, uniquingKeysWith: max)
         // Reports received in the same second keep their order: dates keep their milliseconds, and
-        // the folder breaks a tie.
-        let newest = all.sorted {
-            ($0.source.receivedAt, $0.folder.lastPathComponent) > ($1.source.receivedAt, $1.folder.lastPathComponent)
+        // the folder breaks a tie, its name read once for each rather than at every comparison.
+        let newest = all.map { (folder: $0.folder, source: $0.source, name: $0.folder.lastPathComponent) }.sorted {
+            ($0.source.receivedAt, $0.name) > ($1.source.receivedAt, $1.name)
         }.prefix(limit)
         let database = CodexThreads.newestDatabase()
         let rows = newest.map { report in

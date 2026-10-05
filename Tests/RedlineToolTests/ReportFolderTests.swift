@@ -45,6 +45,12 @@ struct ReportFolderTests {
         )
     }
 
+    @Test func aSimulatorIsFoundFromItsContainerWhateverTheHomeFolderIsCalled() {
+        let container =
+            "/Users/Devices/Library/Developer/CoreSimulator/Devices/198F6C2F-B757-44A8-88BB-A574EC16F621/data/Containers/Data/Application/17364006-587A-45B0-86EC-941E51A550D1"
+        #expect(SimulatorReportPath.device(ofContainer: container) == "198F6C2F-B757-44A8-88BB-A574EC16F621")
+    }
+
     @Test func aSimulatorAppsKitFoldersAreWatchedUnderEitherName() throws {
         let files = FileManager.default
         let container = files.temporaryDirectory.appending(
