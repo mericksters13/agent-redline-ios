@@ -1,20 +1,35 @@
-# Publishes the npm package agent-redline-ios when a GitHub release is published, through npm
-# trusted publishing: npm trusts this workflow, so no npm token is stored anywhere, and npm adds a
-# provenance record that ties the package to this repository and commit. It's set up once on
-# npmjs.com, in the package's Settings under Trusted Publisher (GitHub Actions, this repository,
-# and this workflow file). The release tag must match package.json's version, as 0.1.1 or v0.1.1.
+# Releases Redline and publishes the npm package agent-redline-ios, in one of two ways:
+#
+# - The Release button: Run workflow on this workflow in the Actions tab, on main. It reads the
+#   version from package.json, checks it agrees everywhere, tags main, publishes a GitHub release
+#   with that version's CHANGELOG.md section, and publishes to npm.
+# - A GitHub release published by hand: it checks the tag matches package.json's version, as
+#   0.1.1 or v0.1.1, and publishes to npm.
+#
+# Publishing goes through npm trusted publishing: npm trusts this workflow file, so no npm token
+# is stored anywhere, and npm adds a provenance record that ties the package to this repository
+# and commit. It's set up once on npmjs.com, in the package's Settings under Trusted Publisher
+# (GitHub Actions, this repository and this workflow file), so the file keeps this name.
 name: Publish to npm
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
+
+# One release at a time, never cancelled halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   publish:
+    # The button releases main only.
+    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -30,15 +45,68 @@ jobs:
       - name: Use an npm that supports trusted publishing
         run: npm install --global npm@^11.5.1
 
-      - name: Check that the release tag matches the package version
+      # A run that stopped partway can run again: only the missing steps run.
+      - name: See what this version still needs
+        id: state
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
         run: |
           version="$(node -p "require('./package.json').version")"
-          if [ "${TAG#v}" != "$version" ]; then
-            echo "::error::The release tag $TAG doesn't match package.json's version $version."
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = release ]; then
+            if [ "${TAG#v}" != "$version" ]; then
+              echo "::error::The release tag $TAG doesn't match package.json's version $version."
+              exit 1
+            fi
+            tagged=true
+          elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$version" > /dev/null 2>&1; then
+            tagged=true
+          else
+            tagged=false
+          fi
+          if npm view "agent-redline-ios@$version" version > /dev/null 2>&1; then
+            published=true
+          else
+            published=false
+          fi
+          if [ "$tagged" = true ] && [ "$published" = true ]; then
+            echo "::error::$version is already released and on npm. Raise the version in package.json first."
+            exit 1
+          fi
+          echo "tagged=$tagged" >> "$GITHUB_OUTPUT"
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+
+      - name: Check the version and take its release notes
+        if: steps.state.outputs.tagged == 'false'
+        env:
+          VERSION: ${{ steps.state.outputs.version }}
+        run: |
+          command="$(sed -n 's/^let version = "\(.*\)"$/\1/p' Sources/RedlineTool/main.swift)"
+          app="$(sed -n 's/^version="\(.*\)"$/\1/p' scripts/build-hub-app.sh)"
+          if [ "$VERSION" != "$command" ] || [ "$VERSION" != "$app" ]; then
+            echo "::error::package.json says $VERSION, Sources/RedlineTool/main.swift says $command, scripts/build-hub-app.sh says $app."
+            exit 1
+          fi
+          # The version's CHANGELOG.md section, with links to repository files made absolute at the tag.
+          awk -v heading="## [$VERSION]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md |
+            sed -E "s#\]\(([^)h#][^)]*)\)#](https://github.com/$GITHUB_REPOSITORY/blob/$VERSION/\1)#g" > "$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "::error::CHANGELOG.md has no section for $VERSION."
             exit 1
           fi
 
-      - name: Publish
+      - name: Tag main and publish the GitHub release
+        if: steps.state.outputs.tagged == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.state.outputs.version }}
+        run: gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+
+      - name: Publish to npm
+        if: steps.state.outputs.published == 'false'
         run: npm publish --access public
