@@ -141,7 +141,10 @@ case "setup", "remove":
         }
     }
     for agent in Agent.allCases {
-        guard AgentSettings.isPresent(agent) else {
+        // The hub offers Codex chats whenever it finds the codex command, so its hook goes in
+        // even before Codex has made its settings folder.
+        let codexInstalled = adding && agent == .codex && AgentCommand.locate(.codex) != nil
+        guard AgentSettings.isPresent(agent) || codexInstalled else {
             if adding { print("\(agent.name): not used on this Mac, skipped.") }
             continue
         }
