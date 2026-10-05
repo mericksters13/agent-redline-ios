@@ -2,8 +2,9 @@
 import Foundation
 import Network
 
-/// Where apps send their reports: an offer, the hub's answer, the reports it asked for, and its
-/// reply, one line of JSON each, over the local network.
+/// Where apps send their reports: the app says who it is and each side proves it holds the
+/// app's token, then an offer, the hub's answer, the reports it asked for, and its reply, one
+/// line of JSON each, over the local network.
 final class HubListener: @unchecked Sendable {
     static let port: UInt16 = 47361
 
@@ -47,17 +48,23 @@ final class HubListener: @unchecked Sendable {
 
     private func serve(_ lines: Lines) async {
         guard await lines.open() else { return }
-        guard let first = await lines.read() else { return }
+        guard let first = await lines.read(), let hello = HubMessage.decode(HubMessage.Hello.self, from: first), hello.kind == "hello" else {
+            hub.log("A connection didn't start with an app saying who it is")
+            return
+        }
+        let nonces = HubMessage.Nonces(app: hello.nonce, hub: HubMessage.nonce())
+        let challenge = hub.challenge(hello, nonce: nonces.hub)
+        guard await lines.send(HubMessage.encode(challenge)), challenge.refused == nil, let second = await lines.read() else { return }
         // Before sending, the app asks where a report can go.
-        if let request = HubMessage.decode(HubMessage.ChatsRequest.self, from: first), request.kind == "chats" {
-            _ = await lines.send(HubMessage.encode(hub.chats(request)))
+        if let request = HubMessage.decode(HubMessage.ChatsRequest.self, from: second), request.kind == "chats" {
+            _ = await lines.send(HubMessage.encode(hub.chats(request, nonces: nonces)))
             return
         }
-        guard let offer = HubMessage.decode(HubMessage.Offer.self, from: first) else {
-            hub.log("A connection didn't start with an offer from an app")
+        guard let offer = HubMessage.decode(HubMessage.Offer.self, from: second) else {
+            hub.log("\(hello.bundleID) didn't follow its hello with an offer")
             return
         }
-        let answer = hub.answer(offer)
+        let answer = hub.answer(offer, nonces: nonces)
         guard await lines.send(HubMessage.encode(answer)), !answer.want.isEmpty else { return }
         var waiting = Set(answer.want)
         while !waiting.isEmpty {

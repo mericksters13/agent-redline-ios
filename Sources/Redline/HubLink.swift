@@ -1,4 +1,5 @@
 #if REDLINE
+import CryptoKit
 import Foundation
 import Network
 
@@ -8,10 +9,13 @@ import Network
 /// access, the first time a report is sent.
 ///
 /// One connection, one line of JSON per message:
-/// 1. The app offers the reports the Mac hasn't confirmed (`Offer`).
-/// 2. The hub answers which it wants and which it already has (`Answer`).
-/// 3. The app sends each wanted report's files (`Upload`).
-/// 4. The hub confirms what it now has (`Reply`).
+/// 1. The app says who it is (`Hello`), and the hub proves it holds the app's token
+///    (`Challenge`). The token itself never crosses the network, so whatever answers at an old
+///    address learns nothing it could use, and is sent nothing until it proves it's the hub.
+/// 2. The app offers the reports the Mac hasn't confirmed (`Offer`), with its own proof.
+/// 3. The hub answers which it wants and which it already has (`Answer`).
+/// 4. The app sends each wanted report's files (`Upload`).
+/// 5. The hub confirms what it now has (`Reply`).
 enum HubLink {
     /// What the hub leaves in the app's folder.
     struct Address: Codable, Equatable, Sendable {
@@ -27,6 +31,26 @@ enum HubLink {
         var uploads: Bool? = nil
     }
 
+    /// The app's first line on every connection: which phone and app, so the hub knows whose
+    /// token to prove it holds, and a fresh random value for that proof.
+    struct Hello: Codable, Equatable, Sendable {
+        /// Always "hello".
+        var kind = "hello"
+        var device: String
+        var bundleID: String
+        var nonce: String
+    }
+
+    /// The hub's reply to `Hello`: proof that it holds the app's token, and a fresh random value
+    /// of its own for the app's proof.
+    struct Challenge: Codable, Equatable, Sendable {
+        var nonce: String
+        /// Nil when the hub turned the app down.
+        var proof: String? = nil
+        /// Why the hub turned the app down, when it did.
+        var refused: String? = nil
+    }
+
     struct Offer: Codable, Equatable, Sendable {
         struct Report: Codable, Equatable, Sendable {
             var id: String
@@ -35,7 +59,8 @@ enum HubLink {
 
         var device: String
         var bundleID: String
-        var token: String
+        /// Proves the offer comes from the phone and app the token was given to.
+        var proof: String
         var reports: [Report]
     }
 
@@ -64,7 +89,7 @@ enum HubLink {
         var kind = "chats"
         var device: String
         var bundleID: String
-        var token: String
+        var proof: String
         var sourceFile: String?
     }
 
@@ -111,16 +136,68 @@ enum HubLink {
         }
     }
 
+    /// Which side proves it holds the token. Each side's proof is made differently, so neither
+    /// can be passed off as the other's.
+    enum Side: String, Sendable {
+        case hub
+        case app
+    }
+
+    /// Proof of holding `token` on one connection, made from both sides' random values, so it
+    /// can't be used again on another.
+    static func proof(_ side: Side, token: String, appNonce: String, hubNonce: String) -> String {
+        let code = HMAC<SHA256>.authenticationCode(for: Data("\(side.rawValue)|\(appNonce)|\(hubNonce)".utf8), using: SymmetricKey(data: Data(token.utf8)))
+        return Data(code).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// A fresh random value for one connection.
+    static func nonce() -> String {
+        SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The app's proof for its next line, when the challenge proves that what answered holds
+    /// `token`; nil when it doesn't, or turned the app down.
+    static func appProof(after challenge: Challenge, to hello: Hello, token: String) -> String? {
+        guard let proof = challenge.proof, !challenge.nonce.isEmpty,
+              same(proof, Self.proof(.hub, token: token, appNonce: hello.nonce, hubNonce: challenge.nonce)) else { return nil }
+        return Self.proof(.app, token: token, appNonce: hello.nonce, hubNonce: challenge.nonce)
+    }
+
+    /// Compares proofs in time that doesn't depend on where they differ.
+    private static func same(_ a: String, _ b: String) -> Bool {
+        let x = Array(a.utf8), y = Array(b.utf8)
+        guard x.count == y.count else { return false }
+        return zip(x, y).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
+    }
+
+    private enum Greeting {
+        /// The hub proved itself; the app's proof for its next line.
+        case proven(String)
+        /// The hub doesn't know this app, such as one set up by another Mac.
+        case refused
+        /// Something that isn't this app's hub answered, or nothing did.
+        case notTheHub
+    }
+
+    /// Opens the exchange on `line`: the app says who it is and checks the hub's proof.
+    private static func greet(_ line: Line, device: String, bundleID: String, token: String) async -> Greeting {
+        let hello = Hello(device: device, bundleID: bundleID, nonce: nonce())
+        guard await line.send(encode(hello)), let data = await line.read(), let challenge = decode(Challenge.self, from: data) else { return .notTheHub }
+        if challenge.refused != nil { return .refused }
+        return appProof(after: challenge, to: hello, token: token).map(Greeting.proven) ?? .notTheHub
+    }
+
     /// Asks the hub which chats a report from this app can go to. Nil when the hub can't be
     /// reached or turns the question down.
     static func chats(bundleID: String, address: Address, sourceFile: String?, patience: TimeInterval) async -> ChatList? {
         guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return nil }
-        let request = ChatsRequest(device: address.device, bundleID: bundleID, token: token, sourceFile: sourceFile)
         for host in address.hosts {
             let line = Line(host: host, port: port)
             guard await line.open(patience: patience) else { continue }
             defer { line.close() }
             // Something else may answer at an old address; the hub may be at the next one.
+            guard case .proven(let proof) = await greet(line, device: address.device, bundleID: bundleID, token: token) else { continue }
+            let request = ChatsRequest(device: address.device, bundleID: bundleID, proof: proof, sourceFile: sourceFile)
             guard await line.send(encode(request)), let data = await line.read(), let list = decode(ChatList.self, from: data) else { continue }
             return list.refused == nil ? list : nil
         }
@@ -161,9 +238,8 @@ enum HubLink {
     static func deliver(_ reports: [Offer.Report], bundleID: String, address: Address,
                         files: @Sendable (String) -> [String: Data], patience: TimeInterval) async -> (outcome: Outcome, delivered: [String]) {
         guard let token = address.token, let port = NWEndpoint.Port(rawValue: address.port) else { return (.refused, []) }
-        let offer = Offer(device: address.device, bundleID: bundleID, token: token, reports: reports)
-        // Whatever answers is only trusted with the reports it was offered: an ID it makes up
-        // could name a folder outside the reports folder.
+        // Even the hub is only trusted with the reports it was offered: an ID it makes up could
+        // name a folder outside the reports folder.
         let offered = Set(reports.map(\.id))
         var outcome = Outcome.unreachable
         for host in address.hosts {
@@ -171,6 +247,17 @@ enum HubLink {
             guard await line.open(patience: patience) else { continue }
             defer { line.close() }
             // Something else may answer at an old address; the hub may be at the next one.
+            let proof: String
+            switch await greet(line, device: address.device, bundleID: bundleID, token: token) {
+            case .proven(let made): proof = made
+            case .refused:
+                outcome = .refused
+                continue
+            case .notTheHub:
+                outcome = .interrupted
+                continue
+            }
+            let offer = Offer(device: address.device, bundleID: bundleID, proof: proof, reports: reports)
             guard await line.send(encode(offer)), let answerData = await line.read(), let answer = decode(Answer.self, from: answerData) else {
                 outcome = .interrupted
                 continue
@@ -194,6 +281,10 @@ enum HubLink {
         private let connection: NWConnection
         private let queue = DispatchQueue(label: "hub-link")
         private var buffer = Data()
+
+        /// The longest line the hub sends: an answer, a reply or a list of chats takes a few
+        /// kilobytes. Anything longer isn't from the hub, and isn't kept in memory.
+        static let longestLine = 1 << 20
 
         init(host: String, port: NWEndpoint.Port) {
             connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
@@ -223,7 +314,8 @@ enum HubLink {
             }
         }
 
-        /// The next line, without its newline; nil when the connection ends first or 30 seconds pass.
+        /// The next line, without its newline; nil when the connection ends first, the line is too
+        /// long, or 30 seconds pass.
         func read() async -> Data? {
             if let line = takeLine() { return line }
             let once = Once<Data?>()
@@ -244,7 +336,7 @@ enum HubLink {
                     if let data { self.buffer.append(data) }
                     if let line = self.takeLine() {
                         once.resume(line)
-                    } else if isComplete || error != nil {
+                    } else if isComplete || error != nil || self.buffer.count > Self.longestLine {
                         once.resume(nil)
                     } else {
                         self.receive(once)
