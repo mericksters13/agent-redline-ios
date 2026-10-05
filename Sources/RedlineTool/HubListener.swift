@@ -48,13 +48,14 @@ final class HubListener: @unchecked Sendable {
 
     private func serve(_ lines: Lines) async {
         guard await lines.open() else { return }
-        guard let first = await lines.read(), let hello = HubMessage.decode(HubMessage.Hello.self, from: first), hello.kind == "hello" else {
+        guard let first = await lines.read(limit: Lines.longestGreeting), let hello = HubMessage.decode(HubMessage.Hello.self, from: first), hello.kind == "hello" else {
             hub.log("A connection didn't start with an app saying who it is")
             return
         }
         let nonces = HubMessage.Nonces(app: hello.nonce, hub: HubMessage.nonce())
         let challenge = hub.challenge(hello, nonce: nonces.hub)
-        guard await lines.send(HubMessage.encode(challenge)), challenge.refused == nil, let second = await lines.read() else { return }
+        guard await lines.send(HubMessage.encode(challenge)), challenge.refused == nil,
+              let second = await lines.read(limit: Lines.longestGreeting) else { return }
         // Before sending, the app asks where a report can go.
         if let request = HubMessage.decode(HubMessage.ChatsRequest.self, from: second), request.kind == "chats" {
             _ = await lines.send(HubMessage.encode(hub.chats(request, nonces: nonces)))
@@ -104,6 +105,9 @@ final class HubListener: @unchecked Sendable {
 
         /// The longest line taken: one report, its pictures encoded in the line.
         static let longestLine = Hub.largestReport * 4 / 3 + 65_536
+        /// The longest line taken before the app has proven it holds its token: a hello, an offer
+        /// listing reports by name, or a question about chats. Whoever connects can send it.
+        static let longestGreeting = 1 << 20
 
         init(connection: NWConnection) {
             self.connection = connection
@@ -131,17 +135,17 @@ final class HubListener: @unchecked Sendable {
             }
         }
 
-        /// The next line, without its newline; nil when the connection ends, the line is too
-        /// long, or 60 seconds pass with nothing received. A large report on a slow network
-        /// keeps arriving well past 60 seconds, so only a stalled connection runs out.
-        func read() async -> Data? {
+        /// The next line, without its newline; nil when the connection ends, the line is longer
+        /// than `limit`, or 60 seconds pass with nothing received. A large report on a slow
+        /// network keeps arriving well past 60 seconds, so only a stalled connection runs out.
+        func read(limit: Int = Lines.longestLine) async -> Data? {
             let once = Once<Data?>()
             return await withCheckedContinuation { continuation in
                 once.set(continuation)
                 queue.async {
                     if let line = self.takeLine() { return once.resume(line) }
                     self.waitForData(once)
-                    self.receive(once)
+                    self.receive(once, limit: limit)
                 }
             }
         }
@@ -159,17 +163,17 @@ final class HubListener: @unchecked Sendable {
             connection.cancel()
         }
 
-        private func receive(_ once: Once<Data?>) {
+        private func receive(_ once: Once<Data?>, limit: Int) {
             connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [self] data, _, isComplete, error in
                 queue.async {
                     if let data { self.buffer.append(data) }
                     if let line = self.takeLine() {
                         once.resume(line)
-                    } else if isComplete || error != nil || self.buffer.count > Self.longestLine {
+                    } else if isComplete || error != nil || self.buffer.count > limit {
                         once.resume(nil)
                     } else {
                         if data?.isEmpty == false { self.waitForData(once) }
-                        self.receive(once)
+                        self.receive(once, limit: limit)
                     }
                 }
             }

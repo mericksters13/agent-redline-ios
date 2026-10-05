@@ -558,8 +558,18 @@ struct ReportStore: Sendable {
                 try? files.removeItem(at: old)
                 continue
             }
+            let notesFile = old.appending(path: draftFile.lastPathComponent)
+            // Notes that are there but no longer decode, such as after a change to the note
+            // format, are kept with their pictures for recovery, as an unreadable draft is.
+            if files.fileExists(atPath: notesFile.path), Self.load([Annotation].self, from: notesFile) == nil {
+                try? files.createDirectory(at: unreadableDraftsDirectory, withIntermediateDirectories: true)
+                if (try? files.moveItem(at: old, to: unreadableDraftsDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory))) != nil {
+                    discardReport(folder)
+                }
+                continue
+            }
             do {
-                let annotations = Self.load([Annotation].self, from: old.appending(path: draftFile.lastPathComponent)) ?? []
+                let annotations = Self.load([Annotation].self, from: notesFile) ?? []
                 let screens = Self.load([ScreenRecord].self, from: old.appending(path: screensFile.lastPathComponent)) ?? []
                 try reclaimPictures(from: folder)
                 // Screens first, as when a note is added: a listed screen no note uses is harmless.
@@ -634,6 +644,11 @@ struct ReportStore: Sendable {
         }
     }
 
+    /// The Mac has confirmed the report in `folder`.
+    func isDelivered(_ folder: URL) -> Bool {
+        FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path)
+    }
+
     /// How many reports the Mac already has stay on the phone, for the Sent reports list.
     static let keptDeliveredReports = 20
 
@@ -653,7 +668,7 @@ struct ReportStore: Sendable {
             guard let data = try? Data(contentsOf: folder.appending(path: "report.json")),
                   let report = try? Self.decoder.decode(Report.self, from: data)
             else { return nil }
-            let delivered = FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path)
+            let delivered = isDelivered(folder)
             return SentReport(report: report, folder: folder, delivered: delivered)
         }
         .sorted { ($0.report.createdAt, $0.id) > ($1.report.createdAt, $1.id) }
