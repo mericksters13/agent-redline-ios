@@ -62,11 +62,13 @@ extension HubWindowModel {
                     case .claude:
                         return claudeRow(ClaudeCLI.checkReadiness(recheckingFailure: true))
                     case .codex:
-                        let app = AgentCommand.codexApp()
+                        // With both apps installed, the one running owns the socket.
+                        let apps = AgentCommand.codexApps()
+                        let running = apps.first(where: isRunning)
                         return codexRow(
                             CodexApp.checkHandshake(),
-                            appName: app?.deletingPathExtension().lastPathComponent,
-                            isAppRunning: app.map(isRunning) ?? false
+                            appName: (running ?? apps.first)?.deletingPathExtension().lastPathComponent,
+                            isAppRunning: running != nil
                         )
                     }
                 }
