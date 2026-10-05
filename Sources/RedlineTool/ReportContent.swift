@@ -126,7 +126,8 @@ enum ReportContent {
     static let longestText = 50_000
 
     /// The report's items, with pictures attached while `budget` bytes allow; the rest are
-    /// named by path. Returns the items and the bytes of text and pictures they hold.
+    /// named by path while that fits, then counted in one line. Returns the items and the bytes
+    /// of text and pictures they hold.
     static func items(for report: InboxReport, budget: Int) -> (items: [Item], bytes: Int) {
         let pictures = pictures(in: report.folder)
         var header = header(for: report)
@@ -137,15 +138,30 @@ enum ReportContent {
                              rest: "\n\nThe rest is in \(report.folder.appending(path: "report.md").path).")
         var items: [Item] = [.text(text)]
         var used = text.utf8.count
+        var unnamed = 0
         for picture in pictures {
-            guard let data = try? Data(contentsOf: picture) else { continue }
-            if used + data.count > budget {
-                items.append(.text("\(picture.lastPathComponent) isn't attached, to keep this reply small. Open it at \(picture.path)."))
+            // Mapped rather than read: the command line names pictures by path and never reads
+            // their bytes, so a backlog of large reports doesn't fill memory.
+            guard let data = try? Data(contentsOf: picture, options: .mappedIfSafe) else { continue }
+            let label = picture.lastPathComponent + ":"
+            if used + label.utf8.count + data.count > budget {
+                let notice = "\(picture.lastPathComponent) isn't attached, to keep this reply small. Open it at \(picture.path)."
+                guard used + notice.utf8.count <= budget else {
+                    unnamed += 1
+                    continue
+                }
+                items.append(.text(notice))
+                used += notice.utf8.count
                 continue
             }
-            items.append(.text(picture.lastPathComponent + ":"))
+            items.append(.text(label))
             items.append(.image(file: picture, data: data))
-            used += data.count
+            used += label.utf8.count + data.count
+        }
+        if unnamed > 0 {
+            let notice = "\(unnamed) more \(unnamed == 1 ? "picture isn't" : "pictures aren't") attached, to keep this reply small. Open them in \(report.folder.path)."
+            items.append(.text(notice))
+            used += notice.utf8.count
         }
         return (items, used)
     }
