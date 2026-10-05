@@ -214,11 +214,12 @@ final class Hub: @unchecked Sendable {
     /// Stops taking reports, lets the reports being handed over reach their chats, then lets go
     /// of the PID file. A hub that starts next, such as the menu bar app taking over, hands over
     /// again only what this one gave back, so no report starts two chats. Called again, it
-    /// waits for the first call to finish.
+    /// waits for the first call to finish. A hub that never held the PID file has nothing to
+    /// stop, and leaves the running hub's PID file alone.
     func stop() {
         stopping.lock()
         defer { stopping.unlock() }
-        guard !stopped else { return }
+        guard !stopped, pidFile != nil else { return }
         stopped = true
         discovery?.cancel()
         lock.withLock { chatsWatchers }.forEach { $0.cancel() }
