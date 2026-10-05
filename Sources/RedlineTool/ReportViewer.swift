@@ -74,11 +74,13 @@ extension HubWindowModel {
     /// chat never got the report. `folder` is where the chat works, when known. Nil when the
     /// report went to no chat, or to an agent other than Claude Code and Codex.
     nonisolated static func chat(of report: URL) -> (agent: Agent, id: String, folder: String?)? {
-        let claim = (try? Data(contentsOf: report.appending(path: InboxQueue.claimFile)))
-            .flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
-            .flatMap { $0.isInterrupted ? nil : $0 }
+        chat(of: report, delivery: ReportDelivery.load(from: report), claim: claim(of: report))
+    }
+
+    /// `chat(of:)` from a delivery and claim already read, the same ones `destination` gets.
+    nonisolated static func chat(of report: URL, delivery: ReportDelivery?, claim: Claim?) -> (agent: Agent, id: String, folder: String?)? {
         let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
-        if let delivery = ReportDelivery.load(from: report), !(delivery.pending && claim != nil) {
+        if let delivery, !(delivery.pending && claim != nil) {
             guard delivery.kind != .waiting, let agent = delivery.agent.flatMap(Agent.init(rawValue:)), agent != .cursor,
                   let id = delivery.chat
             else { return nil }
@@ -142,8 +144,8 @@ struct ReportViewer: View {
     private let pictures: [HubWindowModel.Picture]
     private let images: [URL: NSImage]
     private let chat: (agent: Agent, id: String, folder: String?)?
-    /// Where the report went, read again with `chat`: the panel's row may be older than a
-    /// delivery that happened while the panel was closed.
+    /// Where the report went, read again with `chat` and from the same reads, so the two agree:
+    /// the panel's row may be older than a delivery that happened while the panel was closed.
     private let destination: (agent: String, chat: String, waiting: Bool)
     @State private var selected: Int?
 
@@ -151,8 +153,10 @@ struct ReportViewer: View {
         self.report = report
         pictures = HubWindowModel.pictures(in: report.folder)
         images = Dictionary(pictures.compactMap { picture in NSImage(contentsOf: picture.file).map { (picture.file, $0) } }) { first, _ in first }
-        chat = HubWindowModel.chat(of: report.folder)
-        destination = HubWindowModel.destination(of: report.folder)
+        let delivery = ReportDelivery.load(from: report.folder)
+        let claim = HubWindowModel.claim(of: report.folder)
+        chat = HubWindowModel.chat(of: report.folder, delivery: delivery, claim: claim)
+        destination = HubWindowModel.destination(delivery: delivery, claim: claim)
     }
 
     static func title(of report: HubWindowModel.ReportRow) -> String {

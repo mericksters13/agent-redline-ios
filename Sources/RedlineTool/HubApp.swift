@@ -196,10 +196,12 @@ final class HubWindowModel {
     /// claim next to one always came after it. A claim whose hand-over was interrupted doesn't
     /// count: the report is free again, as `InboxQueue.waiting` has it.
     nonisolated static func destination(of folder: URL) -> (agent: String, chat: String, waiting: Bool) {
-        let delivery = ReportDelivery.load(from: folder)
-        let claim = (try? Data(contentsOf: folder.appending(path: InboxQueue.claimFile)))
-            .flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
-            .flatMap { $0.isInterrupted ? nil : $0 }
+        destination(delivery: ReportDelivery.load(from: folder), claim: claim(of: folder))
+    }
+
+    /// `destination(of:)` from a delivery and claim already read, so the report viewer can
+    /// derive this and the chat to open from the same reads.
+    nonisolated static func destination(delivery: ReportDelivery?, claim: Claim?) -> (agent: String, chat: String, waiting: Bool) {
         if let delivery, !(delivery.pending && claim != nil) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             // A report set to go with a chat's next message isn't in that chat yet.
@@ -211,6 +213,13 @@ final class HubWindowModel {
             return (agent, chatTitle(claim), false)
         }
         return ("Not sent", "Waiting in the inbox", true)
+    }
+
+    /// The chat that took a report, unless its hand-over was interrupted.
+    nonisolated static func claim(of folder: URL) -> Claim? {
+        (try? Data(contentsOf: folder.appending(path: InboxQueue.claimFile)))
+            .flatMap { try? Chats.decoder.decode(Claim.self, from: $0) }
+            .flatMap { $0.isInterrupted ? nil : $0 }
     }
 
     /// A chat's title for a report taken before the hub saved where reports went: the Codex
