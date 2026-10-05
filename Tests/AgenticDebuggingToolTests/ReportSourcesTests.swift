@@ -57,6 +57,11 @@ struct ReportSourcesTests {
         #expect(SimulatorReportPath.parse(container + "/Library/Caches/whatever") == nil)
     }
 
+    @Test func aSimulatorIsFoundFromItsContainerWhateverTheHomeFolderIsCalled() {
+        let container = "/Users/Devices/Library/Developer/CoreSimulator/Devices/198F6C2F-B757-44A8-88BB-A574EC16F621/data/Containers/Data/Application/17364006-587A-45B0-86EC-941E51A550D1"
+        #expect(SimulatorWatcher.simulatorIDs(of: [container]) == ["198F6C2F-B757-44A8-88BB-A574EC16F621"])
+    }
+
     @Test func inboxFoldersSortByTimeAndKeepPhonesApart() {
         // Two iPhones of one model share the start of their UDID, so the end tells them apart.
         #expect(Inbox.folderName(reportID: "20261003-202235", device: "00008150-00123C360CF3C01C") == "20261003-202235-0CF3C01C")
