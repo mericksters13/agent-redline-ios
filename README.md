@@ -344,6 +344,9 @@ The phone is asleep, out of range, or on another Wi-Fi network than the Mac. Wak
 **The phone says "Not on the Mac yet: no Mac has set up this app".**
 The hub has not left its address in the app yet. Check that Redline is running, that a chat for the app's project is open (see [Send your first report](#send-your-first-report)), and that Xcode can reach the phone. The panel shows "No watched app installed" when the installed app's bundle ID isn't one the hub found in a chat's project.
 
+**Annotate mode says "SwiftUI elements may not be pickable".**
+The kit couldn't turn on the automation mode that makes SwiftUI build its accessibility tree (see [What ships where](#what-ships-where)), most likely because this iOS version removed the private function it uses. The line shows for a moment when annotate mode opens and after a tap that finds nothing. UIKit views can still be picked, and the capture button still attaches the whole screen.
+
 **macOS asks whether Redline may access files in your Documents folder.**
 Redline reads the project folders of your open chats to learn which app each one builds, and those folders are often in Documents. Allow it. macOS asks once, because the app is signed with your Mac's Apple Development certificate and keeps the same identity across rebuilds. Without that certificate the script signs ad hoc, and macOS may ask again after every rebuild.
 

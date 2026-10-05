@@ -93,6 +93,14 @@ final class DebugSession {
         var isError = false
     }
 
+    /// What the line under the island in pick mode says.
+    enum Hint {
+        /// Which mode this is and the way out, after a tap that found nothing.
+        case annotateMode
+        /// SwiftUI elements may not be pickable, since the automation switch couldn't be turned on.
+        case swiftUIUnreadable
+    }
+
     private(set) var mode = Mode.idle
     private(set) var annotations: [Annotation] = []
     /// What's under the finger, innermost first. `levelIndex` picks one of them.
@@ -130,8 +138,8 @@ final class DebugSession {
     private(set) var displayCornerRadius: CGFloat = 0
     /// Counts taps in pick mode that found nothing; each one shakes the island.
     private(set) var nudges = 0
-    /// A short reminder under the island after such a tap.
-    private(set) var hint: String?
+    /// A short line under the island for a moment in pick mode; nil when none shows.
+    private(set) var hint: Hint?
     /// Why the last Add note failed, shown on the note card.
     private(set) var noteError: String?
     /// The window size when the screen was last read.
@@ -414,6 +422,7 @@ final class DebugSession {
         notesThisVisit = []
         setMode(.picking)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        if AccessibilityTree.automation == .unavailable { showHint(.swiftUIUnreadable) }
         settling?.cancel()
         settlingTouch = nil
         settling = Task {
@@ -1625,17 +1634,25 @@ final class DebugSession {
     /// A tap in pick mode that found nothing: the app didn't respond because Redline has the
     /// screen.
     ///
-    /// Says so, rather than leaving the tester to think the app is broken.
+    /// Says so, rather than leaving the tester to think the app is broken. Without the automation
+    /// switch, the likelier reason is a SwiftUI element that can't be read, so the line under the
+    /// island says that instead.
     private func nudge() {
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
         withAnimation(.linear(duration: 0.4)) { nudges += 1 }
-        withAnimation(.smooth(duration: 0.25)) { hint = "Annotate mode" }
+        showHint(AccessibilityTree.automation == .unavailable ? .swiftUIUnreadable : .annotateMode)
+        // Leaves SwiftUI out: with VoiceOver on, SwiftUI builds its tree anyway.
         UIAccessibility.post(notification: .announcement, argument: "Annotate mode. Close it to use the app.")
+    }
+
+    /// Shows `hint` under the island for a moment.
+    private func showHint(_ hint: Hint) {
+        withAnimation(.smooth(duration: 0.25)) { self.hint = hint }
         hintTimer?.cancel()
         hintTimer = Task {
             try? await Task.sleep(for: .seconds(2.5))
             guard !Task.isCancelled else { return }
-            withAnimation(.smooth(duration: 0.3)) { hint = nil }
+            withAnimation(.smooth(duration: 0.3)) { self.hint = nil }
         }
     }
 
