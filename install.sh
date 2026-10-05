@@ -302,9 +302,10 @@ mcp_entry_is_ours() {
 }
 
 # Removes Redline's hooks from the agent settings file $1 without the redline command, for
-# uninstall, as redline remove would: hooks that run the command at $2, or the earlier version's
-# agentic-debugging with a hook's arguments, go; groups left empty go; everything else stays, even
-# another tool's command named redline. Prints removed, unchanged, unreadable or unwritable.
+# uninstall, as redline remove would: hooks that run the command at $2 (empty when another command
+# holds Redline's path), or the earlier version's agentic-debugging with a hook's arguments, go;
+# groups left empty go; everything else stays, even another tool's command named redline. Prints
+# removed, unchanged, unreadable or unwritable.
 remove_hooks_from() {
     /usr/bin/osascript -l JavaScript - "$1" "$2" 2>/dev/null <<'JS'
 function run(argv) {
@@ -320,7 +321,7 @@ function run(argv) {
         var match = /^'((?:[^']|'\\'')*)' hook ([\s\S]*)$/.exec(hook.command);
         if (!match) return false;
         var path = match[1].replace(/'\\''/g, "'"), args = match[2].split(" ");
-        if (path === argv[1]) return true;
+        if (argv[1] && path === argv[1]) return true;
         return path.split("/").pop() === "agentic-debugging" && args.length === 2 &&
             agents.indexOf(args[0]) >= 0 && events.indexOf(args[1]) >= 0;
     }
@@ -871,6 +872,10 @@ Next: add Redline to your iOS app. Add the package https://github.com/merickster
 # left, because the uninstall deletes the command they run.
 remove_hooks() {
     local output status file result rc failed="" delegated=false unexplained=false found=false kept=false
+    # Hooks running the command's path are Redline's only while that path is Redline's command or
+    # holds nothing; when another command sits there, its hooks are that tool's and stay.
+    local owned="$COMMAND"
+    if [ -e "$COMMAND" ] && ! command_is_ours; then owned=""; fi
     if [ -x "$COMMAND" ] && command_is_ours; then
         delegated=true
         output="$("$COMMAND" remove 2>&1)"
@@ -902,7 +907,7 @@ remove_hooks() {
                 "Check its owner and permissions with ls -lO $file, then run the same command again."
             continue
         fi
-        result="$(remove_hooks_from "$file" "$COMMAND")"
+        result="$(remove_hooks_from "$file" "$owned")"
         # Unchanged: the hooks there are another tool's, such as another command named redline.
         [ "$result" != "unchanged" ] || continue
         found=true
