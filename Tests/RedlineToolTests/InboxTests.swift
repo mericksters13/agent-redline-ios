@@ -117,6 +117,34 @@ struct InboxTests {
         #expect(builder.takeAddressed() == nil)
     }
 
+    @Test func aHookAnswerCarriesOnlyWhatFitsAndLeavesTheRestWaiting() throws {
+        let folder = root.appending(path: "App", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let chat = ChatSession(
+            paths: paths,
+            folder: folder,
+            extraApps: ["com.example.app"],
+            agent: "codex",
+            id: "codex-A",
+            startsHub: false
+        )
+        let recipient = ReportRecipient(chat: "codex-A", agent: "codex", folder: folder.path)
+        let first = try inboxReport("20261004-120000", recipient: recipient)
+        let second = try inboxReport("20261004-120100", recipient: recipient)
+        // Both fit in the usual budget.
+        let both = try #require(chat.takeAddressed())
+        #expect(both.reports.count == 2)
+        ChatSession.settle(both.reports, isDelivered: false)
+
+        // With room for one, the oldest goes and the next waits for the chat's next hook.
+        let budget = ReportContent.text(for: both.reports[0]).utf8.count
+        let one = try #require(chat.takeAddressed(budget: budget))
+        #expect(one.reports.map(\.folder) == [first])
+        let next = try #require(chat.takeAddressed(budget: budget))
+        #expect(next.reports.map(\.folder) == [second])
+        #expect(chat.takeAddressed() == nil)
+    }
+
     @Test func inboxFoldersSortByTimeAndKeepPhonesApart() {
         // Two iPhones of one model share the start of their UDID, so the end tells them apart.
         #expect(

@@ -33,6 +33,7 @@ enum ReportDelivery {
         // each one delivered once it's copied. No mark soon means no hub is watching.
         if !address.acceptsUploads {
             let outcome = await waitForSimulatorHub(toTake: Set(reports.map(\.id)), in: store, patience: patience)
+            if outcome == .delivered { store.pruneDeliveredReports() }
             store.recordDelivery(outcome)
             return outcome
         }
@@ -44,6 +45,7 @@ enum ReportDelivery {
             patience: patience
         )
         store.markDelivered(result.delivered)
+        store.pruneDeliveredReports()
         store.recordDelivery(result.outcome)
         // The hub answered, so iOS has allowed local network access.
         if result.outcome != .unreachable { UserDefaults.standard.set(true, forKey: hubReachedKey) }

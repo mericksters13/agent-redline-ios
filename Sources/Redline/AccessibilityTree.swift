@@ -177,6 +177,11 @@ enum AccessibilityTree {
         default:
             return true
         }
+        return coversWindow(controller, in: window)
+    }
+
+    /// Whether a presented controller's own view is opaque and covers the whole window.
+    private static func coversWindow(_ controller: UIViewController, in window: UIWindow) -> Bool {
         guard let view = controller.viewIfLoaded else { return false }
         let backgroundAlpha = view.backgroundColor?.resolvedColor(with: view.traitCollection).cgColor.alpha ?? 0
         return backgroundAlpha > 0.99 && view.alpha > 0.99
@@ -197,9 +202,12 @@ enum AccessibilityTree {
     /// An open menu presents an empty controller and draws its items in the window, over the screen
     /// it opened from.
     ///
-    /// Such a presentation hides nothing and isn't a new screen.
+    /// Such a presentation hides nothing and isn't a new screen. One that is opaque over the whole
+    /// window hides the screen under it even when it has nothing for accessibility, so it counts as
+    /// showing something; a menu's presentation, which the screen shows through, never is.
     private static func showsContent(_ controller: UIViewController) -> Bool {
         guard let view = controller.viewIfLoaded, let window = view.window else { return false }
+        if coversWindow(controller, in: window) { return true }
         return !elements(under: [view], screenBounds: window.bounds, stopAtFirst: true).isEmpty
     }
 
