@@ -9,25 +9,37 @@ import UIKit
 /// (https://github.com/Connected-Mate/AnnotateKit, MIT).
 @MainActor
 enum AccessibilityTree {
-    private static var isAutomationEnabled = false
+    /// Where the automation switch stands.
+    enum Automation {
+        case notTried
+        case on
+        /// libAccessibility or the switch couldn't be found: SwiftUI screens may show no elements,
+        /// though UIKit views can still be picked.
+        case unavailable
+    }
+
+    /// Settled when the overlay is installed, before anything is picked.
+    private(set) static var automation = Automation.notTried
 
     /// SwiftUI builds its accessibility tree only when an assistive client is connected.
     ///
     /// Turn on the automation mode UI testing uses so the tree exists when we read it. Debug builds
     /// only.
     static func enableAutomation() {
-        guard !isAutomationEnabled else { return }
-        isAutomationEnabled = true
+        guard automation == .notTried else { return }
         guard let handle = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW) else {
             Log.accessibility.error("Couldn't open libAccessibility; SwiftUI screens may show no elements")
+            automation = .unavailable
             return
         }
         guard let symbol = dlsym(handle, "AXSSetAutomationEnabled") ?? dlsym(handle, "_AXSSetAutomationEnabled") else {
             Log.accessibility.error("AXSSetAutomationEnabled is missing; SwiftUI screens may show no elements")
+            automation = .unavailable
             return
         }
         typealias Setter = @convention(c) (Int32) -> Void
         unsafeBitCast(symbol, to: Setter.self)(1)
+        automation = .on
     }
 
     /// The views to read in `windows`: each window, or only what a presented sheet shows.

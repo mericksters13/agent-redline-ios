@@ -89,11 +89,13 @@ struct OverlayView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
 
-            if session.mode == .picking, let hint = session.hint {
+            // A toast in pick mode takes the same place.
+            if session.mode == .picking, session.toast == nil, let hint = session.hint {
                 hintChip(hint)
+                    .padding(.horizontal, 12)
                     .frame(width: width)
                     .padding(.top, islandBottom + 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             }
 
             if session.mode == .attaching {
@@ -178,13 +180,12 @@ struct OverlayView: View {
             .accessibilityHidden(true)
     }
 
-    /// Under the island after a tap that found nothing: which mode this is and the way out.
-    private func hintChip(_ title: String) -> some View {
-        let name = Text(title).foregroundStyle(Mono.text)
-        let tap = Text("  Tap ").foregroundStyle(Mono.secondary)
-        let close = Text(Image(systemName: "xmark.circle.fill")).foregroundStyle(Mono.text)
-        let rest = Text(" to use the app").foregroundStyle(Mono.secondary)
-        return Text("\(name)\(tap)\(close)\(rest)")
+    /// The line under the island, shown for a moment in pick mode.
+    ///
+    /// It takes no touches, so it never blocks the app or a control. VoiceOver skips it: a tap that
+    /// found nothing is announced, and with VoiceOver on SwiftUI builds its tree anyway.
+    private func hintChip(_ hint: DebugSession.Hint) -> some View {
+        hintText(hint)
             .font(.footnote.weight(.semibold))
             .lineLimit(1)
             .padding(.horizontal, 14)
@@ -194,6 +195,19 @@ struct OverlayView: View {
             .shadow(color: .black.opacity(0.3), radius: 12, y: 5)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
+    }
+
+    private func hintText(_ hint: DebugSession.Hint) -> Text {
+        switch hint {
+        case .annotateMode:
+            let name = Text("Annotate mode").foregroundStyle(Mono.text)
+            let tap = Text("  Tap ").foregroundStyle(Mono.secondary)
+            let close = Text(Image(systemName: "xmark.circle.fill")).foregroundStyle(Mono.text)
+            let rest = Text(" to use the app").foregroundStyle(Mono.secondary)
+            return Text("\(name)\(tap)\(close)\(rest)")
+        case .swiftUIUnreadable:
+            return Text("SwiftUI elements may not be pickable").foregroundStyle(Mono.text)
+        }
     }
 
     /// A red line with a thin white halo, so it reads on dark and red content too.
