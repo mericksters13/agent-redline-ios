@@ -311,7 +311,9 @@ remove_hooks_from() {
 function run(argv) {
     ObjC.import("Foundation");
     var text = $.NSString.stringWithContentsOfFileEncodingError(argv[0], $.NSUTF8StringEncoding, null);
-    if (text.isNil()) return "unchanged";
+    // Called only after grep found Redline's hook text, so a file that doesn't decode is one whose
+    // hooks may still be there.
+    if (text.isNil()) return "unreadable";
     var settings;
     try { settings = JSON.parse(text.js); } catch (error) { return "unreadable"; }
     // The same agents and events as earlierHookArguments in Sources/RedlineTool/AgentSettings.swift.
@@ -930,7 +932,7 @@ remove_hooks() {
 }
 
 uninstall() {
-    local domain name have tmp rc artifact try left="" service=""
+    local domain name have tmp rc artifact try left="" service="" running=false
     start_log
     step "Removing Redline"
 
@@ -1002,8 +1004,10 @@ uninstall() {
         case $? in
             0) item "Done" "Stopped Redline" ;;
             2)
-                left="${left:+$left and }a running Redline"
-                item "Needs you" "Redline is still running and didn't stop when asked." "Quit it from its menu bar icon."
+                running=true
+                left="${left:+$left and }a running Redline and $APP"
+                item "Needs you" "Redline is still running and didn't stop when asked, so $APP stays for now." \
+                    "Quit it from its menu bar icon, then run the same command again."
                 ;;
         esac
     fi
@@ -1013,6 +1017,8 @@ uninstall() {
             item "Skipped" "$artifact was already removed"
             continue
         fi
+        # Not under a Redline that is still running: it keeps working from its bundle until it quits.
+        if [ "$artifact" = "$APP" ] && $running; then continue; fi
         if [ "$artifact" = "$APP" ] && [ -e "$APP" ] && ! app_is_ours; then
             item "Skipped" "Kept $APP: it is another app (bundle identifier: $(app_identifier || true)), not Redline"
             continue
