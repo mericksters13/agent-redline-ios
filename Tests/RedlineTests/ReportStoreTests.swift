@@ -455,6 +455,24 @@ struct ReportStoreTests {
         #expect(try files.contentsOfDirectory(atPath: store.reportsDirectory.path).isEmpty)
     }
 
+    @Test func aReportCutShortWithUnreadableNotesIsKeptForRecovery() throws {
+        let files = FileManager.default
+        let sent = annotation("Cut off")
+        try store.saveDraft([sent])
+        try store.saveScreenshot(Data([1]), named: sent.screenshots[0])
+        let started = try store.beginReport(date: Date(timeIntervalSince1970: 1_790_000_000))
+        // Notes saved in a format this version can't read.
+        try Data("{\"future\":true}".utf8).write(to: started.draft.appending(path: "annotations.json"))
+
+        store.recoverInterruptedReports()
+        #expect(store.loadDraft().isEmpty)
+        #expect(try files.contentsOfDirectory(atPath: store.reportsDirectory.path).isEmpty)
+        let kept = try files.contentsOfDirectory(at: store.unreadableDraftsDirectory, includingPropertiesForKeys: nil)
+        #expect(kept.count == 1)
+        #expect(try Data(contentsOf: kept[0].appending(path: "annotations.json")) == Data("{\"future\":true}".utf8))
+        #expect(try Data(contentsOf: kept[0].appending(path: sent.screenshots[0])) == Data([1]))
+    }
+
     @Test func aReportCutShortPutsItsNotesBackAtTheNextLaunch() throws {
         let files = FileManager.default
         let capture = Capture(id: UUID(), file: "capture.png", size: CGSize(width: 402, height: 874), scroll: nil, elements: [], group: 0)
