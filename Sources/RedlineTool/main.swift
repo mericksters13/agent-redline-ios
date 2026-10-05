@@ -190,7 +190,9 @@ case "app":
         hub.stop()
     }
     HubAppContext.hub = hub
-    // Report notifications come from Redline; macOS asks the user once.
+    // Report notifications come from Redline; macOS asks the user once. They show while the
+    // panel is open too.
+    UNUserNotificationCenter.current().delegate = ForegroundNotifications.shared
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     NSApplication.shared.setActivationPolicy(.accessory)
     HubMenuBarApp.main()

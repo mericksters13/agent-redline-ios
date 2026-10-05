@@ -217,17 +217,20 @@ struct ReportStoreTests {
         try Data(#"{"device":"x","hosts":["mac.local"],"port":47361}"#.utf8).write(to: store.hubAddressFile)
         #expect(store.hubAddress()?.token == nil)
         // The hub reads exactly these lines; see the Mac tool's ReportSourcesTests.
-        let offer = HubLink.Offer(device: address.device, bundleID: "com.example.app", token: "secret",
+        let hello = String(decoding: HubLink.encode(HubLink.Hello(device: "D", bundleID: "com.example.app", nonce: "a")), as: UTF8.self)
+        #expect(hello == #"{"bundleID":"com.example.app","device":"D","kind":"hello","nonce":"a"}"# + "\n")
+        #expect(HubLink.decode(HubLink.Challenge.self, from: Data(#"{"nonce":"h","proof":"p"}"#.utf8)) == HubLink.Challenge(nonce: "h", proof: "p"))
+        let offer = HubLink.Offer(device: address.device, bundleID: "com.example.app", proof: "p",
                                   reports: [.init(id: "20261003-215826", finishedAt: Date(timeIntervalSince1970: 1_791_000_000))])
         let line = String(decoding: HubLink.encode(offer), as: UTF8.self)
-        #expect(line == #"{"bundleID":"com.example.app","device":"00008150-00123C360CF3C01C","reports":[{"finishedAt":"2026-10-03T04:00:00Z","id":"20261003-215826"}],"token":"secret"}"# + "\n")
+        #expect(line == #"{"bundleID":"com.example.app","device":"00008150-00123C360CF3C01C","proof":"p","reports":[{"finishedAt":"2026-10-03T04:00:00Z","id":"20261003-215826"}]}"# + "\n")
         #expect(HubLink.decode(HubLink.Answer.self, from: Data(#"{"delivered":[],"want":["20261003-215826"]}"#.utf8))
                 == HubLink.Answer(want: ["20261003-215826"], delivered: []))
         let upload = String(decoding: HubLink.encode(HubLink.Upload(id: "r", files: ["report.md": Data("# Hi".utf8)])), as: UTF8.self)
         #expect(upload == #"{"files":{"report.md":"IyBIaQ=="},"id":"r"}"# + "\n")
         // Asking which chats a report can go to, and the answer.
-        let ask = String(decoding: HubLink.encode(HubLink.ChatsRequest(device: "D", bundleID: "com.example.app", token: "secret", sourceFile: "/w/App.swift")), as: UTF8.self)
-        #expect(ask == #"{"bundleID":"com.example.app","device":"D","kind":"chats","sourceFile":"/w/App.swift","token":"secret"}"# + "\n")
+        let ask = String(decoding: HubLink.encode(HubLink.ChatsRequest(device: "D", bundleID: "com.example.app", proof: "p", sourceFile: "/w/App.swift")), as: UTF8.self)
+        #expect(ask == #"{"bundleID":"com.example.app","device":"D","kind":"chats","proof":"p","sourceFile":"/w/App.swift"}"# + "\n")
         let list = #"{"agents":["claude"],"chats":[{"agent":"claude","folder":"wt","id":"s1","lastActive":"2026-10-03T04:00:00Z","sameWorktree":true,"title":"Let"}],"worktree":"wt"}"#
         #expect(HubLink.decode(HubLink.ChatList.self, from: Data(list.utf8)) == HubLink.ChatList(
             agents: ["claude"], chats: [HubLink.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt", sameWorktree: true,
@@ -244,6 +247,25 @@ struct ReportStoreTests {
         // A simulator app's address says it doesn't upload.
         try Data(#"{"device":"S","hosts":["127.0.0.1"],"port":47361,"token":"t","uploads":false}"#.utf8).write(to: store.hubAddressFile)
         #expect(store.hubAddress()?.uploads == false)
+    }
+
+    @Test func theAppSendsNothingUntilTheHubProvesItHoldsTheToken() {
+        // The hub makes exactly these proofs; see the Mac tool's HubTests.
+        #expect(HubLink.proof(.app, token: "secret", appNonce: "a", hubNonce: "h") == "4401046e18c86d9341f3fd816d12b80347958cf02338a89bfd5ec2f8a335a707")
+        #expect(HubLink.proof(.hub, token: "secret", appNonce: "a", hubNonce: "h") == "f4a6ae4aee48255a3141214cd10e0808b632de322c281bd5a839403249bc7c0a")
+        let hello = HubLink.Hello(device: "D", bundleID: "com.example.app", nonce: "a")
+        let hub = HubLink.Challenge(nonce: "h", proof: "f4a6ae4aee48255a3141214cd10e0808b632de322c281bd5a839403249bc7c0a")
+        #expect(HubLink.appProof(after: hub, to: hello, token: "secret") == "4401046e18c86d9341f3fd816d12b80347958cf02338a89bfd5ec2f8a335a707")
+        // Something that doesn't hold the token, such as whatever answers at an old address.
+        #expect(HubLink.appProof(after: hub, to: hello, token: "another") == nil)
+        #expect(HubLink.appProof(after: HubLink.Challenge(nonce: "h", proof: "guess"), to: hello, token: "secret") == nil)
+        #expect(HubLink.appProof(after: HubLink.Challenge(nonce: "h"), to: hello, token: "secret") == nil)
+        // A proof made for another connection's random value isn't taken.
+        #expect(HubLink.appProof(after: hub, to: HubLink.Hello(device: "D", bundleID: "com.example.app", nonce: "b"), token: "secret") == nil)
+        // The app's own proof can't stand in for the hub's.
+        #expect(HubLink.appProof(after: HubLink.Challenge(nonce: "h", proof: "4401046e18c86d9341f3fd816d12b80347958cf02338a89bfd5ec2f8a335a707"), to: hello, token: "secret") == nil)
+        #expect(HubLink.nonce().count == 64)
+        #expect(HubLink.nonce() != HubLink.nonce())
     }
 
     @Test func thePickedChatIsSavedWithTheReport() throws {
