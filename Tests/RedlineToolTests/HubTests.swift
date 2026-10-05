@@ -418,6 +418,15 @@ struct HubTests {
         hub.flushWrites()
     }
 
+    @Test func aHubThatNeverStartedLeavesTheRunningHubsFileAlone() throws {
+        // Another hub runs and holds `hub.pid`; this one stops, such as on a signal, without
+        // having started.
+        let hub = try hub()
+        try Data("12345".utf8).write(to: paths.pid)
+        hub.stop()
+        #expect(try String(contentsOf: paths.pid, encoding: .utf8) == "12345")
+    }
+
     @Test func aStoppedHubHasSavedWhatItFiledAndTakesNoMore() throws {
         let hub = try hub()
         let token = hub.issueToken(device: phone, bundleID: app)

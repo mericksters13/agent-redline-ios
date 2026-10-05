@@ -56,5 +56,16 @@ struct LineBufferTests {
         // The cancelled timeout doesn't fire later, and a second resume does nothing.
         first.resume(2)
     }
+
+    @Test func aLaterTimeoutReplacesTheOneBefore() async {
+        // A read waits again each time more of a line arrives.
+        let once = Once<Int>()
+        let timedOut = await withCheckedContinuation { continuation in
+            once.set(continuation)
+            once.timeout(after: 0.05, on: .global(), with: 0)
+            once.timeout(after: 0.2, on: .global(), with: 1)
+        }
+        #expect(timedOut == 1)
+    }
 }
 #endif
