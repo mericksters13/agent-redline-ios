@@ -2,7 +2,7 @@
 
 Report UI issues from an iPhone straight into the coding agent chat that is working on the app.
 
-Tap the floating debugger button, tap the broken elements, add notes, and send. The report lands in the active agent chat for that app's project, and the agent can reply on the phone.
+Tap the floating debugger button, tap the broken elements, add notes, and send. The report lands in the active agent chat for that app's project.
 
 Screenshots work too. Take one as usual and send it from the thumbnail that slides in, or in pick mode use the capture button to attach the screen as it is, or the paperclip to attach photos. Element notes and attachments travel together in one report. Each screen arrives as one screenshot with every note on it outlined and numbered; a screen you scrolled while noting is stitched into one tall screenshot (only a very long one is split, between sections, into labeled parts), and `report.md` tells the agent which picture shows each note.
 
@@ -31,4 +31,4 @@ Reports reach a chat only through the `agentic-debugging` tool on the Mac. Witho
 
 - iOS Swift package: floating debugger button, element picker, annotations, glance bubble and full chat.
 - Mac tool (`agentic-debugging`): the hub that finds paired phones over Bonjour, stores reports and conversations, and routes them to agent chats.
-- MCP server (`agentic-debugging mcp`): lets any MCP-capable agent receive reports and message the phone.
+- MCP server (`agentic-debugging mcp`): lets any MCP-capable agent receive reports.
