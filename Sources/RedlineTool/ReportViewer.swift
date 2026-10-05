@@ -35,7 +35,8 @@ struct ReportViewer: View {
 
     /// Reads the report's snapshots, its chat and where it went.
     ///
-    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    /// Runs off the main actor.
+    @concurrent
     nonisolated static func load(_ folder: URL) async -> Contents {
         await withCheckedContinuation { continuation in
             loader.async {

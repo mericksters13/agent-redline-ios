@@ -745,8 +745,7 @@ final class DebugSession {
     }
 
     /// Runs off the main actor.
-    ///
-    /// Add @concurrent when the tools version reaches 6.2.
+    @concurrent
     nonisolated private static func sentReports(from store: ReportStore) async -> [SentReport] {
         store.sentReports()
     }
@@ -757,8 +756,7 @@ final class DebugSession {
     }
 
     /// Runs off the main actor.
-    ///
-    /// Add @concurrent when the tools version reaches 6.2.
+    @concurrent
     nonisolated private static func lastDelivery(from store: ReportStore) async -> Delivery? {
         store.lastDelivery()
     }
@@ -1286,8 +1284,8 @@ final class DebugSession {
     /// Draws the report's snapshots, writes it, then hands every report the Mac hasn't confirmed to
     /// its hub.
     ///
-    /// Returns how that went. Runs off the main actor. Add @concurrent when the tools version
-    /// reaches 6.2.
+    /// Returns how that went. Runs off the main actor.
+    @concurrent
     nonisolated private static func finishAndDeliver(
         _ input: ReportBuilder.Input,
         folder: URL,
@@ -1753,8 +1751,7 @@ final class DebugSession {
     }
 
     /// Runs off the main actor.
-    ///
-    /// Add @concurrent when the tools version reaches 6.2.
+    @concurrent
     nonisolated private static func write(
         _ images: [UIImage],
         named names: [String],

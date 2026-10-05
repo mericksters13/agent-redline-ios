@@ -435,13 +435,14 @@ preflight() {
     xcode="$(xcodebuild -version 2>/dev/null | head -n 1)"
     xcrun --find devicectl >/dev/null 2>&1 ||
         stop "The selected Xcode ($developer) has no devicectl, which Redline uses to reach iPhones." \
-            "Install Xcode 16 or later and select it: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+            "Install Xcode 26 or later and select it: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
     xcrun --find swift >/dev/null 2>&1 ||
         stop "The selected Xcode ($developer) has no swift." "Reinstall Xcode from the App Store, then open it once."
     swift_version="$(swift --version 2>/dev/null | sed -n 's/.*Swift version \([0-9][0-9.]*\).*/\1/p' | head -n 1)"
-    [ "${swift_version%%.*}" -ge 6 ] 2>/dev/null ||
-        stop "Redline needs Swift 6 or later; swift is ${swift_version:-missing}." \
-            "Install Xcode 16 or later and select it: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+    if [ -z "$swift_version" ] || older_than "$swift_version" 6.2; then
+        stop "Redline needs Swift 6.2 or later, which comes with Xcode 26; found Swift ${swift_version:-of an unknown version}, with ${xcode:-Xcode} selected." \
+            "Install Xcode 26 or later and select it: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+    fi
     git --version >/dev/null 2>&1 ||
         stop "git isn't working." "Select Xcode, which includes git: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
 

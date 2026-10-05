@@ -211,9 +211,9 @@ enum ScreenComposition {
         let span = high - low
         let sections = elements.filter { $0.height < span }
         let rows = elements.filter { $0.height < span * 0.25 }
-        let candidates = ([high] + (outlines + elements).flatMap { [$0.minY - 4, $0.maxY + 4] })
-            .filter { $0 >= low && $0 <= high }
-            .sorted(by: >)
+        // Two steps with explicit types: as one expression, Swift 6.2 can't type-check it in time.
+        let edges: [CGFloat] = (outlines + elements).flatMap { rect -> [CGFloat] in [rect.minY - 4, rect.maxY + 4] }
+        let candidates = ([high] + edges).filter { $0 >= low && $0 <= high }.sorted(by: >)
         for blockers in [outlines + sections, outlines + rows] {
             if let row = candidates.first(where: { row in !blockers.contains { $0.minY < row && $0.maxY > row } }) {
                 return row

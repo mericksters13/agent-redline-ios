@@ -174,7 +174,8 @@ struct CodexAppTests {
                 CodexApp.startTurn(thread: "t-1", text: "A report", snapshots: [], socketPath: path, timeout: 1)
             } == .failed("The Codex app didn't answer")
         )
-        #expect(Date.now.timeIntervalSince(started) < 2.5)
+        // Gives up near the 1 s timeout, not the 30 s default; the margin covers a busy CI machine.
+        #expect(Date.now.timeIntervalSince(started) < 5)
     }
 
     @Test func aChatNoWindowHasOpenIsReported() async throws {
@@ -225,7 +226,8 @@ struct CodexAppTests {
         let app = try fakeApp(hello: nil)
         let started = Date.now
         #expect(await offPool { CodexApp.checkHandshake(socketPath: app.path, timeout: 1) } == .notAnswering)
-        #expect(Date.now.timeIntervalSince(started) < 2.5)
+        // Gives up near the 1 s timeout, not the 30 s default; the margin covers a busy CI machine.
+        #expect(Date.now.timeIntervalSince(started) < 5)
     }
 
     @Test func anAppThatAnswersWithoutAClientIsNotAnswering() async throws {
