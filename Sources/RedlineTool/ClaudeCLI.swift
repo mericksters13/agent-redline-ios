@@ -98,7 +98,7 @@ enum ClaudeCLI {
         switch need {
         case .install:
             """
-            Claude Code: the claude command isn't installed. It starts new Claude Code chats for reports. Install it, then run setup again:
+            Claude Code: the claude command isn't installed. It starts new Claude Code chats for reports. Install it, then run the Redline installer again, which also adds Redline's MCP server to Claude Code:
               curl -fsSL https://claude.ai/install.sh | bash
             """
         case .update:

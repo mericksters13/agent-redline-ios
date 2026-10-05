@@ -750,8 +750,10 @@ register_mcp() {
 # CLAUDE_CONFIG_DIR when it is set, so claude runs with the settings and sign-in checked here.
 # launchd gives it only the system's folders on PATH, so the folder of the claude command found
 # here goes first: installed under a Node version manager, claude (and the node it runs) is only
-# there.
+# there. So does the folder of node when it is elsewhere, such as Homebrew's node with a custom npm
+# prefix: an npm-installed claude runs node through env.
 write_launch_agent_plist() {
+    local path node
     rm -f "$1"
     plutil -create xml1 "$1" &&
         plutil -insert Label -string "$LABEL" "$1" &&
@@ -765,7 +767,10 @@ write_launch_agent_plist() {
         plutil -insert EnvironmentVariables.CLAUDE_CONFIG_DIR -string "$CLAUDE_CONFIG_DIR" "$1" || return 1
     fi
     [ -n "$CLAUDE" ] || return 0
-    plutil -insert EnvironmentVariables.PATH -string "$(dirname "$CLAUDE"):/usr/bin:/bin:/usr/sbin:/sbin" "$1"
+    path="$(dirname "$CLAUDE")"
+    node="$(command -v node 2>/dev/null || true)"
+    case $node in /*) [ "$(dirname "$node")" = "$path" ] || path="$path:$(dirname "$node")" ;; esac
+    plutil -insert EnvironmentVariables.PATH -string "$path:/usr/bin:/bin:/usr/sbin:/sbin" "$1"
 }
 
 start_redline() {
@@ -826,7 +831,7 @@ check_codex() {
     elif [ -d "$HOME/.codex" ]; then
         item "Needs you" "Codex: the Report delivery hook isn't in $HOME/.codex/hooks.json (see the Setup line)." \
             "Fix or move that file, then run: $COMMAND setup" "Then in Codex, open /hooks and trust \"Report delivery\"."
-    elif [ -x /opt/homebrew/bin/codex ] || [ -x /usr/local/bin/codex ] || [ -d /Applications/Codex.app ] || [ -d /Applications/ChatGPT.app/Contents/Resources/codex-cli ]; then
+    elif [ -x /opt/homebrew/bin/codex ] || [ -x /usr/local/bin/codex ] || [ -x "$HOME/.local/bin/codex" ] || [ -d /Applications/Codex.app ] || [ -d /Applications/ChatGPT.app/Contents/Resources/codex-cli ]; then
         item "Skipped" "Codex: installed but not used yet (no $HOME/.codex), so no hook was added. After you first use it, run: $COMMAND setup"
     else
         item "Skipped" "Codex: not used on this Mac"
@@ -999,15 +1004,22 @@ uninstall() {
         item "Done" "Login item: removed the $LABEL launchd service"
     fi
 
-    if app_is_ours; then
+    # A Redline whose bundle was deleted while it ran is still stopped when the command is Redline's.
+    if app_is_ours || { [ ! -e "$APP" ] && command_is_ours; }; then
         stop_app "$APP"
         case $? in
             0) item "Done" "Stopped Redline" ;;
             2)
                 running=true
-                left="${left:+$left and }a running Redline and $APP"
-                item "Needs you" "Redline is still running and didn't stop when asked, so $APP stays for now." \
-                    "Quit it from its menu bar icon, then run the same command again."
+                if [ -e "$APP" ]; then
+                    left="${left:+$left and }a running Redline and $APP"
+                    item "Needs you" "Redline is still running and didn't stop when asked, so $APP stays for now." \
+                        "Quit it from its menu bar icon, then run the same command again."
+                else
+                    left="${left:+$left and }a running Redline"
+                    item "Needs you" "Redline is still running and didn't stop when asked." \
+                        "Quit it from its menu bar icon, then run the same command again."
+                fi
                 ;;
         esac
     fi
