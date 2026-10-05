@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import SwiftUI
+import UserNotifications
 
 /// The hub as a menu bar app: the same process takes reports off phones and simulators, and its
 /// menu bar panel shows the devices that are active and the reports sent, with where each went.
@@ -71,6 +72,22 @@ private enum MenuBarIcon {
 private final class HubAppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         HubAppContext.hub?.stop()
+    }
+}
+
+/// Shows Redline's notifications while the app is in front too, such as while its panel is open.
+///
+/// Without it, macOS hands them to the app and shows nothing.
+final class ForegroundNotifications: NSObject, UNUserNotificationCenterDelegate, Sendable {
+    /// The notification center keeps its delegate weakly, so this one stays for the app's life.
+    static let shared = ForegroundNotifications()
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .list])
     }
 }
 

@@ -2,8 +2,9 @@
 import Foundation
 import Network
 
-/// Where apps send their reports: an offer, the hub's answer, the reports it asked for, and its
-/// reply, one line of JSON each, over the local network.
+/// Where apps send their reports: the app says who it is and each side proves it holds the
+/// app's token, then an offer, the hub's answer, the reports it asked for, and its reply, one line
+/// of JSON each, over the local network.
 ///
 /// Thread safety: `listener` and `browser` are written once in `start()` and read only in `stop()`.
 final class HubListener: @unchecked Sendable {
@@ -59,19 +60,35 @@ final class HubListener: @unchecked Sendable {
     private func serve(_ lines: Lines) async {
         guard await lines.open() else { return }
         guard let first = await lines.read() else { return }
+        let hello: HubMessage.Hello
+        do {
+            hello = try HubMessage.decode(HubMessage.Hello.self, from: first)
+        } catch {
+            hub.log("A connection didn't start with an app saying who it is: \(HubMessage.reason(error))")
+            return
+        }
+        guard hello.kind == "hello" else {
+            hub.log("A connection didn't start with an app saying who it is")
+            return
+        }
+        let nonces = HubMessage.Nonces(app: hello.nonce, hub: HubMessage.nonce())
+        let challenge = hub.challenge(hello, nonce: nonces.hub)
+        guard await lines.send(HubMessage.encode(challenge)), challenge.refused == nil,
+            let second = await lines.read()
+        else { return }
         // Before sending, the app asks where a report can go. An offer has no kind.
-        if let request = try? HubMessage.decode(HubMessage.ChatsRequest.self, from: first), request.kind == "chats" {
-            _ = await lines.send(HubMessage.encode(await hub.chats(request)))
+        if let request = try? HubMessage.decode(HubMessage.ChatsRequest.self, from: second), request.kind == "chats" {
+            _ = await lines.send(HubMessage.encode(await hub.chats(request, nonces: nonces)))
             return
         }
         let offer: HubMessage.Offer
         do {
-            offer = try HubMessage.decode(HubMessage.Offer.self, from: first)
+            offer = try HubMessage.decode(HubMessage.Offer.self, from: second)
         } catch {
-            hub.log("A connection didn't start with an offer from an app: \(HubMessage.reason(error))")
+            hub.log("\(hello.bundleID) didn't follow its hello with an offer: \(HubMessage.reason(error))")
             return
         }
-        let answer = await hub.answer(offer)
+        let answer = await hub.answer(offer, nonces: nonces)
         guard await lines.send(HubMessage.encode(answer)), !answer.want.isEmpty else { return }
         var waiting = Set(answer.want)
         while !waiting.isEmpty {

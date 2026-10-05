@@ -217,7 +217,9 @@ case "app":
         failToStart("Another hub is running and didn't stop. Quit it, then open Redline again.")
     }
     HubAppContext.hub = hub
-    // Report notifications come from Redline; macOS asks the user once.
+    // Report notifications come from Redline; macOS asks the user once. They show while the
+    // panel is open too.
+    UNUserNotificationCenter.current().delegate = ForegroundNotifications.shared
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     NSApplication.shared.setActivationPolicy(.accessory)
     HubMenuBarApp.main()

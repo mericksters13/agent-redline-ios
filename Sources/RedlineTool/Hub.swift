@@ -403,10 +403,28 @@ final class Hub: @unchecked Sendable {
         }
     }
 
-    /// True when `token` is the one this hub gave the app on the device.
-    private func hasValidToken(_ token: String, device: String, bundleID: String) -> Bool {
-        let expected = state.withLock { $0.tokens[Self.key(device: device, bundleID: bundleID)] }
-        return expected.map { Self.constantTimeEquals($0, token) } ?? false
+    /// The hub's reply to an app saying who it is: proof that it holds the app's token, made with
+    /// the app's random value and `nonce`, the hub's own for this connection.
+    func challenge(_ hello: HubMessage.Hello, nonce: String) -> HubMessage.Challenge {
+        guard let token = state.withLock({ $0.tokens[Self.key(device: hello.device, bundleID: hello.bundleID)] })
+        else {
+            log("Turned down \(hello.bundleID) from \(phoneName(hello.device)): this hub never gave it an address")
+            return HubMessage.Challenge(
+                nonce: nonce,
+                refused: "The app needs this Mac's address again; it gets it the next time Xcode can reach the phone."
+            )
+        }
+        let nonces = HubMessage.Nonces(app: hello.nonce, hub: nonce)
+        return HubMessage.Challenge(nonce: nonce, proof: HubMessage.proof(.hub, token: token, nonces: nonces))
+    }
+
+    /// True when `proof` shows the app holds the token this hub gave it, on the connection whose
+    /// random values are `nonces`.
+    private func isProven(device: String, bundleID: String, proof: String, nonces: HubMessage.Nonces) -> Bool {
+        guard let token = state.withLock({ $0.tokens[Self.key(device: device, bundleID: bundleID)] }) else {
+            return false
+        }
+        return Self.constantTimeEquals(HubMessage.proof(.app, token: token, nonces: nonces), proof)
     }
 
     /// The hub's answer to an app's offer: the reports to send now, and the ones the app can stop
@@ -414,11 +432,11 @@ final class Hub: @unchecked Sendable {
     ///
     /// Only an app that was given this hub's address, and so is on a phone paired with this Mac,
     /// can deliver.
-    func answerNow(_ offer: HubMessage.Offer) -> HubMessage.Answer {
-        guard hasValidToken(offer.token, device: offer.device, bundleID: offer.bundleID) else {
+    func answerNow(_ offer: HubMessage.Offer, nonces: HubMessage.Nonces) -> HubMessage.Answer {
+        guard isProven(device: offer.device, bundleID: offer.bundleID, proof: offer.proof, nonces: nonces) else {
             let known = state.withLock { $0.tokens[Self.key(device: offer.device, bundleID: offer.bundleID)] != nil }
             log(
-                "Turned down \(offer.bundleID) from \(phoneName(offer.device)): \(known ? "its token doesn't match" : "this hub never gave it an address")"
+                "Turned down \(offer.bundleID) from \(phoneName(offer.device)): \(known ? "it didn't prove it holds its token" : "this hub never gave it an address")"
             )
             return HubMessage.Answer(
                 want: [],
@@ -443,10 +461,10 @@ final class Hub: @unchecked Sendable {
     }
 
     /// The chats a report from this app can go to, for the phone to show before the user sends.
-    func chatsNow(_ request: HubMessage.ChatsRequest) -> HubMessage.ChatList {
-        guard hasValidToken(request.token, device: request.device, bundleID: request.bundleID) else {
+    func chatsNow(_ request: HubMessage.ChatsRequest, nonces: HubMessage.Nonces) -> HubMessage.ChatList {
+        guard isProven(device: request.device, bundleID: request.bundleID, proof: request.proof, nonces: nonces) else {
             log(
-                "Turned down \(request.bundleID)'s question about chats from \(phoneName(request.device)): its token doesn't match"
+                "Turned down \(request.bundleID)'s question about chats from \(phoneName(request.device)): it didn't prove it holds its token"
             )
             return HubMessage.ChatList(agents: [], chats: [], refused: "The app needs this Mac's address again.")
         }
@@ -492,16 +510,16 @@ final class Hub: @unchecked Sendable {
     // the blocking work above on the hub's own queues and resume when it's done.
 
     /// `answerNow`, on the inbox queue.
-    func answer(_ offer: HubMessage.Offer) async -> HubMessage.Answer {
+    func answer(_ offer: HubMessage.Offer, nonces: HubMessage.Nonces) async -> HubMessage.Answer {
         await withCheckedContinuation { continuation in
-            inbox.async { continuation.resume(returning: self.answerNow(offer)) }
+            inbox.async { continuation.resume(returning: self.answerNow(offer, nonces: nonces)) }
         }
     }
 
     /// `chatsNow`, on the directory queue.
-    func chats(_ request: HubMessage.ChatsRequest) async -> HubMessage.ChatList {
+    func chats(_ request: HubMessage.ChatsRequest, nonces: HubMessage.Nonces) async -> HubMessage.ChatList {
         await withCheckedContinuation { continuation in
-            directory.async { continuation.resume(returning: self.chatsNow(request)) }
+            directory.async { continuation.resume(returning: self.chatsNow(request, nonces: nonces)) }
         }
     }
 
@@ -539,7 +557,7 @@ final class Hub: @unchecked Sendable {
             && name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "." }
     }
 
-    /// Compares tokens in time that doesn't depend on where they differ.
+    /// Compares proofs in time that doesn't depend on where they differ.
     static func constantTimeEquals(_ a: String, _ b: String) -> Bool {
         let x = Array(a.utf8)
         let y = Array(b.utf8)

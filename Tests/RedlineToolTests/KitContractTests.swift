@@ -45,10 +45,26 @@ struct KitContractTests {
                 == HubLink.Address(device: "D", hosts: ["h"], port: 1, token: "t")
         )
 
+        let hello = HubLink.Hello(device: "D", bundleID: "com.example.app", nonce: "a")
+        #expect(
+            try kitToMac(hello, as: HubMessage.Hello.self)
+                == HubMessage.Hello(kind: "hello", device: "D", bundleID: "com.example.app", nonce: "a")
+        )
+        let challenge = HubMessage.Challenge(nonce: "h", proof: "p")
+        #expect(
+            try HubLink.decode(HubLink.Challenge.self, from: HubMessage.encode(challenge).dropLast())
+                == HubLink.Challenge(nonce: "h", proof: "p")
+        )
+        let turnedDown = HubMessage.Challenge(nonce: "h", refused: "why")
+        #expect(
+            try HubLink.decode(HubLink.Challenge.self, from: HubMessage.encode(turnedDown).dropLast())
+                == HubLink.Challenge(nonce: "h", refused: "why")
+        )
+
         let offer = HubLink.Offer(
             device: "D",
             bundleID: "com.example.app",
-            token: "t",
+            proof: "p",
             reports: [.init(id: "20261003-215826", finishedAt: date)]
         )
         let macOffer = try kitToMac(offer, as: HubMessage.Offer.self)
@@ -76,7 +92,7 @@ struct KitContractTests {
         let request = HubLink.ChatsRequest(
             device: "D",
             bundleID: "com.example.app",
-            token: "t",
+            proof: "p",
             sourceFile: "/w/App.swift"
         )
         #expect(
@@ -85,7 +101,7 @@ struct KitContractTests {
                     kind: "chats",
                     device: "D",
                     bundleID: "com.example.app",
-                    token: "t",
+                    proof: "p",
                     sourceFile: "/w/App.swift"
                 )
         )
@@ -124,6 +140,18 @@ struct KitContractTests {
             ]
         )
         #expect(kitList.worktree == "wt" && kitList.newChatBase == "main" && kitList.refused == nil)
+    }
+
+    @Test func bothSidesMakeTheSameProofs() {
+        let nonces = HubMessage.Nonces(app: HubLink.nonce(), hub: HubMessage.nonce())
+        let hubProof = HubMessage.proof(.hub, token: "t", nonces: nonces)
+        let appProof = HubMessage.proof(.app, token: "t", nonces: nonces)
+        #expect(HubLink.proof(.hub, token: "t", appNonce: nonces.app, hubNonce: nonces.hub) == hubProof)
+        #expect(HubLink.proof(.app, token: "t", appNonce: nonces.app, hubNonce: nonces.hub) == appProof)
+        // The kit takes the hub's proof and answers with the one the hub checks.
+        let hello = HubLink.Hello(device: "D", bundleID: "com.example.app", nonce: nonces.app)
+        let challenge = HubLink.Challenge(nonce: nonces.hub, proof: hubProof)
+        #expect(HubLink.appProof(after: challenge, to: hello, token: "t") == appProof)
     }
 
     @Test func theKitKeepsOnlyPicksOfAgentsTheMacSendsTo() {

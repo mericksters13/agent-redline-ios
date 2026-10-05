@@ -21,8 +21,17 @@ struct HubTests {
         )
     }
 
+    /// The random values of a connection the tests make offers on.
+    private let nonces = HubMessage.Nonces(app: "a", hub: "h")
+
+    /// An offer with the proof an app holding `token` makes on that connection.
     private func offer(token: String, reports: [HubMessage.Offer.Report]) -> HubMessage.Offer {
-        HubMessage.Offer(device: phone, bundleID: app, token: token, reports: reports)
+        HubMessage.Offer(
+            device: phone,
+            bundleID: app,
+            proof: HubMessage.proof(.app, token: token, nonces: nonces),
+            reports: reports
+        )
     }
 
     @Test func onlySafeNamesBecomeFiles() {
@@ -145,7 +154,7 @@ struct HubTests {
             token: token,
             reports: [.init(id: "20261003-120000", finishedAt: Date.now.addingTimeInterval(-86_400))]
         )
-        let first = hub.answerNow(early)
+        let first = hub.answerNow(early, nonces: nonces)
         #expect(first.want == ["20261003-120000"])
         // Not confirmed until the hub has it.
         #expect(first.delivered.isEmpty)
@@ -153,7 +162,7 @@ struct HubTests {
             HubMessage.Upload(id: "20261003-120000", files: ["report.json": Data("{}".utf8)]),
             offeredIn: early
         )
-        #expect(hub.answerNow(early).delivered == ["20261003-120000"])
+        #expect(hub.answerNow(early, nonces: nonces).delivered == ["20261003-120000"])
         hub.flushWrites()
     }
 
@@ -393,13 +402,63 @@ struct HubTests {
     @Test func anOfferWithoutTheRightTokenIsTurnedDown() throws {
         let hub = try hub()
         _ = hub.issueToken(device: phone, bundleID: app)
-        let answer = hub.answerNow(offer(token: "guess", reports: [.init(id: "20261004-031600", finishedAt: .now)]))
+        let answer = hub.answerNow(
+            offer(token: "guess", reports: [.init(id: "20261004-031600", finishedAt: .now)]),
+            nonces: nonces
+        )
         #expect(answer.refused != nil)
         #expect(answer.want.isEmpty)
         // An app this hub never gave an address to is turned down too.
-        let stranger = HubMessage.Offer(device: "someone", bundleID: app, token: "x", reports: [])
-        #expect(hub.answerNow(stranger).refused != nil)
+        let stranger = HubMessage.Offer(device: "someone", bundleID: app, proof: "x", reports: [])
+        #expect(hub.answerNow(stranger, nonces: nonces).refused != nil)
         // Queued writes land before the test's folder is removed.
+        hub.flushWrites()
+    }
+
+    @Test func eachSideProvesItHoldsTheTokenWithoutSendingIt() throws {
+        // The kit makes exactly these proofs; see the kit's HubLinkTests.
+        #expect(
+            HubMessage.proof(.app, token: "secret", nonces: nonces)
+                == "4401046e18c86d9341f3fd816d12b80347958cf02338a89bfd5ec2f8a335a707"
+        )
+        #expect(
+            HubMessage.proof(.hub, token: "secret", nonces: nonces)
+                == "f4a6ae4aee48255a3141214cd10e0808b632de322c281bd5a839403249bc7c0a"
+        )
+
+        let hub = try hub()
+        let token = hub.issueToken(device: phone, bundleID: app)
+        let challenge = hub.challenge(
+            HubMessage.Hello(kind: "hello", device: phone, bundleID: app, nonce: "a"),
+            nonce: "h"
+        )
+        #expect(challenge.refused == nil)
+        #expect(challenge.proof == HubMessage.proof(.hub, token: token, nonces: nonces))
+        #expect(challenge.proof?.contains(token) == false)
+        // An app this hub never gave an address to gets no proof.
+        let stranger = hub.challenge(
+            HubMessage.Hello(kind: "hello", device: "someone", bundleID: app, nonce: "a"),
+            nonce: "h"
+        )
+        #expect(stranger.proof == nil)
+        #expect(stranger.refused != nil)
+
+        let reports: [HubMessage.Offer.Report] = [.init(id: "20261004-031600", finishedAt: .now)]
+        #expect(hub.answerNow(offer(token: token, reports: reports), nonces: nonces).refused == nil)
+        // A proof from another connection, such as one seen on the network, isn't taken.
+        let other = HubMessage.Nonces(app: "a", hub: "other")
+        #expect(hub.answerNow(offer(token: token, reports: reports), nonces: other).refused != nil)
+        // Nor the hub's own proof sent back.
+        let reflected = HubMessage.Offer(device: phone, bundleID: app, proof: challenge.proof ?? "", reports: [])
+        #expect(hub.answerNow(reflected, nonces: nonces).refused != nil)
+        let ask = HubMessage.ChatsRequest(
+            kind: "chats",
+            device: phone,
+            bundleID: app,
+            proof: challenge.proof ?? "",
+            sourceFile: nil
+        )
+        #expect(hub.chatsNow(ask, nonces: nonces).refused != nil)
         hub.flushWrites()
     }
 
@@ -411,7 +470,7 @@ struct HubTests {
         let offered = offer(token: token, reports: [old, new])
         // The old one was sent before this hub set the app up, and is still waiting for a Mac.
         try hub.storeNow(HubMessage.Upload(id: old.id, files: ["report.json": Data("{}".utf8)]), offeredIn: offered)
-        let answer = hub.answerNow(offered)
+        let answer = hub.answerNow(offered, nonces: nonces)
         #expect(answer.refused == nil)
         #expect(answer.want == ["20261004-031600"])
         #expect(answer.delivered == ["20261002-135144"])
@@ -438,7 +497,7 @@ struct HubTests {
             ]
         )
         // Offered again, it's on the Mac now.
-        let again = hub.answerNow(offered)
+        let again = hub.answerNow(offered, nonces: nonces)
         #expect(again.want.isEmpty)
         #expect(Set(again.delivered) == ["20261002-135144", "20261004-031600"])
         // Queued writes land before the test's folder is removed.
@@ -460,7 +519,7 @@ struct HubTests {
         let first = HubMessage.Offer.Report(id: "20261004-031600", finishedAt: .now)
         let second = HubMessage.Offer.Report(id: "20261004-031700", finishedAt: .now)
         let offered = offer(token: token, reports: [first, second])
-        _ = hub.answerNow(offered)
+        _ = hub.answerNow(offered, nonces: nonces)
         try hub.storeNow(HubMessage.Upload(id: first.id, files: ["report.json": Data("{}".utf8)]), offeredIn: offered)
         hub.stop()
         let saved = try HubPaths.decoder.decode([String: SourceState].self, from: Data(contentsOf: paths.state))
