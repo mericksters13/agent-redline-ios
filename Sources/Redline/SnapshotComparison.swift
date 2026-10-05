@@ -61,7 +61,7 @@ enum SnapshotComparison {
         let rectB = wholeB.intersection(CGRect(x: 0, y: 0, width: b.width, height: b.height))
         // Where the element runs off a capture, only the same part of it is compared.
         let cutA = CGPoint(x: rectA.minX - wholeA.minX, y: rectA.minY - wholeA.minY)
-        guard !rectA.isNull, !rectA.isEmpty, !rectB.isNull, rectA.size == rectB.size,
+        guard wholeA.size == wholeB.size, !rectA.isNull, !rectA.isEmpty, !rectB.isNull, rectA.size == rectB.size,
             cutA == CGPoint(x: rectB.minX - wholeB.minX, y: rectB.minY - wholeB.minY),
             let first = a.cropping(to: rectA), let second = b.cropping(to: rectB)
         else { return .max }

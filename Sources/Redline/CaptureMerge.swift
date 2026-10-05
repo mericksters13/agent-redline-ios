@@ -87,6 +87,7 @@ enum CaptureMerge {
             if !keepsEarlierStates(
                 stitching: capture,
                 image: image,
+                newNoteFrame: element.frame,
                 onto: group,
                 annotations: annotations,
                 loadImage: loadImage
@@ -130,10 +131,12 @@ enum CaptureMerge {
     /// The newest capture draws the content it shows, and the top or bottom bars when it is scrolled
     /// highest or lowest. Where that covers an earlier note's element, the element must look
     /// identical in it; after a segment switch, or a change in a bar, it doesn't, and the scrolled
-    /// capture starts a new snapshot instead.
+    /// capture starts a new snapshot instead. The same holds the other way for the new note: on a
+    /// bar an earlier capture would draw, its element must look identical in that capture.
     static func keepsEarlierStates(
         stitching capture: Capture,
         image: CGImage?,
+        newNoteFrame: CGRect,
         onto group: [Capture],
         annotations: [Annotation],
         loadImage: (_ capture: Capture) -> CGImage?
@@ -145,6 +148,18 @@ enum CaptureMerge {
         let bars = [plan.segments.first, plan.segments.last].compactMap { segment -> CGRect? in
             guard let segment, segment.captureID == capture.id else { return nil }
             return CGRect(x: 0, y: segment.sourceMinY, width: capture.size.width, height: segment.height)
+        }
+        // A new note on a bar that an earlier capture draws.
+        if newNoteFrame.midY < band.lowerBound || newNoteFrame.midY > band.upperBound {
+            for segment in [plan.segments.first, plan.segments.last] {
+                guard let segment, segment.captureID != capture.id else { continue }
+                let bar = CGRect(x: 0, y: segment.sourceMinY, width: capture.size.width, height: segment.height)
+                let shown = newNoteFrame.intersection(bar)
+                guard !shown.isNull, shown.height >= 1 else { continue }
+                guard let owner = group.first(where: { $0.id == segment.captureID }), let ownerImage = loadImage(owner),
+                    looksIdentical(shown, in: image, of: capture, as: shown, in: ownerImage, of: owner)
+                else { return false }
+            }
         }
         for annotation in annotations {
             guard let source = group.first(where: { $0.id == annotation.captureID }), let from = source.scroll,

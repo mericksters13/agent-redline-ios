@@ -183,6 +183,29 @@ struct CaptureMergeTests {
         #expect(draft.snapshots == [[1, 2]])
     }
 
+    /// A note on a changed tab bar, scrolled back up, starts a new snapshot.
+    ///
+    /// Stitched, the snapshot would take the tab bar from the earlier capture scrolled lower and
+    /// draw note 2 over the bar's old state. Note 1, whose card looks identical in the new capture,
+    /// moves onto it.
+    @Test func aScrollUpWithANoteOnAChangedTabBarStartsANewSnapshot() throws {
+        var draft = Draft()
+        try draft.addNote(on: GrowthScreen(segment: .length, scrollOffset: 100), identifier: "sleep.card")
+        let note = try draft.addNote(on: GrowthScreen(segment: .length, selectsInsights: true), label: "Insights")
+        let captures = try #require(draft.screens.first?.captures)
+        #expect(captures.map(\.group) == [0, 1])
+        #expect(draft.captureID(of: note) == captures.last?.id)
+        #expect(draft.snapshots == [[1, 2]])
+    }
+
+    @Test func aScrollUpWithANoteOnAnUnchangedTabBarIsStitched() throws {
+        var draft = Draft()
+        try draft.addNote(on: GrowthScreen(segment: .length, scrollOffset: 100), identifier: "sleep.card")
+        try draft.addNote(on: GrowthScreen(segment: .length), label: "Insights")
+        #expect(draft.screens.first?.captures.map(\.group) == [0, 0])
+        #expect(draft.snapshots == [[1, 2]])
+    }
+
     /// On a 3x phone, layout moves by thirds of a point, which a 2x capture shows as two thirds of
     /// a pixel.
     @Test(arguments: [1.0 / 3, 2.0 / 3, 1.5])

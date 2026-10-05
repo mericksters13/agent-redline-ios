@@ -194,6 +194,9 @@ struct SnapshotComparisonTests {
         let cut = CGRect(x: 700, y: 100, width: 200, height: 40)
         let inside = CGRect(x: 500, y: 100, width: 200, height: 40)
         #expect(SnapshotComparison.differingPixels(weight, in: cut, weight, in: inside) == .max)
+        // Cut off by the same edge in both, at different sizes: the parts shown match, but it resized.
+        let wider = CGRect(x: 700, y: 100, width: 300, height: 40)
+        #expect(SnapshotComparison.differingPixels(weight, in: cut, weight, in: wider) == .max)
     }
 
     /// An iPad-wide card, shrunk to the widest size compared, with its labels smoothed differently.
