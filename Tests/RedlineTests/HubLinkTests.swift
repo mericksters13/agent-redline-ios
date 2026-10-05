@@ -10,19 +10,53 @@ import Testing
 struct HubLinkTests {
     private let finishedAt = Date(timeIntervalSince1970: 1_791_000_000)
 
+    @Test func helloEncodesAndChallengeDecodes() throws {
+        let hello = HubLink.Hello(device: "D", bundleID: "com.example.app", nonce: "a")
+        let line = String(decoding: try HubLink.encode(hello), as: UTF8.self)
+        #expect(line == #"{"bundleID":"com.example.app","device":"D","kind":"hello","nonce":"a"}"# + "\n")
+        #expect(
+            try HubLink.decode(HubLink.Challenge.self, from: Data(#"{"nonce":"h","proof":"p"}"#.utf8))
+                == HubLink.Challenge(nonce: "h", proof: "p")
+        )
+    }
+
     @Test func offerEncodesAsOneSortedLine() throws {
         let offer = HubLink.Offer(
             device: "00008150-00123C360CF3C01C",
             bundleID: "com.example.app",
-            token: "secret",
+            proof: "p",
             reports: [.init(id: "20261003-215826", finishedAt: finishedAt)]
         )
         let line = String(decoding: try HubLink.encode(offer), as: UTF8.self)
         #expect(
             line
-                == #"{"bundleID":"com.example.app","device":"00008150-00123C360CF3C01C","reports":[{"finishedAt":"2026-10-03T04:00:00Z","id":"20261003-215826"}],"token":"secret"}"#
+                == #"{"bundleID":"com.example.app","device":"00008150-00123C360CF3C01C","proof":"p","reports":[{"finishedAt":"2026-10-03T04:00:00Z","id":"20261003-215826"}]}"#
                 + "\n"
         )
+    }
+
+    @Test func theAppSendsNothingUntilTheHubProvesItHoldsTheToken() {
+        // The hub makes exactly these proofs; see the Mac tool's HubTests.
+        let appProof = "4401046e18c86d9341f3fd816d12b80347958cf02338a89bfd5ec2f8a335a707"
+        let hubProof = "f4a6ae4aee48255a3141214cd10e0808b632de322c281bd5a839403249bc7c0a"
+        #expect(HubLink.proof(.app, token: "secret", appNonce: "a", hubNonce: "h") == appProof)
+        #expect(HubLink.proof(.hub, token: "secret", appNonce: "a", hubNonce: "h") == hubProof)
+        let hello = HubLink.Hello(device: "D", bundleID: "com.example.app", nonce: "a")
+        let hub = HubLink.Challenge(nonce: "h", proof: hubProof)
+        #expect(HubLink.appProof(after: hub, to: hello, token: "secret") == appProof)
+        // Something that doesn't hold the token, such as whatever answers at an old address.
+        #expect(HubLink.appProof(after: hub, to: hello, token: "another") == nil)
+        let guess = HubLink.Challenge(nonce: "h", proof: "guess")
+        #expect(HubLink.appProof(after: guess, to: hello, token: "secret") == nil)
+        #expect(HubLink.appProof(after: HubLink.Challenge(nonce: "h"), to: hello, token: "secret") == nil)
+        // A proof made for another connection's random value isn't taken.
+        let otherHello = HubLink.Hello(device: "D", bundleID: "com.example.app", nonce: "b")
+        #expect(HubLink.appProof(after: hub, to: otherHello, token: "secret") == nil)
+        // The app's own proof can't stand in for the hub's.
+        let reflected = HubLink.Challenge(nonce: "h", proof: appProof)
+        #expect(HubLink.appProof(after: reflected, to: hello, token: "secret") == nil)
+        #expect(HubLink.nonce().count == 64)
+        #expect(HubLink.nonce() != HubLink.nonce())
     }
 
     @Test func answerDecodes() throws {
@@ -57,13 +91,13 @@ struct HubLinkTests {
         let request = HubLink.ChatsRequest(
             device: "D",
             bundleID: "com.example.app",
-            token: "secret",
+            proof: "p",
             sourceFile: "/w/App.swift"
         )
         let line = String(decoding: try HubLink.encode(request), as: UTF8.self)
         #expect(
             line
-                == #"{"bundleID":"com.example.app","device":"D","kind":"chats","sourceFile":"/w/App.swift","token":"secret"}"#
+                == #"{"bundleID":"com.example.app","device":"D","kind":"chats","proof":"p","sourceFile":"/w/App.swift"}"#
                 + "\n"
         )
     }

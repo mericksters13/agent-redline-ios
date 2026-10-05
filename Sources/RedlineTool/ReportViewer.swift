@@ -20,6 +20,8 @@ struct ReportViewer: View {
     private let pictures: [HubWindowModel.Picture]
     private let chat: HubWindowModel.ChatLink?
     @State private var selected: Int?
+    /// Why the chat didn't open, shown until the user dismisses it.
+    @State private var openFailure: String?
 
     init(report: HubWindowModel.ReportRow, contents: Contents) {
         var report = report
@@ -69,6 +71,48 @@ struct ReportViewer: View {
         }
         .frame(minWidth: 820, idealWidth: 1040, minHeight: 600, idealHeight: 720)
         .background(Color.black)
+        .alert("The chat didn't open", isPresented: isShowingOpenFailure) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(openFailure ?? "")
+        }
+    }
+
+    /// True while there's a reason the chat didn't open to show.
+    private var isShowingOpenFailure: Binding<Bool> {
+        Binding(get: { openFailure != nil }, set: { if !$0 { openFailure = nil } })
+    }
+
+    /// Opens the chat a report went to; returns why it didn't open, or nil once it has.
+    ///
+    /// Opening runs /usr/bin/open and waits for it, so on the viewer's queue.
+    nonisolated private static func open(_ chat: HubWindowModel.ChatLink, hub: Hub?) async -> String? {
+        await withCheckedContinuation { continuation in
+            loader.async { continuation.resume(returning: openNow(chat, hub: hub)) }
+        }
+    }
+
+    /// `open(_:hub:)`, blocking.
+    ///
+    /// A report sent to an existing Codex chat records no folder; Codex keeps the chat's own, and
+    /// `codex resume` reopens it there. A folder that is gone, such as a removed worktree, is
+    /// skipped: opening a terminal there would make it again, empty, and opening one anywhere else
+    /// would resume the chat away from its project.
+    nonisolated private static func openNow(_ chat: HubWindowModel.ChatLink, hub: Hub?) -> String? {
+        let codexFolder =
+            chat.agent == .codex ? CodexThreads.folder(of: chat.id, in: CodexThreads.newestDatabase()) : nil
+        let folder = [chat.folder, codexFolder].compactMap { $0 }.first { path in
+            var isFolder: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &isFolder) && isFolder.boolValue
+        }
+        do {
+            try Handoff.openChat(chat.agent, id: chat.id, in: folder)
+            return nil
+        } catch {
+            hub?.log("Couldn't open the \(chat.agent.name) chat \(chat.id): \(error.localizedDescription)")
+            if error is Handoff.OpenError { return error.localizedDescription }
+            return "Redline couldn't open the chat: \(error.localizedDescription)"
+        }
     }
 
     /// Room in the strip's height for its padding (48) and each picture's caption (28).
@@ -149,28 +193,8 @@ struct ReportViewer: View {
                 if let chat {
                     Button("Open in \(chat.agent.name)") {
                         let hub = HubAppContext.hub
-                        // Opening runs /usr/bin/open and waits for it, so not on the main thread.
-                        DispatchQueue.global(qos: .userInitiated).async {
-                            // A report sent to an existing Codex chat records no folder; Codex keeps
-                            // the chat's own, and `codex resume` reopens it there. A folder that is
-                            // gone, such as a removed worktree, is skipped: opening a terminal there
-                            // would make it again, empty.
-                            let codexFolder =
-                                chat.agent == .codex
-                                ? CodexThreads.folder(of: chat.id, in: CodexThreads.newestDatabase()) : nil
-                            let folder =
-                                [chat.folder, codexFolder].compactMap { $0 }.first { path in
-                                    var isFolder: ObjCBool = false
-                                    return FileManager.default.fileExists(atPath: path, isDirectory: &isFolder)
-                                        && isFolder.boolValue
-                                } ?? AgentSettings.homeDirectory().path
-                            do {
-                                try Handoff.openChat(chat.agent, id: chat.id, in: folder)
-                            } catch {
-                                hub?.log(
-                                    "Couldn't open the \(chat.agent.name) chat \(chat.id): \(error.localizedDescription)"
-                                )
-                            }
+                        Task {
+                            openFailure = await Self.open(chat, hub: hub)
                         }
                     }
                     .buttonStyle(ViewerButtonStyle(isProminent: true))
