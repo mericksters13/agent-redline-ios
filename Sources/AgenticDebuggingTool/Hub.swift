@@ -186,13 +186,16 @@ final class Hub: @unchecked Sendable {
         let hosts = Self.addresses()
         lock.withLock { self.hosts = hosts }
         if rediscover { simulators?.rescan() }
-        guard let paired = devicectl.pairedPhones() else {
+        // Phones already known still get the new address when the paired list can't be read.
+        let links: [PhoneLink]
+        if let paired = devicectl.pairedPhones() {
+            forgetPhones(except: Set(paired.map(\.udid)))
+            links = paired.map { link(for: $0) }
+        } else {
             log("Couldn't list paired phones")
-            return
+            links = lock.withLock { Array(self.links.values) }
         }
-        forgetPhones(except: Set(paired.map(\.udid)))
-        for phone in paired {
-            let link = link(for: phone)
+        for link in links {
             // Off every network, phones keep the address they have, which works again once the
             // Mac is back on theirs; the new address follows as soon as the Mac has one.
             if hosts.isEmpty {

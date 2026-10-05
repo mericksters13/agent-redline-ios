@@ -270,10 +270,11 @@ final class Handoff: @unchecked Sendable {
                 Self.notify(title: "Report from \(source.deviceName)", message: "Sent to the Codex chat, with its pictures.")
                 return
             }
-            // Saved before the report is free, so a claim the chat's hook makes is always newer than this.
+            // Saved and addressed before the report is free, so a claim the chat's hook makes is
+            // always newer than this, and no other chat can take it in between.
             ReportDelivery.save(.init(agent: .codex, chat: thread, title: CodexThreads.title(of: thread) ?? "Codex chat", kind: .nextMessage), in: report.folder)
-            InboxQueue.release(report)
             InboxQueue.setAddress(Address(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
+            InboxQueue.release(report)
             hub.log("The Codex app didn't take report \(source.reportID) (\(outcome)); it goes in with the chat's next message")
             Self.notify(title: "Report from \(source.deviceName)", message: "Goes to the Codex chat with your next message there.")
         }
