@@ -69,6 +69,35 @@ struct ChatSessionTests {
         ChatSession(paths: paths, folder: folder, extraApps: [], agent: "test", startsHub: false)
     }
 
+    /// A process waiting on the record lock while another removes the chat locks the file that
+    /// replaces it, the one later processes lock too, not the removed one.
+    @Test func theRecordLockFollowsALockFileRemovedWhileWaiting() async throws {
+        try FileManager.default.createDirectory(at: Chats.folder(paths), withIntermediateDirectories: true)
+        let path = Chats.recordLock("claude-1", paths: paths).path
+        let removed = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        try #require(removed >= 0)
+        #expect(flock(removed, LOCK_EX) == 0)
+        var removedFile = stat()
+        #expect(fstat(removed, &removedFile) == 0)
+        let paths = self.paths
+        let waiting = DispatchSemaphore(value: 0)
+        async let locked: ino_t? = offPool {
+            waiting.signal()
+            return Chats.withRecordLock("claude-1", paths: paths) {
+                var file = stat()
+                return stat(path, &file) == 0 ? file.st_ino : nil
+            }
+        }
+        await offPool {
+            waiting.wait()
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        unlink(path)
+        close(removed)
+        let lockedFile = try #require(await locked)
+        #expect(lockedFile != removedFile.st_ino)
+    }
+
     @Test func aChatOutsideAnAppProjectStaysOut() throws {
         let notes = root.appending(path: "Notes", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
@@ -317,6 +346,25 @@ struct ChatSessionTests {
         var gone = saved
         gone.waiter = Int32.max
         #expect(!gone.isWaiting)
+    }
+
+    @Test func hooksSavingAtOnceKeepTheChatsWaiter() throws {
+        let folder = root.appending(path: "App", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let paths = self.paths
+        // Each stands in for a hook's own process: the file lock is per open file, not per process.
+        DispatchQueue.concurrentPerform(iterations: 40) { index in
+            let hook = ChatSession(
+                paths: paths,
+                folder: folder,
+                extraApps: ["com.example.app"],
+                agent: "claude",
+                id: "claude-s1",
+                startsHub: false
+            )
+            if index == 20 { hook.registerWaiting() } else { hook.touch() }
+        }
+        #expect(try #require(Chats.record("claude-s1", paths: paths)).waiter == getpid())
     }
 
     @Test func anotherReportWaitsWhenItsTextMightNotFit() throws {

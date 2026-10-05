@@ -3,6 +3,9 @@ import Foundation
 import Testing
 @testable import Redline
 
+/// Serialized: deliveries run one at a time across the app, so a test waiting on another's would
+/// see its timing change.
+@Suite(.serialized)
 struct ReportDeliveryTests {
     private let store = ReportStore(
         root: FileManager.default.temporaryDirectory.appending(path: "ReportDeliveryTests-\(UUID().uuidString)")

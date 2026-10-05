@@ -289,8 +289,12 @@ final class DebugSession {
         // A report cut short last time, such as by the app being killed while it was drawn, puts
         // its notes back in the draft.
         store.recoverInterruptedReports()
+        // Notes on a capture find their picture through the screens, so notes whose screens can't be
+        // read are set aside with them instead of being kept without their pictures.
+        screens = loadDraftFile(store.screensFile, named: "screens", alongWith: [store.draftFile]) {
+            try store.loadScreens()
+        }
         annotations = loadDraftFile(store.draftFile, named: "notes") { try store.loadDraft() }
-        screens = loadDraftFile(store.screensFile, named: "screens") { try store.loadScreens() }
         observeKeyboard()
         observeScreenshots()
         // On a cold launch the app became active before Redline was installed.
@@ -368,20 +372,29 @@ final class DebugSession {
 
     /// Loads one of the draft's files.
     ///
-    /// One that can't be read is moved aside before anything can save over it, and the draft starts
-    /// without it.
-    private func loadDraftFile<Item>(_ file: URL, named name: String, load: () throws -> [Item]) -> [Item] {
+    /// One that can't be read is moved aside, with any of `others` that are there, before anything
+    /// can save over it, and the draft starts without them.
+    private func loadDraftFile<Item>(
+        _ file: URL,
+        named name: String,
+        alongWith others: [URL] = [],
+        load: () throws -> [Item]
+    ) -> [Item] {
         do {
             return try load()
         } catch {
             logger.error(
                 "Couldn't read the draft's \(name, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
-            do {
-                let aside = try store.setAsideUnreadable(file)
-                logger.notice("Kept the unreadable file at \(aside.path(percentEncoded: false), privacy: .private)")
-            } catch {
-                logger.error("Couldn't move the unreadable file aside: \(error.localizedDescription, privacy: .public)")
+            for file in [file] + others where FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) {
+                do {
+                    let aside = try store.setAsideUnreadable(file)
+                    logger.notice("Kept the unreadable file at \(aside.path(percentEncoded: false), privacy: .private)")
+                } catch {
+                    logger.error(
+                        "Couldn't move the unreadable file aside: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
             }
             return []
         }
@@ -1276,11 +1289,15 @@ final class DebugSession {
         try store.checkSize(of: report, in: folder)
         try store.finishReport(report, in: folder)
         logger.notice("Report saved at \(folder.path(percentEncoded: false), privacy: .public)")
-        return await ReportDelivery.deliver(
+        let outcome = await ReportDelivery.deliver(
             from: store,
             bundleID: Bundle.main.bundleIdentifier,
             patience: ReportDelivery.patience
         )
+        // Nothing left to send: a delivery already under way, such as when the app came back, took
+        // this report along.
+        if outcome == nil, store.isDelivered(folder) { return .delivered }
+        return outcome
     }
 
     // MARK: - One picture per screen

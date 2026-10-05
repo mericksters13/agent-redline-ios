@@ -92,12 +92,15 @@ extension Handoff {
         case agentNotFound(Agent)
         /// A terminal is needed and the folder the chat worked in is gone or unknown.
         case folderUnknown
+        /// macOS couldn't open the link or file, such as when no app takes it.
+        case openFailed
 
         var errorDescription: String? {
             switch self {
             case .agentNotFound(let agent): "Redline found neither the \(agent.name) app nor its command on this Mac."
             case .folderUnknown:
                 "The folder this chat worked in is gone or unknown, so Redline can't resume it in a terminal."
+            case .openFailed: "macOS couldn't open the chat. No app took the link or file."
             }
         }
     }
@@ -126,20 +129,22 @@ extension Handoff {
 
     /// Opens a link or file with /usr/bin/open and waits for it.
     ///
-    /// Throws when open can't start.
+    /// Throws when open can't start or fails, such as when no app takes the link.
     static func openURL(_ link: String) throws {
         try runOpen([link])
     }
 
     /// Runs /usr/bin/open with `arguments` and waits for it.
     ///
-    /// Throws when open can't start.
+    /// Throws when open can't start or fails, such as when no app takes the link.
     private static func runOpen(_ arguments: [String]) throws {
         let open = Process()
         open.executableURL = URL(filePath: "/usr/bin/open")
         open.arguments = arguments
+        open.standardInput = FileHandle.nullDevice
         try open.run()
         open.waitUntilExit()
+        guard open.terminationReason == .exit, open.terminationStatus == 0 else { throw OpenError.openFailed }
     }
 }
 #endif
