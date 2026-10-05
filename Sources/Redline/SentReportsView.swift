@@ -456,8 +456,7 @@ private struct SnapshotImage: View {
     }()
 
     /// Runs off the main actor.
-    ///
-    /// Add @concurrent when the tools version reaches 6.2.
+    @concurrent
     nonisolated private static func load(_ url: URL, pixelWidth: CGFloat) async -> UIImage? {
         // Only the thumbnail is kept; the full image is never cached.
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),

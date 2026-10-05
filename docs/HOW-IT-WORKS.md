@@ -77,7 +77,7 @@ When a screen's content changed between notes, such as a switched segment, earli
 
 ## What the installer checks and runs
 
-- **Before it builds,** it checks for macOS 15 or later, a user other than root, Xcode installed and selected with its license accepted and its first launch done, `devicectl`, Swift 6 or later, git, and 3 GB of free disk space.
+- **Before it builds,** it checks for macOS 15 or later, a user other than root, Xcode installed and selected with its license accepted and its first launch done, `devicectl`, Swift 6.2 or later (Xcode 26 or later), git, and 3 GB of free disk space.
 - **The source** is a copy of the npm package, or, run with curl, the `main` branch (or `REDLINE_REF`), in `~/Library/Caches/Redline/source`. Run from a checkout, it builds that checkout. git is never allowed to ask for a sign-in.
 - **Signing.** `Redline.app` is signed with your Apple Development certificate when one can be used, which it can't over SSH or with the keychain locked. Otherwise it is signed ad hoc.
 - **Claude Code** is set up when `~/.claude` exists, the Claude app is installed or the `claude` command is found. With the Claude app, the command must be version 2.1.285 or later. The MCP server is added with `claude mcp add --scope user redline -- ~/.local/bin/redline mcp`. If another tool's server already has the name `redline`, it stays, and the checklist says so.

@@ -315,8 +315,8 @@ struct AttachmentPicker: View {
     /// to stall the UI.
     ///
     /// Keeps the order they were chosen in. One that can't be loaded is left out; the note box says
-    /// how many are missing. Runs off the main actor. Add @concurrent when the tools version reaches
-    /// 6.2.
+    /// how many are missing.
+    @concurrent
     nonisolated private static func images(from items: [PhotosPickerItem]) async -> [UIImage] {
         await withTaskGroup(of: (index: Int, image: UIImage?).self) { group in
             var loaded = [UIImage?](repeating: nil, count: items.count)
@@ -433,7 +433,8 @@ private final class RecentPhotos {
 extension RecentPhotos {
     /// The sample images, decoded at grid size.
     ///
-    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    /// Runs off the main actor.
+    @concurrent
     nonisolated private static func sampleItems() async -> [Photo] {
         sampleFiles().compactMap { file in
             guard let image = UIImage(contentsOfFile: file.url.path(percentEncoded: false)) else { return nil }

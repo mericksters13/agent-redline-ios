@@ -2,7 +2,7 @@
 
 How code in this package is written and reviewed. Read it before your first pull request; reviewers use the same rules.
 
-The package uses Swift 6.0 tools, the Swift 6 language mode, iOS 18 and macOS 15. [CONTRIBUTING.md](../CONTRIBUTING.md) has the build, test and format commands.
+The package uses Swift 6.2 tools, the Swift 6 language mode, iOS 18 and macOS 15. [CONTRIBUTING.md](../CONTRIBUTING.md) has the build, test and format commands.
 
 ## How to use this guide
 
@@ -31,7 +31,7 @@ Section prefixes:
 | S | Style and consistency |
 | T | Tests and package hygiene |
 
-Baseline: `swift-tools-version: 6.0` means the Swift 6 language mode for every target and a compiler floor of Swift 6.0 (Xcode 16.0). The maintainer builds with a newer compiler, so syntax and APIs newer than that floor compile locally and break for users. They are off limits until the tools version is raised on purpose (T5).
+Baseline: `swift-tools-version: 6.2` means the Swift 6 language mode for every target and a compiler floor of Swift 6.2 (Xcode 26.0). `Package.swift` sets no upcoming-feature flags and no default isolation: `NonisolatedNonsendingByDefault` stays off, and declarations stay nonisolated by default rather than `MainActor`. The maintainer builds with a newer compiler, so syntax and APIs newer than that floor compile locally and break for users. They are off limits until the tools version is raised on purpose (T5).
 
 [Quick scan](#quick-scan) at the end collects the fastest checks.
 
@@ -54,8 +54,8 @@ Outside guides disagree on these points. This is the choice for Redline.
 | Current date | `.now` (or `Date.now` when the type is not known) | The kit and the Mac tool both use it, so dates read the same everywhere. |
 | `try!` in tests | Not allowed (Airbnb) | Google allows it, but a crash ends the whole test run instead of failing one test. |
 | Test framework | Swift Testing. XCTest only for `measure(metrics:)` performance tests. | Swift Testing has no performance API. |
-| Test names | Standard identifiers such as `snapsToTheNearestSideEdge` | Raw identifier names need Swift 6.2 (SE-0451). That is above the compiler floor. |
-| Leaving the main actor | Call a `nonisolated async` function. Not `Task.detached`. | This is current Apple and Swift guidance (SE-0338, SE-0461). The 2022 advice to offload work with detached tasks is out of date. |
+| Test names | Standard identifiers such as `snapsToTheNearestSideEdge` | Every existing test uses them. Raw identifier names (SE-0451) compile from Swift 6.2, the floor, but two naming styles would make the suites harder to scan. |
+| Leaving the main actor | Call a `@concurrent` (nonisolated async) function (C11, C12). Not `Task.detached`. | This is current Apple and Swift guidance (SE-0338, SE-0461). The 2022 advice to offload work with detached tasks is out of date. |
 | Locks | `Mutex` from Synchronization | It is available from iOS 18 and macOS 15, which are exactly the package minimums (SE-0433). |
 | Typed throws | Internal code only | SE-0413 and the Swift book: untyped `throws` stays the default. |
 | Doc comments | Required on public declarations, encouraged on internal ones | Apple asks for docs on every declaration and Google asks for them on public ones. Nearly every type in the package already has one. |
@@ -668,7 +668,8 @@ func refresh() async {
     apply(state)  // @MainActor, one update.
 }
 
-/// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+/// Runs off the main actor.
+@concurrent
 nonisolated static func loadState(paths: HubPaths, watched: Set<String>) async -> HubState { ... }
 
 // Don't
@@ -707,13 +708,13 @@ timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _
 
 **Source:** <https://developer.apple.com/documentation/swift/mainactor/assumeisolated(_:file:line:)>; <https://developer.apple.com/videos/play/wwdc2024/10169/>
 
-### C11. Leave the main actor by calling a nonisolated function, not `Task.detached`
+### C11. Leave the main actor by calling a `@concurrent` function, not `Task.detached`
 
 **Level:** must
 
-**Rule:** To move work off the main actor, call a `nonisolated async` function, and use `Task.detached` only for work that must outlive and ignore its caller, with a comment saying why.
+**Rule:** To move work off the main actor, call a `@concurrent` (nonisolated async) function (C12), and use `Task.detached` only for work that must outlive and ignore its caller, with a comment saying why.
 
-**Why:** In the Swift 6 language mode, a nonisolated async function runs off the caller's actor (SE-0338) and stays part of the caller's task, so it inherits priority, task-local values and cancellation. A detached task inherits none of these. For example, a thumbnail loaded through `await Task.detached { ... }.value` inside `.task(id:)` keeps loading after SwiftUI cancels the view's task. The 2022 advice to offload work with detached tasks is out of date.
+**Why:** In the Swift 6 language mode, a nonisolated async function runs off the caller's actor (SE-0338) while `NonisolatedNonsendingByDefault` is off, and `@concurrent` keeps it there when the feature is on (C12). Either way it stays part of the caller's task, so it inherits priority, task-local values and cancellation. A detached task inherits none of these. For example, a thumbnail loaded through `await Task.detached { ... }.value` inside `.task(id:)` keeps loading after SwiftUI cancels the view's task. The 2022 advice to offload work with detached tasks is out of date.
 
 ```swift
 // Do
@@ -722,7 +723,8 @@ timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _
     image = await Self.load(url, pixelWidth: pointWidth * displayScale)
 }
 
-/// Decodes off the main actor, as part of the view's task. Add @concurrent at tools version 6.2.
+/// Decodes off the main actor, as part of the view's task.
+@concurrent
 nonisolated private static func load(_ url: URL, pixelWidth: CGFloat) async -> UIImage? { ... }
 
 // Don't
@@ -731,28 +733,30 @@ private static func load(_ url: URL, pixelWidth: CGFloat) async -> UIImage? {
 }
 ```
 
-**Check:** `grep -rn 'Task.detached' Sources`. Each hit becomes a nonisolated async call, or carries a comment saying why it must outlive its caller.
+**Check:** `grep -rn 'Task.detached' Sources`. Each hit becomes a call to a `@concurrent` function, or carries a comment saying why it must outlive its caller.
 
 **Source:** <https://developer.apple.com/documentation/swift/task/detached(name:priority:operation:)-795w1>; <https://github.com/swiftlang/swift-evolution/blob/main/proposals/0338-clarify-execution-non-actor-async.md>
 
-### C12. Mark off-main functions for SE-0461
+### C12. Mark off-main functions `@concurrent` for SE-0461
 
 **Level:** should
 
-**Rule:** Give each nonisolated async function that must run off the main actor the comment `Runs off the main actor. Add @concurrent when the tools version reaches 6.2.`, and add `@concurrent` to all of them in the change that raises the tools version or enables `NonisolatedNonsendingByDefault`.
+**Rule:** Mark each nonisolated async function that must run off the main actor `@concurrent`, and say in its doc comment that it runs off the main actor.
 
-**Why:** Under SE-0461, nonisolated async functions run on the caller's actor, and only `@concurrent` functions leave it. Without the markers, turning the feature on would quietly move image decoding and report reading onto the main thread. Writing `@concurrent` now would break users on Swift 6.0 and 6.1 (T5). A host app's own setting does not change how this package compiles.
+**Why:** Under SE-0461, with `NonisolatedNonsendingByDefault` on, nonisolated async functions run on the caller's actor, and only `@concurrent` functions leave it. The feature is off in this package (see the baseline), so today `@concurrent` states what these functions already do; without it, turning the feature on would quietly move image decoding and report reading onto the main thread. `@concurrent` needs Swift 6.2, the package's floor (T5). A host app's own setting does not change how this package compiles.
 
 ```swift
 // Do
-/// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+/// Runs off the main actor.
+@concurrent
 nonisolated static func readReports(paths: HubPaths) async -> [Report] { ... }
 
 // Don't
-@concurrent static func readReports(paths: HubPaths) async -> [Report] { ... }  // Does not compile before Swift 6.2.
+/// Runs off the main actor.
+nonisolated static func readReports(paths: HubPaths) async -> [Report] { ... }  // On the caller's actor once the feature is on.
 ```
 
-**Check:** `grep -rn 'nonisolated.*async' Sources`. Each one that does CPU or I/O work has the comment. A `Package.swift` change that raises the tools version or adds the feature also adds `@concurrent` to every marked function.
+**Check:** `grep -rn 'nonisolated.*async' Sources`, plus the async functions of nonisolated types such as `Thumbnails`. Each one whose doc comment says it runs off the main actor is `@concurrent`, and so is each new one that main-actor code awaits for file, image or process work. Two older functions do such work without the mark and are left for a follow-up: `ReportViewer.open(_:hub:)` and `HubLink.requestChats`. A `Package.swift` change that turns the feature on checks this first.
 
 **Source:** <https://github.com/swiftlang/swift-evolution/blob/main/proposals/0461-async-function-isolation.md>; <https://developer.apple.com/videos/play/wwdc2025/268/>
 
@@ -1046,7 +1050,7 @@ struct NoteViewer: View {
 
 **Rule:** Keep the default values of `@State` properties and the bodies of custom `View` initializers free of side effects and expensive work, and create expensive models in `.task`.
 
-**Why:** With the `@State` property wrapper, SwiftUI builds the default value every time it creates the view value, and throws away all but the first. The newer `State()` macro creates it only once, but it needs Xcode 27 or later, and this package supports Xcode 16. That is why `AttachmentPicker` creates its `RecentPhotos`, which reads `UserDefaults`, in `.task` instead of as a default value.
+**Why:** With the `@State` property wrapper, SwiftUI builds the default value every time it creates the view value, and throws away all but the first. The newer `State()` macro creates it only once, but it needs Xcode 27 or later, and this package supports Xcode 26. That is why `AttachmentPicker` creates its `RecentPhotos`, which reads `UserDefaults`, in `.task` instead of as a default value.
 
 ```swift
 // Do
@@ -1073,20 +1077,20 @@ var body: some View {
 
 **Level:** should
 
-**Rule:** In refresh, poll and watcher code, compare before assigning to an `@Observable` property.
+**Rule:** In refresh, poll and watcher code, update an `@Observable` property by assigning a whole `Equatable` value, and compare first before mutating it in place or assigning a value that isn't `Equatable`.
 
-**Why:** Before Swift 6.2, the `@Observable` setter notifies on every assignment. Swift 6.2 skips only a direct assignment of an equal `Equatable` value. This package builds with Swift 6.0, and mutations in place always notify. The Mac panel refreshes every two seconds while it is open, so without a guard every row would re-render even when nothing changed.
+**Why:** Since Swift 6.2, the package's floor, the `@Observable` setter skips a direct assignment of an equal `Equatable` value. It compares a class reference by identity, so assigning the same instance doesn't notify either. Mutations in place, such as `append` or setting one field of the stored value, and assignments of value types that aren't `Equatable` still notify every time. The Mac panel refreshes every two seconds while it is open, so such a write would re-render every row even when nothing changed. A guard before a whole `Equatable` assignment, as in `HubWindowModel.apply`, is now redundant but harmless.
 
 ```swift
 // Do
-let newReports = found.map(\.row)
-if newReports != reports { reports = newReports }
+reports = found.map(\.row)  // [ReportRow] is Equatable, so an equal array doesn't notify.
 
 // Don't
-reports = found.map(\.row)  // Every tick, even when nothing changed.
+reports.removeAll()
+reports.append(contentsOf: found.map(\.row))  // In place: every tick, even when nothing changed.
 ```
 
-**Check:** Every write to an `@Observable` property from a timer, poll, file watcher or notification has an equality guard, or a comment saying why the value always changes.
+**Check:** Every write to an `@Observable` property from a timer, poll, file watcher or notification assigns a whole `Equatable` value, has an equality guard, or has a comment saying why the value always changes.
 
 **Source:** <https://github.com/swiftlang/swift/pull/78151>; <https://forums.swift.org/t/observation-optimizes-away-unnecessary-callbacks-for-equatable-properties-sometimes/89358>
 
@@ -1118,7 +1122,7 @@ Text("\(chat.folder) · \(ago)")
 
 **Rule:** Start view-related async work, including refresh loops, with `.task` or `.task(id:)`, not with `onAppear` plus a `Task` or a `Timer`, and remember that the closure starts on the main actor.
 
-**Why:** SwiftUI cancels a `.task` when the view goes away, and restarts `.task(id:)` when the ID changes. A `Timer` in `onAppear` needs a matching `onDisappear`. `View` is `@MainActor`, so synchronous work in a `.task` closure runs on the main thread until its first `await`. Move that work behind a nonisolated function (C11).
+**Why:** SwiftUI cancels a `.task` when the view goes away, and restarts `.task(id:)` when the ID changes. A `Timer` in `onAppear` needs a matching `onDisappear`. `View` is `@MainActor`, so synchronous work in a `.task` closure runs on the main thread until its first `await`. Move that work behind a `@concurrent` function (C11).
 
 ```swift
 // Do
@@ -1714,7 +1718,7 @@ for name in try files.contentsOfDirectory(atPath: appFolder.path) {  // Every re
 // Do
 let cache = NSCache<NSURL, NSImage>()  // countLimit = 60
 
-/// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+/// Called only from @concurrent code, so it decodes off the main actor.
 nonisolated static func thumbnail(_ url: URL, maxPixels: Int) -> CGImage? {
     let options = [kCGImageSourceShouldCache: false] as CFDictionary
     guard let source = CGImageSourceCreateWithURL(url as CFURL, options) else { return nil }
@@ -2260,7 +2264,7 @@ if let handle = try? FileHandle(forWritingTo: paths.log) { ... }                
 
 **Rule:** Format with swift-format using a `.swift-format` file at the repo root, and fail CI when `swift format lint --strict` fails.
 
-**Why:** Only a tool keeps the mechanics the same for every contributor. swift-format ships with the toolchain, so it adds no dependency. The checked-in `.swift-format` is the toolchain's default configuration (`swift format dump-configuration`) with these values set. The two trailing-comma values are the defaults, kept explicit for T5:
+**Why:** Only a tool keeps the mechanics the same for every contributor. swift-format ships with the toolchain, so it adds no dependency. The checked-in `.swift-format` is the toolchain's default configuration (`swift format dump-configuration`) with these values set. The two trailing-comma values are the defaults, kept explicit because `keptAsWritten` leaves argument and parameter lists as written, where `alwaysUsed` would add trailing commas to wrapped argument lists across the package:
 
 ```json
 {
@@ -2729,7 +2733,7 @@ func createConnection(to address: Address) -> NWConnection
 
 **Rule:** Write functional tests with Swift Testing in struct suites without a bare `@Suite`, name tests as lowerCamelCase sentences with no `test` prefix or display string, mark tests that can fail with an error as `throws`, unwrap with `try #require`, and use no `!`, `try!` or raw-identifier names. XCTest is allowed only for `measure(metrics:)` performance tests in files named `*PerformanceTests.swift`.
 
-**Why:** A `try!` crash ends the whole test run instead of failing one test. Any type that contains tests is already a suite. Raw-identifier names need Swift 6.2, above the compiler floor (T5). The existing tests already use struct suites and sentence names such as `snapsToTheNearestSideEdge`. Swift Testing has no performance API, which is the only reason XCTest remains.
+**Why:** A `try!` crash ends the whole test run instead of failing one test. Any type that contains tests is already a suite. The existing tests already use struct suites and sentence names such as `snapsToTheNearestSideEdge`. Raw-identifier names compile from Swift 6.2, the package's floor (T5), but mixing them in would leave two naming styles across the suites. Swift Testing has no performance API, which is the only reason XCTest remains.
 
 ```swift
 // Do
@@ -2836,34 +2840,23 @@ Don't: check only that the Debug build works, and trust #if for the rest.
 
 **Level:** must
 
-**Rule:** Use no syntax or API newer than Swift 6.0 while `swift-tools-version` is 6.0, including trailing commas in argument and parameter lists, raw identifiers and `@concurrent`; test with the oldest supported Xcode in CI, or raise the tools version on purpose with a CHANGELOG entry; and do not add `swiftLanguageModes`.
+**Rule:** Use no syntax or API newer than Swift 6.2 while `swift-tools-version` is 6.2, such as module selectors (`Module::name`, Swift 6.3); test with the oldest supported Xcode in CI, or raise the tools version on purpose with a CHANGELOG entry; and do not add `swiftLanguageModes`.
 
-**Why:** The tools version declares the minimum compiler that can use the package, and dependency resolution skips versions whose tools version is newer than the user's compiler. The maintainer builds with Swift 6.4, so newer syntax compiles locally and breaks Xcode 16.0 users. Tools version 6.0 already turns on the Swift 6 language mode for every target.
+**Why:** The tools version declares the minimum compiler that can use the package, and dependency resolution skips versions whose tools version is newer than the user's compiler. The maintainer builds with Swift 6.4, so newer syntax compiles locally and breaks Xcode 26.0 users. An older compiler can also give up on a long expression that a newer one type-checks, as Swift 6.2 did with `ScreenComposition.gap`. Tools version 6.2 turns on the Swift 6 language mode for every target, as 6.0 did. The floor was raised from 6.0 because Xcode 16 couldn't build the package, and App Store uploads already need Xcode 26.
 
 ```swift
 // Do
-annotations.append(
-    Annotation(
-        id: id,
-        createdAt: .now,
-        note: note
-    )
-)
+/// Runs off the main actor.
+@concurrent  // Needs Swift 6.2, the floor.
+nonisolated static func loadState(hub: Hub) async -> HubState { ... }
 
 // Don't
-annotations.append(
-    Annotation(
-        id: id,
-        createdAt: .now,
-        note: note,  // A trailing comma in an argument list needs Swift 6.1.
-    )
-)
-@Test func `snaps to the nearest edge`() { }  // Needs Swift 6.2.
+let url = Foundation::URL(filePath: path)  // A module selector needs Swift 6.3.
 ```
 
-**Check:** CI builds and tests with the oldest supported Xcode, for example `DEVELOPER_DIR=/Applications/Xcode_16.0.app/Contents/Developer swift build`. swift-format keeps `multilineTrailingCommaBehavior` at `keptAsWritten`.
+**Check:** Build and test with the oldest Xcode 26, which is 26.0.1 on GitHub's `macos-15` runner today. The CI workflow does this on each pull request once it is in place (T8). By hand, point `DEVELOPER_DIR` at that Xcode, for example `DEVELOPER_DIR=/Applications/Xcode_26.0.app/Contents/Developer swift build`.
 
-**Source:** <https://docs.swift.org/swiftpm/documentation/packagemanagerdocs/settingswifttoolsversion>; <https://github.com/swiftlang/swift-evolution/blob/main/proposals/0439-trailing-comma-lists.md>; <https://github.com/swiftlang/swift-evolution/blob/main/proposals/0451-escaped-identifiers.md>
+**Source:** <https://docs.swift.org/swiftpm/documentation/packagemanagerdocs/settingswifttoolsversion>; <https://github.com/swiftlang/swift-evolution/blob/main/proposals/0461-async-function-isolation.md>; <https://github.com/swiftlang/swift-evolution/blob/main/proposals/0491-module-selectors.md>
 
 ### T6. `Package.swift` stays usable by other packages
 

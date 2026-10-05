@@ -42,8 +42,7 @@ extension HubWindowModel {
     private nonisolated static let checker = DispatchQueue(label: "Redline.panel.checker", qos: .utility)
 
     /// The agents installed on this Mac, the ones the phone offers, read off the main actor.
-    ///
-    /// Add @concurrent when the tools version reaches 6.2.
+    @concurrent
     nonisolated static func loadInstalledAgents() async -> [Agent] {
         await withCheckedContinuation { continuation in
             checker.async { continuation.resume(returning: ChatDirectory.agents()) }
@@ -53,7 +52,8 @@ extension HubWindowModel {
     /// A row for each of `agents`, from checking the path delivery takes to its chats, the same way
     /// delivery takes it.
     ///
-    /// Runs off the main actor. Add @concurrent when the tools version reaches 6.2.
+    /// Runs off the main actor.
+    @concurrent
     nonisolated static func loadAgentRows(_ agents: [Agent]) async -> [AgentRow] {
         await withCheckedContinuation { continuation in
             checker.async {
