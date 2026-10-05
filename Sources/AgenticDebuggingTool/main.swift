@@ -130,10 +130,13 @@ case "app":
     hub.whenListenerFails = { reason in
         DispatchQueue.main.async { failToStart("\(reason). Phones and simulators can't send reports without it.") }
     }
+    // Before the hub starts: once its status is written, the menu bar app opening next can ask
+    // it to stop, and a hub without these handlers would be ended without letting go of its
+    // hand-overs.
+    stopOnSignals { hub.stop() }
     guard hub.start() else {
         failToStart("A hub is already running (pid \(HubProcess.running(paths).map(String.init) ?? "unknown")) and didn't stop.")
     }
-    stopOnSignals { hub.stop() }
     // Quit in the panel ends the app without a signal: let go of the PID file then too. The
     // panel's Quit has already stopped the hub, so this returns at once then.
     _ = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { _ in
@@ -154,11 +157,12 @@ case "hub":
         exit(1)
     }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: options.apps)
+    // Before the hub starts, for the same reason as in the menu bar app.
+    stopOnSignals { hub.stop() }
     guard hub.start() else {
         print("A hub is already running (pid \(HubProcess.running(paths).map(String.init) ?? "unknown")).")
         exit(1)
     }
-    stopOnSignals { hub.stop() }
     dispatchMain()
 
 case "mcp":
