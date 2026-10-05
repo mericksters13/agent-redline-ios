@@ -9,12 +9,21 @@ import Synchronization
 enum ClaudeCLI {
     /// The first version with `--desktop`.
     static let desktopVersion = [2, 1, 285]
-    /// The last check, so `ready()` runs the command at most every minute.
+    /// The last check, which `checkReadiness()` reuses for a minute.
     private static let lastCheck = Mutex<ReadinessCheck?>(nil)
 
     private struct ReadinessCheck {
-        var isReady: Bool
+        var readiness: Readiness
         var checkedAt: Date
+    }
+
+    /// Where the claude command stands for starting new chats and reopening closed ones.
+    enum Readiness: Equatable, Sendable {
+        case ready
+        /// Found, but `claude --version` failed or didn't finish in time.
+        case doesNotRun
+        /// Not found, too old for the Claude app, which is installed, or not signed in.
+        case needs(Need)
     }
 
     /// Signed in with `claude auth login`, and, with the desktop app installed, new enough to open
@@ -22,20 +31,43 @@ enum ClaudeCLI {
     ///
     /// Checked at most every minute.
     static func isReady() -> Bool {
-        if let check = lastCheck.withLock({ $0 }), Date.now.timeIntervalSince(check.checkedAt) < 60 {
-            return check.isReady
+        checkReadiness() == .ready
+    }
+
+    /// Checks the claude command that delivery uses, for delivery and the menu bar panel alike.
+    ///
+    /// The command is looked for every time, which only reads the disk. A check of running it is
+    /// reused for a minute, except one that failed when `recheckingFailure` is true: the panel asks
+    /// for that, so a fix shows as soon as the user makes it.
+    static func checkReadiness(recheckingFailure: Bool = false) -> Readiness {
+        guard let claude = AgentCommand.locate(.claude) else { return .needs(.install) }
+        if let check = lastCheck.withLock({ $0 }), Date.now.timeIntervalSince(check.checkedAt) < 60,
+            check.readiness == .ready || !recheckingFailure
+        {
+            return check.readiness
         }
-        guard let claude = AgentCommand.locate(.claude) else { return false }
-        let signedIn = runForOutput(claude, ["auth", "status"]) != nil
-        let version = runForOutput(claude, ["--version"]).flatMap { version(in: $0) } ?? []
-        let ready =
-            signedIn && (!AgentCommand.isClaudeAppInstalled() || !version.lexicographicallyPrecedes(desktopVersion))
-        lastCheck.withLock { $0 = ReadinessCheck(isReady: ready, checkedAt: .now) }
-        return ready
+        let readiness = checkReadiness(of: claude, isClaudeAppInstalled: AgentCommand.isClaudeAppInstalled())
+        lastCheck.withLock { $0 = ReadinessCheck(readiness: readiness, checkedAt: .now) }
+        return readiness
+    }
+
+    /// Checks the command at `claude` with `claude --version` and `claude auth status`, neither of
+    /// which reaches a chat.
+    ///
+    /// Parks the caller's thread while the command runs, for at most 10 seconds each time.
+    static func checkReadiness(of claude: URL, isClaudeAppInstalled: Bool) -> Readiness {
+        guard let output = runForOutput(claude, ["--version"]) else { return .doesNotRun }
+        let missing = needs(
+            isInstalled: true,
+            version: version(in: output) ?? [],
+            isSignedIn: runForOutput(claude, ["auth", "status"]) != nil,
+            isClaudeAppInstalled: isClaudeAppInstalled
+        )
+        return missing.first.map { .needs($0) } ?? .ready
     }
 
     /// What the claude command still needs before it can start new chats.
-    enum Need: Equatable {
+    enum Need: Equatable, Sendable {
         case install, update, signIn
     }
 
@@ -99,18 +131,27 @@ enum ClaudeCLI {
         case .install:
             """
             Claude Code: the claude command isn't installed. It starts new Claude Code chats for reports. Install it, then run the Redline installer again, which also adds Redline's MCP server to Claude Code:
-              curl -fsSL https://claude.ai/install.sh | bash
+              \(command(for: .install))
             """
         case .update:
             """
             Claude Code: the claude command is too old to open new chats in the Claude app (\(desktopVersionText) or later). Update it:
-              claude update
+              \(command(for: .update))
             """
         case .signIn:
             """
             Claude Code: the claude command isn't signed in. It starts new Claude Code chats for reports, and keeps its own sign-in, separate from the Claude app's. Sign it in:
-              claude auth login
+              \(command(for: .signIn))
             """
+        }
+    }
+
+    /// What the user runs in Terminal for a need, which setup prints and the panel shows.
+    static func command(for need: Need) -> String {
+        switch need {
+        case .install: "curl -fsSL https://claude.ai/install.sh | bash"
+        case .update: "claude update"
+        case .signIn: "claude auth login"
         }
     }
 
@@ -145,7 +186,7 @@ enum ClaudeCLI {
     /// The command's output when it succeeds.
     ///
     /// One still running after `timeout` is stopped and counts as failed: the hub asks from its
-    /// hand-off queue, which a stalled command would hold up.
+    /// hand-off queue and the panel from its check queue, which a stalled command would hold up.
     private static func runForOutput(
         _ executable: URL,
         _ arguments: [String],
@@ -173,8 +214,8 @@ enum ClaudeCLI {
             output.withLock { $0 = data }
             read.signal()
         }
-        // Parks the caller's thread, the hand-off queue or setup's main thread and never a Task,
-        // for at most `timeout`.
+        // Parks the caller's thread, the hand-off queue, the panel's check queue or setup's main
+        // thread and never a Task, for at most `timeout`.
         let deadline = DispatchTime.now() + timeout
         guard exited.wait(timeout: deadline) == .success, read.wait(timeout: deadline) == .success else {
             process.terminate()

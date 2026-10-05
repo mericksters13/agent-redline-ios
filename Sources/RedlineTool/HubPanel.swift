@@ -4,14 +4,16 @@ import SwiftUI
 
 /// Redline's red: the color it marks elements and numbers notes with on the phone, and the
 /// only color in the panel besides the snapshots.
+///
+/// It also marks an agent whose delivery needs fixing.
 private enum Mark {
     static let red = Color(red: 1, green: 0.271, blue: 0.227)
 }
 
-/// The panel: the devices, then the reports sent.
+/// The panel: the devices, the agents reports go to, then the reports sent.
 struct HubPanel: View {
     let model: HubWindowModel
-    /// The height of the devices and reports.
+    /// The height of the devices, agents and reports.
     ///
     /// A scroll view in the menu bar panel has no height of its own, so they set it, up to what
     /// fits on the screen.
@@ -21,8 +23,8 @@ struct HubPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().overlay(Color.white.opacity(0.12))
-            // Devices and reports scroll together, so with many of both the header and the footer's
-            // Open inbox and Quit stay on the screen.
+            // Devices, agents and reports scroll together, so with many of them the header and the
+            // footer's Open inbox and Quit stay on the screen.
             ScrollView {
                 content.onGeometryChange(for: CGFloat.self) { proxy in
                     proxy.size.height
@@ -46,8 +48,8 @@ struct HubPanel: View {
         .onDisappear { model.panelDidClose() }
     }
 
-    /// The tallest the devices and reports get: 720 points, less on a screen too short for that
-    /// with the header, the footer and some room below.
+    /// The tallest the devices, agents and reports get: 720 points, less on a screen too short for
+    /// that with the header, the footer and some room below.
     nonisolated static func largestContentHeight(screen: CGFloat?) -> CGFloat {
         guard let screen else { return 520 }
         return max(min(720, screen - 160), 120)
@@ -66,6 +68,12 @@ struct HubPanel: View {
                 ForEach(model.devices) { DeviceRowView(device: $0) }
             }
             Divider().overlay(Color.white.opacity(0.12)).padding(.top, 4)
+            // Shown once the agents installed are known, which never holds the panel up.
+            if !model.agents.isEmpty {
+                section("Agents")
+                ForEach(model.agents) { AgentRowView(agent: $0) }
+                Divider().overlay(Color.white.opacity(0.12)).padding(.top, 4)
+            }
             section("Reports")
             if model.reports.isEmpty {
                 Text("Reports sent from the phone show here.")
@@ -192,6 +200,77 @@ private struct DeviceRowView: View {
         let base = Text(verbatim: "\(device.kind) · \(device.state)")
         guard let lastReport = device.lastReport else { return base }
         return Text("\(base) · last report \(Text(.currentDate, format: .reference(to: lastReport)))")
+    }
+}
+
+/// An agent: whether reports reach its chats now, and when they don't all, what happens to them
+/// meanwhile and what to do.
+private struct AgentRowView: View {
+    let agent: HubWindowModel.AgentRow
+    /// The command was copied; reset when it changes.
+    @State private var isCopied = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.body)
+                .foregroundStyle(agent.health == .broken ? Mark.red : Color.secondary)
+                .frame(width: 24)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(agent.name)
+                        .font(.callout.weight(.semibold))
+                    Spacer(minLength: 0)
+                    Text(agent.state)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                if let advice = agent.advice {
+                    Text(advice)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let command = agent.command {
+                    HStack(spacing: 4) {
+                        Text(verbatim: command)
+                            .font(.caption.monospaced())
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(command, forType: .string)
+                            isCopied = true
+                        } label: {
+                            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                                .font(.caption)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Copy the command")
+                        .accessibilityLabel("Copy command")
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 5)
+        .accessibilityElement(children: .combine)
+        .onChange(of: agent.command) { isCopied = false }
+    }
+
+    /// Shaped apart from the round note numbers, so a failure doesn't read as one more note.
+    private var symbol: String {
+        switch agent.health {
+        case .checking: "circle.dotted"
+        case .working: "checkmark.circle"
+        case .limited: "pause.circle"
+        case .broken: "exclamationmark.triangle"
+        }
     }
 }
 

@@ -51,12 +51,19 @@ final class HubWindowModel {
 
     private(set) var devices: [DeviceRow] = []
     private(set) var reports: [ReportRow] = []
+    /// The agents installed on this Mac, from the last check; none before the first check knows
+    /// which are installed.
+    private(set) var agents: [AgentRow] = []
     /// Where apps reach the hub, as the header says it.
     private(set) var reach = "Starting"
     private let hub: Hub
     private var timer: Timer?
     /// The refresh under way; one at a time, cancelled when the panel closes.
     private var refreshing: Task<Void, Never>?
+    /// The check of the agents under way; one at a time.
+    private var checking: Task<Void, Never>?
+    /// When the last check of the agents finished.
+    private var checkedAt: ContinuousClock.Instant?
 
     init(hub: Hub) {
         self.hub = hub
@@ -65,9 +72,10 @@ final class HubWindowModel {
     /// The hub's inbox, for the panel's Open inbox button.
     var inbox: URL { hub.paths.inbox }
 
-    /// Refreshes now and every two seconds while the panel is open.
+    /// Refreshes now and every two seconds while the panel is open, and checks the agents.
     func panelDidOpen() {
         refresh()
+        checkAgents()
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             // Scheduled on the main run loop, so it fires on the main thread.
@@ -97,6 +105,32 @@ final class HubWindowModel {
             guard !Task.isCancelled else { return }
             refreshing = nil
             apply(state)
+        }
+    }
+
+    /// How long the panel shows a check of the agents before it opens with a new one.
+    static let agentCheckInterval = Duration.seconds(30)
+
+    /// Checks off the main actor whether reports can reach each agent's chats, unless a check is
+    /// under way or the last one finished less than `agentCheckInterval` ago.
+    ///
+    /// The panel shows the last check meanwhile, and before the first, a row for each agent saying
+    /// it is checking. Closing the panel doesn't cancel a check: it ends on its own within half a
+    /// minute, and the panel shows it when it opens next.
+    func checkAgents() {
+        guard checking == nil else { return }
+        if let checkedAt, checkedAt.duration(to: .now) < Self.agentCheckInterval { return }
+        checking = Task {
+            let installed = await Self.loadInstalledAgents()
+            // Rows from the start, so the section doesn't appear later and move the reports under
+            // the pointer.
+            if agents.isEmpty, !installed.isEmpty {
+                agents = installed.map { AgentRow($0, state: "Checking", health: .checking) }
+            }
+            let rows = await Self.loadAgentRows(installed)
+            checking = nil
+            checkedAt = .now
+            if rows != agents { agents = rows }
         }
     }
 

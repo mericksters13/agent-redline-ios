@@ -54,7 +54,7 @@ The dashed arrows are setup and happen before the first report. The solid ones c
 ### The parts
 
 - **Redline kit** (the `Redline` Swift package). You add one line, `.redline()`, to your app's root view. In Debug builds it shows a floating button, lets you pick elements and write notes, saves each report on the device, and sends it to the Mac.
-- **Redline hub** (`Redline.app`, the menu bar app). It gives each watched app on each paired iPhone the Mac's address, takes reports off phones and simulators, files them in an inbox, and hands each one to a chat. Its menu bar panel shows the active devices and the reports sent.
+- **Redline hub** (`Redline.app`, the menu bar app). It gives each watched app on each paired iPhone the Mac's address, takes reports off phones and simulators, files them in an inbox, and hands each one to a chat. Its menu bar panel shows the active devices, whether reports can reach each agent, and the reports sent.
 - **The `redline` command.** The same program, run from Terminal. Chats run it to register their app (step 1).
 
 The hub only takes reports for apps that an open chat builds. It finds them by reading the bundle IDs of the iOS app targets in the Xcode projects (or XcodeGen `project.yml`) in each chat's folder.
@@ -317,6 +317,7 @@ Click the Redline icon in the menu bar to open the panel:
 
 - **Header:** the address and port apps reach the Mac at.
 - **Devices:** paired iPhones that are ready and running simulators with a watched app, with the time of each one's last report. Paired phones that can't take reports right now are dimmed, with the reason, such as Not reachable or No watched app installed.
+- **Agents:** Claude Code and Codex, whichever are installed, each with whether reports can reach its chats right now. Redline checks the same way it delivers, without sending anything to a chat: for Claude Code, that the `claude` command runs, is signed in and, with the Claude app, is new enough; for Codex, that the Codex app (the ChatGPT app, when Codex comes inside it) answers Redline on its socket. It checks when the panel opens, at most every 30 seconds, and counts a passing check of the `claude` command for a minute. When a check fails, the row says what happens to reports meanwhile and what to do, with the command to run and a button that copies it. If the Codex app still doesn't answer once you reopen it, an update to it may have changed its socket: [update Redline](#update).
 - **Reports:** the 30 newest, each with its first snapshot, the device, when it arrived, the agent and chat it went to (or why it is waiting), and its first notes. Click a report to open it in a viewer window: its snapshots with the numbered outlines, and its notes beside them; click a note to bring its snapshot into view. **Open in Claude Code** or **Open in Codex** reopens the chat the report went to, and **Show in Finder** shows the report's folder.
 - **Open inbox** opens the inbox folder in Finder. **Quit** stops the hub.
 

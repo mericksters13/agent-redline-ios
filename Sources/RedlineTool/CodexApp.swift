@@ -25,6 +25,26 @@ enum CodexApp {
             + snapshots.map { ["type": "localImage", "path": $0.path] }
     }
 
+    /// How the app answered Redline's handshake, which starts every turn.
+    enum Handshake: Equatable, Sendable {
+        case answered
+        /// Nothing takes a connection on the socket: there is no socket, or nothing listens on it,
+        /// as when the app isn't running.
+        case notListening
+        /// The socket took the connection, but no client ID came back in time.
+        case notAnswering
+    }
+
+    /// Connects and introduces Redline exactly as `startTurn` does, then hangs up: nothing goes to
+    /// a chat and no turn starts.
+    ///
+    /// Gives up once `timeout` seconds have passed. Parks the caller's thread meanwhile.
+    static func checkHandshake(socketPath: String = socketPath, timeout: TimeInterval = 5) -> Handshake {
+        let deadline = ContinuousClock.now + .milliseconds(Int(timeout * 1000))
+        guard let connection = Connection(path: socketPath, deadline: deadline) else { return .notListening }
+        return connection.introduce() == nil ? .notAnswering : .answered
+    }
+
     /// Starts the turn, giving up once `timeout` seconds have passed in all, however much else
     /// the app sends meanwhile.
     static func startTurn(
@@ -38,14 +58,7 @@ enum CodexApp {
         guard let connection = Connection(path: socketPath, deadline: deadline) else {
             return .failed("The Codex app isn't running")
         }
-        let hello = UUID().uuidString
-        guard
-            connection.send([
-                "type": "request", "requestId": hello, "method": "initialize", "params": ["clientType": "redline"],
-            ]),
-            let reply = connection.response(to: hello),
-            let client = (reply["result"] as? [String: Any])?["clientId"] as? String
-        else { return .failed("The Codex app didn't answer") }
+        guard let client = connection.introduce() else { return .failed("The Codex app didn't answer") }
 
         let turn = UUID().uuidString
         let request: [String: Any] = [
@@ -122,6 +135,20 @@ enum CodexApp {
                 }
                 return true
             }
+        }
+
+        /// Introduces this client with `initialize`, which every request to the app needs first.
+        ///
+        /// The client ID the app gives it, or nil when the app doesn't answer with one in time.
+        func introduce() -> String? {
+            let hello = UUID().uuidString
+            guard
+                send([
+                    "type": "request", "requestId": hello, "method": "initialize", "params": ["clientType": "redline"],
+                ]),
+                let reply = response(to: hello)
+            else { return nil }
+            return (reply["result"] as? [String: Any])?["clientId"] as? String
         }
 
         /// The response to a request, answering the app's questions to every client on the way.
