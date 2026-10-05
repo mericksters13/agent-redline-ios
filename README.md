@@ -31,6 +31,8 @@ Status: early development (version 0.1). Supported agents: Claude Code and Codex
 - [Privacy and security](#privacy-and-security)
 - [Troubleshooting](#troubleshooting)
 - [Command reference](#command-reference)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## How it works
 
@@ -383,3 +385,7 @@ To build, test and send a change, see [CONTRIBUTING.md](CONTRIBUTING.md). How th
 ## Acknowledgements
 
 The kit's walk of the accessibility tree and its automation switch follow the approach of [AnnotateKit](https://github.com/Connected-Mate/AnnotateKit) (MIT).
+
+## License
+
+Redline is released under the [MIT License](LICENSE).
