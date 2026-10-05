@@ -6,17 +6,20 @@ import Testing
 struct ReportSourcesTests {
     @Test func messagesMatchTheKitsExactly() {
         // The kit writes exactly these lines; see the kit's ReportStoreTests.
-        let line = #"{"bundleID":"com.example.app","device":"00008150-00123C360CF3C01C","reports":[{"finishedAt":"2026-10-03T04:00:00Z","id":"20261003-215826"}],"token":"secret"}"#
+        #expect(HubMessage.decode(HubMessage.Hello.self, from: Data(#"{"bundleID":"com.example.app","device":"D","kind":"hello","nonce":"a"}"#.utf8))
+                == HubMessage.Hello(kind: "hello", device: "D", bundleID: "com.example.app", nonce: "a"))
+        #expect(String(decoding: HubMessage.encode(HubMessage.Challenge(nonce: "h", proof: "p")), as: UTF8.self) == #"{"nonce":"h","proof":"p"}"# + "\n")
+        let line = #"{"bundleID":"com.example.app","device":"00008150-00123C360CF3C01C","proof":"p","reports":[{"finishedAt":"2026-10-03T04:00:00Z","id":"20261003-215826"}]}"#
         #expect(HubMessage.decode(HubMessage.Offer.self, from: Data(line.utf8)) == HubMessage.Offer(
-            device: "00008150-00123C360CF3C01C", bundleID: "com.example.app", token: "secret",
+            device: "00008150-00123C360CF3C01C", bundleID: "com.example.app", proof: "p",
             reports: [.init(id: "20261003-215826", finishedAt: Date(timeIntervalSince1970: 1_791_000_000))]))
         #expect(String(decoding: HubMessage.encode(HubMessage.Answer(want: ["20261003-215826"], delivered: [])), as: UTF8.self)
                 == #"{"delivered":[],"want":["20261003-215826"]}"# + "\n")
         #expect(HubMessage.decode(HubMessage.Upload.self, from: Data(#"{"files":{"report.md":"IyBIaQ=="},"id":"r"}"#.utf8))
                 == HubMessage.Upload(id: "r", files: ["report.md": Data("# Hi".utf8)]))
-        let ask = #"{"bundleID":"com.example.app","device":"D","kind":"chats","sourceFile":"/w/App.swift","token":"secret"}"#
+        let ask = #"{"bundleID":"com.example.app","device":"D","kind":"chats","proof":"p","sourceFile":"/w/App.swift"}"#
         #expect(HubMessage.decode(HubMessage.ChatsRequest.self, from: Data(ask.utf8))
-                == HubMessage.ChatsRequest(kind: "chats", device: "D", bundleID: "com.example.app", token: "secret", sourceFile: "/w/App.swift"))
+                == HubMessage.ChatsRequest(kind: "chats", device: "D", bundleID: "com.example.app", proof: "p", sourceFile: "/w/App.swift"))
         // An offer isn't taken for a question about chats.
         #expect(HubMessage.decode(HubMessage.ChatsRequest.self, from: Data(line.utf8)) == nil)
         let list = HubMessage.ChatList(agents: ["claude"], chats: [HubMessage.Chat(id: "s1", agent: "claude", title: "Let", folder: "wt",

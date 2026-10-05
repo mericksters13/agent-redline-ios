@@ -1,9 +1,11 @@
 #if os(macOS)
+import CryptoKit
 import Foundation
 
 /// The messages between the kit and the hub, one line of JSON each. Must match the kit's
-/// `HubLink` exactly. On one connection: the app's `Offer`, the hub's `Answer`, an `Upload` for
-/// each report the hub wants, and the hub's `Reply`.
+/// `HubLink` exactly. On one connection: the app's `Hello`, the hub's `Challenge`, then the
+/// app's `Offer`, the hub's `Answer`, an `Upload` for each report the hub wants, and the hub's
+/// `Reply`. Each side proves it holds the app's token without sending it.
 enum HubMessage {
     /// What the hub leaves in each watched app's folder on a phone, over the device link.
     struct Address: Codable, Equatable, Sendable {
@@ -11,12 +13,38 @@ enum HubMessage {
         var device: String
         var hosts: [String]
         var port: UInt16
-        /// Proves an offer comes from the phone and app the address was given to: only a Mac
-        /// paired with the phone can leave it there.
+        /// Shared by the hub and the app the address was given to: only a Mac paired with the
+        /// phone can leave it there. Never sent over the network; each side proves it holds it.
         var token: String?
         /// False in a simulator app, whose reports the hub takes from its folder: the app only
         /// asks which chats a report can go to.
         var uploads: Bool? = nil
+    }
+
+    /// The app's first line on every connection: which phone and app, so the hub knows whose
+    /// token to prove it holds, and a fresh random value for that proof.
+    struct Hello: Codable, Equatable, Sendable {
+        /// Always "hello".
+        var kind: String
+        var device: String
+        var bundleID: String
+        var nonce: String
+    }
+
+    /// The hub's reply to `Hello`: proof that it holds the app's token, and a fresh random value
+    /// of its own for the app's proof.
+    struct Challenge: Codable, Equatable, Sendable {
+        var nonce: String
+        /// Nil when the hub turned the app down.
+        var proof: String? = nil
+        /// Why the hub turned the app down, when it did.
+        var refused: String? = nil
+    }
+
+    /// Both sides' random values on one connection.
+    struct Nonces: Equatable, Sendable {
+        var app: String
+        var hub: String
     }
 
     struct Offer: Codable, Equatable, Sendable {
@@ -27,7 +55,8 @@ enum HubMessage {
 
         var device: String
         var bundleID: String
-        var token: String
+        /// Proves the offer comes from the phone and app the token was given to.
+        var proof: String
         var reports: [Report]
     }
 
@@ -56,7 +85,7 @@ enum HubMessage {
         var kind: String
         var device: String
         var bundleID: String
-        var token: String
+        var proof: String
         /// The project file that attached the kit, naming the worktree the app was built from.
         var sourceFile: String?
     }
@@ -92,6 +121,25 @@ enum HubMessage {
 
     /// Where the kit looks for the hub's address, inside an app's data container.
     static let addressPath = "Library/Application Support/iOSAgenticDebuggingKit/hub.json"
+
+    /// Which side proves it holds the token. Each side's proof is made differently, so neither
+    /// can be passed off as the other's.
+    enum Side: String, Sendable {
+        case hub
+        case app
+    }
+
+    /// Proof of holding `token` on one connection, made from both sides' random values, so it
+    /// can't be used again on another. Must match the kit's `HubLink.proof`.
+    static func proof(_ side: Side, token: String, nonces: Nonces) -> String {
+        let code = HMAC<SHA256>.authenticationCode(for: Data("\(side.rawValue)|\(nonces.app)|\(nonces.hub)".utf8), using: SymmetricKey(data: Data(token.utf8)))
+        return Data(code).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// A fresh random value for one connection.
+    static func nonce() -> String {
+        SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }.map { String(format: "%02x", $0) }.joined()
+    }
 
     static func encode<T: Encodable>(_ value: T) -> Data {
         let encoder = JSONEncoder()

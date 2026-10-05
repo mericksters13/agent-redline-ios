@@ -314,13 +314,30 @@ final class Hub: @unchecked Sendable {
         }
     }
 
+    /// The hub's reply to an app saying who it is: proof that it holds the app's token, made
+    /// with the app's random value and `nonce`, the hub's own for this connection.
+    func challenge(_ hello: HubMessage.Hello, nonce: String) -> HubMessage.Challenge {
+        guard let token = lock.withLock({ tokens["\(hello.device)|\(hello.bundleID)"] }) else {
+            log("Turned down \(hello.bundleID) from \(phoneName(hello.device)): this hub never gave it an address")
+            return HubMessage.Challenge(nonce: nonce, refused: "The app needs this Mac's address again; it gets it the next time Xcode can reach the phone.")
+        }
+        return HubMessage.Challenge(nonce: nonce, proof: HubMessage.proof(.hub, token: token, nonces: HubMessage.Nonces(app: hello.nonce, hub: nonce)))
+    }
+
+    /// Whether `proof` shows the app holds the token this hub gave it, on the connection whose
+    /// random values are `nonces`.
+    private func proven(device: String, bundleID: String, proof: String, nonces: HubMessage.Nonces) -> Bool {
+        guard let token = lock.withLock({ tokens["\(device)|\(bundleID)"] }) else { return false }
+        return Self.same(HubMessage.proof(.app, token: token, nonces: nonces), proof)
+    }
+
     /// The hub's answer to an app's offer: the reports to send now, and the ones the app can
     /// stop offering. Only an app that was given this hub's address, and so is on a phone paired
     /// with this Mac, can deliver.
-    func answer(_ offer: HubMessage.Offer) -> HubMessage.Answer {
+    func answer(_ offer: HubMessage.Offer, nonces: HubMessage.Nonces) -> HubMessage.Answer {
         let expected = lock.withLock { tokens["\(offer.device)|\(offer.bundleID)"] }
-        guard let expected, Self.same(expected, offer.token) else {
-            log("Turned down \(offer.bundleID) from \(phoneName(offer.device)): \(expected == nil ? "this hub never gave it an address" : "its token doesn't match")")
+        guard proven(device: offer.device, bundleID: offer.bundleID, proof: offer.proof, nonces: nonces) else {
+            log("Turned down \(offer.bundleID) from \(phoneName(offer.device)): \(expected == nil ? "this hub never gave it an address" : "it didn't prove it holds its token")")
             return HubMessage.Answer(want: [], delivered: [], refused: "The app needs this Mac's address again; it gets it the next time Xcode can reach the phone.")
         }
         // Report IDs become folder names in the inbox.
@@ -335,10 +352,9 @@ final class Hub: @unchecked Sendable {
     }
 
     /// The chats a report from this app can go to, for the phone to show before the user sends.
-    func chats(_ request: HubMessage.ChatsRequest) -> HubMessage.ChatList {
-        let expected = lock.withLock { tokens["\(request.device)|\(request.bundleID)"] }
-        guard let expected, Self.same(expected, request.token) else {
-            log("Turned down \(request.bundleID)'s question about chats from \(phoneName(request.device)): its token doesn't match")
+    func chats(_ request: HubMessage.ChatsRequest, nonces: HubMessage.Nonces) -> HubMessage.ChatList {
+        guard proven(device: request.device, bundleID: request.bundleID, proof: request.proof, nonces: nonces) else {
+            log("Turned down \(request.bundleID)'s question about chats from \(phoneName(request.device)): it didn't prove it holds its token")
             return HubMessage.ChatList(agents: [], chats: [], refused: "The app needs this Mac's address again.")
         }
         return ChatDirectory.list(bundleID: request.bundleID, sourceFile: request.sourceFile, paths: paths)
@@ -380,7 +396,7 @@ final class Hub: @unchecked Sendable {
         !name.isEmpty && !name.hasPrefix(".") && name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "." }
     }
 
-    /// Compares tokens in time that doesn't depend on where they differ.
+    /// Compares proofs in time that doesn't depend on where they differ.
     static func same(_ a: String, _ b: String) -> Bool {
         let x = Array(a.utf8), y = Array(b.utf8)
         guard x.count == y.count else { return false }

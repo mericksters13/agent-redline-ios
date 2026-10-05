@@ -19,8 +19,13 @@ struct HubTests {
         hub.store(HubMessage.Upload(id: id, files: ["report.json": Data("{}".utf8)]), offeredIn: offer)
     }
 
+    /// The random values of a connection the tests make offers on.
+    private let nonces = HubMessage.Nonces(app: "a", hub: "h")
+
+    /// An offer with the proof an app holding `token` makes on that connection.
     private func offer(token: String, reports: [(String, Date)]) -> HubMessage.Offer {
-        HubMessage.Offer(device: phone, bundleID: app, token: token, reports: reports.map { .init(id: $0.0, finishedAt: $0.1) })
+        HubMessage.Offer(device: phone, bundleID: app, proof: HubMessage.proof(.app, token: token, nonces: nonces),
+                         reports: reports.map { .init(id: $0.0, finishedAt: $0.1) })
     }
 
     /// The hub's state for the phone once `done` accepts it, waiting up to five seconds.
@@ -359,12 +364,40 @@ struct HubTests {
     @Test func anOfferWithoutTheRightTokenIsTurnedDown() throws {
         let hub = try hub()
         _ = hub.token(device: phone, bundleID: app)
-        let answer = hub.answer(offer(token: "guess", reports: [("20261004-031600", Date())]))
+        let answer = hub.answer(offer(token: "guess", reports: [("20261004-031600", Date())]), nonces: nonces)
         #expect(answer.refused != nil)
         #expect(answer.want.isEmpty)
         // An app this hub never gave an address to is turned down too.
-        let stranger = HubMessage.Offer(device: "someone", bundleID: app, token: "x", reports: [])
-        #expect(hub.answer(stranger).refused != nil)
+        let stranger = HubMessage.Offer(device: "someone", bundleID: app, proof: "x", reports: [])
+        #expect(hub.answer(stranger, nonces: nonces).refused != nil)
+    }
+
+    @Test func eachSideProvesItHoldsTheTokenWithoutSendingIt() throws {
+        // The kit makes exactly these proofs; see the kit's ReportStoreTests.
+        let known = HubMessage.Nonces(app: "a", hub: "h")
+        #expect(HubMessage.proof(.app, token: "secret", nonces: known) == "4401046e18c86d9341f3fd816d12b80347958cf02338a89bfd5ec2f8a335a707")
+        #expect(HubMessage.proof(.hub, token: "secret", nonces: known) == "f4a6ae4aee48255a3141214cd10e0808b632de322c281bd5a839403249bc7c0a")
+
+        let hub = try hub()
+        let token = hub.token(device: phone, bundleID: app)
+        let challenge = hub.challenge(HubMessage.Hello(kind: "hello", device: phone, bundleID: app, nonce: "a"), nonce: "h")
+        #expect(challenge.refused == nil)
+        #expect(challenge.proof == HubMessage.proof(.hub, token: token, nonces: nonces))
+        #expect(challenge.proof?.contains(token) == false)
+        // An app this hub never gave an address to gets no proof.
+        let stranger = hub.challenge(HubMessage.Hello(kind: "hello", device: "someone", bundleID: app, nonce: "a"), nonce: "h")
+        #expect(stranger.proof == nil)
+        #expect(stranger.refused != nil)
+
+        let reports = [("20261004-031600", Date())]
+        #expect(hub.answer(offer(token: token, reports: reports), nonces: nonces).refused == nil)
+        // A proof from another connection, such as one seen on the network, isn't taken.
+        #expect(hub.answer(offer(token: token, reports: reports), nonces: HubMessage.Nonces(app: "a", hub: "other")).refused != nil)
+        // Nor the hub's own proof sent back.
+        let reflected = HubMessage.Offer(device: phone, bundleID: app, proof: challenge.proof ?? "", reports: [])
+        #expect(hub.answer(reflected, nonces: nonces).refused != nil)
+        let ask = HubMessage.ChatsRequest(kind: "chats", device: phone, bundleID: app, proof: challenge.proof ?? "", sourceFile: nil)
+        #expect(hub.chats(ask, nonces: nonces).refused != nil)
     }
 
     @Test func theHubAsksOnlyForNewReportsAndFilesThemWhole() throws {
@@ -375,7 +408,7 @@ struct HubTests {
         let offered = offer(token: token, reports: [old, new])
         // The old one was sent before this hub set the app up, and is still waiting for a Mac.
         #expect(store(old.0, in: hub, offeredIn: offered))
-        let answer = hub.answer(offered)
+        let answer = hub.answer(offered, nonces: nonces)
         #expect(answer.refused == nil)
         #expect(answer.want == ["20261004-031600"])
         #expect(answer.delivered == ["20261002-135144"])
@@ -389,7 +422,7 @@ struct HubTests {
         let folder = paths.inbox.appending(path: "\(app)/20261004-031600-0CF3C01C", directoryHint: .isDirectory)
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted() == ["report.json", "report.md", "screen-1.jpg", "source.json"])
         // Offered again, it's on the Mac now.
-        let again = hub.answer(offered)
+        let again = hub.answer(offered, nonces: nonces)
         #expect(again.want.isEmpty)
         #expect(Set(again.delivered) == ["20261002-135144", "20261004-031600"])
     }
@@ -399,12 +432,12 @@ struct HubTests {
         let token = hub.token(device: phone, bundleID: app)
         // Sent a day before any Mac gave the app its address, offered now that one has.
         let early = offer(token: token, reports: [("20261003-120000", Date().addingTimeInterval(-86_400))])
-        let first = hub.answer(early)
+        let first = hub.answer(early, nonces: nonces)
         #expect(first.want == ["20261003-120000"])
         // Not confirmed until the hub has it.
         #expect(first.delivered.isEmpty)
         #expect(store("20261003-120000", in: hub, offeredIn: early))
-        #expect(hub.answer(early).delivered == ["20261003-120000"])
+        #expect(hub.answer(early, nonces: nonces).delivered == ["20261003-120000"])
     }
 
     @Test func aReportWhoseSourceCannotBeWrittenIsNotFiled() throws {
