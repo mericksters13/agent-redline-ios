@@ -4,6 +4,66 @@ import Testing
 @testable import RedlineTool
 
 struct ClaudeCLITests {
+    private let temporary = TemporaryFolder("ClaudeCLITests")
+
+    /// A stand-in for the claude command, in a folder of its own, running `script` as its shell
+    /// script after noting its arguments.
+    private func fakeClaude(_ script: String) throws -> URL {
+        let folder = temporary.url.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let claude = folder.appending(path: "claude")
+        try Data("#!/bin/sh\necho \"$*\" >> \"$0.calls\"\n\(script)\n".utf8).write(to: claude)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claude.path)
+        return claude
+    }
+
+    /// A claude command that prints `version` and is signed in, or not.
+    private func fakeClaude(version: String, isSignedIn: Bool) throws -> URL {
+        try fakeClaude(
+            """
+            case "$1" in
+            --version) echo "\(version) (Claude Code)" ;;
+            auth) exit \(isSignedIn ? 0 : 1) ;;
+            *) exit 2 ;;
+            esac
+            """
+        )
+    }
+
+    /// The arguments the fake `claude` ran with, a line each.
+    private func calls(of claude: URL) throws -> [String] {
+        try String(contentsOf: URL(filePath: claude.path + ".calls"), encoding: .utf8)
+            .split(separator: "\n").map(String.init)
+    }
+
+    @Test func aClaudeCommandThatRunsAndIsSignedInIsReady() async throws {
+        let claude = try fakeClaude(version: "2.1.300", isSignedIn: true)
+        #expect(await offPool { ClaudeCLI.checkReadiness(of: claude, isClaudeAppInstalled: true) } == .ready)
+        // Only questions the command answers itself: nothing reaches a chat.
+        #expect(try calls(of: claude) == ["--version", "auth status"])
+    }
+
+    @Test func aClaudeCommandThatFailsDoesNotRun() async throws {
+        let claude = try fakeClaude("exit 1")
+        #expect(await offPool { ClaudeCLI.checkReadiness(of: claude, isClaudeAppInstalled: true) } == .doesNotRun)
+    }
+
+    @Test func aClaudeCommandRemovedSinceItWasFoundDoesNotRun() async {
+        let claude = temporary.url.appending(path: "removed/claude")
+        #expect(await offPool { ClaudeCLI.checkReadiness(of: claude, isClaudeAppInstalled: true) } == .doesNotRun)
+    }
+
+    @Test func aClaudeCommandThatRunsCanStillNeedUpdatingOrSigningIn() async throws {
+        let old = try fakeClaude(version: "2.1.100", isSignedIn: true)
+        #expect(await offPool { ClaudeCLI.checkReadiness(of: old, isClaudeAppInstalled: true) } == .needs(.update))
+        // Without the Claude app, an old command only opens chats in a terminal, which it can.
+        #expect(await offPool { ClaudeCLI.checkReadiness(of: old, isClaudeAppInstalled: false) } == .ready)
+        let signedOut = try fakeClaude(version: "2.1.300", isSignedIn: false)
+        #expect(
+            await offPool { ClaudeCLI.checkReadiness(of: signedOut, isClaudeAppInstalled: true) } == .needs(.signIn)
+        )
+    }
+
     @Test func theClaudeCommandIsNewEnoughForTheDesktopApp() {
         #expect(ClaudeCLI.version(in: "2.1.289 (Claude Code)") == [2, 1, 289])
         #expect(ClaudeCLI.version(in: "not a version") == nil)

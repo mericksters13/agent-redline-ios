@@ -317,6 +317,55 @@ struct HubWindowModelTests {
         )
     }
 
+    @Test func agentsWhoseChatsGetReportsShowJustThat() {
+        let rows = [
+            HubWindowModel.claudeRow(.ready),
+            HubWindowModel.codexRow(.answered, appName: "ChatGPT", isAppRunning: true),
+        ]
+        #expect(rows.map(\.name) == ["Claude Code", "Codex"])
+        #expect(
+            rows.allSatisfy { $0.health == .working && $0.state == "Ready" && $0.advice == nil && $0.command == nil }
+        )
+    }
+
+    @Test func aFailedCheckSaysWhatHappensToReportsAndWhatToDo() {
+        let claude: [(ClaudeCLI.Readiness, state: String, command: String)] = [
+            (.needs(.install), "Command not found", "curl -fsSL https://claude.ai/install.sh | bash"),
+            (.doesNotRun, "Command doesn't run", "curl -fsSL https://claude.ai/install.sh | bash"),
+            (.needs(.update), "Command too old", "claude update"),
+            (.needs(.signIn), "Not signed in", "claude auth login"),
+        ]
+        for (readiness, state, command) in claude {
+            let row = HubWindowModel.claudeRow(readiness)
+            #expect(row.health == .broken)
+            #expect(row.state == state)
+            #expect(row.advice == "Reports for new or closed chats wait in the inbox. To fix, run:")
+            #expect(row.command == command)
+        }
+        // Connected but silent, or running with its socket gone, as after an update that moved it.
+        for codex in [
+            HubWindowModel.codexRow(.notAnswering, appName: "ChatGPT", isAppRunning: true),
+            HubWindowModel.codexRow(.notListening, appName: "ChatGPT", isAppRunning: true),
+        ] {
+            #expect(codex.health == .broken)
+            #expect(codex.state == "App not answering")
+            #expect(codex.advice == "Reports go in with each chat's next message. Reopen ChatGPT.")
+            #expect(codex.command == nil)
+        }
+    }
+
+    @Test func aCodexAppThatIsntRunningIsntReportedBroken() {
+        let notRunning = HubWindowModel.codexRow(.notListening, appName: "Codex", isAppRunning: false)
+        #expect(notRunning.health == .limited)
+        #expect(notRunning.state == "App not running")
+        #expect(notRunning.advice == "Reports go in with each chat's next message until Codex is open.")
+        // With only the codex command, there is no app to open.
+        let commandOnly = HubWindowModel.codexRow(.notListening, appName: nil, isAppRunning: false)
+        #expect(commandOnly.health == .limited)
+        #expect(commandOnly.state == "App not installed")
+        #expect(commandOnly.advice == "Reports go in with each chat's next message.")
+    }
+
     @Test func aReportTakenBeforeDeliveriesWereSavedNamesItsChat() throws {
         let folder = try report("20261004-100000", at: Date.now)
         let claim = Claim(

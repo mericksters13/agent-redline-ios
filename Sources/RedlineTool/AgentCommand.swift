@@ -19,9 +19,22 @@ enum AgentCommand {
     ///
     /// Checks the disk.
     static func isCodexAppInstalled() -> Bool {
-        ["/Applications/ChatGPT.app/Contents/Resources/codex-cli", "/Applications/Codex.app"].contains {
-            FileManager.default.fileExists(atPath: $0)
+        !codexApps().isEmpty
+    }
+
+    /// The apps installed that Codex's desktop app comes in: the ChatGPT app with Codex inside,
+    /// then the Codex app.
+    ///
+    /// Checks the disk.
+    static func codexApps() -> [URL] {
+        var apps: [URL] = []
+        if FileManager.default.fileExists(atPath: "/Applications/ChatGPT.app/Contents/Resources/codex-cli") {
+            apps.append(URL(filePath: "/Applications/ChatGPT.app", directoryHint: .isDirectory))
         }
+        if FileManager.default.fileExists(atPath: "/Applications/Codex.app") {
+            apps.append(URL(filePath: "/Applications/Codex.app", directoryHint: .isDirectory))
+        }
+        return apps
     }
 
     /// The agent's command, from the places its installers put it; nil when it isn't installed.
