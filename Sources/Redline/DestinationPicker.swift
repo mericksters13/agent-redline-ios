@@ -107,6 +107,22 @@ struct DestinationPicker: View {
                             title: "a new \(HubLink.agentName(agent)) chat"
                         )
                     )
+                    // A new chat may not have the code the report is about.
+                    let builtFrom = list.buildBranch ?? list.buildCommit.map { "commit \($0)" }
+                    if let builtFrom {
+                        let note = "Built from \(builtFrom). A new chat starts from \(list.newChatBase ?? "main")."
+                        // Lined up with the row's icon and text.
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Image(systemName: "arrow.triangle.branch")
+                                .frame(width: 28)
+                                .accessibilityHidden(true)
+                            Text(note)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(Mono.secondary)
+                        .padding(.bottom, 10)
+                    }
                 }
                 ForEach(chats) { chat in
                     if startsNew || chat.id != chats.first?.id {

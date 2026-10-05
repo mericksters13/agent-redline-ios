@@ -142,6 +142,17 @@ enum HubLink {
         var newChatBase: String? = nil
         /// The agents that can start a new chat; nil, from an older Mac, for every agent.
         var newChats: [String]? = nil
+        /// The branch the build's worktree is on when the phone asks, such as "feature/growth-card".
+        ///
+        /// Nil when that is `newChatBase`, the worktree is on no branch, the Mac can't tell the
+        /// worktree or start new chats, or the Mac is older.
+        var buildBranch: String? = nil
+        /// The first seven characters of the commit the build's worktree is on when it is on no
+        /// branch, such as "1a2b3c4".
+        ///
+        /// Nil when the worktree is on a branch, the Mac can't tell the worktree or start new chats,
+        /// or the Mac is older.
+        var buildCommit: String? = nil
         var refused: String?
 
         func startsNewChats(_ agent: String) -> Bool { newChats?.contains(agent) ?? true }
