@@ -7,9 +7,23 @@ import Foundation
 ///
 /// Running it twice changes nothing.
 enum AgentSettings {
+    /// The home folder in `HOME`, where the agents themselves keep their settings and chats.
+    ///
+    /// Every home-relative path Redline uses comes from here, so Redline run with another `HOME`
+    /// uses the settings, chats, app and data there.
+    ///
+    /// Foundation's home folder ignores `HOME` on macOS. Only an absolute path counts: an empty or
+    /// relative one would point at the current folder.
+    static func homeDirectory(in environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+        guard let home = environment["HOME"], home.hasPrefix("/") else {
+            return FileManager.default.homeDirectoryForCurrentUser
+        }
+        return URL(filePath: home, directoryHint: .isDirectory)
+    }
+
     /// The agent's user hook settings file.
     static func fileURL(for agent: Agent) -> URL {
-        let home = URL.homeDirectory
+        let home = homeDirectory()
         switch agent {
         case .claude: return home.appending(path: ".claude/settings.json")
         case .codex: return home.appending(path: ".codex/hooks.json")
@@ -45,35 +59,47 @@ enum AgentSettings {
         }
     }
 
-    /// This tool's hook: one that runs this executable, or one the tool installed under its name
-    /// before the rename, `agentic-debugging`, from any folder, with exactly the arguments of one of
-    /// that version's hooks.
+    /// Cursor's hook settings file.
+    ///
+    /// Cursor isn't supported, but an earlier setup added hooks there. Setup and remove take them
+    /// out, so none is left running a command that is later removed.
+    static func cursorFileURL() -> URL {
+        homeDirectory().appending(path: ".cursor/hooks.json")
+    }
+
+    /// The earlier version's command name.
+    ///
+    /// Setup replaces its hooks, so the installer can remove that command.
+    private static let earlierCommandName = "agentic-debugging"
+
+    /// Every agent and event a hook of an earlier version ran with, Cursor's included: `wait` and
+    /// `built` from the first versions too.
+    private static let earlierHookArguments: (agents: Set<String>, events: Set<String>) = (
+        ["claude", "codex", "cursor"], ["start", "prompt", "wait", "built", "stop", "end"]
+    )
+
+    /// This tool's hook: one that runs this executable, or one the earlier version left under its
+    /// name, `agentic-debugging`, with exactly a hook's arguments.
     ///
     /// A command of another tool, even one also named `redline` in another folder, is never taken for
     /// it.
     private static func isOurs(_ hook: Any, executable: String) -> Bool {
         guard let command = (hook as? [String: Any])?["command"] as? String else { return false }
-        return command.hasPrefix("'\(executable.replacing("'", with: "'\\''"))' hook ") || isFromBeforeRename(command)
-    }
-
-    /// The agents whose settings this tool changes, and every event its hooks ran for before the
-    /// rename.
-    private static let agentsBeforeRename: Set<Substring> = ["claude", "codex"]
-    private static let eventsBeforeRename: Set<Substring> = ["start", "prompt", "stop", "end"]
-
-    /// A hook command the tool wrote before the rename:
-    /// `'<folder>/agentic-debugging' hook <agent> <event>`.
-    private static func isFromBeforeRename(_ command: String) -> Bool {
+        if command.hasPrefix("'\(executable.replacing("'", with: "'\\''"))' hook ") { return true }
         guard command.hasPrefix("'"), let end = command.range(of: "' hook ", options: .backwards) else { return false }
-        let path = command[command.index(after: command.startIndex)..<end.lowerBound].replacing("'\\''", with: "'")
-        let words = command[end.upperBound...].split(separator: " ", omittingEmptySubsequences: false)
-        return URL(filePath: String(path)).lastPathComponent == "agentic-debugging" && words.count == 2
-            && agentsBeforeRename.contains(words[0]) && eventsBeforeRename.contains(words[1])
+        let path = String(command[command.index(after: command.startIndex)..<end.lowerBound]).replacing(
+            "'\\''",
+            with: "'"
+        )
+        let arguments = command[end.upperBound...].split(separator: " ", omittingEmptySubsequences: false)
+        return URL(filePath: path).lastPathComponent == earlierCommandName && arguments.count == 2
+            && earlierHookArguments.agents.contains(String(arguments[0]))
+            && earlierHookArguments.events.contains(String(arguments[1]))
     }
 
     /// The settings with this tool's hooks in place, replacing any older copy of them.
     static func adding(_ agent: Agent, to settings: [String: Any], executable: String) -> [String: Any] {
-        var settings = removing(agent, from: settings, executable: executable)
+        var settings = removing(from: settings, executable: executable)
         let hooks = self.hooks(agent, executable: executable)
         guard !hooks.isEmpty else { return settings }
         var events = settings["hooks"] as? [String: Any] ?? [:]
@@ -90,7 +116,7 @@ enum AgentSettings {
     }
 
     /// The settings without this tool's hooks; everything else stays.
-    static func removing(_ agent: Agent, from settings: [String: Any], executable: String) -> [String: Any] {
+    static func removing(from settings: [String: Any], executable: String) -> [String: Any] {
         var settings = settings
         guard var events = settings["hooks"] as? [String: Any] else { return settings }
         var removedAny = false
@@ -112,6 +138,24 @@ enum AgentSettings {
         guard removedAny else { return settings }
         settings["hooks"] = events.isEmpty ? nil : events
         return settings
+    }
+
+    /// True when the settings hold one of this tool's hooks; false when removing them would change
+    /// nothing.
+    static func containsHooks(in settings: [String: Any], executable: String) -> Bool {
+        !NSDictionary(dictionary: removing(from: settings, executable: executable)).isEqual(to: settings)
+    }
+
+    /// True when the settings file holds one of this tool's hooks; false when it holds none or
+    /// doesn't exist.
+    ///
+    /// A file that exists but can't be read or isn't a JSON object throws.
+    static func containsHooks(inFile file: URL, executable: String) throws -> Bool {
+        guard let data = try StoredFile.read(file) else { return false }
+        guard let settings = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw CocoaError(.fileReadCorruptFile, userInfo: [NSFilePathErrorKey: file.path])
+        }
+        return containsHooks(in: settings, executable: executable)
     }
 
     /// Reads, changes and writes an agent's settings, keeping a copy of the file as it was the

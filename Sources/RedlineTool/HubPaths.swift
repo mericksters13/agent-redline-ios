@@ -20,8 +20,13 @@ import Foundation
 struct HubPaths: Sendable {
     let root: URL
 
+    /// Under the home folder in `HOME`, as the agents' settings and the installer's paths are:
+    /// Foundation's Application Support folder is always the account's own.
     static let standard = HubPaths(
-        root: URL.applicationSupportDirectory.appending(path: "Redline", directoryHint: .isDirectory)
+        root: AgentSettings.homeDirectory().appending(
+            path: "Library/Application Support/Redline",
+            directoryHint: .isDirectory
+        )
     )
 
     var inbox: URL { root.appending(path: "inbox", directoryHint: .isDirectory) }

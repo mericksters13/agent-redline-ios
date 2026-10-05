@@ -16,7 +16,7 @@ enum CodexThreads {
     ///
     /// Lists ~/.codex, so callers look it up once and pass it on.
     static func newestDatabase(
-        in folder: URL = URL.homeDirectory.appending(path: ".codex", directoryHint: .isDirectory)
+        in folder: URL = AgentSettings.homeDirectory().appending(path: ".codex", directoryHint: .isDirectory)
     ) -> URL? {
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
             .filter { $0.hasPrefix("state_") && $0.hasSuffix(".sqlite") }

@@ -23,9 +23,15 @@ let usage = """
           Waits for the next report for the project's apps, then prints it and takes it. Run in an
           agent's background, it wakes the chat when a report arrives. With several chats waiting,
           the one used most recently gets the report.
-      redline setup | remove
-          Adds to (or removes from) Codex's hook settings the hook that hands reports to a chat when
-          nothing else can. Claude Code needs none. Other hooks stay as they are.
+      redline setup [--no-input]
+          Checks that the claude command is installed, new enough and signed in, running claude
+          update and claude auth login in this terminal when needed, and adds the Codex hook that
+          hands reports to a chat when nothing else can. Claude Code needs no hooks, and Cursor's
+          from an earlier setup are removed. Other hooks stay as they are. With --no-input, or with
+          no terminal, it only prints what you need to run.
+      redline remove
+          Removes Redline's hooks from Codex and Claude Code settings, and Cursor's from an earlier
+          setup. Other hooks stay.
       redline hook <claude | codex> prompt
           Run by the agents' hooks, with the event's JSON on standard input.
       redline hub [--app <bundle ID> ...]
@@ -301,19 +307,23 @@ case "hook":
 case "setup", "remove":
     let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
     let adding = arguments.first == "setup"
-    var failed = false
-    // New Claude Code chats need the claude command signed in. Without it, the other agents
-    // still get their hooks, and setup reports the failure at the end. An installed claude
-    // command counts too: the hub offers new Claude chats whenever it finds one.
-    if adding,
-        AgentSettings.isPresent(.claude) || AgentCommand.isClaudeAppInstalled() || AgentCommand.locate(.claude) != nil
-    {
-        if ClaudeCLI.prepare() {
-            print("Claude Code: the claude command is signed in and ready to start new chats.")
-        } else {
-            failed = true
-        }
+    let options = arguments.dropFirst()
+    guard options.isEmpty || (adding && options == ["--no-input"]) else {
+        printError(usage)
+        exit(64)
     }
+    // First: new Claude Code chats need the claude command signed in. What's still missing is
+    // printed for the user, and setup goes on, so the other agents still get their hooks. It
+    // doesn't fail setup: the exit status says whether a settings file couldn't be updated, which
+    // the installer reads, and the installer checks the claude command on its own. An installed
+    // claude command counts too: the hub offers new Claude chats whenever it finds one.
+    if adding,
+        AgentSettings.isPresent(.claude) || AgentCommand.isClaudeAppInstalled() || AgentCommand.locate(.claude) != nil,
+        ClaudeCLI.prepare(isAsking: options.isEmpty && isatty(STDIN_FILENO) != 0)
+    {
+        print("Claude Code: the claude command is signed in and ready to start new chats.")
+    }
+    var failed = false
     for agent in Agent.allCases {
         // The hub offers Codex chats whenever it finds the codex command, so its hook goes in
         // even before Codex has made its settings folder.
@@ -322,22 +332,26 @@ case "setup", "remove":
             if adding { print("\(agent.name): not used on this Mac, skipped.") }
             continue
         }
-        // An agent that needs no hooks only loses any an earlier version added; without those its
-        // settings file isn't touched.
         let needsNoHooks = adding && AgentSettings.hooks(agent, executable: executable).isEmpty
         do {
-            try AgentSettings.update(agent) {
-                adding
-                    ? AgentSettings.adding(agent, to: $0, executable: executable)
-                    : AgentSettings.removing(agent, from: $0, executable: executable)
-            }
-            if needsNoHooks {
+            // An agent that needs no hooks is left alone, its settings file untouched, unless an
+            // earlier setup left hooks there: they go, so none runs a command the installer removes.
+            if needsNoHooks,
+                try !AgentSettings.containsHooks(inFile: AgentSettings.fileURL(for: agent), executable: executable)
+            {
                 print("\(agent.name): no hooks needed")
                 continue
             }
-            print(
-                "\(agent.name): \(adding ? "hooks added to" : "hooks removed from") \(AgentSettings.fileURL(for: agent).path)"
-            )
+            try AgentSettings.update(agent) {
+                adding
+                    ? AgentSettings.adding(agent, to: $0, executable: executable)
+                    : AgentSettings.removing(from: $0, executable: executable)
+            }
+            let change =
+                needsNoHooks
+                ? "no hooks needed; hooks from an earlier setup removed from"
+                : adding ? "hooks added to" : "hooks removed from"
+            print("\(agent.name): \(change) \(AgentSettings.fileURL(for: agent).path)")
             if adding, agent == .codex {
                 print(
                     "  Codex runs a new hook only once you trust it: open /hooks in Codex and trust \"Report delivery\"."
@@ -349,6 +363,18 @@ case "setup", "remove":
             )
             failed = true
         }
+    }
+    // Cursor isn't supported. Setup and remove both take out the hooks an earlier setup added
+    // for it, so none is left running a command that is later removed.
+    let cursorFile = AgentSettings.cursorFileURL()
+    do {
+        if try AgentSettings.containsHooks(inFile: cursorFile, executable: executable) {
+            try AgentSettings.update(cursorFile) { AgentSettings.removing(from: $0, executable: executable) }
+            print("Cursor: hooks from an earlier setup removed from \(cursorFile.path)")
+        }
+    } catch {
+        print("Cursor: couldn't update \(cursorFile.path): \(error.localizedDescription)")
+        failed = true
     }
     if adding {
         print("Reports go to the chat picked on the phone, or else the chat in the worktree the app was built from.")

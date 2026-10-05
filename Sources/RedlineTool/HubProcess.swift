@@ -52,7 +52,7 @@ enum HubProcess {
     ///
     /// With more than one copy, the newest build. Checks the disk.
     static func installedApp() -> URL? {
-        let home = URL.homeDirectory.appending(path: "Applications/Redline.app")
+        let home = AgentSettings.homeDirectory().appending(path: "Applications/Redline.app")
         return newestApp(among: [home] + NSWorkspace.shared.urlsForApplications(withBundleIdentifier: appBundleID))
     }
 
