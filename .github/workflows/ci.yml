@@ -69,15 +69,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Use the oldest Xcode 16
+      # The runner image installs the iOS platform for only some of its Xcode versions.
+      - name: Use the oldest Xcode 16 that can build for the iOS Simulator
         run: |
-          xcode="$(printf '%s\n' /Applications/Xcode_16*.app | sort -V | head -1)"
-          if [ ! -d "$xcode" ]; then
-            echo "::error::The runner has no Xcode 16."
-            exit 1
-          fi
-          echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
-          "$xcode/Contents/Developer/usr/bin/xcodebuild" -version
+          while read -r xcode; do
+            [ -d "$xcode" ] || continue
+            if DEVELOPER_DIR="$xcode/Contents/Developer" xcodebuild -showdestinations -scheme Redline 2>/dev/null |
+              grep "Any iOS Simulator Device" | grep -qv "error:"; then
+              echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+              "$xcode/Contents/Developer/usr/bin/xcodebuild" -version
+              exit 0
+            fi
+          done < <(printf '%s\n' /Applications/Xcode_16*.app | sort -V)
+          echo "::error::No Xcode 16 on the runner has the iOS platform installed."
+          exit 1
 
       - name: Build the kit in Debug
         run: xcodebuild -scheme Redline -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/xcode build
