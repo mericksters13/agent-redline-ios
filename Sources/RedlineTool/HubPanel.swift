@@ -287,7 +287,6 @@ private struct ReportRowView: View {
             row
         }
         .buttonStyle(.plain)
-        .help("Opens the report")
     }
 
     private var row: some View {
