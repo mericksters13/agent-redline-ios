@@ -78,13 +78,14 @@ fi
 # Any installed copy is matched, not only the one in this destination: the copy running from an
 # earlier destination holds the hub's lock, so the new one could not start while it runs. With
 # --no-start, which starts nothing, only the copy in this destination is, so a test install leaves
-# the copy the Mac runs alone.
+# the copy the Mac runs alone. The match is the bundle's own executable path, so another app that
+# happens to share the bundle name is left alone.
 running=false
 stop_running_copies() {
-    local name="$1" inbox="$2" folder="" processes
+    local name="$1" executable="$2" inbox="$3" folder="" processes
     if ! $reopen; then folder="$destination"; fi
     # pgrep and pkill take a regular expression, so the path's special characters are escaped.
-    processes="$(printf '%s' "$folder/$name.app/Contents/MacOS/" | sed 's/[][\.*^$+?(){}|]/\\&/g')"
+    processes="$(printf '%s' "$folder/$name.app/Contents/MacOS/$executable" | sed 's/[][\.*^$+?(){}|]/\\&/g')( |\$)"
     pkill -TERM -f "$processes" 2>/dev/null || return 0
     running=true
     for _ in {1..50}; do pgrep -f "$processes" >/dev/null || break; sleep 0.3; done
@@ -104,12 +105,12 @@ stop_running_copies() {
         exit 1
     fi
 }
-stop_running_copies "Redline" "$HOME/Library/Application Support/Redline/inbox"
+stop_running_copies "Redline" "redline" "$HOME/Library/Application Support/Redline/inbox"
 # The app from before the rename is replaced the same way. Its inbox is still under its own name
 # while it runs: the new app moves that folder when it starts. With --keep-earlier-app it is left
 # for the caller: the installer stops it, moves its folder and removes it in its own steps.
 if $replace_earlier; then
-    stop_running_copies "Agentic Debugging" "$HOME/Library/Application Support/iOSAgenticDebuggingKit/inbox"
+    stop_running_copies "Agentic Debugging" "agentic-debugging" "$HOME/Library/Application Support/iOSAgenticDebuggingKit/inbox"
     rm -rf "$destination/Agentic Debugging.app"
 fi
 rm -rf "$app"

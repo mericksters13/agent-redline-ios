@@ -464,6 +464,20 @@ struct ReportStore: Sendable {
         }
     }
 
+    /// How many reports the Mac already has stay on the phone, for the Sent reports list.
+    static let keptDeliveredReports = 20
+
+    /// Removes reports the Mac already has, all but the newest `keeping`, so their snapshots don't
+    /// pile up in the app's container.
+    ///
+    /// A report the Mac hasn't confirmed always stays.
+    func pruneDeliveredReports(keeping: Int = Self.keptDeliveredReports) {
+        for sent in sentReports().filter(\.isDelivered).dropFirst(keeping) {
+            // Best effort: a folder left behind is removed by the next delivery.
+            try? FileManager.default.removeItem(at: sent.folder)
+        }
+    }
+
     /// Reports already sent, newest first.
     ///
     /// One still being drawn isn't listed yet, nor one that can't be read. Reports in version 1 of
