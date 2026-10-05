@@ -29,9 +29,12 @@ jobs:
         with:
           persist-credentials: false
 
-      # With the runner's default Xcode, the newest, whose formatter matches what contributors run.
+      # The formatter in Xcode 16 can't read this repository's .swift-format, so the lint uses the
+      # current release from Homebrew, as contributors with a newer Xcode do.
       - name: Format lint
-        run: swift format lint --strict --recursive --parallel Sources Tests scripts Package.swift
+        run: |
+          brew install swift-format
+          swift-format lint --strict --recursive --parallel Sources Tests scripts Package.swift
 
       - name: Use the oldest Xcode 16
         run: |
@@ -118,8 +121,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      # Warnings and errors only: info notes differ between shellcheck versions.
       - name: Check the installer
-        run: shellcheck install.sh
+        run: shellcheck --severity=warning install.sh
 
       - name: Check the npm entry point
         run: node --check bin/agent-redline-ios.js
