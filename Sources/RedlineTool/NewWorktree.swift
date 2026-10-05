@@ -34,32 +34,39 @@ enum NewWorktree {
         else { throw Failure.notARepository(source) }
         let commonURL = URL(filePath: common)
         let repository = commonURL.lastPathComponent == ".git" ? commonURL.deletingLastPathComponent().path : top
-        // The folder is named "report-<ID>", its branch "report/<ID>".
-        let id = name.hasPrefix("report-") ? String(name.dropFirst("report-".count)) : name
-        var path = folder(for: agent, repository: repository, name: name)
-        var branch = "report/\(id)"
-        // A name already taken, by an earlier report with the same name, gets a number.
-        var attempt = 1
-        while FileManager.default.fileExists(atPath: path)
-            || git(["rev-parse", "--verify", "--quiet", "refs/heads/\(branch)"], in: top) != nil
-        {
-            attempt += 1
-            path = folder(for: agent, repository: repository, name: "\(name)-\(attempt)")
-            branch = "report/\(id)-\(attempt)"
-        }
         fetchMainBranch(of: top)
         // Never the checkout's own branch: a report's chat starts from main, not from whatever the
         // app was built from.
         guard let base = mainBranch(of: top)?.ref else { throw Failure.noMainBranch(top) }
-        try FileManager.default.createDirectory(
-            at: URL(filePath: path).deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try excludeWorktrees(of: agent, in: commonURL)
-        let add = ["worktree", "add", "-b", branch, path, base]
-        guard git(add, in: top) != nil else { throw Failure.gitFailed(arguments: add) }
-        return path
+        // The folder is named "report-<ID>", its branch "report/<ID>".
+        let id = name.hasPrefix("report-") ? String(name.dropFirst("report-".count)) : name
+        // New chats start at the same time, so picking a free name and taking it happen one at a
+        // time: two reports with the same name then get different numbers.
+        return try reserving.withLock {
+            var path = folder(for: agent, repository: repository, name: name)
+            var branch = "report/\(id)"
+            // A name already taken, by an earlier report with the same name, gets a number.
+            var attempt = 1
+            while FileManager.default.fileExists(atPath: path)
+                || git(["rev-parse", "--verify", "--quiet", "refs/heads/\(branch)"], in: top) != nil
+            {
+                attempt += 1
+                path = folder(for: agent, repository: repository, name: "\(name)-\(attempt)")
+                branch = "report/\(id)-\(attempt)"
+            }
+            try FileManager.default.createDirectory(
+                at: URL(filePath: path).deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try excludeWorktrees(of: agent, in: commonURL)
+            let add = ["worktree", "add", "-b", branch, path, base]
+            guard git(add, in: top) != nil else { throw Failure.gitFailed(arguments: add) }
+            return path
+        }
     }
+
+    /// Held while a new worktree's name is picked and taken.
+    private static let reserving = NSLock()
 
     /// Keeps the agent's worktrees folder inside the repository out of `git status` in the main
     /// checkout, through the repository's own exclude file rather than any tracked file.
