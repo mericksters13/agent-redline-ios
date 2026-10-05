@@ -146,18 +146,36 @@ enum ClaudeCLI {
         return numbers.count == 3 ? numbers : nil
     }
 
-    /// The command's output when it succeeds.
-    private static func output(_ executable: URL, _ arguments: [String]) -> String? {
+    /// The command's output when it succeeds. One still running after `timeout` is stopped and
+    /// counts as failed: the hub asks from its hand-off queue, which a stalled command would hold up.
+    private static func output(_ executable: URL, _ arguments: [String], timeout: TimeInterval = 10) -> String? {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         guard (try? process.run()) != nil else { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+        // Read while it runs, so a long output can't fill the pipe and hold it up.
+        let read = DispatchSemaphore(value: 0)
+        let output = OutputBox()
+        DispatchQueue.global(qos: .utility).async {
+            output.data = pipe.fileHandleForReading.readDataToEndOfFile()
+            read.signal()
+        }
+        let deadline = DispatchTime.now() + timeout
+        guard exited.wait(timeout: deadline) == .success, read.wait(timeout: deadline) == .success else {
+            process.terminate()
+            return nil
+        }
+        return process.terminationStatus == 0 ? String(decoding: output.data, as: UTF8.self) : nil
+    }
+
+    /// The output read on another queue; the semaphore orders the write before the read.
+    private final class OutputBox: @unchecked Sendable {
+        var data = Data()
     }
 }
 #endif
