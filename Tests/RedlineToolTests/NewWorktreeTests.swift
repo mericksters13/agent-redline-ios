@@ -40,6 +40,17 @@ struct NewWorktreeTests {
         // The same name again gets a number rather than failing.
         let again = try await offPool { try NewWorktree.create(from: source, name: "report-1", agent: .claude) }
         #expect(again.hasSuffix("/report-1-2"))
+        // Reports with the same name that start chats at the same time each get a worktree.
+        let together = try await withThrowingTaskGroup(of: String.self) { group in
+            for _ in 0..<3 {
+                group.addTask {
+                    try await offPool { try NewWorktree.create(from: source, name: "report-3", agent: .claude) }
+                }
+            }
+            return try await group.reduce(into: Set<String>()) { $0.insert($1) }
+        }
+        #expect(together.count == 3)
+        for folder in together { await offPool { NewWorktree.remove(folder) } }
 
         // A report copied into the worktree is ignored by git there.
         let report = root.appending(path: "inbox-report", directoryHint: .isDirectory)
