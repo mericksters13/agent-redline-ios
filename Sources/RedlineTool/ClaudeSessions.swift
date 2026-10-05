@@ -127,7 +127,7 @@ enum ClaudeCLI {
         if output(claude, ["auth", "status"]) == nil {
             print("Sign in the claude command first: it starts new Claude Code chats for reports, and keeps its own sign-in, separate from the Claude app's.")
             guard interactive(claude, ["auth", "login"]), output(claude, ["auth", "status"]) != nil else {
-                print("The claude command still isn't signed in. Setup stopped; run it again after claude auth login.")
+                print("The claude command still isn't signed in. Run setup again after claude auth login.")
                 return false
             }
         }

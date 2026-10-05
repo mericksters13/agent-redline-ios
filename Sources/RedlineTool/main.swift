@@ -168,10 +168,13 @@ case "app":
     hub.whenListenerFails = { reason in
         DispatchQueue.main.async { failToStart("\(reason). Phones and simulators can't send reports without it.") }
     }
+    // Before the hub starts: once its status is written, the menu bar app opening next can ask
+    // it to stop, and a hub without these handlers would be ended without letting go of its
+    // hand-overs.
+    stopOnSignals { hub.stop() }
     guard hub.start() else {
         failToStart("A hub is already running (pid \(HubProcess.running(paths).map(String.init) ?? "unknown")) and didn't stop.")
     }
-    stopOnSignals { hub.stop() }
     // Quit in the panel ends the app without a signal: let go of the PID file then too. The
     // panel's Quit has already stopped the hub, so this returns at once then.
     _ = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { _ in
@@ -191,11 +194,12 @@ case "hub":
     }
     guard let devicectl = hubDevicectl else { exit(1) }
     let hub = Hub(paths: paths, devicectl: devicectl, apps: unique(options.apps + (movedApps ?? [])))
+    // Before the hub starts, for the same reason as in the menu bar app.
+    stopOnSignals { hub.stop() }
     guard hub.start() else {
         print("A hub is already running (pid \(HubProcess.running(paths).map(String.init) ?? "unknown")).")
         exit(1)
     }
-    stopOnSignals { hub.stop() }
     dispatchMain()
 
 case "mcp":
@@ -252,12 +256,16 @@ case "hook":
 case "setup", "remove":
     let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
     let adding = arguments.first == "setup"
-    // Before anything else: new Claude Code chats need the claude command signed in.
-    if adding, AgentSettings.isPresent(.claude) || AgentCommand.hasClaudeApp {
-        guard ClaudeCLI.prepare() else { exit(1) }
-        print("Claude Code: the claude command is signed in and ready to start new chats.")
-    }
     var failed = false
+    // New Claude Code chats need the claude command signed in. Without it, the other agents
+    // still get their hooks, and setup reports the failure at the end.
+    if adding, AgentSettings.isPresent(.claude) || AgentCommand.hasClaudeApp {
+        if ClaudeCLI.prepare() {
+            print("Claude Code: the claude command is signed in and ready to start new chats.")
+        } else {
+            failed = true
+        }
+    }
     for agent in Agent.allCases {
         guard AgentSettings.isPresent(agent) else {
             if adding { print("\(agent.name): not used on this Mac, skipped.") }
