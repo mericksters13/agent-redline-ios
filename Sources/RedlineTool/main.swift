@@ -217,13 +217,15 @@ case "app":
     }
     // Before the hub starts: once its status is written, the menu bar app opening next can ask
     // it to stop, and a hub without these handlers would be ended without letting go of its
-    // hand-overs.
+    // hand-overs. A stop asked for while the hub starts waits until it has started.
     stopOnSignals { hub.stop() }
     guard hub.start() else {
         failToStart("Another hub is running and didn't stop. Quit it, then open Redline again.")
     }
     HubAppContext.hub = hub
-    // Report notifications come from Redline; macOS asks the user once.
+    // Report notifications come from Redline; macOS asks the user once. They show while the
+    // panel is open too.
+    UNUserNotificationCenter.current().delegate = ForegroundNotifications.shared
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     NSApplication.shared.setActivationPolicy(.accessory)
     HubMenuBarApp.main()
@@ -323,7 +325,10 @@ case "setup", "remove":
     }
     var failed = false
     for agent in Agent.allCases {
-        guard AgentSettings.isPresent(agent) else {
+        // The hub offers Codex chats whenever it finds the codex command, so its hook goes in
+        // even before Codex has made its settings folder.
+        let codexInstalled = adding && agent == .codex && AgentCommand.locate(.codex) != nil
+        guard AgentSettings.isPresent(agent) || codexInstalled else {
             if adding { print("\(agent.name): not used on this Mac, skipped.") }
             continue
         }

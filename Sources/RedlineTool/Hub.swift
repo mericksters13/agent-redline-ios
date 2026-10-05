@@ -15,8 +15,9 @@ import SystemConfiguration
 /// Thread safety: everything that changes while the hub runs is in `state`, a `Mutex`, apart from
 /// `chatsWatchers`, which has its own. `simulators`, `listener`, `handoff`, `discovery` and
 /// `pidLock` are written once in `start()`, before any source, queue or listener that reads them
-/// starts, and only read afterwards; `stop()` runs once, under `isStopped`, and leaves `hub.pid`
-/// alone unless `start()` took the lock.
+/// starts, and only read afterwards; `start()` and `stop()` run under `lifecycle`, so a stop
+/// waits for a start under way, and `stop()` runs once and leaves `hub.pid` alone unless
+/// `start()` took the lock.
 /// `whenListenerFails` is set before `start()` and only read afterwards. `logDescriptor` is used
 /// only on `writer`.
 ///
@@ -57,10 +58,15 @@ final class Hub: @unchecked Sendable {
     /// Takes offers and files uploads for connections, which write up to `largestReport` bytes.
     private let inbox = DispatchQueue(label: "Redline.hub.inbox", qos: .userInitiated)
     private let network = NWPathMonitor()
-    /// True once `stop()` has run.
+    /// Held while the hub starts and while it stops.
     ///
-    /// Held while it runs, so a second call waits for the first.
-    private let isStopped = Mutex(false)
+    /// A stop asked for while the hub starts, such as by the menu bar app taking over as soon as
+    /// the status is written, waits until everything it has to stop exists. A recursive lock
+    /// rather than a `Mutex`: a listener that fails at once stops the hub from inside `start()`,
+    /// on the same thread.
+    private let lifecycle = NSRecursiveLock()
+    /// True once `stop()` has run; only touched under `lifecycle`.
+    private var isStopped = false
 
     private struct State {
         var currentApps: [String] = []
@@ -130,6 +136,8 @@ final class Hub: @unchecked Sendable {
     /// starts.
     @discardableResult
     func start() -> Bool {
+        lifecycle.lock()
+        defer { lifecycle.unlock() }
         try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
         guard let pidLock = HubProcess.lock(paths) else {
             log(
@@ -157,7 +165,7 @@ final class Hub: @unchecked Sendable {
         simulators?.rescan()
         listener?.start()
         // A listener that failed at once has stopped the hub, and `whenListenerFails` says so.
-        guard !isStopped.withLock({ $0 }) else { return true }
+        guard !isStopped else { return true }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: Self.discoveryInterval, leeway: .seconds(60))
         timer.setEventHandler { [weak self] in self?.discover(includingNewApps: true) }
@@ -182,7 +190,7 @@ final class Hub: @unchecked Sendable {
     /// minutes: called from a signal's queue, the panel's Quit off the main thread, or as the
     /// process ends.
     func stop() {
-        isStopped.withLock { isStopped in
+        lifecycle.withLock {
             guard !isStopped else { return }
             isStopped = true
             discovery?.cancel()
@@ -395,10 +403,28 @@ final class Hub: @unchecked Sendable {
         }
     }
 
-    /// True when `token` is the one this hub gave the app on the device.
-    private func hasValidToken(_ token: String, device: String, bundleID: String) -> Bool {
-        let expected = state.withLock { $0.tokens[Self.key(device: device, bundleID: bundleID)] }
-        return expected.map { Self.constantTimeEquals($0, token) } ?? false
+    /// The hub's reply to an app saying who it is: proof that it holds the app's token, made with
+    /// the app's random value and `nonce`, the hub's own for this connection.
+    func challenge(_ hello: HubMessage.Hello, nonce: String) -> HubMessage.Challenge {
+        guard let token = state.withLock({ $0.tokens[Self.key(device: hello.device, bundleID: hello.bundleID)] })
+        else {
+            log("Turned down \(hello.bundleID) from \(phoneName(hello.device)): this hub never gave it an address")
+            return HubMessage.Challenge(
+                nonce: nonce,
+                refused: "The app needs this Mac's address again; it gets it the next time Xcode can reach the phone."
+            )
+        }
+        let nonces = HubMessage.Nonces(app: hello.nonce, hub: nonce)
+        return HubMessage.Challenge(nonce: nonce, proof: HubMessage.proof(.hub, token: token, nonces: nonces))
+    }
+
+    /// True when `proof` shows the app holds the token this hub gave it, on the connection whose
+    /// random values are `nonces`.
+    private func isProven(device: String, bundleID: String, proof: String, nonces: HubMessage.Nonces) -> Bool {
+        guard let token = state.withLock({ $0.tokens[Self.key(device: device, bundleID: bundleID)] }) else {
+            return false
+        }
+        return Self.constantTimeEquals(HubMessage.proof(.app, token: token, nonces: nonces), proof)
     }
 
     /// The hub's answer to an app's offer: the reports to send now, and the ones the app can stop
@@ -406,11 +432,11 @@ final class Hub: @unchecked Sendable {
     ///
     /// Only an app that was given this hub's address, and so is on a phone paired with this Mac,
     /// can deliver.
-    func answerNow(_ offer: HubMessage.Offer) -> HubMessage.Answer {
-        guard hasValidToken(offer.token, device: offer.device, bundleID: offer.bundleID) else {
+    func answerNow(_ offer: HubMessage.Offer, nonces: HubMessage.Nonces) -> HubMessage.Answer {
+        guard isProven(device: offer.device, bundleID: offer.bundleID, proof: offer.proof, nonces: nonces) else {
             let known = state.withLock { $0.tokens[Self.key(device: offer.device, bundleID: offer.bundleID)] != nil }
             log(
-                "Turned down \(offer.bundleID) from \(phoneName(offer.device)): \(known ? "its token doesn't match" : "this hub never gave it an address")"
+                "Turned down \(offer.bundleID) from \(phoneName(offer.device)): \(known ? "it didn't prove it holds its token" : "this hub never gave it an address")"
             )
             return HubMessage.Answer(
                 want: [],
@@ -435,10 +461,10 @@ final class Hub: @unchecked Sendable {
     }
 
     /// The chats a report from this app can go to, for the phone to show before the user sends.
-    func chatsNow(_ request: HubMessage.ChatsRequest) -> HubMessage.ChatList {
-        guard hasValidToken(request.token, device: request.device, bundleID: request.bundleID) else {
+    func chatsNow(_ request: HubMessage.ChatsRequest, nonces: HubMessage.Nonces) -> HubMessage.ChatList {
+        guard isProven(device: request.device, bundleID: request.bundleID, proof: request.proof, nonces: nonces) else {
             log(
-                "Turned down \(request.bundleID)'s question about chats from \(phoneName(request.device)): its token doesn't match"
+                "Turned down \(request.bundleID)'s question about chats from \(phoneName(request.device)): it didn't prove it holds its token"
             )
             return HubMessage.ChatList(agents: [], chats: [], refused: "The app needs this Mac's address again.")
         }
@@ -484,16 +510,16 @@ final class Hub: @unchecked Sendable {
     // the blocking work above on the hub's own queues and resume when it's done.
 
     /// `answerNow`, on the inbox queue.
-    func answer(_ offer: HubMessage.Offer) async -> HubMessage.Answer {
+    func answer(_ offer: HubMessage.Offer, nonces: HubMessage.Nonces) async -> HubMessage.Answer {
         await withCheckedContinuation { continuation in
-            inbox.async { continuation.resume(returning: self.answerNow(offer)) }
+            inbox.async { continuation.resume(returning: self.answerNow(offer, nonces: nonces)) }
         }
     }
 
     /// `chatsNow`, on the directory queue.
-    func chats(_ request: HubMessage.ChatsRequest) async -> HubMessage.ChatList {
+    func chats(_ request: HubMessage.ChatsRequest, nonces: HubMessage.Nonces) async -> HubMessage.ChatList {
         await withCheckedContinuation { continuation in
-            directory.async { continuation.resume(returning: self.chatsNow(request)) }
+            directory.async { continuation.resume(returning: self.chatsNow(request, nonces: nonces)) }
         }
     }
 
@@ -531,7 +557,7 @@ final class Hub: @unchecked Sendable {
             && name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "." }
     }
 
-    /// Compares tokens in time that doesn't depend on where they differ.
+    /// Compares proofs in time that doesn't depend on where they differ.
     static func constantTimeEquals(_ a: String, _ b: String) -> Bool {
         let x = Array(a.utf8)
         let y = Array(b.utf8)

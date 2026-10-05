@@ -828,11 +828,13 @@ check_codex() {
     if grep -q 'Report delivery' "$HOME/.codex/hooks.json" 2>/dev/null; then
         item "Needs you" "Codex: if you haven't already, trust the Report delivery hook. Codex runs a new hook only after you trust it." \
             "In Codex, open /hooks and trust \"Report delivery\"."
-    elif [ -d "$HOME/.codex" ]; then
+    # Setup adds the hook when ~/.codex exists or it finds the codex command where the hub looks
+    # for it (AgentCommand.locate), even before Codex has made ~/.codex.
+    elif [ -d "$HOME/.codex" ] || [ -x /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex ] ||
+        [ -x /Applications/Codex.app/Contents/Resources/codex ] || [ -x /opt/homebrew/bin/codex ] ||
+        [ -x /usr/local/bin/codex ] || [ -x "$HOME/.local/bin/codex" ]; then
         item "Needs you" "Codex: the Report delivery hook isn't in $HOME/.codex/hooks.json (see the Setup line)." \
             "Fix or move that file, then run: $COMMAND setup" "Then in Codex, open /hooks and trust \"Report delivery\"."
-    elif [ -x /opt/homebrew/bin/codex ] || [ -x /usr/local/bin/codex ] || [ -x "$HOME/.local/bin/codex" ] || [ -d /Applications/Codex.app ] || [ -d /Applications/ChatGPT.app/Contents/Resources/codex-cli ]; then
-        item "Skipped" "Codex: installed but not used yet (no $HOME/.codex), so no hook was added. After you first use it, run: $COMMAND setup"
     else
         item "Skipped" "Codex: not used on this Mac"
     fi

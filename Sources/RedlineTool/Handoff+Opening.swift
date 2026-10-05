@@ -61,8 +61,9 @@ extension Handoff {
     /// Opens a chat where the user works with its agent: in the Claude or Codex app when it's
     /// installed, else in a terminal window in `folder` that resumes it.
     ///
-    /// Throws when it can't.
-    static func openChat(_ agent: Agent, id: String, in folder: String) throws {
+    /// Throws when it can't: neither the app nor the command is there, a terminal is needed and
+    /// there is no folder to open it in, or opening fails.
+    static func openChat(_ agent: Agent, id: String, in folder: String?) throws {
         // The Claude app's link copies a chat started in one of its tabs into a second tab that
         // no longer follows the first, and no link opens the first one
         // (https://github.com/anthropics/claude-code/issues/80773), so the app only comes forward.
@@ -77,6 +78,7 @@ extension Handoff {
             return
         }
         guard let command = AgentCommand.locate(agent) else { throw OpenError.agentNotFound(agent) }
+        guard let folder else { throw OpenError.folderUnknown }
         let resume =
             switch agent {
             case .codex: ["resume"]
@@ -88,10 +90,14 @@ extension Handoff {
     /// Why a chat couldn't be opened.
     enum OpenError: Error, LocalizedError {
         case agentNotFound(Agent)
+        /// A terminal is needed and the folder the chat worked in is gone or unknown.
+        case folderUnknown
 
         var errorDescription: String? {
             switch self {
-            case .agentNotFound(let agent): "Neither \(agent.name)'s app nor its command is installed"
+            case .agentNotFound(let agent): "Redline found neither the \(agent.name) app nor its command on this Mac."
+            case .folderUnknown:
+                "The folder this chat worked in is gone or unknown, so Redline can't resume it in a terminal."
             }
         }
     }

@@ -338,7 +338,7 @@ private struct ReportDetail: View {
             ForEach(attachments, id: \.number) { item in
                 VStack(alignment: .leading, spacing: 10) {
                     notes([item], jump: nil)
-                    ForEach(item.attachments, id: \.self) { file in
+                    ForEach(item.unplacedSnapshots, id: \.self) { file in
                         SnapshotImage(
                             url: sent.folder.appending(path: file),
                             pointWidth: width,
@@ -486,8 +486,17 @@ extension SentReport {
         let snapshot = report.screens.first.flatMap { screen in
             screen.snapshots.first { !$0.isEarlierState } ?? screen.snapshots.first
         }
-        let file = snapshot?.file ?? report.items.lazy.flatMap(\.attachments).first
+        let file = snapshot?.file ?? report.items.lazy.flatMap(\.unplacedSnapshots).first
         return file.map { folder.appending(path: $0) }
+    }
+}
+
+extension Report.Item {
+    /// The snapshots of a note on no screen: its attachments, or the snapshot of an element note
+    /// made before screens shared one snapshot.
+    fileprivate var unplacedSnapshots: [String] {
+        guard screen == nil else { return [] }
+        return (snapshot.map { [$0] } ?? []) + attachments
     }
 }
 #endif

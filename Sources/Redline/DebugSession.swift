@@ -631,7 +631,8 @@ final class DebugSession {
         thumbnails[annotation.id] = nil
         // Other notes on the same screen show this one's outline, so their snapshots are redrawn.
         fullImages.removeAllObjects()
-        annotation.attachments.forEach(store.deleteDraftFile(named:))
+        // After any write still under way, so a snapshot saved late isn't left behind.
+        discardAfterWrites(annotation.attachments)
         pruneCaptures()
         refreshMarkers()
         if mode == .viewer {
@@ -1340,14 +1341,16 @@ final class DebugSession {
     private func pruneCaptures() {
         let used = Set(annotations.compactMap(\.captureID))
         let before = screens
+        var unused: [String] = []
         for index in screens.indices.reversed() {
             for capture in screens[index].captures where !used.contains(capture.id) {
-                store.deleteDraftFile(named: capture.file)
+                unused.append(capture.file)
                 captureImages[capture.id] = nil
             }
             screens[index].captures.removeAll { !used.contains($0.id) }
             if screens[index].captures.isEmpty { screens.remove(at: index) }
         }
+        discardAfterWrites(unused)
         guard screens != before else { return }
         do {
             try persistScreens()
@@ -1761,7 +1764,8 @@ final class DebugSession {
         }
     }
 
-    /// Deletes the images of a note that couldn't be saved, once they're written.
+    /// Deletes images the draft no longer uses once any write under way is done, so a late
+    /// write can't bring one back.
     private func discardAfterWrites(_ files: [String]) {
         guard !files.isEmpty else { return }
         let pending = writes
