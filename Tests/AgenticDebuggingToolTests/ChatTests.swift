@@ -218,6 +218,17 @@ struct ChatTests {
         #expect(ProjectApps.bundleIDs(in: folder) == ["com.example.base.app.debug", "com.example.release"])
     }
 
+    @Test func commentedOutBundleIDsDontCount() {
+        let spec = """
+        targets:
+          App:
+            settings:
+              # PRODUCT_BUNDLE_IDENTIFIER: com.example.old
+              PRODUCT_BUNDLE_IDENTIFIER: com.example.app # was com.example.older
+        """
+        #expect(ProjectApps.bundleIDs(inSettings: spec) == ["com.example.app"])
+    }
+
     @Test func settingReferencesAreFilledInAsXcodeDoes() {
         let settings = ["TARGET_NAME": "Tiny Tally", "PRODUCT_NAME": "$(TARGET_NAME)", "BASE": "com.example"]
         #expect(ProjectApps.expand("${BASE}.$(PRODUCT_NAME:rfc1034identifier:lower)", with: settings) == "com.example.tiny-tally")

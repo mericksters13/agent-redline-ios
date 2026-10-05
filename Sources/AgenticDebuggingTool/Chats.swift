@@ -55,6 +55,12 @@ enum Chats {
     static func unregister(_ id: String, paths: HubPaths) {
         try? FileManager.default.removeItem(at: folder(paths).appending(path: "\(id).json"))
         try? FileManager.default.removeItem(at: folder(paths).appending(path: "\(id).lock"))
+        try? FileManager.default.removeItem(at: recordLock(id, paths: paths))
+    }
+
+    /// Held while a process reads and rewrites a chat's record.
+    static func recordLock(_ id: String, paths: HubPaths) -> URL {
+        folder(paths).appending(path: "\(id).record.lock")
     }
 
     static func record(_ id: String, paths: HubPaths) -> ChatRecord? {

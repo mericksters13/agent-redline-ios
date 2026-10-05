@@ -735,8 +735,31 @@ final class DebugSession {
     nonisolated static let hubReachedKey = "AgenticDebuggingHubReached"
 
     /// Sends every report the Mac hasn't confirmed to its hub, notes the ones it now has, and
-    /// records how it went. Nil when there's nothing to send.
+    /// records how it went. One attempt at a time: each holds its reports' files in memory, up
+    /// to 50 MB, so a send while the app's return is still delivering waits for it, then sends
+    /// whatever is left. Nil when there's nothing to send.
     nonisolated static func deliverReports(from store: ReportStore, patience: TimeInterval) async -> HubLink.Outcome? {
+        await deliveries.run { await deliverNow(from: store, patience: patience) }
+    }
+
+    nonisolated private static let deliveries = DeliveryLine()
+
+    /// Runs deliveries one after another, in the order they were asked for.
+    private actor DeliveryLine {
+        private var last: Task<HubLink.Outcome?, Never>?
+
+        func run(_ work: @escaping @Sendable () async -> HubLink.Outcome?) async -> HubLink.Outcome? {
+            let previous = last
+            let next = Task {
+                _ = await previous?.value
+                return await work()
+            }
+            last = next
+            return await next.value
+        }
+    }
+
+    nonisolated private static func deliverNow(from store: ReportStore, patience: TimeInterval) async -> HubLink.Outcome? {
         guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
         let reports = store.undeliveredReports()
         guard !reports.isEmpty else { return nil }
@@ -989,7 +1012,10 @@ final class DebugSession {
                 logger.notice("Report saved at \(started.folder.path, privacy: .public)")
                 // The first time, iOS asks about local network access before the hub can answer.
                 let patience: TimeInterval = UserDefaults.standard.bool(forKey: DebugSession.hubReachedKey) ? 8 : 60
-                let outcome = await DebugSession.deliverReports(from: store, patience: patience)
+                var outcome = await DebugSession.deliverReports(from: store, patience: patience)
+                // Nothing left to send: a delivery already under way, such as when the app came
+                // back, took this report along.
+                if outcome == nil, store.isDelivered(started.folder) { outcome = .delivered }
                 let notes = count == 1 ? "1 note" : "\(count) notes"
                 await self?.show(Toast(message: DebugSession.toast(for: outcome, notes: notes, to: destination?.title)))
             } catch let tooLarge as ReportStore.TooLarge {
