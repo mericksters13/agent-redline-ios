@@ -6,7 +6,7 @@ Tap the floating debugger button, tap the broken elements, add notes, and send. 
 
 Screenshots work too. Take one as usual and send it from the thumbnail that slides in, or in pick mode use the capture button to attach the screen as it is, or the paperclip to attach photos. Element notes and attachments travel together in one report. Each screen arrives as one screenshot with every note on it outlined and numbered; a screen you scrolled while noting is stitched into one tall screenshot (only a very long one is split, between sections, into labeled parts), and `report.md` tells the agent which picture shows each note.
 
-Setup in the app is one line, `.agenticDebugging()` on the app's root view. The kit needs no Info.plist keys, permissions or build settings. In apps that already declare Photos use, the paperclip's Photos grid can ask for access, only when you tap Show recent photos; with access, the kit also offers screenshots taken in other apps. Apps without it get the system photo picker.
+Setup in the app is one line, `.agenticDebugging()` on the app's root view. The kit needs no Info.plist keys, permissions or build settings. On a physical iPhone, iOS asks once per app for local network access the first time a report is sent, with its standard wording; an app may add `NSLocalNetworkUsageDescription` to explain it in its own words, but doesn't need to. In apps that already declare Photos use, the paperclip's Photos grid can ask for access, only when you tap Show recent photos; with access, the kit also offers screenshots taken in other apps. Apps without it get the system photo picker.
 
 Status: early development. Debug builds only.
 

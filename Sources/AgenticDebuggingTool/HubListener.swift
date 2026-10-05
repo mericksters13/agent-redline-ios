@@ -92,6 +92,8 @@ final class HubListener: @unchecked Sendable {
         private let connection: NWConnection
         private let queue = DispatchQueue(label: "listener.connection")
         private var buffer = Data()
+        /// Counts the idle timeouts started; only the latest one can end a read.
+        private var idleTimeouts = 0
 
         /// The longest line taken: one report, its pictures encoded in the line.
         static let longestLine = Hub.largestReport * 4 / 3 + 65_536
@@ -123,16 +125,26 @@ final class HubListener: @unchecked Sendable {
         }
 
         /// The next line, without its newline; nil when the connection ends, the line is too
-        /// long, or 60 seconds pass.
+        /// long, or 60 seconds pass with nothing received. A large report on a slow network
+        /// keeps arriving well past 60 seconds, so only a stalled connection runs out.
         func read() async -> Data? {
             let once = Once<Data?>()
             return await withCheckedContinuation { continuation in
                 once.set(continuation)
                 queue.async {
                     if let line = self.takeLine() { return once.resume(line) }
-                    self.queue.asyncAfter(deadline: .now() + 60) { once.resume(nil) }
+                    self.waitForData(once)
                     self.receive(once)
                 }
+            }
+        }
+
+        /// Gives up on the read 60 seconds from now, unless more data arrives first. Runs on `queue`.
+        private func waitForData(_ once: Once<Data?>) {
+            idleTimeouts += 1
+            let current = idleTimeouts
+            queue.asyncAfter(deadline: .now() + 60) {
+                if self.idleTimeouts == current { once.resume(nil) }
             }
         }
 
@@ -149,6 +161,7 @@ final class HubListener: @unchecked Sendable {
                     } else if isComplete || error != nil || self.buffer.count > Self.longestLine {
                         once.resume(nil)
                     } else {
+                        if data?.isEmpty == false { self.waitForData(once) }
                         self.receive(once)
                     }
                 }
