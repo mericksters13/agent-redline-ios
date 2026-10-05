@@ -88,6 +88,23 @@ struct ReportStoreTests {
         #expect(files.fileExists(atPath: kept[0].appending(path: "old.png").path))
     }
 
+    @Test func aDraftWithUnreadableScreensIsKeptAsideWhole() throws {
+        let files = FileManager.default
+        let unreadable = Data("not screens".utf8)
+        try store.saveScreenshot(Data([1]), named: "capture.png")
+        try store.saveDraft([annotation("Cut off")])
+        try unreadable.write(to: store.draftDirectory.appending(path: "screens.json"))
+
+        #expect(store.loadDraft().isEmpty)
+        #expect(store.loadScreens().isEmpty)
+
+        let kept = try files.contentsOfDirectory(at: store.unreadableDraftsDirectory, includingPropertiesForKeys: nil)
+        #expect(kept.count == 1)
+        #expect(try Data(contentsOf: kept[0].appending(path: "screens.json")) == unreadable)
+        #expect(files.fileExists(atPath: kept[0].appending(path: "annotations.json").path))
+        #expect(files.fileExists(atPath: kept[0].appending(path: "capture.png").path))
+    }
+
     @Test func aReportTakesTheWholeDraftAndLeavesAFreshOne() throws {
         let items = [annotation("Cut off"), photos("Same bug on another screen", count: 2)]
         for name in items.flatMap(\.screenshots) {
