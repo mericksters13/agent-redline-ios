@@ -333,9 +333,11 @@ final class Handoff: @unchecked Sendable {
     }
 
     /// Opens a chat where the user works with its agent: in the Claude or Codex app when it's
-    /// installed, else in a terminal window in `folder` that resumes it. True when it opened.
+    /// installed, else in a terminal window in `folder` that resumes it. True when it opened;
+    /// false when neither the app nor the command is there, or a terminal is needed and there
+    /// is no folder to open it in.
     @discardableResult
-    static func openChat(_ agent: Agent, id: String, in folder: String) -> Bool {
+    static func openChat(_ agent: Agent, id: String, in folder: String?) -> Bool {
         // The Claude app's link copies a chat started in one of its tabs into a second tab that
         // no longer follows the first, and no link opens the first one
         // (https://github.com/anthropics/claude-code/issues/80773), so the app only comes forward.
@@ -347,7 +349,7 @@ final class Handoff: @unchecked Sendable {
             open(link)
             return true
         }
-        guard agent != .cursor, let command = AgentCommand.locate(agent) else { return false }
+        guard agent != .cursor, let folder, let command = AgentCommand.locate(agent) else { return false }
         return openTerminal(in: folder, running: command.path, arguments: agent == .codex ? ["resume"] : ["--resume"], with: id)
     }
 

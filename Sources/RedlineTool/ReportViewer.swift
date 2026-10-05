@@ -148,6 +148,8 @@ struct ReportViewer: View {
     /// the panel's row may be older than a delivery that happened while the panel was closed.
     private let destination: (agent: String, chat: String, waiting: Bool)
     @State private var selected: Int?
+    /// Why the chat didn't open, shown until the user dismisses it.
+    @State private var openFailure: String?
 
     init(report: HubWindowModel.ReportRow) {
         self.report = report
@@ -174,6 +176,32 @@ struct ReportViewer: View {
         .frame(minWidth: 820, idealWidth: 1040, minHeight: 600, idealHeight: 720)
         .background(Color.black)
         .environment(\.colorScheme, .dark)
+        .alert("The chat didn't open", isPresented: Binding(get: { openFailure != nil }, set: { if !$0 { openFailure = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(openFailure ?? "")
+        }
+    }
+
+    /// Opens the chat a report went to, and says why when it can't. A report sent to an existing
+    /// Codex chat records no folder; Codex keeps the chat's own, and `codex resume` reopens it
+    /// there. A folder that is gone, such as a removed worktree, is skipped: opening a terminal
+    /// there would make it again, empty, and opening one anywhere else would resume the chat
+    /// away from its project.
+    nonisolated private static func open(_ chat: (agent: Agent, id: String, folder: String?)) -> String? {
+        let known = [chat.folder, chat.agent == .codex ? CodexThreads.folder(of: chat.id) : nil]
+        let folder = known.compactMap { $0 }.first { path in
+            var isFolder: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &isFolder) && isFolder.boolValue
+        }
+        if Handoff.openChat(chat.agent, id: chat.id, in: folder) { return nil }
+        if AgentCommand.locate(chat.agent) == nil {
+            return "Redline found neither the \(chat.agent.name) app nor its command on this Mac."
+        }
+        guard let folder else {
+            return "The folder this chat worked in is gone or unknown, so Redline can't resume it in a terminal."
+        }
+        return "Redline couldn't open a terminal in \(folder)."
     }
 
     /// The pictures side by side, each as tall as the window allows.
@@ -248,17 +276,8 @@ struct ReportViewer: View {
             HStack(spacing: 8) {
                 if let chat {
                     Button("Open in \(chat.agent.name)") {
-                        Task.detached {
-                            // A report sent to an existing Codex chat records no folder; Codex
-                            // keeps the chat's own, and `codex resume` reopens it there. A folder
-                            // that is gone, such as a removed worktree, is skipped: opening a
-                            // terminal there would make it again, empty.
-                            let known = [chat.folder, chat.agent == .codex ? CodexThreads.folder(of: chat.id) : nil]
-                            let folder = known.compactMap { $0 }.first { path in
-                                var isFolder: ObjCBool = false
-                                return FileManager.default.fileExists(atPath: path, isDirectory: &isFolder) && isFolder.boolValue
-                            } ?? NSHomeDirectory()
-                            Handoff.openChat(chat.agent, id: chat.id, in: folder)
+                        Task {
+                            openFailure = await Task.detached { Self.open(chat) }.value
                         }
                     }
                     .buttonStyle(ViewerButtonStyle(prominent: true))
