@@ -34,6 +34,18 @@ scripts/build-hub-app.sh <destination folder>
 
 Without a folder, the script installs `Redline.app` in `~/Applications`.
 
+## Install your checkout
+
+To try a change on your own Mac, run the installer from your checkout. It builds and installs that checkout instead of downloading one:
+
+```sh
+git clone https://github.com/mericksters13/agent-redline-ios.git
+cd agent-redline-ios
+bash install.sh
+```
+
+Run it again after each change. It builds the checkout as it is, so `git pull` first to update. If you install the `redline` command by hand, copy it from the output of `swift build -c release --product redline`, as the installer does, not from `Redline.app`: macOS stops a copy taken out of the signed app bundle.
+
 ## Check the iOS build
 
 The kit's UI code only compiles for iOS. Build it in Debug and in Release:
@@ -93,8 +105,8 @@ The npm package `agent-redline-ios` is published by the "Publish to npm" workflo
 (`.github/workflows/publish-npm.yml`) through npm trusted publishing, so there is no npm token to
 keep. To release:
 
-1. Bump `version` in `package.json` and merge it into `main`.
-2. Publish a GitHub release whose tag is that version, as `v0.1.1`.
+1. Set the new version in `package.json`, in `version` in `Sources/RedlineTool/main.swift` and in `scripts/build-hub-app.sh`, move the Unreleased entries in [CHANGELOG.md](CHANGELOG.md) under it, and merge that into `main`.
+2. Publish a GitHub release whose tag is that version, such as `0.1.1`, without a `v`.
 
 The workflow checks that the tag matches the version, then publishes with a provenance record.
 A version can't be published twice, so a mistake means a new version.

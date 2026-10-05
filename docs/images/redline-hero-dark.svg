@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" width="1200" height="620" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title id="t">Redline: a note on the phone arrives in the chat</title>
-  <desc id="d">An iPhone running a notes app in Redline&#39;s annotate mode, with the Save button outlined in red and numbered 1 and the Title field numbered 2. An arrow runs through the Redline menu bar app on the Mac to a Claude Code or Codex chat, which shows the report it received: the screenshot with the same two red outlines (attached in Codex, read from its inbox path in Claude Code), then note 1, Save (Button, editor.save): The button sits under the keyboard on small phones, and note 2, Title (Text field, editor.title): Placeholder is hard to read in dark mode.</desc>
+  <desc id="d">An iPhone running a notes app in Redline&#39;s annotate mode, with the Save button outlined in red and numbered 1 and the Title field numbered 2. An arrow runs through the Redline menu bar app on the Mac to a Claude Code or Codex chat, which shows the report it received: the snapshot with the same two red outlines (attached in Codex, read from its inbox path in Claude Code), then note 1, Save (Button, editor.save): The button sits under the keyboard on small phones, and note 2, Title (Text field, editor.title): Placeholder is hard to read in dark mode.</desc>
   <rect x="0" y="0" width="1200" height="620" rx="24" fill="#1C1C1E"/>
   <!-- Phone in annotate mode -->
   <rect x="45" y="45" width="270" height="530" rx="51" fill="#000000"/>
@@ -53,7 +53,7 @@
   <line x1="590.75" y1="92" x2="1179.25" y2="92" stroke="#48484A" stroke-width="1.5"/>
   <rect x="612" y="108" width="546" height="448" rx="18" fill="#3A3A3C"/>
   <text x="636" y="146" font-size="21" font-weight="600" fill="#FFFFFF">UI report from Alex&#39;s iPhone · Sample Notes</text>
-  <!-- screen-1.jpg -->
+  <!-- 5E0C2A4B-7F1D-….jpg -->
   <rect x="636" y="168" width="122" height="234" rx="12" fill="#000000" stroke="#48484A" stroke-width="1"/>
   <rect x="650" y="214.3" width="93.6" height="23.4" rx="5.4" fill="#2C2C2E"/>
   <rect x="650" y="251.2" width="93.6" height="5.4" rx="2.7" fill="#2C2C2E"/>
@@ -72,7 +72,7 @@
   <text x="778" y="200" font-size="20" fill="#98989D">…/Redline/inbox/</text>
   <text x="778" y="228" font-size="20" fill="#98989D">com.example.notes/</text>
   <text x="778" y="256" font-size="20" fill="#98989D">20261004-142233-0E12001C/</text>
-  <text x="778" y="284" font-size="20" font-weight="600" fill="#FFFFFF">screen-1.jpg</text>
+  <text x="778" y="284" font-size="20" font-weight="600" fill="#FFFFFF">5E0C2A4B-7F1D-….jpg</text>
   <text x="636" y="436" font-size="20" font-weight="600" fill="#FFFFFF">1. Save (Button, editor.save):</text>
   <text x="636" y="462" font-size="20" fill="#FFFFFF">The button sits under the keyboard on small phones</text>
   <text x="636" y="500" font-size="20" font-weight="600" fill="#FFFFFF">2. Title (Text field, editor.title):</text>
