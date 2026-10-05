@@ -4,39 +4,26 @@
 
 # Redline
 
-Redline lets you point at UI in a Debug build of your iOS app, on an iPhone or in a simulator, write a note, and send it straight into the Claude Code or Codex chat working on that app. The agent gets a snapshot of each screen with every element you noted outlined in red and numbered, plus each element's name, role and identifier from the accessibility tree, so it can find the view in the code without guessing. It is the way a designer redlines a screen, done on the running app.
+Redline lets you point at UI in a Debug build of your iOS app, on an iPhone or in a simulator, write a note, and send it to the Claude Code or Codex chat working on that app. It is how a designer redlines a screen, done on the running app.
 
-It replaces the loop of taking a screenshot, moving it to the Mac, pasting it into a chat and describing which button you mean.
+The agent gets a snapshot of each screen with the elements you noted outlined in red and numbered, plus each element's accessibility label, role and identifier, so it can find the view in your code. Redline replaces taking a screenshot, moving it to the Mac, pasting it into a chat and describing which button you mean.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/redline-hero-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/redline-hero-light.svg">
-    <img src="docs/images/redline-hero-light.svg" width="880" alt="An iPhone running a notes app in Redline's annotate mode, with the Save button outlined in red and numbered 1 and the Title field numbered 2. An arrow runs through the Redline menu bar app on the Mac to a Claude Code or Codex chat, which shows the report it received: the snapshot with the same two red outlines (attached in Codex, read from its inbox path in Claude Code), then note 1, Save (Button, editor.save): The button sits under the keyboard on small phones, and note 2, Title (Text field, editor.title): Placeholder is hard to read in dark mode.">
+    <img src="docs/images/redline-hero-light.svg" width="880" alt="An iPhone in Redline's annotate mode, with the Save button outlined in red and numbered 1 and the Title field numbered 2. An arrow runs through the Redline menu bar app on the Mac to a Claude Code or Codex chat, which shows the report: the snapshot with the same two outlines, then note 1, Save (Button, editor.save): The button sits under the keyboard on small phones, and note 2, Title (Text field, editor.title): Placeholder is hard to read in dark mode.">
   </picture>
 </p>
 
-Status: early development (version 0.1). Supported agents: Claude Code and Codex.
-
-## Contents
-
-- [How it works](#how-it-works)
-- [What the agent receives](#what-the-agent-receives)
-- [Requirements](#requirements)
-- [Install on the Mac](#install-on-the-mac)
-- [Add Redline to your iOS app](#add-redline-to-your-ios-app)
-- [Send your first report](#send-your-first-report)
-- [Using Redline](#using-redline)
-- [What ships where](#what-ships-where)
-- [Privacy and security](#privacy-and-security)
-- [Troubleshooting](#troubleshooting)
-- [Command reference](#command-reference)
-- [Contributing](#contributing)
-- [License](#license)
+Version 0.1.0, early development. Works with Claude Code and Codex only. The Agents section in the menu bar panel, the Built from line in Send to and the SwiftUI hint described below are on `main` and not yet in a release.
 
 ## How it works
 
-The dashed arrows are setup and happen before the first report. The solid ones carry each report. The numbers match the list below.
+Redline has two parts:
+
+- **The kit**, the `Redline` Swift package. It goes into your app with one line, `.redline()`, and runs only in Debug builds.
+- **The Mac side**: `Redline.app`, a menu bar app (the hub in the figures), and the `redline` command that chats and Terminal use.
 
 <p align="center">
   <picture>
@@ -46,22 +33,12 @@ The dashed arrows are setup and happen before the first report. The solid ones c
   </picture>
 </p>
 
-1. **Registers its app.** A Claude Code or Codex chat open in your app's project tells the hub which apps the project builds: Claude Code through `redline mcp`, when the chat starts, and Codex through the hook `redline setup` installs, the next time you send the chat a message.
-2. **Address and token.** The hub leaves `hub.json` in the app's data container: the Mac's addresses, port 47361 and a token for that phone and app.
-3. **Report.** You tap the floating button, tap elements, write notes and tap Send. The first time you send from a build, the app asks the hub which open chats work on this app, with the one in this build's worktree first, and you pick one in Send to. The kit saves the report on the device (`report.json`, `report.md` and the snapshots). An iPhone offers it to the hub with the token and uploads the files the hub asks for; from a simulator, the hub copies the finished report out of the app's folder itself.
-4. **Report and snapshots.** The hub files the report in its inbox, chooses the chat, and hands it over with the path of each snapshot. A Mac notification says where it went.
+1. **A chat registers its app.** Redline reads the app's bundle ID from the Xcode project (or XcodeGen `project.yml`) in the chat's folder. It takes reports only for apps a chat works on now or has worked on before.
+2. **Redline sets up the app.** It writes the Mac's address and a token into a file, `hub.json`, in the app's data container. On an iPhone it does this over Xcode's device link, because the app can't find the Mac on its own.
+3. **You send a report.** Tap the floating button, tap elements, write notes and tap Send. From an iPhone, the app saves the report and sends it over the local network. In a simulator, Redline copies it out of the app's folder.
+4. **Redline hands it to a chat.** It files the report in its inbox and gives it to a chat, with the path of each snapshot.
 
-### The parts
-
-- **Redline kit** (the `Redline` Swift package). You add one line, `.redline()`, to your app's root view. In Debug builds it shows a floating button, lets you pick elements and write notes, saves each report on the device, and sends it to the Mac.
-- **Redline hub** (`Redline.app`, the menu bar app). It gives each watched app on each paired iPhone the Mac's address, takes reports off phones and simulators, files them in an inbox, and hands each one to a chat. Its menu bar panel shows the active devices, whether reports can reach each agent, and the reports sent.
-- **The `redline` command.** The same program, run from Terminal. Chats run it to register their app (step 1).
-
-The hub only takes reports for apps that an open chat builds. It finds them by reading the bundle IDs of the iOS app targets in the Xcode projects (or XcodeGen `project.yml`) in each chat's folder.
-
-### How the phone finds the Mac
-
-Steps 2 and 3 travel differently on a physical iPhone and in a simulator:
+Steps 2 and 3 on an iPhone and in a simulator:
 
 <p align="center">
   <picture>
@@ -71,41 +48,11 @@ Steps 2 and 3 travel differently on a physical iPhone and in a simulator:
   </picture>
 </p>
 
-- **iPhone.** An app cannot find the Mac on its own, so the hub leaves the address in the app's folder over Xcode's device link (`devicectl device copy to`). The address lists the Mac's IPv4 addresses on Wi-Fi and Ethernet (not VPN links) and its `.local` name, port 47361, the phone's ID and a token for that phone and app. The hub writes it once, and again only when the Mac's address changes. It looks again for newly paired phones and newly installed apps every 30 minutes, when a chat for a new app opens, and when the Mac's network changes.
-- **A phone that can't be reached** (asleep, out of range, on another network) is tried again after 30 seconds, then after waits that double up to 5 minutes. The hub also watches for the announcement a phone makes on the network when it wakes, and tries again right away.
-- **Simulator.** A simulator app's files are ordinary files on the Mac, so the hub watches them with file system events. No network or `devicectl` is involved in sending.
-
-### Which chat gets the report
-
-This is step 4 in detail.
-
-```mermaid
-flowchart TD
-    a["Report filed in the inbox"] --> b{"Was a chat picked in Send to?"}
-    b -->|"Yes, an open chat"| c["That chat"]
-    b -->|"Yes, New chat"| d{"Did this New chat pick already start a chat?"}
-    d -->|"Yes"| e["The chat that pick started"]
-    d -->|"No"| f["Make a new worktree from main and start a chat there"]
-    b -->|"No pick"| g{"Open chats in the worktree the app was built from"}
-    g -->|"Exactly one"| h["That chat"]
-    g -->|"None"| f
-    g -->|"Several"| i["Waits in the inbox until you pick on the phone"]
-```
-
-- **The phone's Send to pick comes first.** The first time you send from a build, the phone asks the Mac for the open chats that work on this app and shows them. The chat working in the worktree the app was built from is selected for you and tagged "This build". Your pick is kept for later reports from builds of the same worktree.
-- **Otherwise, the chat in the worktree the app was built from.** `.redline()` records the path of the source file that calls it at compile time. The hub walks up from that path to the folder holding `.git`, and looks for an open chat whose folder is in that same worktree.
-- **New chat** makes a new git worktree on a branch named `report/<report ID>`, from the repository's main branch (origin's default branch, fetched first, or else a local `main` or `master`), and starts a chat there. Later reports sent with the same pick go to that chat while its worktree exists. Picking New chat again starts another one. If no chat works in the worktree and nothing was picked, the hub also starts a new chat, with the first agent installed.
-- **The phone warns you before you pick.** When the worktree the app was built from isn't on main, the picker shows a line under New chat, such as "Built from feature/growth-card. A new chat starts from main." If the bug is in the feature, send it to that branch's chat instead.
-- **New chats start read-only.** The hub starts them with the agent's command line, Claude Code in plan mode and Codex in a read-only sandbox, then opens the chat in the Claude app or the Codex app, or in Terminal when that app is not installed.
-
-### How the chat receives it
-
-- **Claude Code.** The report goes in through the chat's own message socket and starts a turn, even when the chat is idle. If the chat has closed, the hub resumes it with `claude --resume`, in the Claude app when it is installed or else in Terminal, then sends the report.
-- **Codex.** The report starts a turn through the Codex app, with its snapshots attached the way the app attaches a screenshot you add. If no Codex window has the chat open, the hub opens it first. If the app can't take it, the report goes in with your next message in that chat, through the hook `redline setup` adds. The Codex app's socket is the app's own, not a published interface, so a Codex update can change it; the hook is the fallback.
+[How Redline works](docs/HOW-IT-WORKS.md) has the details: when Redline looks for phones and apps, how a chat is chosen and reached, and what each report file holds.
 
 ## What the agent receives
 
-The snapshot at the top shows the first screen of this report. Each snapshot is named by its full path, followed by the notes on it. The numbers match the red outlines in the snapshot. Each note names the element by its accessibility label (or identifier), then its role and identifier:
+A report arrives in the chat as a message like this one. Notes 1 and 2 are the ones in the figure at the top. Note 3 is an attached photo.
 
 ```text
 UI report from Alex's iPhone · Sample Notes
@@ -118,27 +65,22 @@ UI report from Alex's iPhone · Sample Notes
 3. Photo: This is how it looked in the last build
 ```
 
-Snapshot file names say nothing about what they show, so when a snapshot is an earlier state of a screen, or one part of a tall one, a line under its path says so, such as `Editor, earlier state, before the screen changed` or `Editor, part 2 of 2`.
+Each snapshot's path comes first, then its notes, numbered like its outlines. A note reads `Label (Role, identifier): note`. Without a label, the identifier is the name. When the element sits inside other named elements, they follow, such as `in Cell "Milestones" (today.list)`, so the agent can tell apart elements that share a label.
 
-The report folder also holds:
-
-- `report.md`: a summary for the agent: the app and version, the device and iOS version, each screen's notes, and which snapshot shows each note.
-- `report.json`: the same in full: each element's frame, role, label, value, identifier and class, the bigger elements that hold it, and where its outline sits in its snapshot.
-- The snapshots, each named by a UUID, such as `5E0C2A4B-7F1D-4C39-9A0E-2B6D8F41C3A7.jpg`: one per screen with every note on it outlined. A screen you scrolled while noting is stitched into one tall snapshot, and one taller than about two screens is cut between rows into parts. A screen whose content changed between notes, such as a switched segment, gets a snapshot of each state, and each note is outlined on the state it was made on. Attachments are snapshots too. `report.md` and `report.json` say what each file shows.
-
-A chat that calls the MCP tool `check_messages` gets `report.md` with the snapshots attached instead.
+When the Codex app takes a report, the snapshots come attached. Claude Code opens them from their paths. Each report's folder also holds `report.md` (a summary) and `report.json` (everything the kit read about each element, such as its frame, value and class).
 
 ## Requirements
 
 - A Mac with macOS 15 or later.
-- Xcode 16 or later (the package uses Swift tools 6.0, and the hub uses Xcode's `devicectl`). Redline has been built and tested with Xcode 27 only. Select Xcode with `xcode-select` if you have more than one.
-- Your app targets iOS 18 or later and uses SwiftUI.
-- Claude Code, Codex, or both on the Mac. For Claude Code, the `claude` command must be installed and signed in: the hub uses it to start new chats.
-- For a physical iPhone: the phone is paired with the Mac in Xcode (you can run builds on it), and the phone and Mac are on the same local network.
+- Xcode 16 or later (so far tested only with Xcode 27).
+- A SwiftUI app that targets iOS 18 or later.
+- An Xcode project or XcodeGen `project.yml` in the folder your chat works in. Redline reads the app's bundle ID from it.
+- Claude Code, Codex, or both. Claude Code also needs the `claude` command installed and signed in (see [After installing](#after-installing)).
+- For an iPhone: the phone is paired with the Mac in Xcode, and both are on the same local network.
 
 ## Install on the Mac
 
-There are three ways in, and all three run the same installer, [`install.sh`](install.sh). It builds Redline from source with your Xcode, so the first run takes a few minutes.
+All three ways run the same installer, [`install.sh`](install.sh). It builds Redline from source with your Xcode, so the first run takes a few minutes.
 
 1. **Ask your agent.** In a Claude Code or Codex chat open in your app's project, paste:
 
@@ -148,126 +90,63 @@ There are three ways in, and all three run the same installer, [`install.sh`](in
 
    The agent follows [INSTALL.md](INSTALL.md): it runs the installer, adds the package and `.redline()` to your app, builds it, and tells you what is left for you to do.
 
-2. **npx** (needs Node.js 18 or later):
+2. **npx** installs the latest release. It needs Node.js 18 or later.
 
    ```sh
    npx agent-redline-ios
    ```
 
-
-3. **curl:**
+3. **curl** builds the newest code on `main`.
 
    ```sh
    (f="$(mktemp)" && trap 'rm -f "$f"' EXIT && curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "$f" && bash "$f")
    ```
 
-   It saves the script to a new private temporary file, runs it only when the download worked, and deletes it afterwards, so a failed download ends with an error instead of an empty run that exits 0. The script then downloads the `main` branch. To install a particular branch, tag or commit, set `REDLINE_REF` in front of `bash`: `... && REDLINE_REF=<commit> bash "$f")`.
+   To build another branch, tag or commit, put `REDLINE_REF=<ref>` before `bash`.
 
-The installer asks for nothing it can do without: with `--no-input` (for example `npx agent-redline-ios --no-input`), or when a coding agent or CI runs it, it never waits for an answer and lists what is left for you.
+When a coding agent or CI runs the installer, or you add `--no-input`, it never waits for an answer. It lists what is left for you instead.
 
-### What the installer does
+### What the installer changes
 
-Each step is safe to run again: nothing is added twice, and a run that stopped partway can be run again.
+It is safe to run again, and it never runs `sudo`. If something needs you first, such as accepting the Xcode license, it stops and shows the command that does it. Run that, then run the installer again.
 
-1. **Checks the Mac:** macOS 15 or later, not run as root, Xcode installed and selected with its license accepted and its first launch done, `devicectl`, Swift 6 or later, git, and 3 GB of free disk space. When something is missing it stops with the one command to fix it, such as `sudo xcodebuild -license accept`; run that, then run the same install command again. The installer never runs `sudo` itself.
-2. **Gets the source:** the checkout it runs from, or a copy of the npm package in `~/Library/Caches/Redline/source`, so the build lands in a folder you own and later versions reuse it. Run with curl, it downloads the `main` branch into that same folder and updates that copy on later runs. git is never allowed to ask for a sign-in: a repository or branch it can't reach stops the installer with the fix.
-3. **Builds the `redline` command** with `swift build -c release --product redline`. The build log is `~/Library/Application Support/Redline/install.log`; if the build fails, the installer shows the last errors and stops.
-4. **Installs the command** as `~/.local/bin/redline`, copied from the build output. If `~/.local/bin` is not on your `PATH` and your shell is zsh, it adds one line to `~/.zprofile`; for another shell, it gives you the line to add.
-5. **Builds and installs `Redline.app`** in `~/Applications` with `scripts/build-hub-app.sh`. Keep it there: chats look for the app there to start it. The app is signed with your Mac's Apple Development certificate when you have one and it can be used (it can't over SSH or with the keychain locked), and ad hoc otherwise. A running copy is stopped and opened again (with `--no-start`, it is stopped and not opened again).
-6. **Runs `redline setup`:**
-   - **Claude Code**, when `~/.claude` exists or the Claude app is installed. Setup checks that the `claude` command is installed, signed in, and, with the Claude app, version 2.1.285 or later. The `claude` command starts new chats for reports and has its own sign-in, separate from the Claude app's. In a terminal, setup runs `claude update` and `claude auth login` for you. With no terminal to ask in, with `--no-input`, or when an agent runs the installer, it runs neither and lists them for you instead. Either way it goes on with the rest.
-   - **Codex**, when `~/.codex` exists or the `codex` command is installed. Setup adds one hook, on `UserPromptSubmit`, named "Report delivery", to `~/.codex/hooks.json`. Your other hooks stay as they are, and the file is backed up once as `hooks.json.before-redline`.
-   - Claude Code needs no hooks, so setup leaves `~/.claude/settings.json` as it is.
-   - Cursor gets no hooks. Hooks an earlier setup added to `~/.cursor/hooks.json` are removed.
-   - **The earlier version**, Agentic Debugging, is replaced: its app in `~/Applications` is stopped and removed, its command `~/.local/bin/agentic-debugging` is removed once setup has moved its hooks to `redline`, and its data folder, `~/Library/Application Support/iOSAgenticDebuggingKit`, moves to `~/Library/Application Support/Redline`, so reports and paired phones carry over; the old name is left as a link to it, for an MCP server of the earlier version still serving an open chat. The data moves only after the new command and app are installed, so a run that stops earlier leaves the earlier version working with its data; that run's log and checklist are in `~/Library/Caches/Redline`.
-7. **Adds the MCP server to Claude Code**, once, when the `claude` command is installed: `claude mcp add --scope user redline -- ~/.local/bin/redline mcp`. Each Claude Code chat then runs `redline mcp`, which registers the chat and the apps its project builds with the hub, and opens Redline when it is not running. In projects that build no iOS app it does nothing. It also gives the chat two tools, `check_messages` and `wait_for_message`, for taking reports that are waiting in the inbox. An entry left from Redline's earlier name, `agentic-debugging`, is removed. Another tool's MCP server already named `redline` stays: the checklist lists it under Needs you instead of replacing it.
-8. **Opens Redline at login and starts it:** a login item, `~/Library/LaunchAgents/com.agentredline.hub.plist`, opens Redline in the background at login. A Redline icon appears in the menu bar. `--no-start` skips this step, for tests and CI.
-9. **Ends with a checklist** of each step, marked Done, Needs you or Skipped, with the exact command or click for each Needs you. It is saved in `~/Library/Application Support/Redline/install-report.txt`.
+- Installs the `redline` command in `~/.local/bin`. If that folder isn't on your `PATH`, it adds a line to `~/.zprofile` for zsh. For another shell, the checklist says how to add it.
+- Installs `Redline.app` in `~/Applications`, with a login item that starts it from there (`~/Library/LaunchAgents/com.agentredline.hub.plist`). Don't move the app.
+- For Claude Code, it checks that the `claude` command is signed in and new enough, and adds Redline's MCP server for all your projects (`claude mcp add --scope user`). In a terminal, it runs `claude update` and `claude auth login` for you when needed.
+- For Codex, it adds one hook, "Report delivery", to `~/.codex/hooks.json`. Your other hooks stay, and the file is backed up first as `hooks.json.before-redline`.
+- Keeps its source and build cache in `~/Library/Caches/Redline`, and its log, reports and settings in `~/Library/Application Support/Redline`.
 
-### What may need you afterwards
+In a project that builds no iOS app, the MCP server and the hook do nothing.
 
-The checklist lists what only you can do. Depending on your Mac, that is:
+It ends with a checklist marked Done, Needs you or Skipped, also saved in `~/Library/Application Support/Redline/install-report.txt`.
 
-- **Sign in the `claude` command:** `claude auth login`, or `claude update` when it is too old for the Claude app. Setup does this for you when it has a terminal to ask in.
-- **Trust the Codex hook:** Codex runs a new hook only after you trust it. In Codex, open `/hooks` and trust "Report delivery".
-- **Open a new terminal** when the installer added `~/.local/bin` to your `PATH`.
-- **Start a new Claude Code chat** in your project, or restart the open one: a chat loads its MCP servers when it starts.
+### After installing
 
-The first time Redline runs, macOS asks once whether it may show notifications, and may say a background item was added: that is the login item.
+The checklist lists what only you can do, with the command for each. The usual ones:
 
-### Update
+- **Sign in the `claude` command** with `claude auth login`, or run `claude update` if it is too old for the Claude app. Redline uses it to start new Claude Code chats and reopen closed ones. It has its own sign-in, separate from the Claude app's.
+- **Trust the Codex hook.** In Codex, open `/hooks` and trust "Report delivery". Codex runs a new hook only after you trust it, and a Codex chat registers its app through this hook.
+- **Open a new terminal** if the installer added `~/.local/bin` to your `PATH`.
 
-Update the Mac first, then rebuild your apps against the new package. A newer hub reads reports from older apps, but an older hub may not fully read a report whose format changed: it still delivers it, without the notes in its panel and with the snapshots out of order.
-
-To update the Mac, run the install command again. It rebuilds the command and the app, replaces them, and restarts Redline. With npx, ask for the latest version, or npx may reuse the copy it downloaded before:
-
-```sh
-npx agent-redline-ios@latest
-```
-
-Run with curl, the installer downloads the latest `main`. From a checkout, it builds the checkout as it is, so `git pull` first.
-
-### Uninstall
-
-```sh
-npx agent-redline-ios uninstall
-```
-
-or
-
-```sh
-(f="$(mktemp)" && trap 'rm -f "$f"' EXIT && curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "$f" && bash "$f" uninstall)
-```
-
-It removes Redline's hooks (with `redline remove`, or by itself when the command is already gone; other hooks stay), the MCP entry in Claude Code (not another tool's server named `redline`), the login item, `Redline.app`, `~/.local/bin/redline`, the line it added to `~/.zprofile`, and its download cache. Reports stay in `~/Library/Application Support/Redline` until you delete that folder, and so do the `.before-redline` backups of your settings. If the app, the command, the login item, a hook or the MCP entry can't be removed, or Redline doesn't stop when asked, the checklist says so under Needs you and the uninstaller exits with status 1. In your app, remove the `.redline()` line and the package.
-
-### From source
-
-To work on Redline itself, clone the repository and run the installer from the checkout. It builds and installs that checkout instead of downloading one:
-
-```sh
-git clone https://github.com/mericksters13/agent-redline-ios.git
-cd agent-redline-ios
-bash install.sh
-```
-
-Run it again after each change. `swift test` runs the tests. To rebuild only the app, run `scripts/build-hub-app.sh`. Install the `redline` command from `swift build -c release --product redline`, as the installer does; do not copy the executable out of `Redline.app`, because macOS stops a copy taken out of the signed app bundle.
+The first time Redline runs, macOS asks whether it may show notifications. If your projects are in your Documents folder, macOS also asks whether Redline may access it. Allow it: Redline reads your chats' project folders to learn which app each one builds. macOS may also say a background item was added. That is Redline's login item.
 
 ## Add Redline to your iOS app
 
-An agent asked to add Redline to your app does these steps for you, following [INSTALL.md](INSTALL.md).
+If your agent installed Redline from the prompt above, it has done this already.
 
-1. **Add the package.** In Xcode, choose File > Add Package Dependencies and enter:
+1. **Add the package.** In Xcode, choose File > Add Package Dependencies and enter `https://github.com/mericksters13/agent-redline-ios.git`. Choose Up to Next Major Version from `0.1.0`, and add the `Redline` library to your app target.
 
-   ```text
-   https://github.com/mericksters13/agent-redline-ios.git
-   ```
-
-   There are no version tags yet, so choose the `main` branch.
-
-2. **Add the `Redline` library to your app target** when Xcode asks which product to add. In a `Package.swift`, the dependency is:
+   In a `Package.swift`, the dependency is:
 
    ```swift
-   .package(url: "https://github.com/mericksters13/agent-redline-ios.git", branch: "main")
+   .package(url: "https://github.com/mericksters13/agent-redline-ios.git", from: "0.1.0")
    // in the app target's dependencies:
    .product(name: "Redline", package: "agent-redline-ios")
    ```
 
-   In an XcodeGen `project.yml`:
+   For XcodeGen and Tuist, see [INSTALL.md](INSTALL.md#3-add-the-package-to-the-app-target).
 
-   ```yaml
-   packages:
-     Redline:
-       url: https://github.com/mericksters13/agent-redline-ios.git
-       branch: main
-   targets:
-     YourApp:
-       dependencies:
-         - package: Redline
-           product: Redline
-   ```
-
-3. **Add one line to your root view.**
+2. **Add one line to your root view.**
 
    ```swift
    import SwiftUI
@@ -284,15 +163,15 @@ An agent asked to add Redline to your app does these steps for you, following [I
    }
    ```
 
-That is all: no Info.plist keys, permissions, build settings or build phases. You don't need `#if DEBUG` around the call; in Release builds, `.redline()` returns the view unchanged.
+That is all: no Info.plist keys, build settings or build phases. You don't need `#if DEBUG` around the call: in Release builds it returns the view unchanged (see [What ships in your app](#what-ships-in-your-app)).
 
-On a physical iPhone, iOS asks once whether the app may find devices on the local network, the first time it talks to the Mac. Allow it, or reports can't reach the Mac. The prompt uses iOS's standard wording; an app may add `NSLocalNetworkUsageDescription` to its Info.plist to explain it in its own words, but doesn't need to.
+The first time you send a report from an iPhone, iOS asks once whether the app may find devices on your local network. Allow it, or reports can't reach the Mac. To explain the prompt in your own words, you can add `NSLocalNetworkUsageDescription` to Info.plist.
 
 ## Send your first report
 
-1. Make sure Redline is running on the Mac (its icon is in the menu bar).
-2. Open a Claude Code or Codex chat in the app's project. A Claude Code chat registers when it starts; a Codex chat registers the next time you send it a message.
-3. Build and run the Debug build from Xcode, on a paired iPhone or a simulator. The menu bar panel then shows the device as Ready (a phone) or Running (a simulator).
+1. Make sure Redline is running on the Mac. Its icon is in the menu bar.
+2. Open a Claude Code or Codex chat in the app's project. Redline finds open Claude Code chats on its own. A Codex chat registers the next time you send it a message, once you have trusted its hook.
+3. Build and run the Debug build from Xcode, on a paired iPhone or a simulator. The menu bar panel then shows the device as Ready (a phone) or Running (a simulator). Redline looks for newly installed apps every 30 minutes, so if the app is new on that device, click Quit in the panel and open `Redline.app` again to make it look now.
 4. In the app, tap the floating Redline button, tap an element, write a note and tap Add note.
 5. Tap Send. The first time, pick the chat in Send to and confirm.
 6. The report appears in the chat, and the menu bar panel lists it with the chat it went to.
@@ -301,90 +180,147 @@ On a physical iPhone, iOS asks once whether the app may find devices on the loca
 
 ### On the phone
 
-- **The floating button.** Tap it to start marking up the screen. Drag it anywhere; it snaps to the nearest screen edge. Press and hold it to see the reports sent from this device.
-- **Annotate mode.** A light red line runs around the screen while Redline has it, and the controls sit in a black bar at the top. Tap any element to select it; Smaller and Larger step to a part of it or to the bigger element around it. Write a note and tap Add note. Keep going across screens: notes collect until you send them. Tap the close button in the bar to use the app again; the notes stay.
-- **Notes tray.** Tap the screen name in the bar to see the waiting notes. Tap one to see its snapshot and note full screen, or delete it. The draft is saved on the device, so it survives the app being killed or reinstalled by a rebuild.
-- **Screenshots and attachments.**
+- **The floating button.** Tap it to start marking up the screen. Drag it anywhere; it snaps to the nearest edge. Press and hold it to see the reports sent from this device.
+- **Annotate mode.** A light red line around the screen means your taps go to Redline, not the app. The controls sit in a black bar at the top.
+  - Tap an element to select it. Smaller selects a part of it, and Larger selects the element around it.
+  - Write a note and tap Add note. Notes collect across screens until you send them.
+  - To use the app again, tap the close button in the bar. Your notes stay.
+- **Notes tray.** Tap the screen name in the bar to see the notes waiting to be sent. Tap a note to see it full screen with its snapshot, or tap its trash button to delete it. Waiting notes are saved on the device, so they survive the app being killed or reinstalled by a rebuild.
+- **Screenshots and photos.**
   - Take a screenshot as usual. A thumbnail appears beside the floating button; tap it to write a note and send. Redline captures the app's own windows at that moment, so Redline itself is never in the snapshot.
-  - In annotate mode, the capture button attaches the whole screen as it is, and the paperclip attaches photos.
-  - Apps that already declare Photos access in their Info.plist show a grid of recent photos, and ask for access only when you tap Show recent photos. With that access, Redline also offers screenshots taken in other apps when you come back to yours. Other apps get the system photo picker, which needs no access.
+  - In annotate mode, the capture button attaches the whole screen as it is, and the paperclip opens a photo panel. Without Photos access, the panel offers the system photo picker, which needs no permission.
+  - If your app already declares Photos access in Info.plist, the panel can show your recent photos: tap Show recent photos to allow access. With access, Redline also offers screenshots you took in other apps when you come back to yours.
   - Notes on elements and attachments go together in one report.
-- **Send to.** The row in the notes tray shows where reports go, and changes it. The picker has one tab per agent on the Mac, a New chat row ("In a new worktree from main", with a line under it when the build's worktree isn't on main), and the open chats that work on this app, the one in this build's worktree first.
-- **Delivery.** After Send, a short message says whether the report reached the Mac. A report that didn't is kept on the device. Once one report has reached the Mac, the app offers any it hasn't confirmed again each time the app comes back to the foreground. The sent reports list shows "On the Mac" for each report, or why it isn't there yet.
+- **Send to.** The Send to row in the notes tray shows where reports go. Tap it to choose an agent, then one of its chats that work on this app, or New chat. The picker lists open Claude Code chats and Codex chats used in the last 14 days. Among them, the chat in the git worktree this build came from (your checkout, if you don't use worktrees) comes first, tagged "This build", and is selected. The first Send from a worktree asks you to pick, and later builds from it keep the pick. [Where reports go](#where-reports-go) explains each choice.
+- **Delivery.** After Send, a short message says whether the report reached the Mac. A report that didn't stays on the device. The app sends it again when it launches, each time it comes back to the foreground, and with the next Send. The sent reports list shows "On the Mac" for each report, or why it isn't there yet.
 
 ### On the Mac
 
 Click the Redline icon in the menu bar to open the panel:
 
-- **Header:** the address and port apps reach the Mac at.
-- **Devices:** paired iPhones that are ready and running simulators with a watched app, with the time of each one's last report. Paired phones that can't take reports right now are dimmed, with the reason, such as Not reachable or No watched app installed.
-- **Agents:** Claude Code and Codex, whichever are installed, each with whether reports can reach its chats right now. Redline checks the same way it delivers, without sending anything to a chat: for Claude Code, that the `claude` command runs, is signed in and, with the Claude app, is new enough; for Codex, that the Codex app (the ChatGPT app, when Codex comes inside it) answers Redline on its socket. It checks when the panel opens, at most every 30 seconds, and counts a passing check of the `claude` command for a minute. When a check fails, the row says what happens to reports meanwhile and what to do, with the command to run and a button that copies it. If the Codex app still doesn't answer once you reopen it, an update to it may have changed its socket: [update Redline](#update).
-- **Reports:** the 30 newest, each with its first snapshot, the device, when it arrived, the agent and chat it went to (or why it is waiting), and its first notes. Click a report to open it in a viewer window: its snapshots with the numbered outlines, and its notes beside them; click a note to bring its snapshot into view. **Open in Claude Code** or **Open in Codex** reopens the chat the report went to, and **Show in Finder** shows the report's folder.
-- **Open inbox** opens the inbox folder in Finder. **Quit** stops the hub.
+- **Devices:** paired iPhones, and running simulators that have one of your apps, with each one's last report. A phone that can't take reports right now is dimmed, with the reason, such as Not reachable or No watched app installed.
+- **Agents:** Claude Code and Codex, whichever are installed, and whether reports can reach their chats right now. When they can't, the row says what happens to reports meanwhile and what to do: for Claude Code, a command, with a button that copies it; for Codex, open or reopen the app.
+- **Reports:** the 30 newest, each with its first snapshot, the device, when it arrived, the chat it went to (or why it is waiting) and its first notes. Click one to see its snapshots and notes side by side. **Open in Claude Code** or **Open in Codex** reopens that chat, and **Show in Finder** shows the report's folder.
+- At the bottom, **Open inbox** opens the inbox folder, and **Quit** stops Redline.
 
-Each report also posts a Mac notification saying where it went.
+Each report also posts a Mac notification that says where it went.
 
-## What ships where
+## Where reports go
 
-- **Debug builds only.** Every kit source file except the public modifier is compiled only when the `REDLINE` flag is set, and `Package.swift` sets it only for the Debug configuration. Release builds, including TestFlight and App Store builds, get an empty module, and `.redline()` returns the view unchanged.
-- **Private API, Debug only.** SwiftUI builds its accessibility tree only when an assistive client is connected. To read element names and roles, the kit turns on the automation mode UI tests use, through the private `AXSSetAutomationEnabled` function, loaded at run time. That code is inside the `REDLINE` flag, so it is not in Release builds.
-- **The Mac side never ships in your app.** `redline` and `Redline.app` are Mac-only targets in the same package. Your app links only the `Redline` library.
+When a report reaches the Mac, it goes to the chat you picked in Send to. With no pick, Redline looks at the git worktree the app was built from, which `.redline()` records at build time:
+
+- **One chat works there:** the report goes to it.
+- **No chat works there:** Redline starts a new chat.
+- **Several chats work there, or the worktree isn't on this Mac**, such as for a build made on another Mac: the report waits in the inbox until a chat takes it (see [Troubleshooting](#troubleshooting)).
+
+**New chats.** Redline makes a git worktree from your repository's main branch, on a branch named `report/<report ID>`, and starts the chat there. A new Codex chat first looks into the report in a read-only sandbox, then opens in the Codex app. A new Claude Code chat starts in plan mode, then opens in the Claude app, where it gets the report. Without the agent's app, the chat opens in Terminal. Redline sets no permission mode when it opens a Claude Code chat, so the chat may not stay in plan mode.
+
+- A new chat starts from main, not from your build's branch. When the build's worktree isn't on main, the picker says so under New chat, such as "Built from feature/growth-card. A new chat starts from main." If the bug is only on that branch, pick that branch's chat instead.
+- With no pick, the new chat uses the agent you last used for this app, or else the first agent that can start one. When you pick New chat, you choose the agent, and later reports with that pick go to the same chat. Picking New chat again starts another.
+- A new chat needs its agent's command, `claude` or `codex`, and a main branch to start from. When no chat can start, the report waits in the inbox.
+
+**How each agent takes a report.**
+
+- **Claude Code.** The report starts a turn in the chat, even when the chat is idle. If the chat has closed, Redline first reopens it with `claude --resume`, in the Claude app or in Terminal.
+- **Codex.** The report starts a turn through the Codex app. If no window shows the chat, Redline opens it first. If the Codex app isn't running or doesn't answer, the report goes in with your next message in that chat, through the "Report delivery" hook. Redline reaches the Codex app through an interface Codex doesn't publish, so a Codex update can break this until you update Redline. The hook keeps working meanwhile.
+
+## What ships in your app
+
+- **Debug builds only.** `Package.swift` sets the kit's compile flag for the Debug configuration only. Release builds, including TestFlight and App Store builds, get an empty module. `.redline()` returns the view unchanged, and your source file path isn't kept in the binary.
+- **A private API, in Debug only.** SwiftUI builds its accessibility tree only for assistive tools. To read element names and roles, the kit turns on the automation mode UI tests use, through the private function `AXSSetAutomationEnabled`, looked up at run time. Release builds don't contain it.
+- **No Mac code.** The `redline` executable, which `Redline.app` wraps, is a separate product in the same package. Your app links only the `Redline` library.
 
 ## Privacy and security
 
-- **Local network only.** Redline has no server and no account. Reports go from the phone to your Mac over your local network (TCP port 47361), or from a simulator's folder on the same Mac. The connection is plain TCP, not encrypted; what guards it is the token below. The hub's one use of the internet is `git fetch` of the main branch when it makes a worktree for a new chat.
-- **A token per phone and app.** The hub makes a random token for each app on each phone and leaves it, with the address, in the app's folder over Xcode's device link, which only a Mac paired with that phone can do. The hub turns down reports and chat questions that don't carry the right token. Tokens are stored in `~/Library/Application Support/Redline/hub/tokens.json`, readable only by you.
-- **Where reports are kept.** On the device: `Library/Application Support/Redline` in the app's own container. On the Mac: `~/Library/Application Support/Redline/inbox`. Nothing is deleted automatically.
-- **What the agent sees.** Once a report is in a chat, it is part of that chat like anything you paste in. The snapshots show whatever was on screen, so avoid noting screens with personal data you don't want in a chat.
+- **Local network only.** Redline has no cloud service and no account. Reports go from the phone to your Mac over your local network, on TCP port 47361, or from a simulator's folder on the same Mac. For Send to, the Mac sends the phone the chats that work on the app (their titles, folder names and when each was last active) and the branch of the build's worktree.
+- **Plain TCP, with a token per phone and app.** The connection isn't encrypted, so others on your local network could read a report as it crosses. Redline makes a random token for each app on each phone and writes it into the app over Xcode's device link, which only a Mac paired with that phone can use. Both sides prove they hold the token without sending it, so the phone sends reports only to the Mac that set it up, and Redline turns away anything else. Tokens are kept in `~/Library/Application Support/Redline/hub/tokens.json`, readable only by you.
+- **Internet use.** Redline itself goes online only when it makes a worktree for a new chat: it asks your repository's origin for its main branch and fetches it. The agents it starts work as they always do.
+- **Where reports are kept.** On the device, in the app's own container, under `Library/Application Support/Redline`. The app keeps every report the Mac hasn't confirmed, and the 20 newest it has. On the Mac, in `~/Library/Application Support/Redline/inbox`, never deleted automatically. A new Claude Code chat also gets a copy of its report in its worktree's `.redline` folder, which git ignores.
+- **What the agent sees.** Once a report is in a chat, it is part of that chat like anything you paste in. Snapshots show whatever was on screen, so avoid noting screens with personal data you don't want in a chat.
+
+## Update and uninstall
+
+### Update
+
+Update the Mac first, then your apps. An older Redline on the Mac still delivers reports from a newer app, but may not read them fully.
+
+- **Mac.** Run your install command again. It rebuilds Redline and restarts it. The curl command builds the newest `main`. With npx, ask for the latest version, or npx may reuse its earlier download:
+
+  ```sh
+  npx agent-redline-ios@latest
+  ```
+
+- **App.** In Xcode, choose File > Packages > Update to Latest Package Versions, then rebuild.
+
+### Uninstall
+
+```sh
+npx agent-redline-ios uninstall
+```
+
+or
+
+```sh
+(f="$(mktemp)" && trap 'rm -f "$f"' EXIT && curl -fsSL https://raw.githubusercontent.com/mericksters13/agent-redline-ios/main/install.sh -o "$f" && bash "$f" uninstall)
+```
+
+This removes the command, the app, the login item, Redline's hooks and MCP entry, the line it added to `~/.zprofile`, and its cache in `~/Library/Caches/Redline`. The checklist lists anything it couldn't remove. Other tools' hooks and MCP servers stay, and so do:
+
+- your reports, in `~/Library/Application Support/Redline`
+- the `.before-redline` backups, next to the files they copied
+- the worktrees and `report/` branches made for new chats, and the line Redline added to each repository's `.git/info/exclude`
+
+In your app, remove the `.redline()` line and the package.
 
 ## Troubleshooting
 
-**The phone says "Saved on this iPhone. Couldn't reach the Mac", or the panel shows the phone as Not reachable.**
-The phone is asleep, out of range, or on another Wi-Fi network than the Mac. Wake the phone and put both on the same network. The hub keeps trying (after 30 seconds, then up to every 5 minutes) and tries again as soon as a phone wakes. The report stays on the phone. Once a report from this app has reached the Mac before, the app offers the waiting ones again each time it comes to the foreground; otherwise they go with the next Send. `redline status` shows each phone's state and the addresses apps use.
+`redline status` and the menu bar panel show what the Mac sees. Redline's log is `~/Library/Application Support/Redline/hub/hub.log`.
 
-**The phone says "Not on the Mac yet: no Mac has set up this app".**
-The hub has not left its address in the app yet. Check that Redline is running, that a chat for the app's project is open (see [Send your first report](#send-your-first-report)), and that Xcode can reach the phone. The panel shows "No watched app installed" when the installed app's bundle ID isn't one the hub found in a chat's project.
+**The phone says "Saved on this iPhone. Couldn't reach the Mac".**
+The app couldn't connect to Redline: Redline isn't running, the Mac is asleep or on a different network from the phone, or the app's Local Network access is off (turn it on in Settings > Privacy & Security > Local Network). The report stays on the phone and goes again when the app launches or comes to the foreground, or with the next Send. `redline status` shows the addresses apps use to reach the Mac.
+
+**The panel shows a phone as Not reachable.**
+Redline couldn't reach the phone over Xcode's device link: the phone is asleep, out of range or on a different network. Wake it. Redline keeps trying, and tries again at once when the phone wakes.
+
+**The phone says "Not on the Mac yet: no Mac has set up this app", or the panel says No watched app installed.**
+Redline hasn't found the app on that device yet. It looks for newly installed apps when it starts, when a chat for a new app opens, and every 30 minutes. To make it look now, click Quit in its panel and open `Redline.app` again from `~/Applications`. If it still doesn't find the app, check that a chat for the app's project is open (for Codex, trust "Report delivery" in `/hooks`, then send the chat a message) and that Xcode can reach the phone.
 
 **Annotate mode says "SwiftUI elements may not be pickable".**
-The kit couldn't turn on the automation mode that makes SwiftUI build its accessibility tree (see [What ships where](#what-ships-where)), most likely because this iOS version removed the private function it uses. The line shows for a moment when annotate mode opens and after a tap that finds nothing. UIKit views can still be picked, and the capture button still attaches the whole screen.
+The kit couldn't turn on the automation mode SwiftUI needs (see [What ships in your app](#what-ships-in-your-app)), most likely because this iOS version removed the private function it uses. You can still select UIKit views, and the capture button still attaches the whole screen.
 
-**macOS asks whether Redline may access files in your Documents folder.**
-Redline reads the project folders of your open chats to learn which app each one builds, and those folders are often in Documents. Allow it. macOS asks once, because the app is signed with your Mac's Apple Development certificate and keeps the same identity across rebuilds. Without that certificate the script signs ad hoc, and macOS may ask again after every rebuild.
+**macOS asks about your Documents folder again after you update Redline.**
+The installer signs Redline with your Apple Development certificate when you have one it can use. Without one, macOS may ask again after each rebuild. Allow it.
 
-**Reports never reach a Codex chat, or wait for the next message.**
-Open `/hooks` in Codex and trust "Report delivery". If you installed Codex after running setup, run `~/.local/bin/redline setup` again. A Codex chat registers with the hub only when you send it a message.
+**Reports for a Codex chat wait for your next message.**
+The Codex app isn't installed, isn't running or doesn't answer. The Agents row in the panel says which. Open the Codex app. If it still doesn't answer after you reopen it, a Codex update may have changed how Redline reaches it: [update Redline](#update). If reports never arrive at all, open `/hooks` in Codex and trust "Report delivery". If you installed Codex after Redline, run `~/.local/bin/redline setup`.
 
 **A notification says to run `claude auth login`.**
-The `claude` command, which starts new Claude Code chats, is not signed in, or is too old for the Claude app. The report waits in the inbox. Run `claude auth login`, or `~/.local/bin/redline setup`, which checks both.
+The `claude` command, which starts new Claude Code chats and reopens closed ones, isn't signed in or is too old for the Claude app. The report waits in the inbox and goes once the command is ready. Run `claude auth login`, or `~/.local/bin/redline setup`, which checks both.
 
 **A report waits in the inbox.**
-The panel says why, for example when several chats work in the same worktree and none was picked. Pick a chat in Send to on the phone for the next report. To take the waiting ones, call `check_messages` in a Claude Code chat with the MCP server, or run `redline check` in the project folder.
+The panel says why, for example when several chats work in the same worktree and none was picked. Pick a chat in Send to for the next report. To give the waiting ones to a chat, ask it to call `check_messages` (a Claude Code chat started after the install) or to run `redline check` in the project folder.
 
 **"Couldn't find devicectl."**
 Install Xcode and select it: `sudo xcode-select -s /Applications/Xcode.app`.
-
-The hub's log is at `~/Library/Application Support/Redline/hub/hub.log`.
 
 ## Command reference
 
 | Command | What it does |
 |---|---|
-| `redline setup` | Checks the `claude` command, adds the Codex hook and removes Cursor hooks from an earlier setup. With `--no-input`, or with no terminal, it lists what you need to run instead of running `claude update` or `claude auth login`. |
+| `redline status` | Shows what Redline is doing, each phone's state and what's in the inbox. |
+| `redline check` | Prints the reports waiting for this project's apps. Once printed, no other chat gets them. |
+| `redline wait` | Waits for the next report for this project's apps, then prints it. |
+| `redline setup` | Checks the `claude` command and adds the Codex hook. With `--no-input`, or without a terminal, it lists the commands for you to run instead of running them. |
 | `redline remove` | Removes Redline's hooks. Other hooks stay. |
-| `redline status` | Shows what the hub is doing, each phone's state and what's in the inbox. |
-| `redline check` | Prints the reports waiting for the current project's apps and takes them. |
-| `redline wait` | Waits for the next report for the current project's apps, then prints it. |
-| `redline mcp` | The MCP server a Claude Code chat runs. |
-| `redline hub` | The hub without the menu bar app. |
-| `redline app` | The menu bar app; opening `Redline.app` does the same. |
+| `redline mcp` | The MCP server a Claude Code chat runs. It gives the chat the `check_messages` and `wait_for_message` tools. |
+| `redline hub` | Redline without the menu bar app. |
+| `redline app` | The menu bar app. Opening `Redline.app` does the same. |
 
-`check`, `wait` and `mcp` take `--project <folder>`, and `--app <bundle ID>` for a bundle ID that can't be read from the project.
-
-`hub` and `app` take `--app <bundle ID>` for an app to watch whether or not a chat is open for it.
+`check`, `wait` and `mcp` take `--project <folder>`, and `--app <bundle ID>` for an app whose bundle ID can't be read from the project. `hub` and `app` take `--app <bundle ID>` to take reports for an app no chat works on.
 
 ## Contributing
 
-To build, test and send a change, see [CONTRIBUTING.md](CONTRIBUTING.md). How the code is written is in [docs/CODE_STYLE.md](docs/CODE_STYLE.md).
+To build, test, install your own checkout and send a change, see [CONTRIBUTING.md](CONTRIBUTING.md). How the code is written is in [docs/CODE_STYLE.md](docs/CODE_STYLE.md).
 
 ## Acknowledgements
 

@@ -51,7 +51,7 @@ Find the iOS app target and its `@main` `App` struct. Redline needs an app that 
 The package details, for every project type:
 
 - URL: `https://github.com/mericksters13/agent-redline-ios.git`
-- Version: the `main` branch (there are no version tags yet)
+- Version: up to the next major version from `0.1.0`
 - Product: `Redline`; package identity: `agent-redline-ios`
 
 ## 3. Add the package to the app target
@@ -64,7 +64,7 @@ Add the package and the dependency, then regenerate the project:
 packages:
   Redline:
     url: https://github.com/mericksters13/agent-redline-ios.git
-    branch: main
+    from: 0.1.0
 targets:
   YourApp:
     dependencies:
@@ -83,7 +83,7 @@ Merge these into the existing `packages:` and the app target's `dependencies:`; 
 If the project lists its packages in `Tuist/Package.swift`, add the dependency there:
 
 ```swift
-.package(url: "https://github.com/mericksters13/agent-redline-ios.git", branch: "main"),
+.package(url: "https://github.com/mericksters13/agent-redline-ios.git", from: "0.1.0"),
 ```
 
 and add `.external(name: "Redline")` to the app target's `dependencies` in `Project.swift`. Then:
@@ -93,12 +93,12 @@ tuist install
 tuist generate --no-open
 ```
 
-If the project lists packages in `Project.swift` instead, add `.remote(url: "https://github.com/mericksters13/agent-redline-ios.git", requirement: .branch("main"))` to its `packages:` and `.package(product: "Redline")` to the app target's dependencies, then run `tuist generate --no-open`.
+If the project lists packages in `Project.swift` instead, add `.remote(url: "https://github.com/mericksters13/agent-redline-ios.git", requirement: .upToNextMajor(from: "0.1.0"))` to its `packages:` and `.package(product: "Redline")` to the app target's dependencies, then run `tuist generate --no-open`.
 
 ### Swift package app (`Package.swift`)
 
 ```swift
-.package(url: "https://github.com/mericksters13/agent-redline-ios.git", branch: "main")
+.package(url: "https://github.com/mericksters13/agent-redline-ios.git", from: "0.1.0")
 // in the app target's dependencies:
 .product(name: "Redline", package: "agent-redline-ios")
 ```
@@ -108,9 +108,9 @@ If the project lists packages in `Project.swift` instead, add `.remote(url: "htt
 Adding a package means editing `project.pbxproj`, which Xcode normally writes itself. A mistake there can stop the project from opening. Work like this:
 
 1. If the project folder is a git repository, check that `project.pbxproj` has no uncommitted changes, so your edit can be undone with `git checkout -- <path>/project.pbxproj`. Otherwise copy the file first.
-2. If the `xcodeproj` Ruby gem is installed (`gem list xcodeproj`), use it to add the package; it writes the file the way Xcode does. Otherwise edit the file by hand. You need three new objects, each with a new unique 24-character hexadecimal ID: an `XCRemoteSwiftPackageReference` (the URL, with `requirement = { kind = branch; branch = main; }`), an `XCSwiftPackageProductDependency` (`package` set to that reference, `productName = Redline`), and a `PBXBuildFile` with `productRef` set to the product dependency. Then add the reference to the project's `packageReferences`, the product dependency to the app target's `packageProductDependencies`, and the build file to the `files` of the app target's Frameworks build phase.
+2. If the `xcodeproj` Ruby gem is installed (`gem list xcodeproj`), use it to add the package; it writes the file the way Xcode does. Otherwise edit the file by hand. You need three new objects, each with a new unique 24-character hexadecimal ID: an `XCRemoteSwiftPackageReference` (the URL, with `requirement = { kind = upToNextMajorVersion; minimumVersion = 0.1.0; }`), an `XCSwiftPackageProductDependency` (`package` set to that reference, `productName = Redline`), and a `PBXBuildFile` with `productRef` set to the product dependency. Then add the reference to the project's `packageReferences`, the product dependency to the app target's `packageProductDependencies`, and the build file to the `files` of the app target's Frameworks build phase.
 3. Check the result: `xcodebuild -list -project <App>.xcodeproj` must succeed, and so must the build in step 5.
-4. If anything fails, or you are not confident in the edit, restore the file and ask the user to add the package in Xcode instead: File > Add Package Dependencies, enter `https://github.com/mericksters13/agent-redline-ios.git`, choose the `main` branch, and add the `Redline` library to the app target. Tell them you will do the rest when they are done.
+4. If anything fails, or you are not confident in the edit, restore the file and ask the user to add the package in Xcode instead: File > Add Package Dependencies, enter `https://github.com/mericksters13/agent-redline-ios.git`, choose Up to Next Major Version from `0.1.0`, and add the `Redline` library to the app target. Tell them you will do the rest when they are done.
 
 ## 4. Add `.redline()` to the root view
 
