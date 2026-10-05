@@ -86,8 +86,11 @@ final class Hub: @unchecked Sendable {
     private let network = NWPathMonitor()
     /// The PID file, held open and locked while the hub runs.
     private var pidFile: Int32?
-    /// Held while the hub stops; `stopped` once it has.
-    private let stopping = NSLock()
+    /// Held while the hub starts and while it stops; `stopped` once it has. A stop asked for
+    /// while the hub starts, such as by the menu bar app taking over as soon as the status is
+    /// written, waits until everything it has to stop exists. Recursive, since a listener that
+    /// fails at once stops the hub from inside `start`.
+    private let stopping = NSRecursiveLock()
     private var stopped = false
 
     /// How often the hub looks for newly paired phones and newly installed apps. Changes to the
@@ -113,6 +116,8 @@ final class Hub: @unchecked Sendable {
 
     /// Starts the hub. False when another hub already holds the PID file.
     func start() -> Bool {
+        stopping.lock()
+        defer { stopping.unlock() }
         try? FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
         guard let pidFile = HubProcess.claim(paths) else { return false }
         self.pidFile = pidFile
@@ -131,7 +136,7 @@ final class Hub: @unchecked Sendable {
         listener.start()
         self.listener = listener
         // A listener that failed at once has stopped the hub, and `whenListenerFails` says so.
-        guard stopping.withLock({ !stopped }) else { return true }
+        guard !stopped else { return true }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: Self.discoveryInterval, leeway: .seconds(60))
         timer.setEventHandler { [weak self] in self?.discover(rediscover: true) }

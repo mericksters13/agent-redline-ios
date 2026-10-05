@@ -196,6 +196,19 @@ struct HubTests {
         #expect(rows.map(\.folder.lastPathComponent) == ["a-second-0CF3C01C", "b-first-0CF3C01C"])
     }
 
+    /// Sources already read are kept between refreshes; a report filed since still shows.
+    @Test func aRefreshListsReportsFiledSinceTheLastOne() throws {
+        let hub = try hub()
+        func file(_ id: String) {
+            let source = ReportSource(kind: .phone, device: phone, deviceName: "Mark iPhone", bundleID: app, reportID: id, receivedAt: Date())
+            #expect(hub.receive(source) { (try? FileManager.default.createDirectory(at: $0, withIntermediateDirectories: true)) != nil })
+        }
+        file("first")
+        #expect(HubWindowModel.readReports(paths: paths).rows.map(\.folder.lastPathComponent) == ["first-0CF3C01C"])
+        file("second")
+        #expect(HubWindowModel.readReports(paths: paths).rows.map(\.folder.lastPathComponent) == ["second-0CF3C01C", "first-0CF3C01C"])
+    }
+
     @Test func aReportArrivingTwiceAtOnceIsFiledOnce() throws {
         let hub = try hub()
         let source = ReportSource(kind: .phone, device: phone, deviceName: "Mark iPhone", bundleID: app, reportID: "20261004-031600", receivedAt: Date())
