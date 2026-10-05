@@ -86,7 +86,7 @@ Install the Mac side in one of three ways. Each runs the same installer, [`insta
    Install Redline from https://github.com/mericksters13/agent-redline-ios and add it to this app.
    ```
 
-   Your agent follows [INSTALL.md](INSTALL.md): it runs the installer, adds the package to your app target and `.redline()` to your root view, builds the project, and lists what's left for you.
+   Your agent follows [INSTALL.md](INSTALL.md): it adds the package to your app target and `.redline()` to your root view, builds the project, and lists what's left. It hands you one command for the Mac side, `npx agent-redline-ios`, since agent safety checks don't let an agent run an installer that changes your Mac.
 
 2. **npx** installs the latest release. It needs Node.js 18 or later.
 
