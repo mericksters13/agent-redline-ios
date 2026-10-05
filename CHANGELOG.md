@@ -4,22 +4,24 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
-### Changed
-
-- Redline now needs Xcode 26 or later (Swift 6.2); Xcode 16 couldn't build it. The installer stops on an older Swift and says how to fix it.
-
-## [0.1.1] - 2026-10-05
+## [0.1.1] - 2026-10-06
 
 ### Added
 
 - The menu bar panel has an Agents section. It shows whether reports can reach Claude Code and Codex right now, and what to do when they can't.
-- When the app was built from a worktree that isn't on main, the phone's Send to picker says so under New chat.
+- When the build's worktree isn't on main, the phone's Send to picker says so under New chat.
 - Annotate mode says "SwiftUI elements may not be pickable" when the kit can't turn on the accessibility mode SwiftUI needs.
 
 ### Changed
 
-- The README is shorter and matches the code. Deeper detail moved to [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+- Redline needs Xcode 26 or later (Swift 6.2); Xcode 16 couldn't build it. The installer stops on an older Swift and says how to fix it.
 - Add the package up to the next minor version, so a breaking 0.2 isn't picked up.
+- The README is rewritten for developers and matches the code. Deeper detail moved to [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+
+### Fixed
+
+- `redline` exits cleanly on SIGINT, SIGTERM and SIGHUP instead of crashing, including when the installer restarts the menu bar app.
+- Scrolling the menu bar panel's report list is smoother: rows no longer carry tooltips, whose tracking areas were rebuilt on every frame.
 
 ## [0.1.0] - 2026-10-05
 
