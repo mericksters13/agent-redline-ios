@@ -1276,11 +1276,15 @@ final class DebugSession {
         try store.checkSize(of: report, in: folder)
         try store.finishReport(report, in: folder)
         logger.notice("Report saved at \(folder.path(percentEncoded: false), privacy: .public)")
-        return await ReportDelivery.deliver(
+        let outcome = await ReportDelivery.deliver(
             from: store,
             bundleID: Bundle.main.bundleIdentifier,
             patience: ReportDelivery.patience
         )
+        // Nothing left to send: a delivery already under way, such as when the app came back, took
+        // this report along.
+        if outcome == nil, store.isDelivered(folder) { return .delivered }
+        return outcome
     }
 
     // MARK: - One picture per screen

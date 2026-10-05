@@ -75,10 +75,16 @@ enum Chats {
         try HubPaths.encoder.encode(chat).write(to: folder(paths).appending(path: "\(chat.id).json"), options: .atomic)
     }
 
-    /// Removes the chat's record and its lock; already gone is fine.
+    /// Removes the chat's record and its locks; already gone is fine.
     static func unregister(_ id: String, paths: HubPaths) {
         try? FileManager.default.removeItem(at: folder(paths).appending(path: "\(id).json"))
         try? FileManager.default.removeItem(at: folder(paths).appending(path: "\(id).lock"))
+        try? FileManager.default.removeItem(at: recordLock(id, paths: paths))
+    }
+
+    /// Held while a process reads and rewrites a chat's record.
+    static func recordLock(_ id: String, paths: HubPaths) -> URL {
+        folder(paths).appending(path: "\(id).record.lock")
     }
 
     /// The chat's saved record, if it has one.

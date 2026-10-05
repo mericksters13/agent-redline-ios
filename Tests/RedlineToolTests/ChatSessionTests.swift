@@ -319,6 +319,25 @@ struct ChatSessionTests {
         #expect(!gone.isWaiting)
     }
 
+    @Test func hooksSavingAtOnceKeepTheChatsWaiter() throws {
+        let folder = root.appending(path: "App", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let paths = self.paths
+        // Each stands in for a hook's own process: the file lock is per open file, not per process.
+        DispatchQueue.concurrentPerform(iterations: 40) { index in
+            let hook = ChatSession(
+                paths: paths,
+                folder: folder,
+                extraApps: ["com.example.app"],
+                agent: "claude",
+                id: "claude-s1",
+                startsHub: false
+            )
+            if index == 20 { hook.registerWaiting() } else { hook.touch() }
+        }
+        #expect(try #require(Chats.record("claude-s1", paths: paths)).waiter == getpid())
+    }
+
     @Test func anotherReportWaitsWhenItsTextMightNotFit() throws {
         let folder = try inboxReport("20261003-223449")
         try ("# UI report\n\n1. **Log**: " + String(repeating: "é", count: 200_000)).write(

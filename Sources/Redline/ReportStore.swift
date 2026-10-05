@@ -463,6 +463,11 @@ struct ReportStore: Sendable {
         }
     }
 
+    /// The Mac has confirmed the report in `folder`.
+    func isDelivered(_ folder: URL) -> Bool {
+        FileManager.default.fileExists(atPath: folder.appending(path: "delivered").path(percentEncoded: false))
+    }
+
     /// How many reports the Mac already has stay on the phone, for the Sent reports list.
     static let keptDeliveredReports = 20
 
@@ -495,10 +500,7 @@ struct ReportStore: Sendable {
                 )
                 return nil
             }
-            let delivered = FileManager.default.fileExists(
-                atPath: folder.appending(path: "delivered").path(percentEncoded: false)
-            )
-            return SentReport(report: report, folder: folder, isDelivered: delivered)
+            return SentReport(report: report, folder: folder, isDelivered: isDelivered(folder))
         }
         .sorted { ($0.report.createdAt, $0.id) > ($1.report.createdAt, $1.id) }
     }
