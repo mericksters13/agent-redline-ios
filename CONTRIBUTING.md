@@ -87,6 +87,18 @@ Redline runs inside other people's apps, so a few rules are strict:
 - **No new dependencies or speculative types.** Add a type or helper only when it replaces existing code in the same change.
 - **Plain language, no emoji** in code, comments, documentation, commit messages and UI text.
 
+## Releasing
+
+The npm package `agent-redline-ios` is published by the "Publish to npm" workflow
+(`.github/workflows/publish-npm.yml`) through npm trusted publishing, so there is no npm token to
+keep. To release:
+
+1. Bump `version` in `package.json` and merge it into `main`.
+2. Publish a GitHub release whose tag is that version, as `v0.1.1`.
+
+The workflow checks that the tag matches the version, then publishes with a provenance record.
+A version can't be published twice, so a mistake means a new version.
+
 ## Pull requests
 
 - Keep each pull request to one change, and stage only the files it needs.
