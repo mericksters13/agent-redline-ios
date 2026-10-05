@@ -1031,7 +1031,13 @@ uninstall() {
         fi
     done
 
-    if grep -qxF "$PATH_LINE" "$ZPROFILE" 2>/dev/null; then
+    grep -qxF "$PATH_LINE" "$ZPROFILE" 2>/dev/null
+    rc=$?
+    if [ "$rc" -gt 1 ] && [ -e "$ZPROFILE" ]; then
+        left="${left:+$left and }possibly the installer's line in $ZPROFILE"
+        item "Needs you" "PATH: couldn't read $ZPROFILE to check for the installer's line." \
+            "Check its permissions with ls -lO $ZPROFILE, then delete the line ending in \"# Added by the Redline installer\" if it is there."
+    elif [ "$rc" -eq 0 ]; then
         tmp="$ZPROFILE.redline.$$"
         TMP_ZPROFILE="$tmp"
         grep -vxF "$PATH_LINE" "$ZPROFILE" >"$tmp"
