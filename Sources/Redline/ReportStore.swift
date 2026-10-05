@@ -394,12 +394,15 @@ struct ReportStore: Sendable {
     private var draftFile: URL { draftDirectory.appending(path: "annotations.json") }
     private var screensFile: URL { draftDirectory.appending(path: "screens.json") }
 
-    /// The saved draft. A draft file that no longer decodes, such as after a change to the
-    /// note format, is moved with its screenshots to `unreadableDraftsDirectory` and an
-    /// empty draft starts, so the next note can't write over it.
+    /// The saved draft. A draft whose notes or screens file no longer decodes, such as after
+    /// a change to the format, is moved with its screenshots to `unreadableDraftsDirectory`
+    /// and an empty draft starts, so the next note can't write over it. Notes on a capture
+    /// need the screens file to find their picture, so it can't be dropped on its own.
     func loadDraft() -> [Annotation] {
         guard let data = try? Data(contentsOf: draftFile) else { return [] }
-        if let annotations = try? Self.decoder.decode([Annotation].self, from: data) { return annotations }
+        if let annotations = try? Self.decoder.decode([Annotation].self, from: data), Self.screensAreReadable(in: draftDirectory) {
+            return annotations
+        }
         let files = FileManager.default
         try? files.createDirectory(at: unreadableDraftsDirectory, withIntermediateDirectories: true)
         try? files.moveItem(at: draftDirectory, to: unreadableDraftsDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory))
@@ -411,9 +414,17 @@ struct ReportStore: Sendable {
         try Self.encoder.encode(annotations).write(to: draftFile, options: .atomic)
     }
 
+    /// The draft's screens. Call after `loadDraft`, which sets aside a draft whose screens
+    /// file doesn't decode.
     func loadScreens() -> [ScreenRecord] {
         guard let data = try? Data(contentsOf: screensFile) else { return [] }
         return (try? Self.decoder.decode([ScreenRecord].self, from: data)) ?? []
+    }
+
+    /// False when `folder` has a screens file that doesn't decode.
+    private static func screensAreReadable(in folder: URL) -> Bool {
+        let file = folder.appending(path: "screens.json")
+        return !FileManager.default.fileExists(atPath: file.path) || load([ScreenRecord].self, from: file) != nil
     }
 
     func saveScreens(_ screens: [ScreenRecord]) throws {
@@ -559,9 +570,10 @@ struct ReportStore: Sendable {
                 continue
             }
             let notesFile = old.appending(path: draftFile.lastPathComponent)
-            // Notes that are there but no longer decode, such as after a change to the note
-            // format, are kept with their pictures for recovery, as an unreadable draft is.
-            if files.fileExists(atPath: notesFile.path), Self.load([Annotation].self, from: notesFile) == nil {
+            // Notes or screens that are there but no longer decode, such as after a change to
+            // the format, are kept with their pictures for recovery, as an unreadable draft is.
+            if (files.fileExists(atPath: notesFile.path) && Self.load([Annotation].self, from: notesFile) == nil)
+                || !Self.screensAreReadable(in: old) {
                 try? files.createDirectory(at: unreadableDraftsDirectory, withIntermediateDirectories: true)
                 if (try? files.moveItem(at: old, to: unreadableDraftsDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory))) != nil {
                     discardReport(folder)
@@ -572,11 +584,13 @@ struct ReportStore: Sendable {
                 let annotations = Self.load([Annotation].self, from: notesFile) ?? []
                 let screens = Self.load([ScreenRecord].self, from: old.appending(path: screensFile.lastPathComponent)) ?? []
                 try reclaimPictures(from: folder)
-                // Screens first, as when a note is added: a listed screen no note uses is harmless.
+                // The draft is read first, so one that can't be read is set aside before its
+                // screens file is written over. Screens are saved first, as when a note is
+                // added: a listed screen no note uses is harmless.
+                let draft = loadDraft()
                 let currentScreens = loadScreens()
                 let screenIDs = Set(currentScreens.map(\.id))
                 try saveScreens(screens.filter { !screenIDs.contains($0.id) } + currentScreens)
-                let draft = loadDraft()
                 let noteIDs = Set(draft.map(\.id))
                 try saveDraft(annotations.filter { !noteIDs.contains($0.id) } + draft)
                 discardReport(folder)
