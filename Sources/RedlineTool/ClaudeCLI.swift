@@ -91,22 +91,45 @@ enum ClaudeCLI {
     }
 
     /// The command's output when it succeeds.
-    private static func runForOutput(_ executable: URL, _ arguments: [String]) -> String? {
+    ///
+    /// One still running after `timeout` is stopped and counts as failed: the hub asks from its
+    /// hand-off queue, which a stalled command would hold up.
+    private static func runForOutput(
+        _ executable: URL,
+        _ arguments: [String],
+        timeout: TimeInterval = 10
+    ) -> String? {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         do {
             try process.run()
         } catch {
             printError("Couldn't run \(executable.path): \(error.localizedDescription)")
             return nil
         }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+        // Read while it runs, so a long output can't fill the pipe and hold it up.
+        let read = DispatchSemaphore(value: 0)
+        let output = Mutex(Data())
+        DispatchQueue.global(qos: .utility).async {
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            output.withLock { $0 = data }
+            read.signal()
+        }
+        // Parks the caller's thread, the hand-off queue or setup's main thread and never a Task,
+        // for at most `timeout`.
+        let deadline = DispatchTime.now() + timeout
+        guard exited.wait(timeout: deadline) == .success, read.wait(timeout: deadline) == .success else {
+            process.terminate()
+            return nil
+        }
+        guard process.terminationStatus == 0 else { return nil }
+        return output.withLock { String(decoding: $0, as: UTF8.self) }
     }
 }
 #endif
