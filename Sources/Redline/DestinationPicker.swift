@@ -1,0 +1,243 @@
+#if REDLINE && canImport(UIKit)
+import SwiftUI
+
+/// Where reports go: an agent on the Mac, then one of its chats that work on this app, or a new
+/// chat.
+///
+/// The chat in the worktree the app was built from is marked and picked at first.
+struct DestinationPicker: View {
+    let session: DebugSession
+
+    private var width: CGFloat { min(session.screenSize.width - 24, 420) }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            // Keeps the app underneath out of reach while picking.
+            Color.black.opacity(0.45)
+                .contentShape(Rectangle())
+                .onTapGesture {}
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Send to")
+                    .font(.headline)
+                    .foregroundStyle(Mono.text)
+                    .accessibilityAddTraits(.isHeader)
+                content
+                buttons
+            }
+            .buttonStyle(.plain)
+            .padding(16)
+            .frame(width: width)
+            .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(0.3), radius: 18, y: 8)
+            .padding(.top, session.safeAreaTop + 12)
+        }
+        .frame(width: session.screenSize.width, height: session.screenSize.height, alignment: .top)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch session.chatList {
+        case .loading:
+            HStack(spacing: 10) {
+                ProgressView().tint(Mono.text)
+                Text("Asking the Mac for its chats")
+                    .font(.subheadline)
+                    .foregroundStyle(Mono.secondary)
+            }
+            .frame(minHeight: 44)
+        case .unavailable:
+            Text(
+                "Couldn't reach the Mac. It will send the report to the chat working in the folder this app was built from."
+            )
+            .font(.subheadline)
+            .foregroundStyle(Mono.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        case .loaded(let list):
+            if list.agents.isEmpty {
+                Text("No agents found on the Mac. The report waits in the Mac's inbox.")
+                    .font(.subheadline)
+                    .foregroundStyle(Mono.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                agents(list.agents)
+                chats(in: list)
+            }
+        }
+    }
+
+    private func agents(_ agents: [String]) -> some View {
+        HStack(spacing: 8) {
+            ForEach(agents, id: \.self) { agent in
+                let isSelected = session.pickerAgent == agent
+                Button {
+                    session.choose(agent: agent)
+                } label: {
+                    Text(HubLink.agentName(agent))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(isSelected ? Color.black : Mono.text)
+                        .padding(.horizontal, 14)
+                        .frame(height: 34)
+                        .background(isSelected ? Color.white : Mono.fill, in: Capsule(style: .continuous))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+    }
+
+    private func chats(in list: HubLink.ChatList) -> some View {
+        let agent = session.pickerAgent ?? ""
+        let chats = list.chats.filter { $0.agent == agent }
+        let startsNew = list.startsNewChats(agent)
+        return ScrollView {
+            VStack(spacing: 0) {
+                if startsNew {
+                    row(
+                        title: "New chat",
+                        detail: "In a new worktree from \(list.newChatBase ?? "main")",
+                        tag: nil,
+                        icon: "plus",
+                        choice: Report.Destination(
+                            agent: agent,
+                            chat: nil,
+                            title: "a new \(HubLink.agentName(agent)) chat"
+                        )
+                    )
+                }
+                ForEach(chats) { chat in
+                    if startsNew || chat.id != chats.first?.id {
+                        Rectangle().fill(Mono.hairline).frame(height: 1)
+                    }
+                    row(
+                        title: chat.title,
+                        detail: detail(chat),
+                        tag: chat.isSameWorktree ? "This build" : nil,
+                        icon: nil,
+                        choice: Report.Destination(agent: agent, chat: chat.id, title: chat.title)
+                    )
+                }
+                if chats.isEmpty {
+                    caption("No open \(HubLink.agentName(agent)) chats work on this app.")
+                }
+                if !startsNew {
+                    caption(
+                        list.newChatBase == nil
+                            ? "New chats need the app's project in a Git repository with a main branch."
+                            : "New \(HubLink.agentName(agent)) chats need its command line on the Mac."
+                    )
+                }
+            }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(maxHeight: session.screenSize.height * 0.45)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(Mono.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 6)
+    }
+
+    private func detail(_ chat: HubLink.Chat) -> String {
+        "\(chat.folder) · \(chat.lastActive.formatted(.relative(presentation: .numeric, unitsStyle: .wide)))"
+    }
+
+    private func row(title: String, detail: String, tag: String?, icon: String?, choice: Report.Destination)
+        -> some View
+    {
+        let isSelected = choice.isSameChoice(as: session.pickerChoice)
+        return Button {
+            session.choose(choice)
+        } label: {
+            HStack(spacing: 12) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Mono.text)
+                        .frame(width: 28, height: 28)
+                        .background(Mono.fill, in: Circle())
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Mono.text)
+                            .lineLimit(1)
+                        if let tag {
+                            Text(tag)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(Mono.text)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Mono.fill, in: Capsule(style: .continuous))
+                        }
+                    }
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(Mono.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "checkmark")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Mono.text)
+                    .opacity(isSelected ? 1 : 0)
+            }
+            .padding(.vertical, 10)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    /// The picker opened from Send sends; opened from the notes, it only keeps the pick.
+    private func primaryTitle(sendsAnyway: Bool) -> String {
+        if !session.sendsAfterChoosingDestination {
+            "Done"
+        } else if sendsAnyway {
+            "Send anyway"
+        } else {
+            "Send"
+        }
+    }
+
+    private var buttons: some View {
+        let unavailable = session.chatList == .unavailable
+        let loading = session.chatList == .loading
+        // With nothing to pick, the report goes without a pick and waits in the Mac's inbox.
+        var nothingToPick = false
+        if case .loaded(let list) = session.chatList { nothingToPick = !list.offersDestination }
+        let ready = unavailable || nothingToPick || session.pickerChoice?.agent == session.pickerAgent
+        return HStack {
+            Button("Cancel") { session.cancelDestinations() }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Mono.secondary)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            Spacer()
+            Button {
+                session.confirmDestination()
+            } label: {
+                Text(primaryTitle(sendsAnyway: unavailable || nothingToPick))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.black)
+                    .padding(.horizontal, 18)
+                    .frame(height: 38)
+                    .background(Color.white.opacity(ready && !loading ? 1 : 0.4), in: Capsule(style: .continuous))
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .allowsHitTesting(ready && !loading)
+            .accessibilityAddTraits(ready && !loading ? [] : .isStaticText)
+        }
+    }
+}
+#endif

@@ -1,0 +1,116 @@
+#if os(macOS)
+import Darwin
+import Foundation
+
+/// The hook events this tool takes, as its hook settings name them.
+enum HookEvent: String, Sendable {
+    /// The user sent a message (Codex): hand over reports sent to this chat.
+    case prompt
+}
+
+/// Which chat a hook call is for, and its folder, from the agent's JSON.
+struct HookInput: Equatable {
+    var chat: String
+    var folder: String
+
+    init?(json: Data) {
+        guard let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+            let id = object["session_id"] as? String, let cwd = object["cwd"] as? String
+        else { return nil }
+        chat = id
+        folder = cwd
+    }
+}
+
+/// What `redline hook <agent> <event>` does: hands reports addressed to the chat over in the
+/// agent's own words.
+enum AgentHooks {
+    /// Set for chats the hub starts itself.
+    ///
+    /// Their hooks stay out of the way: such a chat runs once and ends, and must not take other
+    /// reports.
+    static let startedByHub = "REDLINE_STARTED_CHAT"
+
+    /// Runs one hook call and returns the exit code for the agent.
+    static func run(for agent: Agent, event: HookEvent, paths: HubPaths) -> Int32 {
+        let input = HookInput(json: FileHandle.standardInput.readDataToEndOfFile())
+        guard let input, ProcessInfo.processInfo.environment[startedByHub] == nil else {
+            return answer(for: event, taken: nil)
+        }
+        let id = ChatID.make(agent, input.chat)
+        let folder = URL(filePath: input.folder)
+
+        let session = ChatSession(
+            paths: paths,
+            folder: folder,
+            extraApps: [],
+            agent: agent.rawValue,
+            id: id,
+            pid: AgentProcess.find()
+        )
+        // Not an app project: nothing to do, in every project the agent opens.
+        guard !session.chat.bundleIDs.isEmpty else { return answer(for: event, taken: nil) }
+
+        switch event {
+        case .prompt:
+            // Registered, not just marked used: this is the only hook, so it's what notes the
+            // chat's apps and starts the hub.
+            session.register()
+            return answer(for: event, taken: session.takeAddressed())
+        }
+    }
+
+    /// Prints what the agent expects from this event, carrying the reports taken when there are
+    /// any.
+    ///
+    /// They're the chat's only once the answer is written out; otherwise they're freed for the
+    /// chat's next message.
+    static func answer(for event: HookEvent, taken: (text: String, reports: [InboxReport])?) -> Int32 {
+        var isWritten = false
+        if let output = output(for: event, text: taken?.text),
+            let data = try? JSONSerialization.data(
+                withJSONObject: output,
+                options: [.sortedKeys, .withoutEscapingSlashes]
+            )
+        {
+            // An agent that stopped reading gets nothing; the hook still exits cleanly.
+            isWritten = (try? FileHandle.standardOutput.write(contentsOf: data + Data("\n".utf8))) != nil
+        }
+        if let taken { ChatSession.settle(taken.reports, isDelivered: isWritten) }
+        return 0
+    }
+
+    /// The output for each event; Claude Code and Codex share one shape.
+    static func output(for event: HookEvent, text: String?) -> [String: Any]? {
+        switch event {
+        case .prompt:
+            text.map { ["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": $0]] }
+        }
+    }
+}
+
+/// Finds the process a chat lives in, from a hook that runs as its child.
+private enum AgentProcess {
+    /// The nearest ancestor that isn't a shell started to run the hook.
+    static func find() -> Int32 {
+        var pid = getppid()
+        while let (parent, name) = info(pid), shells.contains(name), parent > 1 {
+            pid = parent
+        }
+        return pid
+    }
+
+    private static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "fish", "env"]
+
+    private static func info(_ pid: Int32) -> (parent: Int32, name: String)? {
+        var process = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &process, &size, nil, 0) == 0, size > 0 else { return nil }
+        let name = withUnsafeBytes(of: process.kp_proc.p_comm) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        return (process.kp_eproc.e_ppid, name)
+    }
+}
+#endif

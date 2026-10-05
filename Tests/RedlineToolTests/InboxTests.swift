@@ -1,0 +1,160 @@
+#if os(macOS)
+import Foundation
+import Testing
+@testable import RedlineTool
+
+struct InboxTests {
+    private let temporary = TemporaryFolder("InboxTests")
+    private var root: URL { temporary.url }
+    private var paths: HubPaths { HubPaths(root: root.appending(path: "hub-root", directoryHint: .isDirectory)) }
+
+    /// A report in the inbox with one note, addressed to `recipient` when given.
+    private func inboxReport(_ id: String, recipient: ReportRecipient? = nil) throws -> URL {
+        let item: [String: Any] = [
+            "number": 1, "title": "Save", "note": "Too small.", "attachments": [String](),
+            "element": ["identifier": "editor.save", "label": "Save", "role": "Button"],
+        ]
+        let listing: [String: Any] = [
+            "app": ["name": "Example"], "screens": [["images": [["file": "screen-1.jpg", "notes": [1]]]]],
+            "items": [item],
+        ]
+        return try fileInboxReport(
+            id,
+            in: paths,
+            listing: listing,
+            summary: "1. **Save**: Too small.\n",
+            recipient: recipient
+        )
+    }
+
+    @Test func aClaimThatCantBeReadStillCountsAsTaken() throws {
+        let folder = try inboxReport("20261004-120200")
+        try Data("{\"chat\":\"cod".utf8).write(to: folder.appending(path: Inbox.claimFile))
+        #expect(Inbox.unclaimedReports(for: ["com.example.app"], paths: paths).isEmpty)
+        let chat = ChatRecord(
+            id: "codex-A",
+            agent: "codex",
+            folder: "/w",
+            bundleIDs: ["com.example.app"],
+            pid: getpid(),
+            registeredAt: .now,
+            lastActiveAt: .now
+        )
+        let report = try #require(Inbox.reports(for: ["com.example.app"], paths: paths).first)
+        guard case .takenByAnotherChat = Inbox.claim(report, for: chat) else {
+            Issue.record("A second claim should find the first")
+            return
+        }
+    }
+
+    @Test func aReportWhoseHandOverWasInterruptedIsFreeAgain() throws {
+        let folder = try inboxReport("20261004-120300")
+        // No chat took it yet.
+        #expect(Inbox.activeClaim(of: folder) == nil)
+        // A process that took it and ended before the chat had it, such as a hook that crashed.
+        let ended = Process()
+        ended.executableURL = URL(filePath: "/usr/bin/true")
+        try ended.run()
+        ended.waitUntilExit()
+        let claimFile = folder.appending(path: Inbox.claimFile)
+        var claim = Claim(
+            chat: "codex-A",
+            agent: "codex",
+            folder: "/w",
+            claimedAt: .now,
+            handingOverIn: ended.processIdentifier
+        )
+        try HubPaths.encoder.encode(claim).write(to: claimFile)
+        #expect(Inbox.activeClaim(of: folder) == nil)
+        #expect(Inbox.unclaimedReports(for: ["com.example.app"], paths: paths).map(\.folder) == [folder])
+        // One this process is still handing over, and one the chat has, are taken.
+        claim.handingOverIn = getpid()
+        try HubPaths.encoder.encode(claim).write(to: claimFile)
+        #expect(Inbox.activeClaim(of: folder)?.chat == "codex-A")
+        claim.handingOverIn = nil
+        try HubPaths.encoder.encode(claim).write(to: claimFile)
+        #expect(Inbox.activeClaim(of: folder)?.chat == "codex-A")
+        #expect(Inbox.unclaimedReports(for: ["com.example.app"], paths: paths).isEmpty)
+    }
+
+    @Test func onlyTheAddressedChatTakesAReport() throws {
+        let folder = root.appending(path: "App", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let builder = ChatSession(
+            paths: paths,
+            folder: folder,
+            extraApps: ["com.example.app"],
+            agent: "codex",
+            id: "codex-A",
+            startsHub: false
+        )
+        let other = ChatSession(
+            paths: paths,
+            folder: folder,
+            extraApps: ["com.example.app"],
+            agent: "codex",
+            id: "codex-B",
+            startsHub: false
+        )
+        let report = try inboxReport(
+            "20261004-120000",
+            recipient: ReportRecipient(chat: "codex-A", agent: "codex", folder: folder.path)
+        )
+        _ = try inboxReport("20261004-120100")
+
+        // Another chat on the same app gets nothing, and an unaddressed report goes to no one.
+        #expect(other.takeAddressed() == nil)
+        let taken = try #require(builder.takeAddressed())
+        #expect(taken.text.contains("1. Save (Button, editor.save): Too small."))
+        #expect(taken.text.contains(report.appending(path: "screen-1.jpg").path))
+        #expect(taken.reports.map(\.folder) == [report])
+        #expect(builder.takeAddressed() == nil)
+        // Not written out, such as when the agent stopped reading: the chat takes it next time.
+        ChatSession.settle(taken.reports, isDelivered: false)
+        let again = try #require(builder.takeAddressed())
+        ChatSession.settle(again.reports, isDelivered: true)
+        #expect(Inbox.claim(of: report)?.handingOverIn == nil)
+        #expect(builder.takeAddressed() == nil)
+    }
+
+    @Test func aHookAnswerCarriesOnlyWhatFitsAndLeavesTheRestWaiting() throws {
+        let folder = root.appending(path: "App", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let chat = ChatSession(
+            paths: paths,
+            folder: folder,
+            extraApps: ["com.example.app"],
+            agent: "codex",
+            id: "codex-A",
+            startsHub: false
+        )
+        let recipient = ReportRecipient(chat: "codex-A", agent: "codex", folder: folder.path)
+        let first = try inboxReport("20261004-120000", recipient: recipient)
+        let second = try inboxReport("20261004-120100", recipient: recipient)
+        // Both fit in the usual budget.
+        let both = try #require(chat.takeAddressed())
+        #expect(both.reports.count == 2)
+        ChatSession.settle(both.reports, isDelivered: false)
+
+        // With room for one, the oldest goes and the next waits for the chat's next hook.
+        let budget = ReportContent.text(for: both.reports[0]).utf8.count
+        let one = try #require(chat.takeAddressed(budget: budget))
+        #expect(one.reports.map(\.folder) == [first])
+        let next = try #require(chat.takeAddressed(budget: budget))
+        #expect(next.reports.map(\.folder) == [second])
+        #expect(chat.takeAddressed() == nil)
+    }
+
+    @Test func inboxFoldersSortByTimeAndKeepPhonesApart() {
+        // Two iPhones of one model share the start of their UDID, so the end tells them apart.
+        #expect(
+            Inbox.folderName(reportID: "20261003-202235", device: "00000000-0000000000000001")
+                == "20261003-202235-00000001"
+        )
+        #expect(
+            Inbox.folderName(reportID: "20261003-202235", device: "00000000-0000000000000002")
+                == "20261003-202235-00000002"
+        )
+    }
+}
+#endif

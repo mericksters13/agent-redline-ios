@@ -6,3 +6,7 @@ DerivedData/
 xcuserdata/
 node_modules/
 tmp/
+.impeccable/questions/
+.impeccable/build/
+.impeccable/review/
+.impeccable/config.local.json
