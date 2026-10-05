@@ -440,7 +440,9 @@ func stopOnSignals(_ cleanup: @escaping @Sendable () -> Void) {
     for number in [SIGINT, SIGTERM, SIGHUP] {
         signal(number, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
-        source.setEventHandler {
+        // Sendable, so it isn't main-actor code: written here in main.swift it would be, and running it
+        // on the global queue would stop the process at Swift's isolation check instead of exiting.
+        source.setEventHandler { @Sendable in
             cleanup()
             exit(0)
         }
