@@ -142,6 +142,56 @@ struct KitContractTests {
         #expect(kitList.worktree == "wt" && kitList.newChatBase == "main" && kitList.refused == nil)
     }
 
+    /// The kit's chat list before it had the build's branch and commit, as apps built with that
+    /// version read the hub's answer.
+    private struct ChatListBeforeBuildBranch: Codable, Equatable {
+        var agents: [String]
+        var chats: [HubLink.Chat]
+        var worktree: String?
+        var newChatBase: String?
+        var newChats: [String]?
+        var refused: String?
+    }
+
+    @Test func theBuildsBranchOrCommitReachesTheKitAndOlderSidesDoWithoutThem() throws {
+        let onMain = HubMessage.ChatList(
+            agents: ["claude"],
+            chats: [],
+            worktree: "wt",
+            newChatBase: "main",
+            newChats: ["claude"]
+        )
+        var onFeature = onMain
+        onFeature.buildBranch = "feature/growth-card"
+        var onNoBranch = onMain
+        onNoBranch.buildCommit = "1a2b3c4"
+        for list in [onFeature, onNoBranch] {
+            let line = HubMessage.encode(list)
+            let kitList = try HubLink.decode(HubLink.ChatList.self, from: line.dropLast())
+            #expect(kitList.buildBranch == list.buildBranch && kitList.buildCommit == list.buildCommit)
+            #expect(try HubLink.encode(kitList) == line)
+            // A kit from before reads the rest of the answer as it did.
+            #expect(
+                try HubLink.decode(ChatListBeforeBuildBranch.self, from: line.dropLast())
+                    == ChatListBeforeBuildBranch(
+                        agents: ["claude"],
+                        chats: [],
+                        worktree: "wt",
+                        newChatBase: "main",
+                        newChats: ["claude"]
+                    )
+            )
+        }
+
+        // A hub from before leaves both out, as this one does when the build's worktree is on main:
+        // the phone shows no line.
+        let earlier = #"{"agents":["claude"],"chats":[],"newChatBase":"main","newChats":["claude"],"worktree":"wt"}"#
+        #expect(HubMessage.encode(onMain) == Data((earlier + "\n").utf8))
+        let fromEarlier = try HubLink.decode(HubLink.ChatList.self, from: Data(earlier.utf8))
+        #expect(fromEarlier.buildBranch == nil && fromEarlier.buildCommit == nil)
+        #expect(fromEarlier.startsNewChats("claude"))
+    }
+
     @Test func bothSidesMakeTheSameProofs() {
         let nonces = HubMessage.Nonces(app: HubLink.nonce(), hub: HubMessage.nonce())
         let hubProof = HubMessage.proof(.hub, token: "t", nonces: nonces)

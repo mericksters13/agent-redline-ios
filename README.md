@@ -95,6 +95,7 @@ flowchart TD
 - **The phone's Send to pick comes first.** The first time you send from a build, the phone asks the Mac for the open chats that work on this app and shows them. The chat working in the worktree the app was built from is selected for you and tagged "This build". Your pick is kept for later reports from builds of the same worktree.
 - **Otherwise, the chat in the worktree the app was built from.** `.redline()` records the path of the source file that calls it at compile time. The hub walks up from that path to the folder holding `.git`, and looks for an open chat whose folder is in that same worktree.
 - **New chat** makes a new git worktree on a branch named `report/<report ID>`, from the repository's main branch (origin's default branch, fetched first, or else a local `main` or `master`), and starts a chat there. Later reports sent with the same pick go to that chat while its worktree exists. Picking New chat again starts another one. If no chat works in the worktree and nothing was picked, the hub also starts a new chat, with the first agent installed.
+- **The phone warns you before you pick.** When the worktree the app was built from isn't on main, the picker shows a line under New chat, such as "Built from feature/growth-card. A new chat starts from main." If the bug is in the feature, send it to that branch's chat instead.
 - **New chats start read-only.** The hub starts them with the agent's command line, Claude Code in plan mode and Codex in a read-only sandbox, then opens the chat in the Claude app or the Codex app, or in Terminal when that app is not installed.
 
 ### How the chat receives it
@@ -308,7 +309,7 @@ On a physical iPhone, iOS asks once whether the app may find devices on the loca
   - In annotate mode, the capture button attaches the whole screen as it is, and the paperclip attaches photos.
   - Apps that already declare Photos access in their Info.plist show a grid of recent photos, and ask for access only when you tap Show recent photos. With that access, Redline also offers screenshots taken in other apps when you come back to yours. Other apps get the system photo picker, which needs no access.
   - Notes on elements and attachments go together in one report.
-- **Send to.** The row in the notes tray shows where reports go, and changes it. The picker has one tab per agent on the Mac, a New chat row ("In a new worktree from main"), and the open chats that work on this app, the one in this build's worktree first.
+- **Send to.** The row in the notes tray shows where reports go, and changes it. The picker has one tab per agent on the Mac, a New chat row ("In a new worktree from main", with a line under it when the build's worktree isn't on main), and the open chats that work on this app, the one in this build's worktree first.
 - **Delivery.** After Send, a short message says whether the report reached the Mac. A report that didn't is kept on the device. Once one report has reached the Mac, the app offers any it hasn't confirmed again each time the app comes back to the foreground. The sent reports list shows "On the Mac" for each report, or why it isn't there yet.
 
 ### On the Mac

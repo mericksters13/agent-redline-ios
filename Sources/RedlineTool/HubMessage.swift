@@ -129,6 +129,16 @@ enum HubMessage {
         var newChatBase: String? = nil
         /// The agents whose command is on this Mac to start a new chat; nil for every agent.
         var newChats: [String]? = nil
+        /// The branch the build's worktree is on when the phone asks, such as "feature/growth-card".
+        ///
+        /// Nil when that is `newChatBase`, the worktree is on no branch or can't be told, or no agent
+        /// starts new chats.
+        var buildBranch: String? = nil
+        /// The first seven characters of the commit the build's worktree is on when it is on no
+        /// branch, such as "1a2b3c4".
+        ///
+        /// Nil when the worktree is on a branch or can't be told, or no agent starts new chats.
+        var buildCommit: String? = nil
         /// Why the request was turned down, when it was.
         var refused: String?
     }

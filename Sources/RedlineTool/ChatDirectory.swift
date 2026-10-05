@@ -76,12 +76,22 @@ enum ChatDirectory {
         // new chat works in a worktree made from the main branch, so without one no agent can
         // start it.
         let base = worktree.flatMap { NewWorktree.mainBranch(of: $0)?.name }
+        let newChats = base == nil ? [] : agents.filter { AgentCommand.locate($0) != nil }
+        // When the build's worktree isn't on the main branch, a new chat may not have the code the
+        // report is about: the phone says so under "New chat". Nothing records the branch at build
+        // time, so it is the one the worktree is on now.
+        var checkout: (branch: String?, commit: String?) = (nil, nil)
+        if let worktree, let base, !newChats.isEmpty {
+            checkout = NewWorktree.checkout(of: worktree, otherThan: base)
+        }
         return HubMessage.ChatList(
             agents: agents.map(\.rawValue),
             chats: chats,
             worktree: worktree.map { URL(filePath: $0).lastPathComponent },
             newChatBase: base,
-            newChats: base == nil ? [] : agents.filter { AgentCommand.locate($0) != nil }.map(\.rawValue)
+            newChats: newChats.map(\.rawValue),
+            buildBranch: checkout.branch,
+            buildCommit: checkout.commit
         )
     }
 }

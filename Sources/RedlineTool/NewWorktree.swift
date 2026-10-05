@@ -150,6 +150,20 @@ enum NewWorktree {
         return nil
     }
 
+    /// The branch the folder's checkout is on when it isn't `main`, or, when the checkout is on no
+    /// branch, the first seven characters of its commit.
+    ///
+    /// Both are nil when the checkout is on `main` or can't be told. Changes nothing.
+    static func checkout(of folder: String, otherThan main: String) -> (branch: String?, commit: String?) {
+        // One local command, since the phone waits for the answer: the commit, then the branch's
+        // full name, or "HEAD" when the checkout is on no branch.
+        let output = git(["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"], in: folder)
+        guard let lines = output?.split(separator: "\n"), lines.count == 2 else { return (nil, nil) }
+        guard lines[1].hasPrefix("refs/heads/") else { return (nil, String(lines[0].prefix(7))) }
+        let name = String(lines[1].dropFirst("refs/heads/".count))
+        return (name == main ? nil : name, nil)
+    }
+
     /// Where the agent keeps its own worktrees for the repository.
     static func folder(for agent: Agent, repository: String, name: String) -> String {
         switch agent {

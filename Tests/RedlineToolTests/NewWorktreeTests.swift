@@ -94,5 +94,45 @@ struct NewWorktreeTests {
         }
         #expect(StartedChats.all(paths).count == 41)
     }
+
+    @Test func theBuildsCheckoutIsNamedOnlyWhenItIsntOnMain() async throws {
+        let repository = root.appending(path: "repo", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        @discardableResult
+        func git(_ arguments: String...) async throws -> String {
+            try await runProcess(
+                "/usr/bin/git",
+                ["-C", repository.path, "-c", "user.name=Test", "-c", "user.email=test@example.com"] + arguments
+            )
+        }
+        try await git("init", "-q", "-b", "main")
+        try await git("commit", "-q", "--allow-empty", "-m", "First")
+        let source = repository.path
+        let main = try #require(await offPool { NewWorktree.mainBranch(of: source)?.name })
+        func checkout(_ folder: String) async -> (branch: String?, commit: String?) {
+            await offPool { NewWorktree.checkout(of: folder, otherThan: main) }
+        }
+        let onMain = await checkout(source)
+        #expect(onMain.branch == nil && onMain.commit == nil)
+
+        try await git("checkout", "-q", "-b", "feature/growth-card")
+        let onFeature = await checkout(source)
+        #expect(onFeature.branch == "feature/growth-card" && onFeature.commit == nil)
+        // A linked worktree names its own branch, not the main checkout's.
+        let other = root.appending(path: "other", directoryHint: .isDirectory).path
+        try await git("worktree", "add", "-q", "-b", "fix/picker", other)
+        #expect(await checkout(other).branch == "fix/picker")
+
+        // A checkout on no branch, such as one at a tag, names its commit.
+        try await git("checkout", "-q", "--detach")
+        let commit = try await git("rev-parse", "HEAD").trimmingCharacters(in: .whitespacesAndNewlines)
+        let onNoBranch = await checkout(source)
+        #expect(onNoBranch.branch == nil && onNoBranch.commit == String(commit.prefix(7)))
+
+        let notARepository = root.appending(path: "not-a-repo", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: notARepository, withIntermediateDirectories: true)
+        let unknown = await checkout(notARepository.path)
+        #expect(unknown.branch == nil && unknown.commit == nil)
+    }
 }
 #endif
