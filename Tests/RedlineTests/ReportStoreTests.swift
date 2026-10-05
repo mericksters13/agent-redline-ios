@@ -189,6 +189,24 @@ struct ReportStoreTests {
         #expect(store.undeliveredReports().map(\.id) == [ids[1]])
     }
 
+    @Test func onlyTheNewestDeliveredReportsStay() throws {
+        var ids: [String] = []
+        for index in 0..<4 {
+            let seconds = 1_790_000_000.0 + Double(index) * 600
+            try store.saveDraft([annotation("Report \(index)")])
+            let started = try store.beginReport(date: Date(timeIntervalSince1970: seconds))
+            var report = sampleReport(id: started.id)
+            report.createdAt = Date(timeIntervalSince1970: seconds)
+            try store.finishReport(report, in: started.folder)
+            ids.append(started.id)
+        }
+        // The oldest isn't on the Mac yet, so it stays whatever its age.
+        store.markDelivered(Array(ids.dropFirst()))
+        store.pruneDeliveredReports(keeping: 2)
+        #expect(store.sentReports().map(\.folder.lastPathComponent) == [ids[3], ids[2], ids[0]])
+        #expect(store.undeliveredReports().map(\.id) == [ids[0]])
+    }
+
     @Test func theHubsAddressAndMessagesRoundTrip() throws {
         #expect(store.hubAddress() == nil)
         let address = HubLink.Address(device: "00008150-00123C360CF3C01C", hosts: ["192.168.1.2", "mac.local"], port: 47361, token: "secret")

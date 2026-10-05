@@ -758,6 +758,7 @@ final class DebugSession {
             while Date.now < deadline {
                 try? await Task.sleep(for: .milliseconds(250))
                 if !store.undeliveredReports().contains(where: { ids.contains($0.id) }) {
+                    store.pruneDeliveredReports()
                     store.recordDelivery(.delivered)
                     return .delivered
                 }
@@ -767,6 +768,7 @@ final class DebugSession {
         }
         let result = await HubLink.deliver(reports, bundleID: bundleID, address: address, files: { store.reportFiles($0) }, patience: patience)
         store.markDelivered(result.delivered)
+        store.pruneDeliveredReports()
         store.recordDelivery(result.outcome)
         // The hub answered, so iOS has allowed local network access.
         if result.outcome != .unreachable { UserDefaults.standard.set(true, forKey: hubReachedKey) }
