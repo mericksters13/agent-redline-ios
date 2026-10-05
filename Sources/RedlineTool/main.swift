@@ -313,8 +313,10 @@ case "setup", "remove":
     // First: new Claude Code chats need the claude command signed in. What's still missing is
     // printed for the user, and setup goes on, so the other agents still get their hooks. It
     // doesn't fail setup: the exit status says whether a settings file couldn't be updated, which
-    // the installer reads, and the installer checks the claude command on its own.
-    if adding, AgentSettings.isPresent(.claude) || AgentCommand.isClaudeAppInstalled(),
+    // the installer reads, and the installer checks the claude command on its own. An installed
+    // claude command counts too: the hub offers new Claude chats whenever it finds one.
+    if adding,
+        AgentSettings.isPresent(.claude) || AgentCommand.isClaudeAppInstalled() || AgentCommand.locate(.claude) != nil,
         ClaudeCLI.prepare(isAsking: options.isEmpty && isatty(STDIN_FILENO) != 0)
     {
         print("Claude Code: the claude command is signed in and ready to start new chats.")

@@ -212,8 +212,18 @@ final class HubWindowModel {
     nonisolated static func destination(of folder: URL, codexDatabase: URL?) -> (
         agent: String, chat: String, isWaiting: Bool
     ) {
-        let delivery = ChatDelivery.load(from: folder)
-        let claim = Inbox.activeClaim(of: folder)
+        destination(
+            delivery: ChatDelivery.load(from: folder),
+            claim: Inbox.activeClaim(of: folder),
+            codexDatabase: codexDatabase
+        )
+    }
+
+    /// `destination(of:codexDatabase:)` from a delivery and claim already read, so the report
+    /// viewer can derive this and the chat to open from the same reads.
+    nonisolated static func destination(delivery: ChatDelivery?, claim: Claim?, codexDatabase: URL?) -> (
+        agent: String, chat: String, isWaiting: Bool
+    ) {
         if let delivery, !(delivery.isPending && claim != nil) {
             let agent = delivery.agent.flatMap(Agent.init(rawValue:))?.name ?? "Not sent"
             // A report set to go with a chat's next message isn't in that chat yet.

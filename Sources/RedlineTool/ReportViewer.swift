@@ -10,8 +10,9 @@ struct ReportViewer: View {
     struct Contents: Sendable {
         var snapshots: [HubWindowModel.ReportSnapshot]
         var chat: HubWindowModel.ChatLink?
-        /// Where the report went, read again with `chat`: the panel's row may be older than a
-        /// delivery that happened while the panel was closed.
+        /// Where the report went, read again with `chat` and from the same reads, so the two
+        /// agree: the panel's row may be older than a delivery that happened while the panel was
+        /// closed.
         var destination: (agent: String, chat: String, isWaiting: Bool)
     }
 
@@ -36,12 +37,15 @@ struct ReportViewer: View {
     nonisolated static func load(_ folder: URL) async -> Contents {
         await withCheckedContinuation { continuation in
             loader.async {
+                let delivery = ChatDelivery.load(from: folder)
+                let claim = Inbox.activeClaim(of: folder)
                 continuation.resume(
                     returning: Contents(
                         snapshots: HubWindowModel.snapshots(in: folder),
-                        chat: HubWindowModel.chat(of: folder),
+                        chat: HubWindowModel.chat(of: folder, delivery: delivery, claim: claim),
                         destination: HubWindowModel.destination(
-                            of: folder,
+                            delivery: delivery,
+                            claim: claim,
                             codexDatabase: CodexThreads.newestDatabase()
                         )
                     )

@@ -96,9 +96,13 @@ extension HubWindowModel {
     ///
     /// Nil when the report went to no chat.
     nonisolated static func chat(of report: URL) -> ChatLink? {
-        let claim = Inbox.activeClaim(of: report)
+        chat(of: report, delivery: ChatDelivery.load(from: report), claim: Inbox.activeClaim(of: report))
+    }
+
+    /// `chat(of:)` from a delivery and claim already read, the same ones `destination` gets.
+    nonisolated static func chat(of report: URL, delivery: ChatDelivery?, claim: Claim?) -> ChatLink? {
         let folder = claim.flatMap { $0.folder.isEmpty ? nil : $0.folder }
-        if let delivery = ChatDelivery.load(from: report), !(delivery.isPending && claim != nil) {
+        if let delivery, !(delivery.isPending && claim != nil) {
             guard delivery.kind != .waiting, let agent = delivery.agent.flatMap(Agent.init(rawValue:)),
                 let id = delivery.chat
             else { return nil }
