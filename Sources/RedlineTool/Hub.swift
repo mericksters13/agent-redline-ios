@@ -231,16 +231,17 @@ final class Hub: @unchecked Sendable {
         let hosts = Self.addresses()
         state.withLock { $0.hosts = hosts }
         if includingNewApps { simulators?.rescan() }
-        let paired: [Devicectl.Phone]
+        // Phones already known still get the new address when the paired list can't be read.
+        let links: [PhoneLink]
         do {
-            paired = try devicectl.pairedPhones()
+            let paired = try devicectl.pairedPhones()
+            forgetPhones(except: Set(paired.map(\.udid)))
+            links = paired.map { link(for: $0) }
         } catch {
             log("Couldn't list paired phones: \(error.localizedDescription)")
-            return
+            links = state.withLock { Array($0.links.values) }
         }
-        forgetPhones(except: Set(paired.map(\.udid)))
-        for phone in paired {
-            let link = link(for: phone)
+        for link in links {
             // Off every network, phones keep the address they have, which works again once the Mac
             // is back on theirs; the new address follows as soon as the Mac has one.
             if hosts.isEmpty {
