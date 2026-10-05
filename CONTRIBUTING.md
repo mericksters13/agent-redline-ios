@@ -114,6 +114,6 @@ A version can't be published twice, so a mistake means a new version.
 ## Pull requests
 
 - Keep each pull request to one change, and stage only the files it needs.
-- Run `git diff --check`, the build and test commands, the iOS builds, the documentation build and the format lint before you open it.
+- Run `git diff --check`, the build and test commands, the iOS builds, the documentation build and the format lint before you open it. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs them again on the pull request, and a failing check blocks the merge.
 - Say what you checked and how, including any device checks and, for performance work, the numbers you measured.
 - A change to the messages between the phone and the Mac, or to `report.json`, keeps older versions readable: rename a field only with a `CodingKeys` entry that keeps the old key, or, for `report.json`, raise `Report.version`, write the new key and keep reading the old one, as version 2 does for snapshots; and extend the contract tests in `Tests/RedlineToolTests/KitContractTests.swift`. A hub already installed can't read a newer version fully, so a version bump also says, in the pull request and in the README's update steps, that the Mac is updated before apps are rebuilt.

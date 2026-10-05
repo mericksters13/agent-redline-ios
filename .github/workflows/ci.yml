@@ -1,0 +1,139 @@
+# Runs the checks CONTRIBUTING.md lists on every pull request to main and every push to it, so a
+# failure blocks the merge instead of relying on someone to remember them. The Swift and iOS jobs
+# build with the oldest Xcode 16 on the runner, since the package must build with Swift 6.0
+# (docs/CODE_STYLE.md T5).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request or branch replaces a run still under way.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift:
+    name: Swift
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # With the runner's default Xcode, the newest, whose formatter matches what contributors run.
+      - name: Format lint
+        run: swift format lint --strict --recursive --parallel Sources Tests scripts Package.swift
+
+      - name: Use the oldest Xcode 16
+        run: |
+          xcode="$(printf '%s\n' /Applications/Xcode_16*.app | sort -V | head -1)"
+          if [ ! -d "$xcode" ]; then
+            echo "::error::The runner has no Xcode 16."
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+          "$xcode/Contents/Developer/usr/bin/xcodebuild" -version
+
+      - name: Build with warnings as errors
+        run: swift build -Xswiftc -warnings-as-errors
+
+      - name: Test
+        run: swift test
+
+      - name: Test the Mac tool with the thread sanitizer
+        run: swift test --sanitize=thread --filter RedlineToolTests
+
+      # Builds the release `redline` command and the menu bar app around it, into a folder of its
+      # own, without opening it.
+      - name: Build Redline.app
+        run: scripts/build-hub-app.sh "$RUNNER_TEMP/app" --no-start --keep-earlier-app
+
+  ios:
+    name: iOS
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Use the oldest Xcode 16
+        run: |
+          xcode="$(printf '%s\n' /Applications/Xcode_16*.app | sort -V | head -1)"
+          if [ ! -d "$xcode" ]; then
+            echo "::error::The runner has no Xcode 16."
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+          "$xcode/Contents/Developer/usr/bin/xcodebuild" -version
+
+      - name: Build the kit in Debug
+        run: xcodebuild -scheme Redline -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/xcode build
+
+      - name: Build the kit in Release
+        run: xcodebuild -scheme Redline -configuration Release -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/xcode build
+
+      # The kit ships in Debug builds only: the Release object must hold no kit code, no private API
+      # name and no path from the machine that built it (docs/CODE_STYLE.md T4).
+      - name: Check what each build contains
+        run: |
+          debug=.build/xcode/Build/Products/Debug-iphonesimulator/Redline.o
+          release=.build/xcode/Build/Products/Release-iphonesimulator/Redline.o
+          if ! strings -a "$debug" | grep -q AXSSetAutomationEnabled; then
+            echo "::error::The Debug build has no AXSSetAutomationEnabled, so the Release check below proves nothing."
+            exit 1
+          fi
+          for text in AXSSetAutomationEnabled DebugSession "$GITHUB_WORKSPACE"; do
+            if strings -a "$release" | grep -qF "$text"; then
+              echo "::error::The Release build contains $text."
+              exit 1
+            fi
+          done
+
+      - name: Build the documentation with no warnings
+        run: |
+          set -o pipefail
+          xcodebuild docbuild -scheme Redline -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/xcode 2>&1 | tee "$RUNNER_TEMP/docbuild.log"
+          if grep -q "warning:" "$RUNNER_TEMP/docbuild.log"; then
+            echo "::error::The documentation build has warnings."
+            exit 1
+          fi
+
+  scripts:
+    name: Scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check the installer
+        run: shellcheck install.sh
+
+      - name: Check the npm entry point
+        run: node --check bin/agent-redline-ios.js
+
+      - name: Check that the version agrees everywhere
+        run: |
+          package="$(node -p "require('./package.json').version")"
+          command="$(sed -n 's/^let version = "\(.*\)"$/\1/p' Sources/RedlineTool/main.swift)"
+          app="$(sed -n 's/^version="\(.*\)"$/\1/p' scripts/build-hub-app.sh)"
+          if [ "$package" != "$command" ] || [ "$package" != "$app" ]; then
+            echo "::error::package.json says $package, Sources/RedlineTool/main.swift says $command, scripts/build-hub-app.sh says $app."
+            exit 1
+          fi
+
+      - name: Check whitespace in the change
+        if: github.event_name == 'pull_request'
+        run: git diff --check "origin/$GITHUB_BASE_REF...HEAD"

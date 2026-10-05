@@ -2913,7 +2913,7 @@ let debugOnly: [SwiftSetting] = [.define("REDLINE", .when(configuration: .debug)
 
 **Rule:** Run every automated check in this guide in CI on each pull request: format lint, a warnings-as-errors build, `swift test`, the thread sanitizer, the Debug and Release `xcodebuild` builds with the binary checks, a documentation build, and a build on the oldest supported Xcode.
 
-**Why:** Rules that are not checked drift. Until the repo has a CI configuration, run these commands before each pull request; [CONTRIBUTING.md](../CONTRIBUTING.md) lists them.
+**Why:** Rules that are not checked drift. [.github/workflows/ci.yml](../.github/workflows/ci.yml) runs these commands on each pull request; [CONTRIBUTING.md](../CONTRIBUTING.md) lists them for running before you open one.
 
 ```sh
 # Do
