@@ -148,11 +148,18 @@ struct ReportViewer: View {
                         // Opening runs /usr/bin/open and waits for it, so not on the main thread.
                         DispatchQueue.global(qos: .userInitiated).async {
                             // A report sent to an existing Codex chat records no folder; Codex keeps
-                            // the chat's own, and `codex resume` reopens it there.
+                            // the chat's own, and `codex resume` reopens it there. A folder that is
+                            // gone, such as a removed worktree, is skipped: opening a terminal there
+                            // would make it again, empty.
                             let codexFolder =
                                 chat.agent == .codex
                                 ? CodexThreads.folder(of: chat.id, in: CodexThreads.newestDatabase()) : nil
-                            let folder = chat.folder ?? codexFolder ?? URL.homeDirectory.path
+                            let folder =
+                                [chat.folder, codexFolder].compactMap { $0 }.first { path in
+                                    var isFolder: ObjCBool = false
+                                    return FileManager.default.fileExists(atPath: path, isDirectory: &isFolder)
+                                        && isFolder.boolValue
+                                } ?? URL.homeDirectory.path
                             do {
                                 try Handoff.openChat(chat.agent, id: chat.id, in: folder)
                             } catch {
