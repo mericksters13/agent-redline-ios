@@ -1,6 +1,6 @@
 {
   "name": "agent-redline-ios",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Installs Redline on your Mac: point at UI in a Debug build of your iOS app and send a note with a snapshot to the Claude Code or Codex chat working on it.",
   "keywords": ["ios", "swiftui", "claude-code", "codex", "debugging", "mcp"],
   "license": "MIT",

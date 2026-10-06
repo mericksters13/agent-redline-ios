@@ -4,9 +4,15 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-06
+
 ### Added
 
 - A demo app in `Examples/RedlineDemo`: an Xcode project with `.redline()` on its root view, a UIKit screen and three planted UI bugs. It builds the kit from the same checkout and isn't part of the npm package.
+
+### Fixed
+
+- Redline picks up a simulator install as it happens. Every install moves the app's data container, so a first install, a reinstall or a Run from Xcode left the build without the hub's address, or the hub watching the old container. Send then saved the report on the simulator, and it reached your session only at Redline's next scan, up to 30 minutes later.
 
 ## [0.1.1] - 2026-10-06
 
@@ -31,6 +37,7 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 First public release.
 
-[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.1...HEAD
+[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.2...HEAD
+[0.1.2]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.1...0.1.2
 [0.1.1]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.0...0.1.1
 [0.1.0]: https://github.com/mericksters13/agent-redline-ios/releases/tag/0.1.0
