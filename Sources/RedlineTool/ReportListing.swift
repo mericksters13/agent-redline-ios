@@ -74,13 +74,32 @@ struct ReportListing: Decodable {
             var identifier: String?
             var label: String?
             var role: String?
+            /// For a group with no identifier or label: the names of the first elements inside it.
+            var contents: [String]?
+            /// How many named elements the group holds, of which `contents` lists the first.
+            var contentCount: Int?
 
-            /// `Cell "Milestones" (today.list)`; nil for an element with no label or identifier.
+            /// `Cell "Milestones" (today.list)`, or `Group "Beyond the sky" and 2 more` for a group
+            /// with no name of its own; nil for an element with no label, identifier or contents.
             var description: String? {
-                guard label != nil || identifier != nil else { return nil }
+                guard label != nil || identifier != nil else {
+                    return contentsName.map { [role, $0].compactMap { $0 }.joined(separator: " ") }
+                }
                 return [role, label.map { "\"\($0)\"" }, identifier.map { "(\($0))" }].compactMap { $0 }.joined(
                     separator: " "
                 )
+            }
+
+            /// `"Beyond the sky"`, `"Beyond the sky" and "Unlock"`, or `"Beyond the sky" and 2 more`,
+            /// as the kit's `ElementSnapshot.contentsName` names a group.
+            var contentsName: String? {
+                guard let first = contents?.first else { return nil }
+                let count = max(contentCount ?? 0, contents?.count ?? 0)
+                switch count {
+                case ...1: return "\"\(first)\""
+                case 2: return "\"\(first)\" and \"\(contents?.dropFirst().first ?? "")\""
+                default: return "\"\(first)\" and \(count - 1) more"
+                }
             }
         }
 

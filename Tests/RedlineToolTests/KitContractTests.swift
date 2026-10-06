@@ -259,6 +259,18 @@ struct KitContractTests {
             isContainer: false,
             frame: .zero
         )
+        // A group with no name of its own, known by what it holds.
+        var form = ElementSnapshot(
+            role: "Group",
+            label: nil,
+            value: nil,
+            identifier: nil,
+            className: nil,
+            isContainer: true,
+            frame: .zero
+        )
+        form.contents = ["Title", "Save"]
+        form.contentCount = 2
         let report = Report(
             id: "20261004-120950",
             createdAt: date,
@@ -298,7 +310,7 @@ struct KitContractTests {
                     createdAt: date,
                     title: "Save",
                     element: element,
-                    ancestors: [],
+                    ancestors: [form],
                     screen: "s1",
                     screenTitle: "Editor",
                     snapshot: "screen-1.jpg",
@@ -331,6 +343,8 @@ struct KitContractTests {
         #expect(listing.screens?.first?.title == "Editor")
         #expect(listing.screens?.first?.snapshots.first?.notes == [1])
         #expect(listing.items?.first?.element?.identifier == "editor.save")
+        #expect(listing.items?.first?.ancestors?.first?.contents == ["Title", "Save"])
+        #expect(listing.items?.first?.ancestors?.first?.description == #"Group "Title" and "Save""#)
         #expect(listing.items?.last?.attachments == ["note-2.jpg"])
 
         // Every reader gets the whole report, not its fallback.
@@ -352,7 +366,7 @@ struct KitContractTests {
         )
         let text = ReportContent.text(for: InboxReport(folder: folder, source: source, claim: nil))
         #expect(text.hasPrefix("UI report from Test iPhone · Example"))
-        #expect(text.contains("1. Save (Button, editor.save): Too small"))
+        #expect(text.contains(#"1. Save (Button, editor.save), in Group "Title" and "Save": Too small"#))
     }
 
     @Test func everyReaderUsesTheSnapshotNamesTheReportGives() throws {

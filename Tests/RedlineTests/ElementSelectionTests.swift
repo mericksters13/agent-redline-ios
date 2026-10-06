@@ -244,6 +244,53 @@ struct ElementSelectionTests {
         #expect(element(role: "Group", label: nil, frame: .zero).fullName == nil)
     }
 
+    @Test func aGroupWithNoNameIsNamedAfterWhatItHolds() {
+        var group = element(role: "Group", label: nil, frame: .zero, isContainer: true)
+        group.contents = ["Beyond the sky"]
+        group.contentCount = 1
+        #expect(group.fullName == #""Beyond the sky""#)
+        group.contents = ["Beyond the sky", "Unlock the rest"]
+        group.contentCount = 2
+        #expect(group.fullName == #""Beyond the sky" and "Unlock the rest""#)
+        group.contents = ["Time, 55 min", "Serves, 4", "Calories, 480"]
+        group.contentCount = 6
+        #expect(group.fullName == #""Time, 55 min" and 5 more"#)
+        // Its own name wins over what it holds.
+        group.identifier = "detail.stats"
+        #expect(group.fullName == "detail.stats")
+    }
+
+    @Test func aGroupWithNoNameIsALevelAndIsFoundAgainByWhatItHolds() {
+        var card = element(
+            role: "Group",
+            label: nil,
+            frame: CGRect(x: 20, y: 100, width: 360, height: 200),
+            isContainer: true
+        )
+        card.contents = ["Beyond the sky", "Tricks and bigger patterns"]
+        card.contentCount = 2
+        let text = element(
+            role: "Text",
+            label: "Tricks and bigger patterns",
+            frame: CGRect(x: 30, y: 160, width: 340, height: 60),
+            parent: 0
+        )
+        let levels = ElementSelection.levels(at: CGPoint(x: 100, y: 180), in: [card, text], screenSize: screen)
+        #expect(
+            levels.map(\.fullName) == [
+                "Tricks and bigger patterns", #""Beyond the sky" and "Tricks and bigger patterns""#,
+            ]
+        )
+
+        var moved = card
+        moved.frame.origin.y += 40
+        var other = card
+        other.contents = ["Low orbit"]
+        other.frame.origin.y = 400
+        #expect(ElementSelection.match(card, in: [other, moved]) == moved)
+        #expect(ElementSelection.match(card, in: [other]) == nil)
+    }
+
     @Test func aLongNameIsCutShortForLists() {
         let long = String(repeating: "a", count: 40)
         #expect(element(role: "Text", label: long, frame: .zero).shortName == String(repeating: "a", count: 33) + "…")

@@ -4,6 +4,14 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Changed
+
+- The note card shows the path from the outermost element enclosing your pick to the element you tapped, and tapping a step selects that element. It replaces the Larger and Smaller buttons, which showed only when there was somewhere to go. When nothing encloses the pick, the card says "Nothing larger to select".
+
+### Added
+
+- A container with `.accessibilityElement(children: .contain)` and no identifier or label can be picked. It is named after what it holds, such as `"Beyond the sky" and 2 more`, in the note card and the report.
+
 ## [0.1.2] - 2026-10-06
 
 ### Added

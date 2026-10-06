@@ -40,7 +40,7 @@ struct ReportContentTests {
             "app": ["name": "Example", "version": "1.0.9", "build": "41"],
             "screens": [
                 ["images": [["file": "screen-1.jpg", "notes": [1]]]],
-                ["images": [["file": "screen-2.jpg", "notes": [3]]]],
+                ["images": [["file": "screen-2.jpg", "notes": [3, 5]]]],
             ],
             "items": [
                 [
@@ -56,6 +56,15 @@ struct ReportContentTests {
                 [
                     "number": 3, "title": "growth.card", "note": "", "attachments": [String](),
                     "element": ["identifier": "growth.card", "role": "Group"],
+                ],
+                // A group with no name of its own is described by what it holds.
+                [
+                    "number": 5, "title": "\"Beyond the sky\" and 2 more", "note": "Spacing", "attachments": [String](),
+                    "picture": "screen-2.jpg",
+                    "element": [
+                        "role": "Group", "contents": ["Beyond the sky", "Tricks", "Unlock"], "contentCount": 3,
+                    ],
+                    "ancestors": [["role": "Group", "contents": ["Sky"], "contentCount": 1]],
                 ],
                 // An element note made before notes on one screen shared its picture keeps its own.
                 [
@@ -83,6 +92,7 @@ struct ReportContentTests {
 
                 \(report.path)/screen-2.jpg
                 3. growth.card (Group): No note
+                5. "Beyond the sky" and 2 more (Group, holding "Beyond the sky", "Tricks", "Unlock"), in Group "Sky": Spacing
 
                 \(report.path)/note-2.jpg
                 2. History: The list breaks

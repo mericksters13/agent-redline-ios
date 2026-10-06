@@ -176,9 +176,6 @@ final class DebugSession {
         levels.indices.contains(levelIndex) ? levels[levelIndex] : nil
     }
 
-    var canStepUp: Bool { levelIndex + 1 < levels.count }
-    var canStepDown: Bool { levelIndex > 0 }
-
     var screenTitle: String { screen.title ?? "This screen" }
 
     /// The number the note being written will get.
@@ -500,12 +497,11 @@ final class DebugSession {
         beginNoting()
     }
 
-    func stepUp() {
-        if canStepUp { levelIndex += 1 }
-    }
-
-    func stepDown() {
-        if canStepDown { levelIndex -= 1 }
+    /// Selects one of `levels`: the element under the finger, or one enclosing it.
+    func selectLevel(_ index: Int) {
+        guard levels.indices.contains(index), index != levelIndex else { return }
+        levelIndex = index
+        selectionFeedback.selectionChanged()
     }
 
     // MARK: - Notes

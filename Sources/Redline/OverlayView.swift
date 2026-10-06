@@ -492,17 +492,9 @@ struct OverlayView: View {
                 }
                 .lineLimit(1)
                 Spacer(minLength: 0)
-                if pending == nil {
-                    if session.canStepDown {
-                        sizeButton("Smaller", accessibilityLabel: "Select a smaller part") { session.stepDown() }
-                    }
-                    if session.canStepUp {
-                        sizeButton("Larger", accessibilityLabel: "Select the larger area around it") {
-                            session.stepUp()
-                        }
-                    }
-                }
             }
+
+            if pending == nil { levelPath }
 
             TextField("What's wrong?", text: $session.noteText, axis: .vertical)
                 .font(.body)
@@ -606,19 +598,75 @@ struct OverlayView: View {
         return opening + 3 * UIFont.preferredFont(forTextStyle: .body).lineHeight
     }
 
-    /// Moves the selection to a larger or smaller element around the same spot.
-    private func sizeButton(_ title: String, accessibilityLabel: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
+    /// The picked element and every element enclosing it, outermost first.
+    ///
+    /// The selection is marked, tapping a step selects it, and a long path scrolls sideways.
+    /// With nothing enclosing the element, says so, so the path's absence doesn't hide that it exists.
+    @ViewBuilder private var levelPath: some View {
+        let levels = session.levels
+        if levels.count > 1 {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) {
+                        ForEach(levels.indices.reversed(), id: \.self) { index in
+                            // One view per step, so scrolling to a step shows its pill, not its chevron.
+                            HStack(spacing: 2) {
+                                if index != levels.count - 1 {
+                                    Image(systemName: "chevron.compact.right")
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(Mono.secondary)
+                                        .accessibilityHidden(true)
+                                }
+                                levelButton(levels[index], index: index)
+                            }
+                            .id(index)
+                        }
+                    }
+                }
+                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                .onAppear { proxy.scrollTo(session.levelIndex, anchor: pathAnchor(session.levelIndex, of: levels)) }
+                .onChange(of: session.levelIndex) { _, index in
+                    withAnimation(.snappy) { proxy.scrollTo(index, anchor: pathAnchor(index, of: levels)) }
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Enclosing elements")
+        } else {
+            Text("Nothing larger to select")
+                .font(.footnote)
+                .foregroundStyle(Mono.secondary)
+        }
+    }
+
+    /// Where a selected step sits in a path too long to show whole: the outermost at the start, the
+    /// picked element at the end, any other in the middle.
+    private func pathAnchor(_ index: Int, of levels: [ElementSnapshot]) -> UnitPoint {
+        if index == 0 { return .trailing }
+        if index == levels.count - 1 { return .leading }
+        return .center
+    }
+
+    /// One step of `levelPath`, named after the element it selects.
+    private func levelButton(_ level: ElementSnapshot, index: Int) -> some View {
+        let isSelected = index == session.levelIndex
+        return Button {
+            session.selectLevel(index)
+        } label: {
+            Text(level.shortName ?? level.role)
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(Mono.text)
+                .foregroundStyle(isSelected ? Color.black : Mono.text)
+                .lineLimit(1)
+                // Narrow enough that a path of two short steps fits without scrolling.
+                .frame(maxWidth: 170)
                 .padding(.horizontal, 12)
-                .frame(height: 30)
-                .background(Mono.fill, in: Capsule(style: .continuous))
+                .padding(.vertical, 6)
+                .frame(minHeight: 30)
+                .background(isSelected ? Color.white : Mono.fill, in: Capsule(style: .continuous))
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
         }
-        .accessibilityLabel(accessibilityLabel)
+        .accessibilityLabel("\(level.fullName ?? level.role), \(level.role)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     // MARK: - Notes list
