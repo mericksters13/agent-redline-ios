@@ -7,6 +7,12 @@
 Redline is a SwiftUI annotation tool for agentic iOS development. Add `.redline()` to your root view, run a Debug build on a device or simulator, and tap elements to annotate them. Reports route to your Claude Code or Codex session, optionally matched by worktree. Each snapshot carries the annotation plus every annotated element's accessibility label, role, and identifier. Your agent resolves views in source instead of inferring them from contextless pixels.
 
 <p align="center">
+  <img src="docs/images/redline-demo.gif" width="880" alt="Screen recording at 2.5x speed. On the left, a Claude Code session in a terminal; on the right, the demo build on an iPhone 16 Pro simulator. In Redline's annotate mode, a recipe row whose summary cuts off is outlined and given the note: Summary cuts off mid-word. Let it wrap to two lines. On the Tonight tab, the Start cooking button is outlined and given the note: Start cooking is shifted to the right. Send to picks the Claude Code session, and the report arrives in the terminal with both notes. The session edits RecipeList.swift and RecipeDetail.swift, rebuilds, and the simulator shows the summaries wrapping to two lines.">
+</p>
+
+<p align="center"><sub>The <a href="#try-the-demo">demo build</a> on a simulator: two notes, sent to a Claude Code session that picks up the report and fixes both bugs. 2.5x speed.</sub></p>
+
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/redline-hero-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/redline-hero-light.svg">
