@@ -4,6 +4,10 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Added
+
+- A demo app in `Examples/RedlineDemo`: an Xcode project with `.redline()` on its root view, a UIKit screen and three planted UI bugs. It builds the kit from the same checkout and isn't part of the npm package.
+
 ## [0.1.1] - 2026-10-06
 
 ### Added

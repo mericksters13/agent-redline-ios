@@ -128,6 +128,10 @@ The checklist names the steps only you can take, each with its command. The usua
 
 On first launch, macOS asks whether Redline may show notifications. If your projects live in `~/Documents`, macOS also asks for access to that folder. Allow it: Redline reads each session's project folder to learn which bundle IDs it builds. If macOS reports a new background item, that is Redline's login item.
 
+## Try the demo
+
+[`Examples/RedlineDemo`](Examples/RedlineDemo) is an Xcode project with `.redline()` on its root view, a UIKit screen and three planted UI bugs to find. Clone this repository, open a Claude Code or Codex session in it, and run `Examples/RedlineDemo/RedlineDemo.xcodeproj` on a device or simulator. [Its README](Examples/RedlineDemo/README.md) covers device signing and what to try.
+
 ## Add Redline to your project
 
 Add the package to your app target, then `.redline()` to your root view. If your agent installed Redline from the prompt above, it has done both.

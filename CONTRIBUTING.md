@@ -68,7 +68,15 @@ Build the documentation, which must finish with no warnings:
 xcodebuild docbuild -scheme Redline -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/xcode
 ```
 
-If your change touches `redline(sourceFile:)` or how the kit records file paths, build a host app in Release and confirm its binary holds no path from your Mac:
+Build the demo app, which compiles the kit from your checkout into an app target:
+
+```sh
+xcodebuild -project Examples/RedlineDemo/RedlineDemo.xcodeproj -scheme RedlineDemo -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/demo build CODE_SIGNING_ALLOWED=NO
+```
+
+To try a change in a running build, run the demo on a device or simulator, as [its README](Examples/RedlineDemo/README.md) describes.
+
+If your change touches `redline(sourceFile:)` or how the kit records file paths, build a host app, such as the demo app, in Release and confirm its binary holds no path from your Mac:
 
 ```sh
 strings -a <Release host app binary> | grep "$HOME"    # nothing

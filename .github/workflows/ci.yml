@@ -116,6 +116,12 @@ jobs:
             exit 1
           fi
 
+      # The demo app references the kit in this checkout by local path, so this also checks that the
+      # kit builds into an app target. A simulator build needs no signing identity, and the runner has
+      # none.
+      - name: Build the demo app in Debug
+        run: xcodebuild -project Examples/RedlineDemo/RedlineDemo.xcodeproj -scheme RedlineDemo -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/demo build CODE_SIGNING_ALLOWED=NO
+
   scripts:
     name: Scripts
     runs-on: ubuntu-latest

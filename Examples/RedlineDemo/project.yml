@@ -1,0 +1,54 @@
+# The Redline demo app. RedlineDemo.xcodeproj is generated from this file and committed, so the
+# project runs without XcodeGen. After changing this file, run `xcodegen generate` in this folder
+# and commit both.
+name: RedlineDemo
+
+options:
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "26.0"
+
+# The kit from this checkout, by local path, so the demo always builds the code next to it.
+packages:
+  Redline:
+    path: ../..
+    # XcodeGen would list the package folder under the checkout's folder name, which differs between
+    # clones and worktrees. The target's sources list it under a fixed name instead.
+    excludeFromProject: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    # Automatic signing with no team: a simulator build needs none, and a device build uses the
+    # team you pick in Xcode.
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  RedlineDemo:
+    type: application
+    platform: iOS
+    sources:
+      - RedlineDemo
+      # The package folder, which Xcode opens as a local package. Nothing in it is added to the app.
+      - path: ../..
+        name: Redline
+        type: folder
+        buildPhase: none
+    dependencies:
+      - package: Redline
+        product: Redline
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.agentredline.demo
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        # Set, so XcodeGen doesn't search the whole checkout, build folders included, for an Info.plist.
+        INFOPLIST_FILE: ""
+        INFOPLIST_KEY_CFBundleDisplayName: Redline Demo
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: >-
+          UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+    scheme: {}
