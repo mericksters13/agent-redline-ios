@@ -19,11 +19,11 @@ Redline reads bundle IDs from the app targets of the Xcode projects in a chat's 
 - the phone's ID, which an app can't find out on its own
 - a token for that phone and app
 
-Redline looks for paired phones and installed apps when it starts, when the set of apps it takes reports for changes, and every 30 minutes. At each look it writes the file again, in case an app was reinstalled. It also writes it again when the Mac's address changes. An app that wasn't installed at the last look waits for the next one.
+Redline looks for paired phones and the apps installed on them when it starts, when the set of apps it takes reports for changes, and every 30 minutes. At each look it writes the file again, in case an app was reinstalled. It also writes it again when the Mac's address changes. An app installed on a phone after the last look waits for the next one.
 
 A phone that can't be reached is tried again after 30 seconds, then after waits that double up to 5 minutes. When a phone announces on the network that it woke, Redline tries again at once.
 
-**Simulator.** A simulator app's files are ordinary files on the Mac. Redline writes `hub.json` with `127.0.0.1`, which the app uses only to ask for the chats in Send to. It watches the app's folder with file system events, copies each finished report out of it, and marks the report delivered.
+**Simulator.** A simulator app's files are ordinary files on the Mac. Redline writes `hub.json` with `127.0.0.1`, which the app uses only to ask for the chats in Send to. It watches the app's folder with file system events, copies each finished report out of it, and marks the report delivered. Every install changes the app's folder: a first install or a reinstall makes a new one, and installing over a build, as Xcode's Run does, renames it, `hub.json` and all. Redline also watches the folders that list simulators and their apps' folders, so as an install happens it writes `hub.json` into a new folder and moves its watch to the new or renamed one.
 
 ## How a report reaches the Mac
 

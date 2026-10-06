@@ -173,7 +173,7 @@ The first report sent from an iPhone triggers the one-time iOS local network pro
 
 1. Check that Redline is running: its icon is in the menu bar.
 2. Open a Claude Code or Codex session in your project. Redline detects open Claude Code sessions. A Codex session registers through the hook on your next message to it, once you have trusted the hook.
-3. Run a Debug build from Xcode on a device or simulator. The menu bar panel shows the device as Ready (iPhone) or Running (simulator). Redline scans for new installs every 30 minutes. After the first install on a device, click Quit in the panel and reopen `Redline.app` to scan now.
+3. Run a Debug build from Xcode on a device or simulator. The menu bar panel shows the device as Ready (iPhone) or Running (simulator). Redline picks up simulator installs as they happen and scans iPhones for new installs every 30 minutes. After the first install on an iPhone, click Quit in the panel and reopen `Redline.app` to scan now.
 4. In the build, tap the floating Redline button, tap an element, write a note and tap Add note.
 5. Tap Send. The first time, pick your session in Send to and confirm.
 6. The report arrives in your session, and the menu bar panel lists it with the session it went to.
@@ -285,7 +285,7 @@ The build couldn't connect to Redline: Redline isn't running, the Mac is asleep 
 Redline couldn't reach the iPhone over Xcode's device link: it is asleep, out of range or on a different network. Wake it. Redline keeps retrying, and retries immediately when the iPhone wakes.
 
 **The build shows "Not on the Mac yet: no Mac has set up this app", or the panel shows No watched app installed.**
-Redline hasn't found the build on that device yet. It scans for new installs when it starts, when a session for a new bundle ID opens, and every 30 minutes. To scan now, click Quit in the panel and reopen `Redline.app` from `~/Applications`. If it still doesn't find the build, check that a session for the project is open (for Codex, trust "Report delivery" in `/hooks`, then send the session a message) and that Xcode can reach the iPhone.
+Redline hasn't found the build on that device yet. It picks up simulator installs as they happen. For an iPhone, it scans for new installs when it starts, when a session for a new bundle ID opens, and every 30 minutes. To scan now, click Quit in the panel and reopen `Redline.app` from `~/Applications`. If it still doesn't find the build, check that a session for the project is open (for Codex, trust "Report delivery" in `/hooks`, then send the session a message) and that Xcode can reach the iPhone.
 
 **Annotate mode says "SwiftUI elements may not be pickable".**
 The kit couldn't enable the automation mode SwiftUI needs (see [What compiles into your build](#what-compiles-into-your-build)), most likely because this iOS version removed the private function it uses. You can still select UIKit views, and the capture button still attaches a snapshot of the whole screen.
