@@ -41,7 +41,7 @@ Used mid-test, one-handed, on a physical iPhone, on top of whatever app is being
 
 ## Evidence on Hand
 
-Real host apps for testing: Tiny Tally and Trail. No users, metrics, or testimonials exist yet.
+It has been tried on the maintainer's own apps. No users, metrics, or testimonials exist yet.
 
 ## Product Principles
 

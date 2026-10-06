@@ -4,7 +4,7 @@ import Foundation
 import Testing
 @testable import Redline
 
-/// Notes made on Tiny Tally's growth card in different states, filed the way the phone files them.
+/// Notes made on a sample app's growth card in different states, filed the way the phone files them.
 struct CaptureMergeTests {
     /// The draft as the phone keeps it: screens with their captures, notes, and each capture's
     /// pixels.
