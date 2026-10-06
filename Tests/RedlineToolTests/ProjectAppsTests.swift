@@ -227,10 +227,10 @@ struct ProjectAppsTests {
     }
 
     @Test func settingReferencesAreFilledInAsXcodeDoes() {
-        let settings = ["TARGET_NAME": "Tiny Tally", "PRODUCT_NAME": "$(TARGET_NAME)", "BASE": "com.example"]
+        let settings = ["TARGET_NAME": "Sample App", "PRODUCT_NAME": "$(TARGET_NAME)", "BASE": "com.example"]
         #expect(
             ProjectApps.expand("${BASE}.$(PRODUCT_NAME:rfc1034identifier:lower)", with: settings)
-                == "com.example.tiny-tally"
+                == "com.example.sample-app"
         )
         #expect(ProjectApps.expand("$(inherited)com.example.app", with: settings) == "com.example.app")
         #expect(ProjectApps.expand("$(MISSING).app", with: settings) == nil)

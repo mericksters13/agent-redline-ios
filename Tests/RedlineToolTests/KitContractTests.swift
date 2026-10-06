@@ -526,7 +526,7 @@ struct KitContractTests {
         )
         let inboxReport = InboxReport(folder: inbox, source: source, claim: nil)
         let text = ReportContent.text(for: inboxReport)
-        #expect(text.hasPrefix("UI report from Test iPhone · Tiny Tally"))
+        #expect(text.hasPrefix("UI report from Test iPhone · Sample App"))
         #expect(
             text.contains(
                 inbox.appending(path: "screen-1-earlier-1.jpg").path

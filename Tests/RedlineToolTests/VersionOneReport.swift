@@ -1,7 +1,7 @@
 #if os(macOS) && REDLINE
 import Foundation
 
-/// A report as version 1 of the kit wrote it, before images were called snapshots: Tiny Tally's
+/// A report as version 1 of the kit wrote it, before images were called snapshots: a sample app's
 /// growth card with an earlier state, a second screen and an attachment.
 ///
 /// Copied from a real report in the hub's inbox, with the notes, the chat and the source path
@@ -17,9 +17,9 @@ enum VersionOneReport {
         {
          "app": {
           "build": "41",
-          "bundleIdentifier": "com.example.TinyTally",
-          "name": "Tiny Tally",
-          "sourceFile": "/w/TinyTally/App/TinyTallyApp.swift",
+          "bundleIdentifier": "com.example.SampleApp",
+          "name": "Sample App",
+          "sourceFile": "/w/SampleApp/App/SampleAppApp.swift",
           "version": "1.0.9"
          },
          "createdAt": "2026-10-04T08:23:30Z",
@@ -207,7 +207,7 @@ enum VersionOneReport {
         """#
 
     static let markdown = #"""
-        # UI report: Tiny Tally 1.0.9 (41)
+        # UI report: Sample App 1.0.9 (41)
 
         iPhone18,1, iOS 27.0.1. 5 notes on 2 screens. Numbers match the red numbered outlines in the pictures.
 

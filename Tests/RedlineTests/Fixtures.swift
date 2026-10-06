@@ -99,7 +99,7 @@ enum Fixtures {
     }
 }
 
-/// A synthetic capture of Tiny Tally's Patterns screen, drawn the way the kit captures screens (at
+/// A synthetic capture of a sample app's Patterns screen, drawn the way the kit captures screens (at
 /// 2x, in color, dark mode): a growth card with a Weight, Length and Head segment control, a sleep
 /// card under it, and a tab bar.
 ///
@@ -240,7 +240,7 @@ struct GrowthScreen {
         fill(context, CGRect(origin: .zero, size: Self.size), gray: 0.07)
         context.saveGState()
         context.translateBy(x: 0, y: -scrollOffset)
-        text(context, "Athena", at: CGPoint(x: 90, y: 110), size: 22, gray: 1)
+        text(context, "Sam", at: CGPoint(x: 90, y: 110), size: 22, gray: 1)
         text(context, "1 month, 14 days", at: CGPoint(x: 90, y: 134), size: 15, gray: 0.6)
 
         fill(context, Self.card, gray: 0.17, radius: 24)

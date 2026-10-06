@@ -4,11 +4,12 @@ These rules apply to every change in this repository.
 
 ## Task identity
 
-- The Linear **Devex** team (`DEV`) owns the problem, acceptance criteria, and status: <https://linear.app/trailxyz/team/DEV>.
-- Before changing files, identify or create the one active `DEV` issue that owns the work and read its acceptance criteria.
-- Branch from an up-to-date `main`. Use Linear's generated branch name, or `<type>/dev-<number>-<short-slug>`.
+- One active issue owns each change: its problem, acceptance criteria, and status. It is either a maintainer's Linear issue in the `DEV` team, or a GitHub issue in this repository. Contributors without access to the maintainer's Linear use GitHub issues.
+- Before changing files, identify or create the issue that owns the work and read its acceptance criteria.
+- Branch from an up-to-date `main`. For a Linear issue, use Linear's generated branch name, or `<type>/dev-<number>-<short-slug>`. For a GitHub issue, use `<type>/gh-<number>-<short-slug>`.
 - Use a dedicated worktree when another issue is already in progress in the root checkout. Preserve unrelated and uncommitted work.
-- Commit messages and pull request titles start with `[DEV-<number>]`.
+- Commit messages and pull request titles start with `[DEV-<number>]` for a Linear issue, or `[GH-<number>]` for a GitHub issue.
+- This repository is public. Tracked files, commit messages, and pull requests name nothing from the maintainer's private work: no private apps or repositories, no Linear workspace links, and no local paths.
 
 ## Engineering rules
 
@@ -23,10 +24,10 @@ These rules apply to every change in this repository.
 
 - `swift test` for logic.
 - `xcodebuild -scheme Redline -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/xcode build` in Debug and Release. The Release product must not contain `AXSSetAutomationEnabled`.
-- Simulator and device runs happen through a host app such as Trail or Tiny Tally and follow that repository's simulator rules.
+- Simulator and device runs happen through a host app that adds the package.
 - Physical-device behavior (gestures, haptics, the real accessibility tree) needs a device check; a simulator run does not prove it.
 
 ## Delivery
 
 - Stage only issue-owned files and run `git diff --check` before commit.
-- Never merge a pull request or move a Linear issue to Done or Canceled without explicit user approval.
+- Never merge a pull request, move a Linear issue to Done or Canceled, or close a GitHub issue without explicit user approval.
