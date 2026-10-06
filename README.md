@@ -190,7 +190,7 @@ The first report sent from an iPhone triggers the one-time iOS local network pro
 
 - **Floating button.** Tap it to enter annotate mode. Drag it anywhere; it snaps to the nearest edge. Press and hold it to list the reports sent from this device.
 - **Annotate mode.** Routes taps to Redline instead of the build, and draws a light red border around the screen. Its controls sit in a black bar at the top.
-  - Tap an element to select it. Larger selects the enclosing element; Smaller steps back toward the one you tapped.
+  - Tap an element to select it. Larger selects the enclosing element; Smaller steps back toward the one you tapped. A card or section that Larger skips needs an element of its own: see [Make containers pickable](#make-containers-pickable).
   - Write a note and tap Add note. Notes collect across screens until you send them.
   - Tap the close button in the bar to exit annotate mode. Unsent notes stay.
 - **Notes tray.** Lists unsent notes; tap the screen name in the bar to open it. Tap a note to view it full screen with its snapshot, or tap its trash button to delete it. Unsent notes persist on the device, across a killed process and a reinstall from a rebuild.
@@ -201,6 +201,62 @@ The first report sent from an iPhone triggers the one-time iOS local network pro
   - Element notes and attachments go out together in one report.
 - **Send to.** The Send to row in the notes tray sets where reports go. Tap it, choose an agent, then one of its sessions that work on this bundle ID, or New chat. The picker lists open Claude Code sessions and Codex sessions used in the last 14 days. The session in the build's worktree comes first, tagged "This build", and is selected. The first Send from a worktree asks you to pick; later builds from it keep the pick. [Where reports go](#where-reports-go) explains each choice.
 - **Delivery.** After Send, a toast says whether the report reached the Mac. Undelivered reports stay on the device, and the build retries them on launch, on each return to the foreground, and with the next Send. The sent reports list marks each report "On the Mac" or gives the reason it isn't there yet.
+
+### Make containers pickable
+
+Redline picks from your build's accessibility tree. Buttons, text and controls are always in it. A card, section or custom component built from stacks usually isn't, so Larger skips it. Two modifiers fix that.
+
+<details>
+<summary><b>The accessibility tree, accessibility identifiers, and how to expose a container</b></summary>
+
+<br>
+
+**The accessibility tree.** iOS describes each screen to assistive technologies such as VoiceOver as a tree of elements. Each element has a frame, a label (what VoiceOver reads), traits such as Button or Header, and optionally an identifier. SwiftUI builds this tree from your view hierarchy, but not one to one: layout containers such as `VStack`, `HStack` and `Grid` get no element of their own, so their children sit directly under the nearest element above them. In Debug builds the kit turns on the automation mode XCUITest uses, so SwiftUI builds the tree even with VoiceOver off.
+
+**Accessibility identifiers.** An `accessibilityIdentifier` is a string for code, not for people. VoiceOver never reads it, and it doesn't change when your copy or language does. UI tests use it to find elements. Redline puts it in each note, `Label (Role, identifier)`, so your agent searches your source for it instead of guessing from display text that can repeat or be localized.
+
+**What you can pick.** A tap selects the innermost element under your finger. Larger steps out to the next enclosing element that has an identifier or a label, and Smaller steps back. A container with no element of its own can't be reached.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/redline-accessibility-tree-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/redline-accessibility-tree-light.svg">
+    <img src="docs/images/redline-accessibility-tree-light.svg" width="880" alt="Two columns. Left: a VStack holding two Text views; in the accessibility tree both texts sit directly under the screen, so tapping a text picks only that text and there is no Larger. Right: the same VStack with .accessibilityElement(children: .contain) and .accessibilityIdentifier(&quot;detail.titles&quot;); in the tree it becomes a group named detail.titles holding the two texts, so after tapping a text, Larger picks the whole stack.">
+  </picture>
+</p>
+
+**Give a container an element of its own.** Add both modifiers to the container:
+
+```swift
+VStack(alignment: .leading) {
+    Text(recipe.name)
+    Text(recipe.summary)
+}
+.accessibilityElement(children: .contain)
+.accessibilityIdentifier("detail.titles")
+```
+
+`.contain` makes the stack an element that keeps its children pickable, and the identifier names it. Tap a child, then Larger selects the whole stack. In the [demo](Examples/RedlineDemo), with and without the two modifiers:
+
+<p align="center">
+  <img src="docs/images/redline-larger-before-after.jpg" width="880" alt="Two screenshots of the demo's recipe title block in annotate mode. Left, without the modifiers: tapping the summary selects only the summary text, and the note card offers no Larger. Right, with them: after Larger, the outline covers the title and the summary, and the note card names the group detail.titles.">
+</p>
+
+**Set both, not just the identifier.** On a container with no element of its own, SwiftUI copies the identifier onto each child instead of naming the container. In the demo, `.accessibilityIdentifier("detail.stats")` alone on the stats grid left the grid unreachable and gave every stat cell the identifier `detail.stats`.
+
+**What merges or hides elements:**
+
+- `.accessibilityElement(children: .combine)` merges a container's children into one element. The demo's stat cells use it, so a tap selects the whole cell, not its title or value.
+- `.accessibilityElement(children: .ignore)` replaces the children with one element that you label.
+- A `Button` or `NavigationLink` merges its label into one element.
+- `.accessibilityHidden(true)` removes a view and its children. Redline also skips views that are hidden, nearly transparent, or clipped out of view.
+- `Canvas`, Metal and custom drawing have no child elements. Pick the enclosing view, or attach a snapshot of the whole screen with the capture button.
+
+**UIKit.** Set `accessibilityIdentifier` on the view. A view with an identifier or a label becomes a group that Larger can reach; set `isAccessibilityElement = true` to make it one element instead.
+
+**Apple's documentation:** [Accessibility fundamentals](https://developer.apple.com/documentation/swiftui/accessibility-fundamentals), [`accessibilityIdentifier(_:)`](https://developer.apple.com/documentation/swiftui/view/accessibilityidentifier(_:)), [`accessibilityElement(children:)`](https://developer.apple.com/documentation/swiftui/view/accessibilityelement(children:)), [`AccessibilityChildBehavior`](https://developer.apple.com/documentation/swiftui/accessibilitychildbehavior), and UIKit's [`accessibilityIdentifier`](https://developer.apple.com/documentation/uikit/uiaccessibilityidentification/accessibilityidentifier).
+
+</details>
 
 ### On the Mac
 

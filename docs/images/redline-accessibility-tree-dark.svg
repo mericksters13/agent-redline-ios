@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 640" width="960" height="640" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="t">A container with and without its own accessibility element</title>
+  <desc id="d">Two columns. Left: a VStack holding two Text views. In the accessibility tree the VStack has no element, so both texts sit directly under the screen, and Redline can only pick each text. Right: the same VStack with .accessibilityElement(children: .contain) and .accessibilityIdentifier("detail.titles"). In the tree it becomes a group named detail.titles that holds the two texts, so after tapping a text, Larger selects the whole stack.</desc>
+  <rect x="0" y="0" width="960" height="640" rx="24" fill="#1C1C1E"/>
+  <text x="24" y="56" font-size="22" font-weight="600" fill="#FFFFFF">A plain VStack</text>
+  <rect x="24" y="76" width="444" height="184" rx="16" fill="#2C2C2E"/>
+  <text x="44" y="110" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="15" fill="#FFFFFF" xml:space="preserve">VStack {</text>
+  <text x="44" y="136" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="15" fill="#FFFFFF" xml:space="preserve">    Text("Lemon Herb Chicken")</text>
+  <text x="44" y="162" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="15" fill="#FFFFFF" xml:space="preserve">    Text("Weeknight dinner…")</text>
+  <text x="44" y="188" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="15" fill="#FFFFFF" xml:space="preserve">}</text>
+  <text x="24" y="300" font-size="18" font-weight="600" fill="#98989D">In the accessibility tree</text>
+  <circle cx="34" cy="334" r="6" fill="#98989D"/>
+  <text x="50" y="340" font-size="18" fill="#98989D">Screen</text>
+  <path d="M34 340 V386 H64" fill="none" stroke="#98989D" stroke-width="2"/>
+  <rect x="64" y="364" width="404" height="44" rx="12" fill="#2C2C2E" stroke="#FFFFFF" stroke-width="2"/>
+  <text x="80" y="392" font-size="17" fill="#98989D">Text</text>
+  <text x="140" y="392" font-size="17" font-weight="600" fill="#FFFFFF">"Lemon Herb Chicken"</text>
+  <path d="M34 340 V446 H64" fill="none" stroke="#98989D" stroke-width="2"/>
+  <rect x="64" y="424" width="404" height="44" rx="12" fill="#2C2C2E" stroke="#FFFFFF" stroke-width="2"/>
+  <text x="80" y="452" font-size="17" fill="#98989D">Text</text>
+  <text x="140" y="452" font-size="17" font-weight="600" fill="#FFFFFF">"Weeknight dinner…"</text>
+  <text x="24" y="556" font-size="17" fill="#FFFFFF">Tap a text: Redline picks that text.</text>
+  <text x="24" y="582" font-size="17" fill="#FFFFFF">No Larger. The stack has no element, so</text>
+  <text x="24" y="608" font-size="17" fill="#FFFFFF">it can&#8217;t be picked as a whole.</text>
+  <text x="492" y="56" font-size="22" font-weight="600" fill="#FFFFFF">With an element of its own</text>
+  <rect x="492" y="76" width="444" height="184" rx="16" fill="#2C2C2E"/>
+  <text x="512" y="110" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="15" fill="#FFFFFF" xml:space="preserve">VStack {</text>
+  <text x="512" y="136" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="15" fill="#FFFFFF" xml:space="preserve">    Text("Lemon Herb Chicken")</text>
+  <text x="512" y="162" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="15" fill="#FFFFFF" xml:space="preserve">    Text("Weeknight dinner…")</text>
+  <text x="512" y="188" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="15" fill="#FFFFFF" xml:space="preserve">}</text>
+  <text x="512" y="214" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="15" fill="#FF453A" xml:space="preserve">.accessibilityElement(children: .contain)</text>
+  <text x="512" y="240" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="15" fill="#FF453A" xml:space="preserve">.accessibilityIdentifier("detail.titles")</text>
+  <text x="492" y="300" font-size="18" font-weight="600" fill="#98989D">In the accessibility tree</text>
+  <circle cx="502" cy="334" r="6" fill="#98989D"/>
+  <text x="518" y="340" font-size="18" fill="#98989D">Screen</text>
+  <path d="M502 340 V386 H532" fill="none" stroke="#98989D" stroke-width="2"/>
+  <rect x="532" y="364" width="404" height="44" rx="12" fill="#2C2C2E" stroke="#FF453A" stroke-width="3"/>
+  <text x="548" y="392" font-size="17" fill="#98989D">Group</text>
+  <text x="608" y="392" font-size="17" font-weight="600" fill="#FFFFFF">detail.titles</text>
+  <path d="M552 408 V446 H582" fill="none" stroke="#98989D" stroke-width="2"/>
+  <rect x="582" y="424" width="354" height="44" rx="12" fill="#2C2C2E" stroke="#FFFFFF" stroke-width="2"/>
+  <text x="598" y="452" font-size="17" fill="#98989D">Text</text>
+  <text x="658" y="452" font-size="17" font-weight="600" fill="#FFFFFF">"Lemon Herb Chicken"</text>
+  <path d="M552 408 V502 H582" fill="none" stroke="#98989D" stroke-width="2"/>
+  <rect x="582" y="480" width="354" height="44" rx="12" fill="#2C2C2E" stroke="#FFFFFF" stroke-width="2"/>
+  <text x="598" y="508" font-size="17" fill="#98989D">Text</text>
+  <text x="658" y="508" font-size="17" font-weight="600" fill="#FFFFFF">"Weeknight dinner…"</text>
+  <text x="492" y="556" font-size="17" fill="#FFFFFF">Tap a text, then Larger: Redline picks the</text>
+  <text x="492" y="582" font-size="17" fill="#FFFFFF">whole stack, and the report names it</text>
+  <text x="492" y="608" font-size="17" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" fill="#FF453A">detail.titles</text>
+</svg>
