@@ -1,0 +1,354 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		00155F906603BF079E2B195D /* Recipe+Samples.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFF33899274A81BA9EB8C611 /* Recipe+Samples.swift */; };
+		359A87BC2E283507CA9CDC18 /* MealPlanForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23D7D3C0B4BF6506A7E3D9A3 /* MealPlanForm.swift */; };
+		367D89D3F3C39A5281CDCCB0 /* Redline in Frameworks */ = {isa = PBXBuildFile; productRef = AEA991A3DF5BCC972A9A718B /* Redline */; };
+		63D8A25CA80767A6EDCDFCC5 /* Recipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = B922AB2C09A42EC4A6DDFBC3 /* Recipe.swift */; };
+		720A25828B0989A872BC278D /* UIKitScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D14268BA71835D2CAB2FD72 /* UIKitScreen.swift */; };
+		957DB01595D95B36A9681720 /* RecipeDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = A610AA3FD2570F43C634A544 /* RecipeDetail.swift */; };
+		C73B1782A974F6A79817CBD0 /* DemoTabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 527356366A0272DF8E3E5CFF /* DemoTabs.swift */; };
+		D7D7BBF115BD97658F6E5C5E /* ShoppingListViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3715FE57C4C02AA67B1CC818 /* ShoppingListViewController.swift */; };
+		F56355185EBDCB669449A905 /* RecipeList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37EEB31CFE0D2B45207525E0 /* RecipeList.swift */; };
+		F9D1E595200488DEAD2929E8 /* RedlineDemoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8271331F3DBC3EB9BA901DBD /* RedlineDemoApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		23D7D3C0B4BF6506A7E3D9A3 /* MealPlanForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealPlanForm.swift; sourceTree = "<group>"; };
+		3715FE57C4C02AA67B1CC818 /* ShoppingListViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingListViewController.swift; sourceTree = "<group>"; };
+		37EEB31CFE0D2B45207525E0 /* RecipeList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipeList.swift; sourceTree = "<group>"; };
+		527356366A0272DF8E3E5CFF /* DemoTabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoTabs.swift; sourceTree = "<group>"; };
+		5D14268BA71835D2CAB2FD72 /* UIKitScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIKitScreen.swift; sourceTree = "<group>"; };
+		8271331F3DBC3EB9BA901DBD /* RedlineDemoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedlineDemoApp.swift; sourceTree = "<group>"; };
+		A610AA3FD2570F43C634A544 /* RecipeDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipeDetail.swift; sourceTree = "<group>"; };
+		A9113A5C870035C3CB793EDD /* Redline */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Redline; path = ../..; sourceTree = SOURCE_ROOT; };
+		B922AB2C09A42EC4A6DDFBC3 /* Recipe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Recipe.swift; sourceTree = "<group>"; };
+		CB66A2D5FEAD65F3AA051785 /* RedlineDemo.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RedlineDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CFF33899274A81BA9EB8C611 /* Recipe+Samples.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Recipe+Samples.swift"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		CADE9575098F565D70C1CD8A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				367D89D3F3C39A5281CDCCB0 /* Redline in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		5A1F1D1E21CB790CF2618931 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				CB66A2D5FEAD65F3AA051785 /* RedlineDemo.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		75B8AC26BA7EA1D93D10A70B /* RedlineDemo */ = {
+			isa = PBXGroup;
+			children = (
+				527356366A0272DF8E3E5CFF /* DemoTabs.swift */,
+				23D7D3C0B4BF6506A7E3D9A3 /* MealPlanForm.swift */,
+				B922AB2C09A42EC4A6DDFBC3 /* Recipe.swift */,
+				CFF33899274A81BA9EB8C611 /* Recipe+Samples.swift */,
+				A610AA3FD2570F43C634A544 /* RecipeDetail.swift */,
+				37EEB31CFE0D2B45207525E0 /* RecipeList.swift */,
+				8271331F3DBC3EB9BA901DBD /* RedlineDemoApp.swift */,
+				3715FE57C4C02AA67B1CC818 /* ShoppingListViewController.swift */,
+				5D14268BA71835D2CAB2FD72 /* UIKitScreen.swift */,
+			);
+			path = RedlineDemo;
+			sourceTree = "<group>";
+		};
+		93922FEB1D19730BA18D4E3D = {
+			isa = PBXGroup;
+			children = (
+				A9113A5C870035C3CB793EDD /* Redline */,
+				75B8AC26BA7EA1D93D10A70B /* RedlineDemo */,
+				5A1F1D1E21CB790CF2618931 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		7FDF08E5F5F324B5D043B536 /* RedlineDemo */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 695C72E3456E23155720549C /* Build configuration list for PBXNativeTarget "RedlineDemo" */;
+			buildPhases = (
+				B63D0E760FABB0F339FDE24C /* Sources */,
+				CADE9575098F565D70C1CD8A /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RedlineDemo;
+			packageProductDependencies = (
+				AEA991A3DF5BCC972A9A718B /* Redline */,
+			);
+			productName = RedlineDemo;
+			productReference = CB66A2D5FEAD65F3AA051785 /* RedlineDemo.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		64005B6212A88E0AFF9D0776 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					7FDF08E5F5F324B5D043B536 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 2FFEE1A4E8F624AB91391AC9 /* Build configuration list for PBXProject "RedlineDemo" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 93922FEB1D19730BA18D4E3D;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 5A1F1D1E21CB790CF2618931 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				7FDF08E5F5F324B5D043B536 /* RedlineDemo */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B63D0E760FABB0F339FDE24C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C73B1782A974F6A79817CBD0 /* DemoTabs.swift in Sources */,
+				359A87BC2E283507CA9CDC18 /* MealPlanForm.swift in Sources */,
+				00155F906603BF079E2B195D /* Recipe+Samples.swift in Sources */,
+				63D8A25CA80767A6EDCDFCC5 /* Recipe.swift in Sources */,
+				957DB01595D95B36A9681720 /* RecipeDetail.swift in Sources */,
+				F56355185EBDCB669449A905 /* RecipeList.swift in Sources */,
+				F9D1E595200488DEAD2929E8 /* RedlineDemoApp.swift in Sources */,
+				D7D7BBF115BD97658F6E5C5E /* ShoppingListViewController.swift in Sources */,
+				720A25828B0989A872BC278D /* UIKitScreen.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		63BB6CD7C4D01387297B43FC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "";
+				INFOPLIST_KEY_CFBundleDisplayName = "Redline Demo";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.agentredline.demo;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		846DF4CABC22DE64774482A9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		C5DEE64E0DD8801A51083742 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "";
+				INFOPLIST_KEY_CFBundleDisplayName = "Redline Demo";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.agentredline.demo;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		DF2D51BFBE79E5D7ECD8AEE9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2FFEE1A4E8F624AB91391AC9 /* Build configuration list for PBXProject "RedlineDemo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DF2D51BFBE79E5D7ECD8AEE9 /* Debug */,
+				846DF4CABC22DE64774482A9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		695C72E3456E23155720549C /* Build configuration list for PBXNativeTarget "RedlineDemo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C5DEE64E0DD8801A51083742 /* Debug */,
+				63BB6CD7C4D01387297B43FC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AEA991A3DF5BCC972A9A718B /* Redline */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Redline;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 64005B6212A88E0AFF9D0776 /* Project object */;
+}

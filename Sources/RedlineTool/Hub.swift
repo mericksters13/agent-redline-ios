@@ -96,9 +96,10 @@ final class Hub: @unchecked Sendable {
         }
     }
 
-    /// How often the hub looks for newly paired phones and newly installed apps.
+    /// How often the hub looks for newly paired phones and the apps newly installed on them.
     ///
-    /// Changes to the Mac's network are noticed as they happen.
+    /// Changes to the Mac's network, and apps installed on a simulator, are noticed as they happen;
+    /// for simulators this is only a backstop.
     static let discoveryInterval: TimeInterval = 1800
     /// hub.log is moved to hub.log.1 once it grows past this.
     static let largestLog = 5_000_000
@@ -130,6 +131,21 @@ final class Hub: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
+    /// Raises the limit on open files from the 256 an app opened from the Finder gets, as far as the
+    /// system allows.
+    ///
+    /// The simulator watcher keeps one folder open for each simulator, and a Mac that has had Xcode
+    /// for years can have hundreds of them.
+    private static func allowMoreOpenFiles() {
+        var limit = rlimit()
+        guard getrlimit(RLIMIT_NOFILE, &limit) == 0 else { return }
+        // macOS turns down a soft limit above OPEN_MAX, whatever the hard limit says.
+        let wanted = min(limit.rlim_max, rlim_t(OPEN_MAX))
+        guard limit.rlim_cur < wanted else { return }
+        limit.rlim_cur = wanted
+        setrlimit(RLIMIT_NOFILE, &limit)
+    }
+
     /// Starts taking reports.
     ///
     /// False when another hub holds the lock on `hub.pid`, or it can't be taken; then nothing
@@ -147,6 +163,7 @@ final class Hub: @unchecked Sendable {
             return false
         }
         self.pidLock = pidLock
+        Self.allowMoreOpenFiles()
         // Everything a source or queue reads is in place before any of them starts.
         handoff = Handoff(hub: self)
         simulators = SimulatorWatcher(hub: self)

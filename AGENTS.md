@@ -24,7 +24,8 @@ These rules apply to every change in this repository.
 
 - `swift test` for logic.
 - `xcodebuild -scheme Redline -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/xcode build` in Debug and Release. The Release product must not contain `AXSSetAutomationEnabled`.
-- Simulator and device runs happen through a host app that adds the package.
+- `xcodebuild -project Examples/RedlineDemo/RedlineDemo.xcodeproj -scheme RedlineDemo -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/demo build CODE_SIGNING_ALLOWED=NO` builds the demo app, as CI does.
+- Simulator and device runs use the demo app in `Examples/RedlineDemo` as the default host for checking Redline changes. When a change needs another host app, follow that repository's simulator rules.
 - Physical-device behavior (gestures, haptics, the real accessibility tree) needs a device check; a simulator run does not prove it.
 
 ## Delivery
