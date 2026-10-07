@@ -30,6 +30,56 @@ struct ReportContentTests {
         )
     }
 
+    @Test func aDrawingReadsAsWhatItEnclosesAndWhatHoldsIt() throws {
+        let report = paths.inbox.appending(
+            path: "com.example.app/20261007-090000-00000001",
+            directoryHint: .isDirectory
+        )
+        try FileManager.default.createDirectory(at: report, withIntermediateDirectories: true)
+        let listing: [String: Any] = [
+            "app": ["name": "Example"],
+            "screens": [["snapshots": [["file": "screen-1.jpg", "notes": [1, 2, 3]]]]],
+            "items": [
+                [
+                    "number": 1, "kind": "drawing", "title": "Drawing around growth.card and 2 more",
+                    "note": "Too cramped", "attachments": [String](), "snapshot": "screen-1.jpg",
+                    "encloses": [
+                        ["role": "Group", "identifier": "growth.card"], ["role": "Text", "label": "Growth"],
+                        ["role": "Group", "contents": ["Weight", "Length"], "contentCount": 2],
+                    ],
+                    "enclosedCount": 14,
+                    "ancestors": [["role": "List", "identifier": "patterns.list"]],
+                ],
+                [
+                    "number": 2, "kind": "drawing", "title": "Drawing", "note": "", "attachments": [String](),
+                    "snapshot": "screen-1.jpg", "encloses": [[String: Any]](),
+                ],
+                // A kind this Mac doesn't know still reads.
+                [
+                    "number": 3, "kind": "somethingNewer", "title": "Later", "note": "Fine",
+                    "attachments": [String](), "snapshot": "screen-1.jpg",
+                ],
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: listing).write(to: report.appending(path: "report.json"))
+        let source = ReportSource(
+            kind: .phone,
+            device: "D",
+            deviceName: "Test iPhone",
+            bundleID: "com.example.app",
+            reportID: "20261007-090000",
+            receivedAt: .now
+        )
+        let text = ReportContent.text(for: InboxReport(folder: report, source: source, claim: nil))
+        #expect(
+            text.contains(
+                #"1. Drawing around growth.card and 2 more, enclosing Group (growth.card), Text "Growth", Group "Weight" and "Length" and 11 more, in List (patterns.list): Too cramped"#
+            )
+        )
+        #expect(text.contains("2. Drawing, enclosing nothing named: No note"))
+        #expect(text.contains("3. Later: Fine"))
+    }
+
     @Test func aReportReadsAsSnapshotsAndTheirNotes() throws {
         let report = paths.inbox.appending(
             path: "com.example.app/20261004-120950-00000001",

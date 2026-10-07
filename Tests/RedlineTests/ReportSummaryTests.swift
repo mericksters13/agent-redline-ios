@@ -137,5 +137,54 @@ struct ReportSummaryTests {
             )
         )
     }
+
+    @Test func aDrawingListsWhatItEnclosesAndWhatHoldsIt() {
+        func named(_ role: String, label: String? = nil, identifier: String? = nil) -> ElementSnapshot {
+            ElementSnapshot(
+                role: role,
+                label: label,
+                value: nil,
+                identifier: identifier,
+                className: nil,
+                isContainer: role == "Group",
+                frame: .zero
+            )
+        }
+        var report = Fixtures.report(id: "r")
+        report.items[0].kind = .drawing
+        report.items[0].element = nil
+        report.items[0].title = "Drawing around growth.card and 2 more"
+        report.items[0].encloses = [
+            named("Group", identifier: "growth.card"), named("Text", label: "Growth"),
+            named("Button", label: "Add"),
+        ]
+        report.items[0].ancestors = [named("List", identifier: "patterns.list")]
+        #expect(
+            ReportSummary.markdown(report).contains(
+                #"1. **Drawing around growth.card and 2 more**, enclosing Group `growth.card`, Text "Growth", Button "Add", in List `patterns.list`: Cut off."#
+            )
+        )
+
+        report.items[0].enclosedCount = 15
+        #expect(ReportSummary.markdown(report).contains(#"Button "Add" and 12 more, in List"#))
+
+        report.items[0].encloses = []
+        report.items[0].enclosedCount = nil
+        report.items[0].title = "Drawing"
+        #expect(ReportSummary.markdown(report).contains(#"1. **Drawing**, enclosing nothing named, in List"#))
+    }
+
+    @Test func aReportWithAKindThisKitDoesNotKnowStillReads() throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let json = try #require(String(data: encoder.encode(Fixtures.report(id: "r")), encoding: .utf8))
+        let newer = json.replacingOccurrences(of: #""kind":"element""#, with: #""kind":"somethingNewer""#)
+        #expect(newer != json)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let report = try decoder.decode(Report.self, from: Data(newer.utf8))
+        // It has an element, so it reads as an element note.
+        #expect(report.items.first?.kind == .element)
+    }
 }
 #endif

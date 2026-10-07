@@ -119,6 +119,173 @@ enum ElementSelection {
         return levels
     }
 
+    /// How many enclosed elements a drawing keeps; the rest are counted.
+    static let enclosedLimit = 12
+    /// How far past the box around a drawing still counts as inside it, in points: a quick circle
+    /// cuts corners.
+    static let enclosingSlack: CGFloat = 12
+    /// How much of an element must be inside the drawing's box for it to be enclosed.
+    ///
+    /// A list row merges its title and details into one element as wide as the screen, and
+    /// circling the title means the row.
+    static let enclosedShare: CGFloat = 0.5
+    /// The smallest area a shape must close around to enclose anything, in square points, so a
+    /// straight line or a tap encloses nothing.
+    static let minimumEnclosedArea: CGFloat = 200
+
+    /// The named elements a drawing encloses, in screen order: back to front, each parent before its
+    /// children, as `AccessibilityTree` reads them.
+    ///
+    /// Strokes whose boxes, each grown by `enclosingSlack`, overlap, directly or through other
+    /// strokes, draw one shape, so a circle traced twice, two half circles or a box drawn as four
+    /// lines all enclose what lies between them, while two circles apart each enclose only what they
+    /// hold. A shape counts as the convex hull of its points. An element is enclosed when, for one
+    /// shape, its center is inside the hull and at least `enclosedShare` of it is within
+    /// `enclosingSlack` of the box around the shape, and it shows: an element covered by a sheet or by
+    /// a view in front of it isn't what was circled. A group named only by what it holds adds nothing
+    /// once what it holds is listed.
+    static func enclosed(by strokes: [[CGPoint]], in elements: [ElementSnapshot], screenSize: CGSize)
+        -> [ElementSnapshot]
+    {
+        let areas = shapes(of: strokes).compactMap { shape -> (hull: [CGPoint], reach: CGRect)? in
+            let hull = convexHull(Array(shape.joined()))
+            guard hull.count >= 3, polygonArea(hull) >= minimumEnclosedArea, let box = Annotation.bounds(of: shape)
+            else { return nil }
+            return (hull, box.insetBy(dx: -enclosingSlack, dy: -enclosingSlack))
+        }
+        guard !areas.isEmpty else { return [] }
+        let screenArea = screenSize.width * screenSize.height
+        let inside = elements.filter { element in
+            let frame = element.frame
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            guard hasName(element), !frame.isEmpty, area(frame) < screenArea * 0.9,
+                areas.contains(where: { shape in
+                    area(frame.intersection(shape.reach)) >= area(frame) * enclosedShare
+                        && contains(center, inConvex: shape.hull)
+                })
+            else { return false }
+            // The center and four points around it, so a small view in front of one spot, like a
+            // badge, doesn't hide a whole card.
+            let samples = [(0.5, 0.5), (0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)].map { x, y in
+                CGPoint(x: frame.minX + frame.width * x, y: frame.minY + frame.height * y)
+            }
+            return samples.contains { levels(at: $0, in: elements, screenSize: screenSize).contains(element) }
+        }
+        let names = Set(inside.compactMap { $0.label?.nonEmpty ?? $0.identifier?.nonEmpty ?? $0.value?.nonEmpty })
+        return inside.filter { element in
+            guard element.label?.nonEmpty == nil, element.identifier?.nonEmpty == nil, let contents = element.contents
+            else { return true }
+            return !contents.allSatisfy(names.contains)
+        }
+    }
+
+    /// The named elements holding the whole box around a drawing, innermost first, like an element
+    /// note's ancestors: for a circle around a gap, they say where it is.
+    ///
+    /// What the drawing encloses is left out, since the note already lists it.
+    static func holding(
+        _ box: CGRect,
+        excluding enclosed: [ElementSnapshot],
+        in elements: [ElementSnapshot],
+        screenSize: CGSize
+    ) -> [ElementSnapshot] {
+        levels(at: CGPoint(x: box.midX, y: box.midY), in: elements, screenSize: screenSize).filter {
+            hasName($0) && $0.frame.insetBy(dx: -2, dy: -2).contains(box) && !enclosed.contains($0)
+        }
+    }
+
+    /// How far `element` has moved on a fresh read of the screen; nil when it isn't found there, or
+    /// it changed size by more than 2 points.
+    ///
+    /// A saved drawing moves with the first element it encloses, so it stays on it through a scroll.
+    static func offset(of element: ElementSnapshot, in elements: [ElementSnapshot]) -> CGPoint? {
+        guard let match = match(element, in: elements), abs(match.frame.width - element.frame.width) <= 2,
+            abs(match.frame.height - element.frame.height) <= 2
+        else { return nil }
+        return CGPoint(x: match.frame.minX - element.frame.minX, y: match.frame.minY - element.frame.minY)
+    }
+
+    /// Strokes grouped into the shapes they draw: two strokes are in one shape when their boxes,
+    /// grown by `enclosingSlack`, overlap, directly or through other strokes.
+    ///
+    /// Compares every pair of shapes until none overlap, which is quick for the few strokes a finger
+    /// draws.
+    private static func shapes(of strokes: [[CGPoint]]) -> [[[CGPoint]]] {
+        var shapes = strokes.compactMap { stroke in
+            Annotation.bounds(of: [stroke]).map {
+                (box: $0.insetBy(dx: -enclosingSlack, dy: -enclosingSlack), strokes: [stroke])
+            }
+        }
+        var merged = true
+        while merged {
+            merged = false
+            search: for first in shapes.indices {
+                for second in shapes.indices where second > first && shapes[first].box.intersects(shapes[second].box) {
+                    shapes[first] = (
+                        shapes[first].box.union(shapes[second].box), shapes[first].strokes + shapes[second].strokes
+                    )
+                    shapes.remove(at: second)
+                    merged = true
+                    break search
+                }
+            }
+        }
+        return shapes.map(\.strokes)
+    }
+
+    /// Whether an element has a label, an identifier, or, for a group, named contents: something a
+    /// report can call it.
+    private static func hasName(_ element: ElementSnapshot) -> Bool {
+        element.label?.nonEmpty != nil || element.identifier?.nonEmpty != nil || element.contents?.isEmpty == false
+    }
+
+    /// The smallest convex polygon around `points`, by Andrew's monotone chain.
+    private static func convexHull(_ points: [CGPoint]) -> [CGPoint] {
+        let sorted = points.sorted { ($0.x, $0.y) < ($1.x, $1.y) }
+        guard sorted.count >= 3 else { return sorted }
+        func turn(_ o: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        }
+        func half(_ points: [CGPoint]) -> [CGPoint] {
+            var chain: [CGPoint] = []
+            for point in points {
+                while chain.count >= 2, turn(chain[chain.count - 2], chain[chain.count - 1], point) <= 0 {
+                    chain.removeLast()
+                }
+                chain.append(point)
+            }
+            return chain
+        }
+        return Array(half(sorted).dropLast() + half(sorted.reversed()).dropLast())
+    }
+
+    private static func polygonArea(_ polygon: [CGPoint]) -> CGFloat {
+        var sum: CGFloat = 0
+        for index in polygon.indices {
+            let a = polygon[index]
+            let b = polygon[(index + 1) % polygon.count]
+            sum += a.x * b.y - b.x * a.y
+        }
+        return abs(sum) / 2
+    }
+
+    /// Whether `point` is inside a convex polygon or on its edge: it is on the same side of every edge.
+    private static func contains(_ point: CGPoint, inConvex polygon: [CGPoint]) -> Bool {
+        var side: CGFloat = 0
+        for index in polygon.indices {
+            let a = polygon[index]
+            let b = polygon[(index + 1) % polygon.count]
+            let turn = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x)
+            guard turn != 0 else { continue }
+            if side == 0 {
+                side = turn
+            } else if (turn > 0) != (side > 0) {
+                return false
+            }
+        }
+        return true
+    }
+
     /// Finds the element a saved annotation points at on a fresh read of the screen: by identifier
     /// first, then by role and label only when the identifier is gone from the screen.
     ///

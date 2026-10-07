@@ -52,9 +52,14 @@ struct OverlayView: View {
                 // Frames from before a rotation would land on the wrong spots.
                 if session.screenReadIsCurrent {
                     ForEach(session.markers) { marker in
-                        savedNoteMarker(number: marker.number, frame: marker.frame)
+                        savedNoteMarker(marker)
                     }
                 }
+            }
+
+            // The drawing being made, and behind its note card while it's written.
+            if session.mode == .drawing || (session.mode == .noting && session.isNotingDrawing) {
+                StrokeLines(strokes: session.strokes, weight: 4)
             }
 
             if session.mode.isAnnotating {
@@ -165,6 +170,8 @@ struct OverlayView: View {
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture { session.toggleTray() }
+        case .drawing:
+            DrawingCanvas(session: session)
         case .noting, .idle, .viewer, .attaching, .reports, .destination:
             Color.clear.contentShape(Rectangle())
         }
@@ -252,123 +259,60 @@ struct OverlayView: View {
         .allowsHitTesting(false)
     }
 
-    /// A note already made on this screen: its outline and number.
-    private func savedNoteMarker(number: Int, frame: CGRect) -> some View {
+    /// A note already made on this screen: its outline or drawing, and its number.
+    private func savedNoteMarker(_ marker: DebugSession.Marker) -> some View {
+        let number = marker.number
+        let frame = marker.frame
         let badge: CGFloat = 22
         let x = min(max(frame.minX - badge / 2, 4), width - badge - 4)
         let y = max(frame.minY - badge / 2, islandBottom + 4)
         return ZStack(alignment: .topLeading) {
-            outline(frame, weight: 1.5)
-            // Red with a white number, like the notes in sent snapshots.
-            Text("\(number)")
-                .font(.caption.weight(.bold).monospacedDigit())
-                .foregroundStyle(Color.white)
-                .frame(minWidth: badge, minHeight: badge)
-                .background(Markup.red, in: Circle())
-                .overlay(Circle().strokeBorder(Color.white, lineWidth: 1.5))
-                .offset(x: x, y: y)
+            ZStack(alignment: .topLeading) {
+                if marker.strokes.isEmpty {
+                    outline(frame, weight: 1.5)
+                } else {
+                    StrokeLines(strokes: marker.strokes, weight: 2)
+                }
+                // Red with a white number, like the notes in sent snapshots.
+                Text("\(number)")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(Color.white)
+                    .frame(minWidth: badge, minHeight: badge)
+                    .background(Markup.red, in: Circle())
+                    .overlay(Circle().strokeBorder(Color.white, lineWidth: 1.5))
+                    .offset(x: x, y: y)
+            }
+            .accessibilityHidden(true)
+            // Placed by layout rather than drawn there, so VoiceOver finds the note where it is
+            // marked: strokes fill the whole overlay.
+            Color.clear
+                .frame(width: max(frame.width, 1), height: max(frame.height, 1))
+                .accessibilityElement()
+                .accessibilityLabel("Note \(number)")
+                .position(x: frame.midX, y: frame.midY)
         }
         .allowsHitTesting(false)
-        .accessibilityElement()
-        .accessibilityLabel("Note \(number)")
     }
 
     // MARK: - Island
 
-    /// The pick-mode controls: a black capsule under the status bar.
+    /// The annotate-mode controls: a black capsule under the status bar.
+    ///
+    /// While drawing it holds only what a drawing needs: stop, undo and done.
     private var island: some View {
-        let count = session.annotations.count
-        return HStack(spacing: 10) {
-            Button {
-                session.exitPicking()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.footnote.weight(.bold))
-                    .foregroundStyle(Mono.text)
-                    .frame(width: 32, height: 32)
-                    .background(Mono.fill, in: Circle())
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel("Close annotate mode")
-
-            Button {
-                session.toggleTray()
-            } label: {
-                HStack(spacing: 4) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(session.screenTitle)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Mono.text)
-                        Text(count == 0 ? "Tap an element" : countPhrase(count, singular: "note", plural: "notes"))
-                            .font(.caption)
-                            .foregroundStyle(Mono.secondary)
-                    }
-                    .lineLimit(1)
-                    if count > 0 {
-                        Image(systemName: session.mode == .tray ? "chevron.up" : "chevron.down")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(Mono.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-            }
-            // Not disabled: a disabled button fades its text, and this one also shows the screen name.
-            .allowsHitTesting(count > 0)
-            .accessibilityLabel(notesButtonLabel(count: count))
-
-            Button {
-                session.captureThisScreen()
-            } label: {
-                Image(systemName: "camera.viewfinder")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Mono.text)
-                    .frame(width: 32, height: 32)
-                    .background(Mono.fill, in: Circle())
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel("Capture this screen")
-
-            Button {
-                session.openAttachments()
-            } label: {
-                Image(systemName: "paperclip")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Mono.text)
-                    .frame(width: 32, height: 32)
-                    .background(Mono.fill, in: Circle())
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel("Attach photos")
-            .onGeometryChange(for: CGRect.self) {
-                $0.frame(in: .global)
-            } action: {
-                session.attachAnchor = $0
-            }
-
-            if count > 0 {
-                Button {
-                    session.send()
-                } label: {
-                    Text("Send")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.black)
-                        .padding(.horizontal, 16)
-                        .frame(height: 34)
-                        .background(Color.white, in: Capsule(style: .continuous))
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityLabel("Send " + countPhrase(count, singular: "note", plural: "notes"))
+        let isDrawing = session.mode == .drawing
+        let hasSend = !isDrawing && !session.annotations.isEmpty
+        // The round buttons' 44-point touch areas already put 6 points around each circle.
+        return HStack(spacing: 4) {
+            if isDrawing {
+                drawingControls
+            } else {
+                pickControls
             }
         }
         .buttonStyle(.plain)
         .padding(.leading, 4)
-        .padding(.trailing, count > 0 ? 9 : 4)
+        .padding(.trailing, hasSend ? 9 : 4)
         .padding(.vertical, 4)
         .frame(width: islandWidth)
         .background(Mono.surface, in: Capsule(style: .continuous))
@@ -379,6 +323,148 @@ struct OverlayView: View {
         } action: {
             islandHeight = $0
         }
+    }
+
+    @ViewBuilder
+    private var pickControls: some View {
+        let count = session.annotations.count
+        Button {
+            session.exitPicking()
+        } label: {
+            islandIcon("xmark", weight: .bold)
+        }
+        .accessibilityLabel("Close annotate mode")
+
+        Button {
+            session.toggleTray()
+        } label: {
+            HStack(spacing: 4) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(session.screenTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Mono.text)
+                    Text(count == 0 ? "Tap an element" : countPhrase(count, singular: "note", plural: "notes"))
+                        .font(.caption)
+                        .foregroundStyle(Mono.secondary)
+                }
+                .lineLimit(1)
+                if count > 0 {
+                    Image(systemName: session.mode == .tray ? "chevron.up" : "chevron.down")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Mono.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        // Not disabled: a disabled button fades its text, and this one also shows the screen name.
+        .allowsHitTesting(count > 0)
+        .accessibilityLabel(notesButtonLabel(count: count))
+
+        // Their 44-point touch areas already space the circles apart.
+        HStack(spacing: 0) {
+            Button {
+                session.startDrawing()
+            } label: {
+                islandIcon("pencil")
+            }
+            .accessibilityLabel("Draw on the screen")
+
+            Button {
+                session.captureThisScreen()
+            } label: {
+                islandIcon("camera.viewfinder")
+            }
+            .accessibilityLabel("Capture this screen")
+
+            Button {
+                session.openAttachments()
+            } label: {
+                islandIcon("paperclip")
+            }
+            .accessibilityLabel("Attach photos")
+            .onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .global)
+            } action: {
+                session.attachAnchor = $0
+            }
+        }
+
+        if count > 0 {
+            Button {
+                session.send()
+            } label: {
+                Text("Send")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.black)
+                    .padding(.horizontal, 12)
+                    .frame(height: 34)
+                    .background(Color.white, in: Capsule(style: .continuous))
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Send " + countPhrase(count, singular: "note", plural: "notes"))
+        }
+    }
+
+    @ViewBuilder
+    private var drawingControls: some View {
+        let strokes = session.strokes.count
+        Button {
+            session.cancelDrawing()
+        } label: {
+            islandIcon("xmark", weight: .bold)
+        }
+        .accessibilityLabel("Stop drawing")
+
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Circle what's wrong")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Mono.text)
+            Text(strokes == 0 ? "Draw with your finger" : countPhrase(strokes, singular: "stroke", plural: "strokes"))
+                .font(.caption)
+                .foregroundStyle(Mono.secondary)
+        }
+        .lineLimit(1)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .accessibilityElement(children: .combine)
+
+        HStack(spacing: 0) {
+            Button {
+                session.undoStroke()
+            } label: {
+                islandIcon("arrow.uturn.backward")
+                    .opacity(strokes == 0 ? 0.4 : 1)
+            }
+            .disabled(strokes == 0)
+            .accessibilityLabel("Undo last stroke")
+
+            Button {
+                session.finishDrawing()
+            } label: {
+                Image(systemName: "checkmark")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(strokes == 0 ? Mono.secondary : Color.black)
+                    .frame(width: 32, height: 32)
+                    .background(strokes == 0 ? Mono.fill : Color.white, in: Circle())
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .disabled(strokes == 0)
+            .accessibilityLabel("Done drawing, add a note")
+        }
+    }
+
+    /// A round icon button's label in the island.
+    private func islandIcon(_ name: String, weight: Font.Weight = .semibold) -> some View {
+        Image(systemName: name)
+            .font(weight == .bold ? .footnote.weight(.bold) : .subheadline.weight(weight))
+            .foregroundStyle(Mono.text)
+            .frame(width: 32, height: 32)
+            .background(Mono.fill, in: Circle())
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
     }
 
     /// What VoiceOver says for the screen name and note count in the island.
@@ -440,6 +526,47 @@ struct OverlayView: View {
         }
     }
 
+    private func noteCardTitle(pending: DebugSession.PendingAttachment?) -> String {
+        if let pending {
+            return Annotation.title(
+                kind: pending.kind,
+                element: nil,
+                screen: pending.screen,
+                snapshotCount: pending.count
+            )
+        }
+        if session.isNotingDrawing {
+            return Annotation.title(
+                kind: .drawing,
+                element: nil,
+                screen: session.screen,
+                snapshotCount: 1,
+                encloses: session.encloses,
+                enclosedCount: session.encloses.count
+            )
+        }
+        return session.selected?.shortName ?? "Unnamed element"
+    }
+
+    private func noteCardSubtitle(pending: DebugSession.PendingAttachment?) -> String {
+        if let pending { return Annotation.subtitle(kind: pending.kind, element: nil, screen: pending.screen) }
+        if session.isNotingDrawing { return Annotation.subtitle(kind: .drawing, element: nil, screen: session.screen) }
+        return session.selected?.role ?? "Element"
+    }
+
+    /// What the drawing encloses, where an element's card shows its path: the agent finds the code
+    /// by these names.
+    private var enclosedLine: some View {
+        let shown = session.encloses.prefix(3).compactMap(\.shortName)
+        let more = session.encloses.count - shown.count
+        let names = shown.joined(separator: ", ") + (more > 0 ? " and \(more) more" : "")
+        return Text(shown.isEmpty ? "Nothing named inside the drawing" : "Encloses \(names)")
+            .font(.footnote)
+            .foregroundStyle(Mono.secondary)
+            .lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     /// The scrolling part's height: all of it when the card fits, otherwise what is left once the
     /// card's padding, spacing and buttons are in.
     private var noteScrollHeight: CGFloat {
@@ -475,26 +602,24 @@ struct OverlayView: View {
                     NumberBadge(number: session.nextNumber, size: 26)
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(
-                        pending.map {
-                            Annotation.title(kind: $0.kind, element: nil, screen: $0.screen, snapshotCount: $0.count)
-                        }
-                            ?? session.selected?.shortName ?? "Unnamed element"
-                    )
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Mono.text)
-                    Text(
-                        pending.map { Annotation.subtitle(kind: $0.kind, element: nil, screen: $0.screen) } ?? session
-                            .selected?.role ?? "Element"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(Mono.secondary)
+                    Text(noteCardTitle(pending: pending))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Mono.text)
+                    Text(noteCardSubtitle(pending: pending))
+                        .font(.caption)
+                        .foregroundStyle(Mono.secondary)
                 }
                 .lineLimit(1)
                 Spacer(minLength: 0)
             }
 
-            if pending == nil { levelPath }
+            if pending == nil {
+                if session.isNotingDrawing {
+                    enclosedLine
+                } else {
+                    levelPath
+                }
+            }
 
             TextField("What's wrong?", text: $session.noteText, axis: .vertical)
                 .font(.body)
@@ -583,7 +708,7 @@ struct OverlayView: View {
     /// True when the picked element sits under the keyboard or under the card itself, or the screen
     /// has rotated since it was picked and its frame no longer lines up.
     private func isElementHidden(cardTop: CGFloat, cardHeight height: CGFloat) -> Bool {
-        guard let frame = session.selected?.frame else { return false }
+        guard let frame = session.noteFrame else { return false }
         guard session.screenReadIsCurrent else { return true }
         let visibleBottom = min(session.noteKeyboardTop, session.screenSize.height)
         let card = CGRect(x: panelLeading, y: cardTop, width: panelWidth, height: height)
@@ -834,7 +959,7 @@ struct OverlayView: View {
     private var toastTop: CGFloat {
         switch session.mode {
         case .idle, .noting: islandTop
-        case .picking, .tray, .attaching: islandBottom + 8
+        case .picking, .tray, .attaching, .drawing: islandBottom + 8
         case .viewer, .reports, .destination: session.safeAreaTop + 56
         }
     }
@@ -1082,6 +1207,69 @@ private struct CaptureFlight: View {
                 onLand()
             }
         }
+    }
+}
+
+/// Strokes in red with a thin white halo, like an outline, so they read on dark and red content.
+private struct StrokeLines: View {
+    var strokes: [[CGPoint]]
+    var weight: CGFloat
+
+    var body: some View {
+        let path = Path { path in
+            for stroke in strokes where stroke.count > 1 { path.addLines(stroke) }
+        }
+        ZStack {
+            path.stroke(
+                Color.white.opacity(0.9),
+                style: StrokeStyle(lineWidth: weight + 2, lineCap: .round, lineJoin: .round)
+            )
+            path.stroke(Markup.red, style: StrokeStyle(lineWidth: weight, lineCap: .round, lineJoin: .round))
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Takes touches while drawing and draws the stroke under the finger.
+///
+/// The stroke lives here until the finger lifts, so only this small view redraws as it moves; the
+/// overlay draws the strokes already made.
+private struct DrawingCanvas: View {
+    let session: DebugSession
+    @State private var stroke: [CGPoint] = []
+    /// True while a finger draws.
+    ///
+    /// SwiftUI resets it both when the drag ends and when it is cancelled, as when a system
+    /// gesture takes the finger, so the stroke drawn so far is added either way and the bar's count
+    /// matches what shows.
+    @GestureState private var isDrawing = false
+
+    var body: some View {
+        StrokeLines(strokes: [stroke], weight: 4)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .updating($isDrawing) { _, isDrawing, _ in isDrawing = true }
+                    .onChanged { value in
+                        guard let last = stroke.last else {
+                            stroke = [value.location]
+                            return
+                        }
+                        // A point every 2 points along the way is smooth and keeps the draft small.
+                        guard hypot(value.location.x - last.x, value.location.y - last.y) >= 2 else { return }
+                        stroke.append(value.location)
+                    }
+            )
+            .onChange(of: isDrawing) {
+                guard !isDrawing else { return }
+                session.addStroke(stroke)
+                stroke = []
+            }
+            .onChange(of: session.screenSize) { stroke = [] }
+            // Drawing is by touch only; VoiceOver users pick elements instead.
+            .accessibilityHidden(true)
     }
 }
 

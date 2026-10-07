@@ -39,7 +39,7 @@ Redline has two parts:
 
 1. **Your session registers its bundle IDs.** Redline reads them from the app targets of the Xcode project, or XcodeGen `project.yml`, in the session's working directory. It accepts reports only for registered bundle IDs, and keeps them registered after the session closes.
 2. **Redline sets up the build.** It writes the Mac's address and a token to `hub.json` in the data container for the build's bundle ID. On an iPhone, it uses Xcode's device link, because a build can't find the Mac on its own.
-3. **You send a report.** Tap the floating button to enter annotate mode, then tap elements, add notes and tap Send. On an iPhone, the build saves the report and sends it over the local network. On a simulator, Redline copies it out of the data container.
+3. **You send a report.** Tap the floating button to enter annotate mode, then tap elements or draw around them, add notes and tap Send. On an iPhone, the build saves the report and sends it over the local network. On a simulator, Redline copies it out of the data container.
 4. **Redline delivers it to your session.** It files the report in its inbox, then sends it with each snapshot's path.
 
 Steps 2 and 3 on a device and on a simulator:
@@ -69,7 +69,7 @@ UI report from Alex's iPhone · Sample Notes
 3. Photo: This is how it looked in the last build
 ```
 
-Each snapshot's path comes first, then its notes, numbered like its outlines. A note reads `Label (Role, identifier): note`. An element without a label is named by its identifier. Any named ancestors follow, such as `in Cell "Milestones" (today.list)`, so your agent can tell apart elements that share a label.
+Each snapshot's path comes first, then its notes, numbered like its outlines. A note reads `Label (Role, identifier): note`. An element without a label is named by its identifier. Any named ancestors follow, such as `in Cell "Milestones" (today.list)`, so your agent can tell apart elements that share a label. A drawing's snapshot shows its strokes instead of an outline, and its note lists up to 12 named elements inside it, such as `Drawing around Growth and 2 more, enclosing Text "Growth", Button "Weight" (growth.weight), Button "Length": Too cramped`.
 
 When a report goes through the Codex app, its snapshots arrive as attachments. Claude Code reads them from their paths. Each report folder also holds `report.md` with a summary and `report.json` with everything the kit read about each element, such as its frame, value and class.
 
@@ -192,6 +192,7 @@ The first report sent from an iPhone triggers the one-time iOS local network pro
 - **Annotate mode.** Routes taps to Redline instead of the build, and draws a light red border around the screen. Its controls sit in a black bar at the top.
   - Tap an element to select it. The note card shows the path from the outermost element enclosing it to the one you tapped; tap a step to select that element instead. When nothing encloses it, the card says "Nothing larger to select". A card or section missing from the path needs an element of its own: see [Make containers pickable](#make-containers-pickable).
   - Write a note and tap Add note. Notes collect across screens until you send them.
+  - Tap the pen in the bar to draw instead, for example to circle a gap or a group of elements. While you draw, the bar shows Undo and Done, and its close button discards the drawing. Tap Done to number the drawing and write its note. The note card lists the named elements inside the drawing; its Cancel returns to the drawing with your strokes kept.
   - Tap the close button in the bar to exit annotate mode. Unsent notes stay.
 - **Notes tray.** Lists unsent notes; tap the screen name in the bar to open it. Tap a note to view it full screen with its snapshot, or tap its trash button to delete it. Unsent notes persist on the device, across a killed process and a reinstall from a rebuild.
 - **Screenshots and photos.**

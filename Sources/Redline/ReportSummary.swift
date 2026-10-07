@@ -82,15 +82,18 @@ enum ReportSummary {
             }
             text += " (\(details.joined(separator: ", ")))"
         }
+        // What a drawing encloses is what to search the source for.
+        if let encloses = item.encloses {
+            let named = encloses.compactMap(describe)
+            let more = max((item.enclosedCount ?? named.count) - named.count, 0)
+            text +=
+                named.isEmpty
+                ? ", enclosing nothing named"
+                : ", enclosing " + named.joined(separator: ", ") + (more > 0 ? " and \(more) more" : "")
+        }
         // The elements holding it, such as the row or card with the identifier, tell apart
         // elements that share a label.
-        let inside = item.ancestors.compactMap { ancestor -> String? in
-            if ancestor.label == nil, ancestor.identifier == nil {
-                return ancestor.contentsName.map { "\(ancestor.role) \($0)" }
-            }
-            return [ancestor.role, ancestor.label.map { "\"\($0)\"" }, ancestor.identifier.map { "`\($0)`" }]
-                .compactMap { $0 }.joined(separator: " ")
-        }
+        let inside = item.ancestors.compactMap(describe)
         if !inside.isEmpty { text += ", in " + inside.joined(separator: " in ") }
         if item.note.isEmpty {
             text += ". No note."
@@ -101,6 +104,16 @@ enum ReportSummary {
         if let snapshot = item.snapshot { text += " See \(snapshot)." }
         if !item.attachments.isEmpty { text += " Snapshots: \(item.attachments.joined(separator: ", "))." }
         return text
+    }
+
+    /// `Button "Save" `editor.save``, or `Group "Title" and "Save"` for a group named only by what
+    /// it holds; nil for an element with no name.
+    private static func describe(_ element: ElementSnapshot) -> String? {
+        if element.label == nil, element.identifier == nil {
+            return element.contentsName.map { "\(element.role) \($0)" }
+        }
+        return [element.role, element.label.map { "\"\($0)\"" }, element.identifier.map { "`\($0)`" }]
+            .compactMap { $0 }.joined(separator: " ")
     }
 
     private static func list(_ numbers: [Int]) -> String {

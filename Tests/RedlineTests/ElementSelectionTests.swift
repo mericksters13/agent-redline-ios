@@ -298,6 +298,226 @@ struct ElementSelectionTests {
         #expect(element(role: "Text", label: "Short", frame: .zero).shortName == "Short")
     }
 
+    // MARK: - Drawings
+
+    /// A card with a title, a button, a chart and a link, then a row below it, each child
+    /// pointing at the card, as `AccessibilityTree` reads them.
+    private var card: [ElementSnapshot] {
+        [
+            element(
+                role: "Group",
+                label: nil,
+                frame: CGRect(x: 20, y: 156, width: 362, height: 295),
+                identifier: "growth.card",
+                isContainer: true
+            ),
+            element(role: "Text", label: "Growth", frame: CGRect(x: 92, y: 186, width: 80, height: 24), parent: 0),
+            element(role: "Button", label: "Add", frame: CGRect(x: 300, y: 176, width: 66, height: 44), parent: 0),
+            element(
+                role: "Group",
+                label: "Weight in kg by age",
+                frame: CGRect(x: 36, y: 330, width: 330, height: 90),
+                identifier: "growth.card.chart",
+                isContainer: true,
+                parent: 0
+            ),
+            element(
+                role: "Button",
+                label: "All measurements",
+                frame: CGRect(x: 36, y: 420, width: 330, height: 24),
+                parent: 0
+            ),
+            element(role: "Button", label: "Sleep", frame: CGRect(x: 20, y: 520, width: 362, height: 60)),
+        ]
+    }
+
+    /// A hand-drawn loop around `rect`, a little bigger than it, from `start` to `end` radians.
+    private func loop(around rect: CGRect, from start: Double = 0, to end: Double = 2 * .pi) -> [CGPoint] {
+        (0...24).map { step in
+            let angle = start + (end - start) * Double(step) / 24
+            return CGPoint(
+                x: rect.midX + rect.width * 0.6 * cos(angle),
+                y: rect.midY + rect.height * 0.6 * sin(angle)
+            )
+        }
+    }
+
+    private func names(_ elements: [ElementSnapshot]) -> [String?] {
+        elements.map(\.fullName)
+    }
+
+    @Test func aCircleAroundAButtonEnclosesOnlyThatButton() {
+        let add = CGRect(x: 300, y: 176, width: 66, height: 44)
+        let enclosed = ElementSelection.enclosed(by: [loop(around: add)], in: card, screenSize: screen)
+        #expect(names(enclosed) == ["Add"])
+    }
+
+    @Test func aCircleAroundACardEnclosesItAndWhatItHolds() {
+        let box = CGRect(x: 20, y: 156, width: 362, height: 295)
+        let enclosed = ElementSelection.enclosed(by: [loop(around: box)], in: card, screenSize: screen)
+        #expect(names(enclosed) == ["growth.card", "Growth", "Add", "Weight in kg by age", "All measurements"])
+    }
+
+    @Test func aLineOrATapEnclosesNothing() {
+        let line = [CGPoint(x: 290, y: 198), CGPoint(x: 330, y: 199), CGPoint(x: 376, y: 198)]
+        #expect(ElementSelection.enclosed(by: [line], in: card, screenSize: screen).isEmpty)
+        #expect(ElementSelection.enclosed(by: [], in: card, screenSize: screen).isEmpty)
+    }
+
+    @Test func aLoopTracedTwiceOrInTwoHalvesStillEncloses() {
+        let add = CGRect(x: 300, y: 176, width: 66, height: 44)
+        let twice = loop(around: add) + loop(around: add)
+        #expect(names(ElementSelection.enclosed(by: [twice], in: card, screenSize: screen)) == ["Add"])
+        // Two halves whose ends don't meet: the gap between them is closed all the same.
+        let top = loop(around: add, from: .pi + 0.1, to: 2 * .pi - 0.1)
+        let bottom = loop(around: add, from: 0.1, to: .pi - 0.1)
+        #expect(names(ElementSelection.enclosed(by: [top, bottom], in: card, screenSize: screen)) == ["Add"])
+    }
+
+    @Test func aLoopAroundMostOfARowEnclosesIt() {
+        // A list row merges its title and details into one element as wide as the screen.
+        let title = CGRect(x: 20, y: 520, width: 230, height: 60)
+        #expect(names(ElementSelection.enclosed(by: [loop(around: title)], in: card, screenSize: screen)) == ["Sleep"])
+    }
+
+    @Test func anElementReachingWellPastTheDrawingIsNotEnclosed() {
+        // The Sleep row's center is inside, but the row is far wider than the loop.
+        let middle = CGRect(x: 171, y: 520, width: 60, height: 60)
+        #expect(ElementSelection.enclosed(by: [loop(around: middle)], in: card, screenSize: screen).isEmpty)
+    }
+
+    @Test func anElementCoveredByASheetIsNotEnclosed() {
+        let list = element(
+            role: "Group",
+            label: "Inbox",
+            frame: CGRect(x: 0, y: 100, width: 400, height: 600),
+            isContainer: true
+        )
+        let row = element(
+            role: "Button",
+            label: "Message",
+            frame: CGRect(x: 0, y: 300, width: 400, height: 60),
+            parent: 0
+        )
+        let sheet = element(
+            role: "Group",
+            label: "Compose",
+            frame: CGRect(x: 0, y: 250, width: 400, height: 400),
+            isContainer: true
+        )
+        let send = element(
+            role: "Button",
+            label: "Send",
+            frame: CGRect(x: 300, y: 270, width: 80, height: 44),
+            parent: 2
+        )
+        let around = CGRect(x: 0, y: 290, width: 400, height: 80)
+        let enclosed = ElementSelection.enclosed(
+            by: [loop(around: around)],
+            in: [list, row, sheet, send],
+            screenSize: screen
+        )
+        #expect(names(enclosed) == ["Send"])
+    }
+
+    @Test func aGroupNamedOnlyByWhatItHoldsAddsNothingOnceThoseAreListed() {
+        var group = element(
+            role: "Group",
+            label: nil,
+            frame: CGRect(x: 80, y: 170, width: 300, height: 60),
+            isContainer: true
+        )
+        group.contents = ["Growth", "Add"]
+        group.contentCount = 2
+        let elements = [
+            group,
+            element(role: "Text", label: "Growth", frame: CGRect(x: 92, y: 186, width: 80, height: 24), parent: 0),
+            element(role: "Button", label: "Add", frame: CGRect(x: 300, y: 176, width: 66, height: 44), parent: 0),
+        ]
+        let enclosed = ElementSelection.enclosed(by: [loop(around: group.frame)], in: elements, screenSize: screen)
+        #expect(names(enclosed) == ["Growth", "Add"])
+    }
+
+    @Test func twoCirclesApartEncloseOnlyWhatEachHolds() {
+        // The chart and the link between them are in neither circle.
+        let add = loop(around: CGRect(x: 300, y: 176, width: 66, height: 44))
+        let sleep = loop(around: CGRect(x: 20, y: 520, width: 230, height: 60))
+        #expect(names(ElementSelection.enclosed(by: [add, sleep], in: card, screenSize: screen)) == ["Add", "Sleep"])
+    }
+
+    @Test func aLineApartFromALoopEnclosesNothingMore() {
+        let add = loop(around: CGRect(x: 300, y: 176, width: 66, height: 44))
+        let underline = [CGPoint(x: 40, y: 700), CGPoint(x: 200, y: 702), CGPoint(x: 360, y: 700)]
+        #expect(names(ElementSelection.enclosed(by: [add, underline], in: card, screenSize: screen)) == ["Add"])
+    }
+
+    @Test func anElementInTheBoxButOutsideTheShapeIsNotEnclosed() {
+        let triangle = [CGPoint(x: 0, y: 0), CGPoint(x: 200, y: 0), CGPoint(x: 0, y: 200), CGPoint(x: 0, y: 0)]
+        let elements = [
+            element(role: "Button", label: "Inside", frame: CGRect(x: 20, y: 20, width: 40, height: 40)),
+            // Its center is past the triangle's long side.
+            element(role: "Button", label: "Corner", frame: CGRect(x: 150, y: 150, width: 40, height: 40)),
+        ]
+        #expect(names(ElementSelection.enclosed(by: [triangle], in: elements, screenSize: screen)) == ["Inside"])
+    }
+
+    @Test func aGroupHoldingSomethingNotListedStays() {
+        var group = element(
+            role: "Group",
+            label: nil,
+            frame: CGRect(x: 80, y: 170, width: 300, height: 60),
+            isContainer: true
+        )
+        group.contents = ["Growth", "Add", "Chart"]
+        group.contentCount = 3
+        let elements = [
+            group,
+            element(role: "Text", label: "Growth", frame: CGRect(x: 92, y: 186, width: 80, height: 24), parent: 0),
+            element(role: "Button", label: "Add", frame: CGRect(x: 300, y: 176, width: 66, height: 44), parent: 0),
+        ]
+        let enclosed = ElementSelection.enclosed(by: [loop(around: group.frame)], in: elements, screenSize: screen)
+        #expect(enclosed == elements)
+    }
+
+    @Test func aDrawingIsHeldByTheElementsAroundIt() {
+        let gap = CGRect(x: 60, y: 350, width: 40, height: 40)
+        #expect(
+            names(ElementSelection.holding(gap, excluding: [], in: card, screenSize: screen)) == [
+                "Weight in kg by age", "growth.card",
+            ]
+        )
+        // Partly outside the chart, so only the card holds it.
+        let edge = CGRect(x: 60, y: 320, width: 40, height: 40)
+        #expect(names(ElementSelection.holding(edge, excluding: [], in: card, screenSize: screen)) == ["growth.card"])
+    }
+
+    @Test func aLoopInsideAButtonEnclosesItAndIsHeldOnlyByWhatHoldsTheButton() throws {
+        let strokes = [loop(around: CGRect(x: 310, y: 185, width: 46, height: 26))]
+        let enclosed = ElementSelection.enclosed(by: strokes, in: card, screenSize: screen)
+        #expect(names(enclosed) == ["Add"])
+        let box = try #require(Annotation.bounds(of: strokes))
+        let holders = ElementSelection.holding(box, excluding: [], in: card, screenSize: screen)
+        #expect(names(holders) == ["Add", "growth.card"])
+        let outside = ElementSelection.holding(box, excluding: enclosed, in: card, screenSize: screen)
+        #expect(names(outside) == ["growth.card"])
+    }
+
+    @Test func aDrawingFollowsItsElementOnlyAtTheSameSize() {
+        let add = element(
+            role: "Button",
+            label: "Add",
+            frame: CGRect(x: 300, y: 176, width: 66, height: 44),
+            identifier: "growth.add"
+        )
+        var scrolled = add
+        scrolled.frame = add.frame.offsetBy(dx: 0, dy: -100)
+        #expect(ElementSelection.offset(of: add, in: [scrolled]) == CGPoint(x: 0, y: -100))
+        var grown = add
+        grown.frame.size.height += 10
+        #expect(ElementSelection.offset(of: add, in: [grown]) == nil)
+        #expect(ElementSelection.offset(of: add, in: []) == nil)
+    }
+
     @Test func headerTitleIsTheTopmostHeader() {
         let section = element(role: "Header", label: "Quick add", frame: CGRect(x: 20, y: 600, width: 200, height: 30))
         let title = element(role: "Header", label: "Today", frame: CGRect(x: 20, y: 150, width: 200, height: 40))

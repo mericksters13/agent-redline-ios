@@ -119,6 +119,11 @@ struct Report: Codable, Sendable {
         var outline: Box?
         /// Attached snapshots, for whole-screen captures and photos.
         var attachments: [String]
+        /// For a drawing, the named elements it encloses, in screen order, up to
+        /// `ElementSelection.enclosedLimit`; nil for other kinds.
+        var encloses: [ElementSnapshot]? = nil
+        /// For a drawing that encloses more than `encloses` lists, how many it encloses; nil otherwise.
+        var enclosedCount: Int? = nil
     }
 
     var id: String
@@ -171,11 +176,14 @@ extension Report.Item {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         number = try container.decode(Int.self, forKey: .number)
-        kind = try container.decode(Annotation.Kind.self, forKey: .kind)
         note = try container.decode(String.self, forKey: .note)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         title = try container.decode(String.self, forKey: .title)
         element = try container.decodeIfPresent(ElementSnapshot.self, forKey: .element)
+        // A kind this kit doesn't know, written by a newer one, reads as the item it is closest to,
+        // so the report still shows in the sent list.
+        let kindName = try container.decode(String.self, forKey: .kind)
+        kind = Annotation.Kind(rawValue: kindName) ?? (element == nil ? .screen : .element)
         ancestors = try container.decode([ElementSnapshot].self, forKey: .ancestors)
         screen = try container.decodeIfPresent(String.self, forKey: .screen)
         screenTitle = try container.decodeIfPresent(String.self, forKey: .screenTitle)
@@ -184,6 +192,33 @@ extension Report.Item {
             ?? decoder.container(keyedBy: VersionOneKeys.self).decodeIfPresent(String.self, forKey: .picture)
         outline = try container.decodeIfPresent(Report.Box.self, forKey: .outline)
         attachments = try container.decode([String].self, forKey: .attachments)
+        encloses = try container.decodeIfPresent([ElementSnapshot].self, forKey: .encloses)
+        enclosedCount = try container.decodeIfPresent(Int.self, forKey: .enclosedCount)
+    }
+
+    /// The item for a draft's note or attachment, numbered `number`, before its snapshot, outline
+    /// and attachments are known.
+    init(_ annotation: Annotation, number: Int) {
+        let isDrawing = annotation.kind == .drawing
+        self.init(
+            number: number,
+            kind: annotation.kind,
+            note: annotation.note,
+            createdAt: annotation.createdAt,
+            // The element's whole name: the agent searches the code for it, so nothing is cut short.
+            // A drawing's title names what it encloses, for Macs that don't list it.
+            title: annotation.element?.fullName ?? annotation.title,
+            element: annotation.element,
+            ancestors: annotation.ancestors,
+            screen: nil,
+            screenTitle: annotation.screen?.title,
+            snapshot: nil,
+            outline: nil,
+            attachments: [],
+            encloses: isDrawing ? annotation.encloses : nil,
+            enclosedCount: isDrawing && annotation.enclosedCount > annotation.encloses.count
+                ? annotation.enclosedCount : nil
+        )
     }
 }
 

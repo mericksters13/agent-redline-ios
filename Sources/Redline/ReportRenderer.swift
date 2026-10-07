@@ -11,7 +11,7 @@ enum ReportRenderer {
     /// enough that agents don't shrink it and its JPEG stays near 90 KB.
     static let sendScale: CGFloat = 1.4
 
-    /// A note's outline and number, drawn on a snapshot.
+    /// A note's outline or drawing, and its number, drawn on a snapshot.
     struct Outline: Sendable {
         enum Style: Sendable {
             /// In a sent report: every note drawn the same.
@@ -23,8 +23,11 @@ enum ReportRenderer {
         }
 
         var number: Int
+        /// The element's frame, or the box around the drawing, in the snapshot's points.
         var rect: CGRect
         var style: Style
+        /// For a drawing, its strokes, in the snapshot's points; drawn instead of a box around `rect`.
+        var strokes: [[CGPoint]] = []
     }
 
     /// Draws the rows `rows` of the plan's snapshot, all of it by default.
@@ -146,16 +149,29 @@ enum ReportRenderer {
         text.draw(at: CGPoint(x: gap.midX - size.width / 2, y: gap.midY - size.height / 2), withAttributes: attributes)
     }
 
-    /// A red outline with the note's number in a red circle at its top-left corner.
+    /// A red outline, or the drawing's red strokes, with the note's number in a red circle at its
+    /// top-left corner.
     ///
     /// Red reads on almost any app and is the usual color for markup.
     private static func draw(_ outline: Outline, within visible: CGRect) {
         let quiet = outline.style == .quiet
         let red = UIColor.systemRed.withAlphaComponent(quiet ? 0.55 : 1)
-        let box = UIBezierPath(roundedRect: outline.rect.insetBy(dx: -3, dy: -3), cornerRadius: 6)
-        box.lineWidth = quiet ? 2 : 3
         red.setStroke()
-        box.stroke()
+        if outline.strokes.isEmpty {
+            let box = UIBezierPath(roundedRect: outline.rect.insetBy(dx: -3, dy: -3), cornerRadius: 6)
+            box.lineWidth = quiet ? 2 : 3
+            box.stroke()
+        } else {
+            let path = UIBezierPath()
+            for stroke in outline.strokes where stroke.count > 1 {
+                path.move(to: stroke[0])
+                for point in stroke.dropFirst() { path.addLine(to: point) }
+            }
+            path.lineWidth = quiet ? 2 : 3
+            path.lineCapStyle = .round
+            path.lineJoinStyle = .round
+            path.stroke()
+        }
 
         let diameter: CGFloat = 22
         let center = CGPoint(

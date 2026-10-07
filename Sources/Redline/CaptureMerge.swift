@@ -4,7 +4,7 @@ import Foundation
 
 /// What a new note's capture does to its screen's snapshot.
 ///
-/// A note keeps the capture of the state it was made on, unless its element looks identical in a
+/// A note keeps the capture of the state it was made on, unless what it marks looks identical in a
 /// newer capture of the screen.
 enum CaptureMerge {
     enum Decision: Equatable {
@@ -47,7 +47,8 @@ enum CaptureMerge {
     /// - Parameters:
     ///   - capture: the capture just taken, in group 0.
     ///   - image: its pixels.
-    ///   - element: the element the new note is about.
+    ///   - element: the element the new note is about; nil for a drawing.
+    ///   - frame: the area the new note marks: the element's frame, or the box around the drawing.
     ///   - screen: the screen the capture is of.
     ///   - screens: the draft's screens, updated.
     ///   - annotations: the draft's notes, updated when earlier notes move onto the new capture.
@@ -56,7 +57,8 @@ enum CaptureMerge {
     static func place(
         _ capture: Capture,
         image: CGImage?,
-        element: ElementSnapshot,
+        element: ElementSnapshot?,
+        frame: CGRect,
         screen: ScreenInfo,
         screens: inout [ScreenRecord],
         annotations: inout [Annotation],
@@ -75,19 +77,22 @@ enum CaptureMerge {
         }
         let overlap = overlapCheck(previous: previous, before: before, new: capture, after: image)
         var result = decision(previous: previous, new: capture, snapshotsMatch: snapshotsMatch, overlap: overlap) {
+            guard let before, let image else { return false }
+            // A drawing marks a place, not an element: the same place must look identical.
+            guard let element else {
+                return looksIdentical(frame, in: before, of: previous, as: frame, in: image, of: capture)
+            }
             // The new note's element must look identical in the snapshot it would share, found
             // there by itself, since layout may have moved it by a fraction of a point.
-            guard let before, let image, let old = ElementSelection.match(element, in: previous.elements) else {
-                return false
-            }
-            return looksIdentical(old.frame, in: before, of: previous, as: element.frame, in: image, of: capture)
+            guard let old = ElementSelection.match(element, in: previous.elements) else { return false }
+            return looksIdentical(old.frame, in: before, of: previous, as: frame, in: image, of: capture)
         }
         if result == .stitch {
             let group = screens[index].captures.filter { $0.group == previous.group }
             if !keepsEarlierStates(
                 stitching: capture,
                 image: image,
-                newNoteFrame: element.frame,
+                newNoteFrame: frame,
                 onto: group,
                 annotations: annotations,
                 loadImage: loadImage
@@ -112,14 +117,32 @@ enum CaptureMerge {
             for i in annotations.indices {
                 guard let image, let old = annotations[i].captureID, old != capture.id,
                     let oldCapture = screenCaptures.first(where: { $0.id == old }),
-                    let element = annotations[i].element,
-                    let match = ElementSelection.match(element, in: capture.elements),
-                    onScreen.contains(match.frame.insetBy(dx: 1, dy: 1)),
-                    let oldImage = loadImage(oldCapture),
-                    looksIdentical(element.frame, in: oldImage, of: oldCapture, as: match.frame, in: image, of: capture)
+                    let oldImage = loadImage(oldCapture)
                 else { continue }
+                if let element = annotations[i].element {
+                    guard let match = ElementSelection.match(element, in: capture.elements),
+                        onScreen.contains(match.frame.insetBy(dx: 1, dy: 1)),
+                        looksIdentical(
+                            element.frame,
+                            in: oldImage,
+                            of: oldCapture,
+                            as: match.frame,
+                            in: image,
+                            of: capture
+                        )
+                    else { continue }
+                    annotations[i].element?.frame = match.frame
+                } else {
+                    // A drawing stays where it was drawn, so it moves only onto a capture of the
+                    // same size, scrolled to the same place, that looks identical there. A finger
+                    // can draw to the screen's edge; only the part on screen is compared.
+                    guard let frame = annotations[i].frame, !annotations[i].strokes.isEmpty,
+                        oldCapture.size == capture.size, isSameScroll(oldCapture.scroll, capture.scroll),
+                        frame.intersects(onScreen),
+                        looksIdentical(frame, in: oldImage, of: oldCapture, as: frame, in: image, of: capture)
+                    else { continue }
+                }
                 annotations[i].captureID = capture.id
-                annotations[i].element?.frame = match.frame
                 moved.append(annotations[i].id)
             }
             return Filing(captureID: capture.id, isNewCapture: true, movedNotes: moved)
@@ -163,9 +186,9 @@ enum CaptureMerge {
         }
         for annotation in annotations {
             guard let source = group.first(where: { $0.id == annotation.captureID }), let from = source.scroll,
-                let frame = annotation.element?.frame
+                let frame = annotation.frame
             else { continue }
-            // The element's pixels as the note was made, and where the new capture would draw them.
+            // The marked pixels as the note was made, and where the new capture would draw them.
             var compared: [(shown: CGRect, drawn: CGRect)] = []
             // The element's content rows that both captures show between the bars.
             let top = max(
@@ -205,6 +228,16 @@ enum CaptureMerge {
             }
         }
         return true
+    }
+
+    /// Whether two reads of the main scroll view are at the same place, within 2 points; true when
+    /// neither had one.
+    static func isSameScroll(_ a: ScrollState?, _ b: ScrollState?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): true
+        case (let a?, let b?): a.isSameView(as: b) && abs(a.offsetY - b.offsetY) <= 2
+        default: false
+        }
     }
 
     /// Whether an element looks identical in two captures.

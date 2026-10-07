@@ -117,6 +117,9 @@ enum ReportContent {
         var element: ReportListing.Item.Element?
         /// The elements holding it, innermost first.
         var ancestors: [ReportListing.Item.Element]
+        /// For a drawing, the named elements it encloses; nil for other kinds.
+        var encloses: [ReportListing.Item.Element]?
+        var enclosedCount: Int?
         /// The snapshot its outline is drawn on.
         var snapshot: String?
         var attachments: [String]
@@ -130,6 +133,8 @@ enum ReportContent {
             self.note = note
             element = item.element
             ancestors = item.ancestors ?? []
+            encloses = item.encloses
+            enclosedCount = item.enclosedCount
             snapshot = item.snapshot
             self.attachments = attachments
         }
@@ -149,9 +154,16 @@ enum ReportContent {
         }
         let details = [element?.role, element?.identifier == name ? nil : element?.identifier, holding]
             .compactMap { $0 }.joined(separator: ", ")
+        // What a drawing encloses is what to search the source for.
+        let enclosing = item.encloses.map { encloses -> String in
+            let named = encloses.compactMap(\.description)
+            guard !named.isEmpty else { return ", enclosing nothing named" }
+            let more = max((item.enclosedCount ?? named.count) - named.count, 0)
+            return ", enclosing " + named.joined(separator: ", ") + (more > 0 ? " and \(more) more" : "")
+        }
         let inside = item.ancestors.compactMap(\.description)
         let note = item.note.isEmpty ? "No note" : item.note
-        return "\(item.number). \(name)\(details.isEmpty ? "" : " (\(details))")"
+        return "\(item.number). \(name)\(details.isEmpty ? "" : " (\(details))")" + (enclosing ?? "")
             + (inside.isEmpty ? "" : ", in " + inside.joined(separator: " in ")) + ": \(note)"
     }
 

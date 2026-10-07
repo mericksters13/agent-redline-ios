@@ -37,26 +37,7 @@ enum ReportBuilder {
         let scale = ReportRenderer.sendScale
         let numbers = Dictionary(uniqueKeysWithValues: input.annotations.enumerated().map { ($1.id, $0 + 1) })
         var items = Dictionary(
-            uniqueKeysWithValues: input.annotations.enumerated().map { index, annotation in
-                (
-                    index + 1,
-                    Report.Item(
-                        number: index + 1,
-                        kind: annotation.kind,
-                        note: annotation.note,
-                        createdAt: annotation.createdAt,
-                        // The element's whole name: the agent searches the code for it, so nothing is cut short.
-                        title: annotation.element?.fullName ?? annotation.title,
-                        element: annotation.element,
-                        ancestors: annotation.ancestors,
-                        screen: nil,
-                        screenTitle: annotation.screen?.title,
-                        snapshot: nil,
-                        outline: nil,
-                        attachments: []
-                    )
-                )
-            }
+            uniqueKeysWithValues: input.annotations.enumerated().map { ($0 + 1, Report.Item($1, number: $0 + 1)) }
         )
 
         // Screens in the order of their first note.
@@ -92,11 +73,16 @@ enum ReportBuilder {
                     images[capture.id] = image
                 }
                 let outlines = notes.compactMap { note -> ReportRenderer.Outline? in
-                    guard let number = numbers[note.id], let frame = note.element?.frame,
+                    guard let number = numbers[note.id], let frame = note.frame,
                         let captureID = note.captureID,
                         let rect = plan.position(of: frame, from: captureID)
                     else { return nil }
-                    return ReportRenderer.Outline(number: number, rect: rect, style: .normal)
+                    return ReportRenderer.Outline(
+                        number: number,
+                        rect: rect,
+                        style: .normal,
+                        strokes: Annotation.strokes(note.strokes, from: frame, to: rect)
+                    )
                 }
                 screenNotes += outlines.map(\.number)
 

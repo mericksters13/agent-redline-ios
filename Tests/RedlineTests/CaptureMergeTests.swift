@@ -34,6 +34,7 @@ struct CaptureMergeTests {
                 capture,
                 image: image,
                 element: element,
+                frame: element.frame,
                 screen: ScreenInfo(title: "Patterns", viewController: "NavigationStackHostingController"),
                 screens: &screens,
                 annotations: &annotations
@@ -51,6 +52,56 @@ struct CaptureMergeTests {
                     screen: ScreenInfo(title: "Patterns", viewController: "NavigationStackHostingController"),
                     attachments: [],
                     captureID: filing.captureID
+                )
+            )
+            return id
+        }
+
+        /// Adds a drawing: a box drawn around `area`, as it is on `state`.
+        @discardableResult
+        mutating func addDrawing(on state: GrowthScreen, around area: CGRect) throws -> UUID {
+            let outer = area.insetBy(dx: -10, dy: -10)
+            let strokes = [
+                [
+                    CGPoint(x: outer.minX, y: outer.minY), CGPoint(x: outer.maxX, y: outer.minY),
+                    CGPoint(x: outer.maxX, y: outer.maxY), CGPoint(x: outer.minX, y: outer.maxY),
+                    CGPoint(x: outer.minX, y: outer.minY),
+                ]
+            ]
+            let frame = try #require(Annotation.bounds(of: strokes))
+            let image = try state.image()
+            let capture = Capture(
+                id: UUID(),
+                file: "capture.png",
+                size: GrowthScreen.size,
+                scroll: state.scroll,
+                elements: state.elements,
+                group: 0
+            )
+            let images = self.images
+            let filing = CaptureMerge.place(
+                capture,
+                image: image,
+                element: nil,
+                frame: frame,
+                screen: ScreenInfo(title: "Patterns", viewController: "NavigationStackHostingController"),
+                screens: &screens,
+                annotations: &annotations
+            ) { images[$0.id] }
+            if filing.isNewCapture { self.images[capture.id] = image }
+            let id = UUID()
+            annotations.append(
+                Annotation(
+                    id: id,
+                    createdAt: .now,
+                    note: "Note \(annotations.count + 1)",
+                    kind: .drawing,
+                    element: nil,
+                    ancestors: [],
+                    screen: ScreenInfo(title: "Patterns", viewController: "NavigationStackHostingController"),
+                    attachments: [],
+                    captureID: filing.captureID,
+                    strokes: strokes
                 )
             )
             return id
@@ -85,6 +136,89 @@ struct CaptureMergeTests {
         let card = try draft.addNote(on: GrowthScreen(segment: .length), identifier: "growth.card")
         let banner = try draft.addNote(on: GrowthScreen(segment: .head, showsBanner: true), label: "Back up your data")
         #expect(draft.captureID(of: card) != draft.captureID(of: banner))
+        #expect(draft.snapshots == [[1], [2]])
+    }
+
+    @Test func aDrawingOnAnUnchangedScreenSharesItsSnapshot() throws {
+        var draft = Draft()
+        let sleep = try draft.addNote(on: GrowthScreen(segment: .weight), identifier: "sleep.card")
+        let drawing = try draft.addDrawing(on: GrowthScreen(segment: .weight), around: GrowthScreen.sleepCard)
+        #expect(draft.captureID(of: drawing) == draft.captureID(of: sleep))
+        #expect(draft.screens.first?.captures.count == 1)
+        #expect(draft.snapshots == [[1, 2]])
+    }
+
+    @Test func aDrawingOnAnotherStateOfTheScreenGetsItsOwnSnapshot() throws {
+        // Only the drawn-around card shows the segment switch.
+        var draft = Draft()
+        let card = try draft.addNote(on: GrowthScreen(segment: .length), identifier: "growth.card")
+        let drawing = try draft.addDrawing(on: GrowthScreen(segment: .head), around: GrowthScreen.card)
+        #expect(draft.captureID(of: drawing) != draft.captureID(of: card))
+        #expect(draft.snapshots == [[1], [2]])
+    }
+
+    @Test func aDrawingStaysOnItsSnapshotWhenTheScreenScrolled() throws {
+        // The tab bar looks the same at every scroll position, but a drawing marks a place on the
+        // screen, and after a scroll that place shows other content.
+        var draft = Draft()
+        try draft.addNote(on: GrowthScreen(segment: .length), identifier: "growth.card")
+        let drawing = try draft.addDrawing(on: GrowthScreen(segment: .length), around: GrowthScreen.insightsTab)
+        let sleep = try draft.addNote(on: GrowthScreen(segment: .head, scrollOffset: 100), identifier: "sleep.card")
+        #expect(draft.captureID(of: drawing) != draft.captureID(of: sleep))
+        #expect(draft.snapshots == [[1, 2], [3]])
+    }
+
+    @Test func aDrawingToTheScreensEdgeStillMovesOntoTheNewerSnapshot() throws {
+        var draft = Draft()
+        let edge = CGRect(x: 300, y: 520, width: GrowthScreen.size.width - 300, height: 190)
+        let drawing = try draft.addDrawing(on: GrowthScreen(segment: .length), around: edge)
+        let banner = try draft.addNote(on: GrowthScreen(segment: .head, showsBanner: true), label: "Back up your data")
+        #expect(draft.captureID(of: drawing) == draft.captureID(of: banner))
+        #expect(draft.snapshots == [[1, 2]])
+    }
+
+    @Test func scrollsMatchWithinTwoPointsOnTheSameView() {
+        let top = GrowthScreen(scrollOffset: 0).scroll
+        var other = top
+        other.offsetY = 2
+        #expect(CaptureMerge.isSameScroll(nil, nil))
+        #expect(CaptureMerge.isSameScroll(top, other))
+        other.offsetY = 2.5
+        #expect(!CaptureMerge.isSameScroll(top, other))
+        #expect(!CaptureMerge.isSameScroll(top, nil))
+        #expect(!CaptureMerge.isSameScroll(nil, top))
+        var moved = top
+        moved.frame.origin.y += 40
+        #expect(!CaptureMerge.isSameScroll(top, moved))
+    }
+
+    @Test func aDrawingAroundWhatStayedTheSameMovesOntoTheNewerSnapshot() throws {
+        var draft = Draft()
+        let sleep = try draft.addDrawing(on: GrowthScreen(segment: .length), around: GrowthScreen.sleepCard)
+        let banner = try draft.addNote(on: GrowthScreen(segment: .head, showsBanner: true), label: "Back up your data")
+        #expect(draft.captureID(of: sleep) == draft.captureID(of: banner))
+        #expect(draft.snapshots == [[1, 2]])
+    }
+
+    @Test func aDrawingAroundWhatChangedKeepsItsSnapshot() throws {
+        var draft = Draft()
+        let chart = try draft.addDrawing(on: GrowthScreen(segment: .weight), around: GrowthScreen.chart)
+        let banner = try draft.addNote(
+            on: GrowthScreen(segment: .length, showsBanner: true),
+            label: "Back up your data"
+        )
+        #expect(draft.captureID(of: chart) != draft.captureID(of: banner))
+        #expect(draft.snapshots == [[1], [2]])
+    }
+
+    @Test func aScrollThatChangesATabBarWithADrawingStartsANewSnapshot() throws {
+        var draft = Draft()
+        let insights = try #require(GrowthScreen(segment: .length).elements.first { $0.label == "Insights" })
+        try draft.addDrawing(on: GrowthScreen(segment: .length), around: insights.frame)
+        try draft.addNote(
+            on: GrowthScreen(segment: .length, scrollOffset: 100, selectsInsights: true),
+            identifier: "sleep.card"
+        )
         #expect(draft.snapshots == [[1], [2]])
     }
 

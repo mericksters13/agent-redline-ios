@@ -111,13 +111,18 @@ struct ReportListing: Decodable {
         ///
         /// Missing in reports from before they were saved.
         var ancestors: [Element]?
+        /// For a drawing, the named elements it encloses, in screen order; nil for other kinds and in
+        /// reports from before drawings.
+        var encloses: [Element]?
+        /// For a drawing that encloses more than `encloses` lists, how many it encloses.
+        var enclosedCount: Int?
         var screenTitle: String?
         /// The snapshot that shows most of the note's outline.
         var snapshot: String?
         var attachments: [String]?
 
         private enum CodingKeys: String, CodingKey {
-            case number, title, note, element, ancestors, screenTitle, snapshot, attachments
+            case number, title, note, element, ancestors, encloses, enclosedCount, screenTitle, snapshot, attachments
             /// The name version 1 of report.json used for `snapshot`.
             case picture
         }
@@ -129,6 +134,8 @@ struct ReportListing: Decodable {
             note = try container.decodeIfPresent(String.self, forKey: .note)
             element = try container.decodeIfPresent(Element.self, forKey: .element)
             ancestors = try container.decodeIfPresent([Element].self, forKey: .ancestors)
+            encloses = try container.decodeIfPresent([Element].self, forKey: .encloses)
+            enclosedCount = try container.decodeIfPresent(Int.self, forKey: .enclosedCount)
             screenTitle = try container.decodeIfPresent(String.self, forKey: .screenTitle)
             snapshot =
                 try container.decodeIfPresent(String.self, forKey: .snapshot)

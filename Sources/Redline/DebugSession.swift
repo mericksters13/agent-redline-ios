@@ -13,6 +13,8 @@ final class DebugSession {
     /// What Redline is doing, which decides what the overlay shows and whether it takes touches.
     enum Mode {
         case idle, picking, noting, tray, viewer, attaching
+        /// Drawing strokes on the screen, around what a note will be about.
+        case drawing
         /// The reports already sent, opened with a long press on the floating button.
         case reports
         /// Choosing where reports go: an agent on the Mac, then one of its chats.
@@ -22,7 +24,7 @@ final class DebugSession {
         /// annotate frame and the markers of notes already made.
         var isAnnotating: Bool {
             switch self {
-            case .picking, .noting, .tray, .attaching: true
+            case .picking, .noting, .tray, .attaching, .drawing: true
             case .idle, .viewer, .reports, .destination: false
             }
         }
@@ -30,7 +32,7 @@ final class DebugSession {
         /// The island of pick-mode controls shows.
         var showsIsland: Bool {
             switch self {
-            case .picking, .tray, .attaching: true
+            case .picking, .tray, .attaching, .drawing: true
             case .idle, .noting, .viewer, .reports, .destination: false
             }
         }
@@ -80,11 +82,14 @@ final class DebugSession {
         var screen: ScreenInfo?
     }
 
-    /// A note already made on the screen being picked on, where its element is now.
+    /// A note already made on the screen being picked on, where its element or drawing is now.
     struct Marker: Identifiable, Equatable {
         var id: UUID
         var number: Int
+        /// The element's frame, or the box around the drawing.
         var frame: CGRect
+        /// For a drawing, its strokes where they are now.
+        var strokes: [[CGPoint]] = []
     }
 
     /// A short message under the island, or at the top of the screen when idle.
@@ -144,6 +149,24 @@ final class DebugSession {
     private(set) var noteError: String?
     /// The window size when the screen was last read.
     private(set) var readSize = CGSize.zero
+    /// The drawing being made, in screen points: each stroke a finger drew, in order.
+    ///
+    /// Empty while the window is at another size than the one it was drawn at, such as after a
+    /// rotation, since it no longer lines up with the screen. Coming back to that size shows it
+    /// again: iPadOS lays an app out at another size for a moment to snapshot it for the app
+    /// switcher.
+    var strokes: [[CGPoint]] { strokesSize == screenSize ? drawnStrokes : [] }
+    /// Every stroke of the drawing, at `strokesSize`.
+    private var drawnStrokes: [[CGPoint]] = []
+    /// The window size the drawing was made at.
+    private var strokesSize = CGSize.zero
+    /// The box around the drawing, set when Done is tapped.
+    private var drawingBox: CGRect?
+    /// The named elements the drawing encloses, in screen order, read when Done is tapped.
+    private(set) var encloses: [ElementSnapshot] = []
+    /// True while the note card is for the drawing: Add note saves it, and Cancel goes back to
+    /// drawing with the strokes kept.
+    private(set) var isNotingDrawing = false
 
     /// False after the window changes size, such as on rotation, until the screen is read
     /// again: element frames from the last read no longer line up with the screen.
@@ -175,6 +198,9 @@ final class DebugSession {
     var selected: ElementSnapshot? {
         levels.indices.contains(levelIndex) ? levels[levelIndex] : nil
     }
+
+    /// The area the note card is about: the picked element's frame, or the box around the drawing.
+    var noteFrame: CGRect? { isNotingDrawing ? drawingBox : selected?.frame }
 
     var screenTitle: String { screen.title ?? "This screen" }
 
@@ -416,6 +442,9 @@ final class DebugSession {
         let scrollViews = AppWindows.scrollViews(in: appWindows())
         AppWindows.stopScrolling(scrollViews)
         levels = []
+        // Markers from the last visit, or from a draft put back after a failed send, until the
+        // screen is read.
+        markers = []
         notesThisVisit = []
         setMode(.picking)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -425,7 +454,7 @@ final class DebugSession {
         settling = Task {
             try? await Task.sleep(for: .milliseconds(60))
             var positions = AppWindows.scrollPositions(of: scrollViews)
-            for _ in 0..<27 where !Task.isCancelled && mode == .picking {
+            for _ in 0..<27 where !Task.isCancelled && (mode == .picking || mode == .drawing) {
                 try? await Task.sleep(for: .milliseconds(16))
                 let next = AppWindows.scrollPositions(of: scrollViews)
                 if next == positions { break }
@@ -433,6 +462,11 @@ final class DebugSession {
             }
             guard !Task.isCancelled else { return }
             settling = nil
+            // The pen was tapped while the screen settled: read it for the saved-note markers.
+            if mode == .drawing {
+                readScreen()
+                return
+            }
             guard mode == .picking else { return }
             // A touch made while the screen settled picks from this read, not a moving one.
             let touch = settlingTouch
@@ -456,6 +490,8 @@ final class DebugSession {
         markers = []
         elements = []
         screenImage = nil
+        drawnStrokes = []
+        encloses = []
         setMode(.idle)
     }
 
@@ -504,6 +540,59 @@ final class DebugSession {
         selectionFeedback.selectionChanged()
     }
 
+    // MARK: - Drawing
+
+    /// Switches touches from picking to drawing.
+    func startDrawing() {
+        guard mode == .picking || mode == .tray else { return }
+        // A touch made while the screen settled was for picking.
+        settlingTouch = nil
+        levels = []
+        drawnStrokes = []
+        encloses = []
+        setMode(.drawing)
+    }
+
+    /// Adds a stroke a finger just drew.
+    ///
+    /// A tap draws nothing.
+    func addStroke(_ points: [CGPoint]) {
+        guard mode == .drawing, points.count > 1 else { return }
+        // Strokes from before a rotation no longer line up with the screen.
+        if strokesSize != screenSize {
+            drawnStrokes = []
+            strokesSize = screenSize
+        }
+        drawnStrokes.append(points)
+    }
+
+    func undoStroke() {
+        guard mode == .drawing, !strokes.isEmpty else { return }
+        drawnStrokes.removeLast()
+    }
+
+    /// Throws the drawing away and goes back to picking.
+    func cancelDrawing() {
+        guard mode == .drawing else { return }
+        drawnStrokes = []
+        encloses = []
+        setMode(.picking)
+    }
+
+    /// Reads the screen as it is under the drawing, then opens the note card for it.
+    func finishDrawing() {
+        guard mode == .drawing, !strokes.isEmpty else { return }
+        readScreen()
+        encloses = ElementSelection.enclosed(by: strokes, in: elements, screenSize: readSize)
+        drawingBox = Annotation.bounds(of: strokes)
+        noteText = ""
+        pending = nil
+        levels = []
+        isNotingDrawing = true
+        notingReturnMode = .picking
+        beginNoting()
+    }
+
     // MARK: - Notes
 
     func saveNote() {
@@ -535,23 +624,37 @@ final class DebugSession {
             }
             return
         }
-        guard let element = selected, let screenImage else { return }
+        guard let screenImage, let frame = noteFrame else { return }
         let id = UUID()
         // Filing the capture can move earlier notes onto it, so keep what to put back if the
         // draft can't be written.
         let before = (annotations: annotations, screens: screens)
-        let captureID = fileCapture(screenImage, for: element)
-        let annotation = Annotation(
-            id: id,
-            createdAt: .now,
-            note: note,
-            kind: .element,
-            element: element,
-            ancestors: Array(levels.dropFirst(levelIndex + 1)),
-            screen: screen,
-            attachments: [],
-            captureID: captureID
-        )
+        let annotation: Annotation
+        if isNotingDrawing {
+            // The strokes as drawn, at the size the screen was read at, even if it has turned since.
+            annotation = .drawing(
+                id: id,
+                note: note,
+                strokes: drawnStrokes,
+                enclosing: encloses,
+                heldBy: ElementSelection.holding(frame, excluding: encloses, in: elements, screenSize: readSize),
+                screen: screen,
+                captureID: fileCapture(screenImage, element: nil, frame: frame)
+            )
+        } else {
+            guard let element = selected else { return }
+            annotation = Annotation(
+                id: id,
+                createdAt: .now,
+                note: note,
+                kind: .element,
+                element: element,
+                ancestors: Array(levels.dropFirst(levelIndex + 1)),
+                screen: screen,
+                attachments: [],
+                captureID: fileCapture(screenImage, element: element, frame: frame)
+            )
+        }
         // A failed save keeps the card open with the text for another try: a note missing from
         // the draft file would vanish on the next launch. Screens go first: a screens file
         // listing a capture no note uses is harmless, while a note whose capture isn't listed
@@ -570,13 +673,15 @@ final class DebugSession {
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             return
         }
-        thumbnails[id] = Self.crop(screenImage, around: element.frame)
+        thumbnails[id] = Self.crop(screenImage, around: frame)
         notesThisVisit.insert(id)
         if let screenController { noteControllers.setObject(screenController, forKey: id as NSUUID) }
         annotations.append(annotation)
         pruneCaptures()
         fullImages.removeAllObjects()
         levels = []
+        drawnStrokes = []
+        encloses = []
         refreshMarkers()
         endNoting(returningTo: notingReturnMode)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -587,7 +692,13 @@ final class DebugSession {
         captureFlight = nil
         pending?.loading?.cancel()
         pending = nil
-        endNoting(returningTo: notingReturnMode)
+        guard isNotingDrawing else {
+            endNoting(returningTo: notingReturnMode)
+            return
+        }
+        // Back to the drawing, to add to it.
+        encloses = []
+        endNoting(returningTo: .drawing)
     }
 
     /// Saves the attachment's images and adds it to the draft.
@@ -768,7 +879,7 @@ final class DebugSession {
             trayReturnMode = mode
             refreshHubAddress()
             setMode(.tray)
-        case .noting, .viewer, .attaching, .reports, .destination:
+        case .noting, .viewer, .attaching, .drawing, .reports, .destination:
             break
         }
     }
@@ -1213,6 +1324,10 @@ final class DebugSession {
         markers = []
         elements = []
         screenImage = nil
+        drawnStrokes = []
+        encloses = []
+        isNotingDrawing = false
+        drawingBox = nil
         setMode(.idle)
 
         let store = store
@@ -1308,8 +1423,9 @@ final class DebugSession {
     /// Files the screen as just read under its screen (see `CaptureMerge.place`): one snapshot per
     /// state of the screen.
     ///
-    /// Returns the capture the new note belongs to.
-    private func fileCapture(_ image: UIImage, for element: ElementSnapshot) -> UUID {
+    /// Returns the capture the new note belongs to. `frame` is the area the note marks: its element's
+    /// frame, or the box around its drawing.
+    private func fileCapture(_ image: UIImage, element: ElementSnapshot?, frame: CGRect) -> UUID {
         let capture = Capture(
             id: UUID(),
             file: "capture-\(UUID().uuidString).png",
@@ -1322,6 +1438,7 @@ final class DebugSession {
             capture,
             image: image.cgImage,
             element: element,
+            frame: frame,
             screen: screen,
             screens: &screens,
             annotations: &annotations
@@ -1393,13 +1510,14 @@ final class DebugSession {
         let band = ScreenComposition.band(for: group)
         let outlines = annotations.enumerated().compactMap { index, other -> ReportRenderer.Outline? in
             guard let otherCapture = other.captureID.flatMap({ id in group.first { $0.id == id } }),
-                let frame = other.element?.frame,
+                let frame = other.frame,
                 let rect = ScreenComposition.position(of: frame, from: otherCapture, on: capture, band: band)
             else { return nil }
             return ReportRenderer.Outline(
                 number: index + 1,
                 rect: rect,
-                style: other.id == annotation.id ? .current : .quiet
+                style: other.id == annotation.id ? .current : .quiet,
+                strokes: Annotation.strokes(other.strokes, from: frame, to: rect)
             )
         }
         let snapshot = ReportRenderer.render(plan, captures: [capture.id: image], outlines: outlines, scale: 2)
@@ -1407,10 +1525,10 @@ final class DebugSession {
         return snapshot
     }
 
-    /// A close crop of the picked element from the screen as last read, for the note card
-    /// when the element itself is hidden behind the keyboard or the card.
+    /// A close crop of the picked element or the drawn-around area from the screen as last read, for
+    /// the note card when it is hidden behind the keyboard or the card.
     func selectedElementPreview() -> UIImage? {
-        guard let frame = selected?.frame, let image = screenImage else { return nil }
+        guard let frame = noteFrame, let image = screenImage else { return nil }
         return Self.crop(image, around: frame)
     }
 
@@ -1495,15 +1613,15 @@ final class DebugSession {
         return cgImage.cropping(to: crop).flatMap(thumbnailBitmap)
     }
 
-    /// A thumbnail of the item for the notes list: a close crop around its element, or the top
-    /// of its first image.
+    /// A thumbnail of the item for the notes list: a close crop around its element or drawing, or
+    /// the top of its first image.
     ///
     /// Cached for the life of the draft.
     func thumbnail(for annotation: Annotation) -> UIImage? {
         if let cached = thumbnails[annotation.id] { return cached }
-        if let captureID = annotation.captureID, let element = annotation.element {
+        if let captureID = annotation.captureID, let frame = annotation.frame {
             guard let (_, capture) = capture(withID: captureID), let image = captureImage(capture),
-                let thumbnail = Self.crop(image, around: element.frame)
+                let thumbnail = Self.crop(image, around: frame)
             else { return nil }
             thumbnails[annotation.id] = thumbnail
             return thumbnail
@@ -1532,7 +1650,7 @@ final class DebugSession {
         NoteCardPlacement.top(
             // After a rotation the picked frame points at the wrong place; the card shows
             // a crop of the element instead.
-            element: screenReadIsCurrent ? selected?.frame : nil,
+            element: screenReadIsCurrent ? noteFrame : nil,
             height: height,
             reservedHeight: reservedHeight,
             top: safeAreaTop,
@@ -1715,6 +1833,8 @@ final class DebugSession {
 
     private func endNoting(returningTo next: Mode) {
         noteText = ""
+        isNotingDrawing = false
+        drawingBox = nil
         keyboardWait?.cancel()
         keyboardWait = nil
         isAwaitingKeyboard = false
@@ -1855,12 +1975,34 @@ final class DebugSession {
             let sameScreen =
                 notesThisVisit.contains(annotation.id)
                 || (isSameController && screen.title != nil && annotation.screen == screen)
-            guard let element = annotation.element, sameScreen,
-                let match = ElementSelection.match(element, in: elements)
-            else { return nil }
+            guard sameScreen else { return nil }
+            if !annotation.strokes.isEmpty { return drawingMarker(for: annotation, number: index + 1) }
+            guard let element = annotation.element, let match = ElementSelection.match(element, in: elements) else {
+                return nil
+            }
             return Marker(id: annotation.id, number: index + 1, frame: match.frame)
         }
         if found != markers { markers = found }
+    }
+
+    /// Where a drawing is now: moved with the first element it encloses when that is found at the
+    /// same size, so it follows a scroll; otherwise where it was drawn, only on a read of the same
+    /// size and scroll position as its capture.
+    private func drawingMarker(for annotation: Annotation, number: Int) -> Marker? {
+        guard let box = annotation.frame else { return nil }
+        if let anchor = annotation.encloses.first, let offset = ElementSelection.offset(of: anchor, in: elements) {
+            let moved = box.offsetBy(dx: offset.x, dy: offset.y)
+            return Marker(
+                id: annotation.id,
+                number: number,
+                frame: moved,
+                strokes: Annotation.strokes(annotation.strokes, from: box, to: moved)
+            )
+        }
+        guard let (_, capture) = annotation.captureID.flatMap(capture(withID:)), capture.size == readSize,
+            CaptureMerge.isSameScroll(capture.scroll, scrollState)
+        else { return nil }
+        return Marker(id: annotation.id, number: number, frame: box, strokes: annotation.strokes)
     }
 
     /// The app's own visible windows, bottom to top, without Redline's.
