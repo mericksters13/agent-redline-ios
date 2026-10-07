@@ -94,7 +94,8 @@ enum CaptureMerge {
             if !keepsEarlierStates(
                 stitching: capture,
                 image: image,
-                newNoteAreas: Annotation.areas(element: element, strokes: strokes),
+                newNoteFrame: frame,
+                newNoteStrokes: strokes,
                 onto: group,
                 annotations: annotations,
                 loadImage: loadImage
@@ -162,7 +163,8 @@ enum CaptureMerge {
     static func keepsEarlierStates(
         stitching capture: Capture,
         image: CGImage?,
-        newNoteAreas: [CGRect],
+        newNoteFrame: CGRect,
+        newNoteStrokes: [[CGPoint]],
         onto group: [Capture],
         annotations: [Annotation],
         loadImage: (_ capture: Capture) -> CGImage?
@@ -176,6 +178,9 @@ enum CaptureMerge {
             return CGRect(x: 0, y: segment.sourceMinY, width: capture.size.width, height: segment.height)
         }
         // A new note on a bar that an earlier capture draws.
+        let newNoteAreas =
+            newNoteStrokes.isEmpty
+            ? [newNoteFrame] : Annotation.areas(element: nil, strokes: newNoteStrokes, band: band)
         for frame in newNoteAreas where frame.midY < band.lowerBound || frame.midY > band.upperBound {
             for segment in [plan.segments.first, plan.segments.last] {
                 guard let segment, segment.captureID != capture.id else { continue }
@@ -193,7 +198,7 @@ enum CaptureMerge {
             }
             // The marked pixels as the note was made, and where the new capture would draw them.
             var compared: [(shown: CGRect, drawn: CGRect)] = []
-            for frame in Annotation.areas(element: annotation.element, strokes: annotation.strokes) {
+            for frame in Annotation.areas(element: annotation.element, strokes: annotation.strokes, band: band) {
                 // The element's content rows that both captures show between the bars.
                 let top = max(
                     from.contentY(ofScreenY: max(frame.minY, band.lowerBound)),

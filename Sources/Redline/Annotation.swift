@@ -109,11 +109,16 @@ struct Annotation: Codable, Equatable, Identifiable, Sendable {
         }
     }
 
-    /// The areas a note marks, each placed on its own in a stitched snapshot: the element's frame,
-    /// or the box around each stroke of a drawing.
-    static func areas(element: ElementSnapshot?, strokes: [[CGPoint]]) -> [CGRect] {
+    /// The areas a note marks, as a stitched snapshot places them: the element's frame, or the box
+    /// around a drawing's strokes over the top bars, over the content in `band`, and over the bottom
+    /// bars, so the content between strokes on the same side counts too.
+    static func areas(element: ElementSnapshot?, strokes: [[CGPoint]], band: ClosedRange<CGFloat>) -> [CGRect] {
         if let element { return [element.frame] }
-        return strokes.compactMap { bounds(of: [$0]) }
+        let sides = Dictionary(grouping: strokes) { stroke -> Int in
+            guard let box = bounds(of: [stroke]) else { return 0 }
+            return box.midY < band.lowerBound ? -1 : box.midY > band.upperBound ? 1 : 0
+        }
+        return [-1, 0, 1].compactMap { sides[$0].flatMap(bounds(of:)) }
     }
 
     /// The square of the screen a note's thumbnail shows, in the points of `screen`.

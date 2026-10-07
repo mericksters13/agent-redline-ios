@@ -191,14 +191,18 @@ struct AnnotationTests {
         #expect(placed == [high, [CGPoint(x: 10, y: 140), CGPoint(x: 40, y: 190)]])
     }
 
-    @Test func aNotesAreasAreItsElementOrEachStroke() {
-        #expect(Annotation.areas(element: button, strokes: []) == [button.frame])
-        let strokes = [
-            [CGPoint(x: 10, y: 10), CGPoint(x: 40, y: 30)], [CGPoint(x: 10, y: 90), CGPoint(x: 40, y: 140)],
-        ]
+    @Test func aDrawingsAreasAreItsStrokesOnEachSideOfTheBars() {
+        let band: ClosedRange<CGFloat> = 50...700
+        #expect(Annotation.areas(element: button, strokes: [], band: band) == [button.frame])
+        // Two lines bracketing the content count as one area, with what lies between them.
+        let bar = [CGPoint(x: 10, y: 10), CGPoint(x: 40, y: 30)]
+        let left = [CGPoint(x: 10, y: 100), CGPoint(x: 10, y: 300)]
+        let right = [CGPoint(x: 300, y: 100), CGPoint(x: 300, y: 300)]
+        let tab = [CGPoint(x: 50, y: 750), CGPoint(x: 80, y: 760)]
         #expect(
-            Annotation.areas(element: nil, strokes: strokes) == [
-                CGRect(x: 8, y: 8, width: 34, height: 24), CGRect(x: 8, y: 88, width: 34, height: 54),
+            Annotation.areas(element: nil, strokes: [left, tab, bar, right], band: band) == [
+                CGRect(x: 8, y: 8, width: 34, height: 24), CGRect(x: 8, y: 98, width: 294, height: 204),
+                CGRect(x: 48, y: 748, width: 34, height: 14),
             ]
         )
     }

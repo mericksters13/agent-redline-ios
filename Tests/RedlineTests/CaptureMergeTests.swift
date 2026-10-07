@@ -61,14 +61,22 @@ struct CaptureMergeTests {
         /// Adds a drawing: a box drawn around each of `areas`, as they are on `state`.
         @discardableResult
         mutating func addDrawing(on state: GrowthScreen, around areas: CGRect...) throws -> UUID {
-            let strokes = areas.map { area in
-                let outer = area.insetBy(dx: -10, dy: -10)
-                return [
-                    CGPoint(x: outer.minX, y: outer.minY), CGPoint(x: outer.maxX, y: outer.minY),
-                    CGPoint(x: outer.maxX, y: outer.maxY), CGPoint(x: outer.minX, y: outer.maxY),
-                    CGPoint(x: outer.minX, y: outer.minY),
-                ]
-            }
+            try addDrawing(
+                on: state,
+                strokes: areas.map { area in
+                    let outer = area.insetBy(dx: -10, dy: -10)
+                    return [
+                        CGPoint(x: outer.minX, y: outer.minY), CGPoint(x: outer.maxX, y: outer.minY),
+                        CGPoint(x: outer.maxX, y: outer.maxY), CGPoint(x: outer.minX, y: outer.maxY),
+                        CGPoint(x: outer.minX, y: outer.minY),
+                    ]
+                }
+            )
+        }
+
+        /// Adds a drawing of `strokes`, as drawn on `state`.
+        @discardableResult
+        mutating func addDrawing(on state: GrowthScreen, strokes: [[CGPoint]]) throws -> UUID {
             let frame = try #require(Annotation.bounds(of: strokes))
             let image = try state.image()
             let capture = Capture(
@@ -192,6 +200,23 @@ struct CaptureMergeTests {
             on: GrowthScreen(segment: .length, scrollOffset: 100, selectsInsights: true),
             identifier: "sleep.card"
         )
+        #expect(draft.snapshots == [[1], [2]])
+    }
+
+    @Test func aBoxDrawnAsFourLinesKeepsTheStateItWasDrawnOn() throws {
+        // Only the card between the lines shows the segment switch.
+        let card = GrowthScreen.card.insetBy(dx: -10, dy: -10)
+        var draft = Draft()
+        try draft.addDrawing(
+            on: GrowthScreen(segment: .length),
+            strokes: [
+                [CGPoint(x: card.minX, y: card.minY), CGPoint(x: card.maxX, y: card.minY)],
+                [CGPoint(x: card.maxX, y: card.minY), CGPoint(x: card.maxX, y: card.maxY)],
+                [CGPoint(x: card.maxX, y: card.maxY), CGPoint(x: card.minX, y: card.maxY)],
+                [CGPoint(x: card.minX, y: card.maxY), CGPoint(x: card.minX, y: card.minY)],
+            ]
+        )
+        try draft.addNote(on: GrowthScreen(segment: .head, scrollOffset: 100), identifier: "sleep.card")
         #expect(draft.snapshots == [[1], [2]])
     }
 
