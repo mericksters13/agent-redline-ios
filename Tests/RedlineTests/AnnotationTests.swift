@@ -180,6 +180,49 @@ struct AnnotationTests {
         #expect(item.enclosedCount == nil)
     }
 
+    @Test func eachStrokeMovesWholeByItsOwnBox() {
+        // Strokes whose box is low move down 50; one far right is left out.
+        let high = [CGPoint(x: 10, y: 10), CGPoint(x: 40, y: 30)]
+        let low = [CGPoint(x: 10, y: 90), CGPoint(x: 40, y: 140)]
+        let right = [CGPoint(x: 310, y: 10), CGPoint(x: 340, y: 30)]
+        let placed = Annotation.strokes([high, low, right]) { box in
+            box.midX > 300 ? nil : box.offsetBy(dx: 0, dy: box.midY > 100 ? 50 : 0)
+        }
+        #expect(placed == [high, [CGPoint(x: 10, y: 140), CGPoint(x: 40, y: 190)]])
+    }
+
+    @Test func aNotesAreasAreItsElementOrEachStroke() {
+        #expect(Annotation.areas(element: button, strokes: []) == [button.frame])
+        let strokes = [
+            [CGPoint(x: 10, y: 10), CGPoint(x: 40, y: 30)], [CGPoint(x: 10, y: 90), CGPoint(x: 40, y: 140)],
+        ]
+        #expect(
+            Annotation.areas(element: nil, strokes: strokes) == [
+                CGRect(x: 8, y: 8, width: 34, height: 24), CGRect(x: 8, y: 88, width: 34, height: 54),
+            ]
+        )
+    }
+
+    @Test func aThumbnailShowsAnElementsLeadingEndAndAllOfADrawing() {
+        let screen = CGSize(width: 402, height: 874)
+        func area(_ frame: CGRect, drawing: Bool) -> CGRect {
+            Annotation.thumbnailArea(around: frame, isDrawing: drawing, on: screen)
+        }
+        // A wide row: the square at its leading end.
+        let row = CGRect(x: 20, y: 100, width: 362, height: 60)
+        #expect(area(row, drawing: false) == CGRect(x: 8, y: 88, width: 84, height: 84))
+        // An underline: a square around all of it.
+        let underline = CGRect(x: 40, y: 500, width: 300, height: 10)
+        #expect(area(underline, drawing: true) == CGRect(x: 28, y: 343, width: 324, height: 324))
+        // Near a corner: moved inside the screen, still holding the drawing.
+        let corner = CGRect(x: 300, y: 20, width: 100, height: 40)
+        #expect(area(corner, drawing: true) == CGRect(x: 278, y: 0, width: 124, height: 124))
+        #expect(area(corner, drawing: true).contains(corner))
+        // Taller than the screen is wide: past both sides, centered on the screen.
+        let tall = CGRect(x: 60, y: 100, width: 200, height: 600)
+        #expect(area(tall, drawing: true) == CGRect(x: -111, y: 88, width: 624, height: 624))
+    }
+
     @Test func strokesMoveWithTheirBox() {
         let strokes = [[CGPoint(x: 10, y: 20), CGPoint(x: 30, y: 40)], [CGPoint(x: 12, y: 22)]]
         let box = CGRect(x: 8, y: 18, width: 24, height: 24)

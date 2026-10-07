@@ -96,6 +96,51 @@ struct Annotation: Codable, Equatable, Identifiable, Sendable {
         return strokes.map { $0.map { CGPoint(x: $0.x + dx, y: $0.y + dy) } }
     }
 
+    /// A drawing's strokes, each moved whole as `place` moves the box around it; a stroke `place`
+    /// leaves out is left out.
+    ///
+    /// A stitched snapshot keeps a bar where it was and moves the content under it, so a stroke on
+    /// a bar and one on the content move apart, like an element on each. A stroke that only grazes
+    /// the edge between them goes with the side its middle is on.
+    static func strokes(_ strokes: [[CGPoint]], placedBy place: (CGRect) -> CGRect?) -> [[CGPoint]] {
+        strokes.compactMap { stroke in
+            guard let box = bounds(of: [stroke]), let placed = place(box) else { return nil }
+            return Self.strokes([stroke], from: box, to: placed).first
+        }
+    }
+
+    /// The areas a note marks, each placed on its own in a stitched snapshot: the element's frame,
+    /// or the box around each stroke of a drawing.
+    static func areas(element: ElementSnapshot?, strokes: [[CGPoint]]) -> [CGRect] {
+        if let element { return [element.frame] }
+        return strokes.compactMap { bounds(of: [$0]) }
+    }
+
+    /// The square of the screen a note's thumbnail shows, in the points of `screen`.
+    ///
+    /// An element's keeps its leading end when it is wide and its top when it is tall, where the
+    /// icon and title usually are; the middle of a row is often empty. A drawing's holds all of it,
+    /// centered and moved inside the screen. A drawing taller or wider than the screen's shorter
+    /// side gets a square that reaches past the screen's edges, centered on the screen there.
+    static func thumbnailArea(around frame: CGRect, isDrawing: Bool, on screen: CGSize) -> CGRect {
+        let area = frame.insetBy(dx: -12, dy: -12)
+        guard isDrawing else {
+            let side = min(area.width, area.height)
+            return CGRect(origin: area.origin, size: CGSize(width: side, height: side))
+        }
+        let side = max(area.width, area.height)
+        func start(centeredOn center: CGFloat, within length: CGFloat) -> CGFloat {
+            guard side <= length else { return (length - side) / 2 }
+            return min(max(center - side / 2, 0), length - side)
+        }
+        return CGRect(
+            x: start(centeredOn: area.midX, within: screen.width),
+            y: start(centeredOn: area.midY, within: screen.height),
+            width: side,
+            height: side
+        )
+    }
+
     /// The box around every point of a drawing, grown by 2 points on each side so a straight line
     /// still has an area; nil without points.
     static func bounds(of strokes: [[CGPoint]]) -> CGRect? {

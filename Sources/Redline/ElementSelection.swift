@@ -85,10 +85,7 @@ enum ElementSelection {
     /// at the same distance. Elements covering almost the whole screen are left out, since "the
     /// whole screen" says nothing useful.
     static func levels(at point: CGPoint, in elements: [ElementSnapshot], screenSize: CGSize) -> [ElementSnapshot] {
-        let screenArea = screenSize.width * screenSize.height
-        func isUsable(_ element: ElementSnapshot) -> Bool {
-            !element.frame.isEmpty && area(element.frame) < screenArea * 0.9
-        }
+        func isUsable(_ element: ElementSnapshot) -> Bool { Self.isUsable(element, screenSize: screenSize) }
 
         var hit = elements.indices.last { isUsable(elements[$0]) && elements[$0].frame.contains(point) }
         if hit == nil,
@@ -141,9 +138,10 @@ enum ElementSelection {
     /// lines all enclose what lies between them, while two circles apart each enclose only what they
     /// hold. A shape counts as the convex hull of its points. An element is enclosed when, for one
     /// shape, its center is inside the hull and at least `enclosedShare` of it is within
-    /// `enclosingSlack` of the box around the shape, and it shows: an element covered by a sheet or by
-    /// a view in front of it isn't what was circled. A group named only by what it holds adds nothing
-    /// once what it holds is listed.
+    /// `enclosingSlack` of the box around the shape, and it shows: it is the frontmost element at one
+    /// of five points on it, or holds that element. An element covered by a sheet or by a view in
+    /// front of it isn't what was circled. A group named only by what it holds adds nothing once what
+    /// it holds shows inside the drawing, by name or by value.
     static func enclosed(by strokes: [[CGPoint]], in elements: [ElementSnapshot], screenSize: CGSize)
         -> [ElementSnapshot]
     {
@@ -154,11 +152,10 @@ enum ElementSelection {
             return (hull, box.insetBy(dx: -enclosingSlack, dy: -enclosingSlack))
         }
         guard !areas.isEmpty else { return [] }
-        let screenArea = screenSize.width * screenSize.height
-        let inside = elements.filter { element in
+        let shown = elements.filter { element in
             let frame = element.frame
             let center = CGPoint(x: frame.midX, y: frame.midY)
-            guard hasName(element), !frame.isEmpty, area(frame) < screenArea * 0.9,
+            guard isUsable(element, screenSize: screenSize),
                 areas.contains(where: { shape in
                     area(frame.intersection(shape.reach)) >= area(frame) * enclosedShare
                         && contains(center, inConvex: shape.hull)
@@ -169,10 +166,13 @@ enum ElementSelection {
             let samples = [(0.5, 0.5), (0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)].map { x, y in
                 CGPoint(x: frame.minX + frame.width * x, y: frame.minY + frame.height * y)
             }
-            return samples.contains { levels(at: $0, in: elements, screenSize: screenSize).contains(element) }
+            return samples.contains { chain(at: $0, in: elements, screenSize: screenSize).contains(element) }
         }
-        let names = Set(inside.compactMap { $0.label?.nonEmpty ?? $0.identifier?.nonEmpty ?? $0.value?.nonEmpty })
-        return inside.filter { element in
+        // Everything inside, named or not: a group named by what it holds, values included, adds
+        // nothing once that shows.
+        let names = Set(shown.compactMap { $0.label?.nonEmpty ?? $0.identifier?.nonEmpty ?? $0.value?.nonEmpty })
+        return shown.filter { element in
+            guard hasName(element) else { return false }
             guard element.label?.nonEmpty == nil, element.identifier?.nonEmpty == nil, let contents = element.contents
             else { return true }
             return !contents.allSatisfy(names.contains)
@@ -189,9 +189,36 @@ enum ElementSelection {
         in elements: [ElementSnapshot],
         screenSize: CGSize
     ) -> [ElementSnapshot] {
-        levels(at: CGPoint(x: box.midX, y: box.midY), in: elements, screenSize: screenSize).filter {
+        chain(at: CGPoint(x: box.midX, y: box.midY), in: elements, screenSize: screenSize).filter {
             hasName($0) && $0.frame.insetBy(dx: -2, dy: -2).contains(box) && !enclosed.contains($0)
         }
+    }
+
+    /// The frontmost element at `point` and every element holding it, innermost first.
+    ///
+    /// Unlike `levels(at:in:screenSize:)`, a holder the same size as what it holds stays, so a named
+    /// wrapper around an unlabeled control counts as shown, and nothing is picked from nearby.
+    private static func chain(at point: CGPoint, in elements: [ElementSnapshot], screenSize: CGSize)
+        -> [ElementSnapshot]
+    {
+        guard
+            var current = elements.indices.last(where: {
+                isUsable(elements[$0], screenSize: screenSize) && elements[$0].frame.contains(point)
+            })
+        else { return [] }
+        var chain = [elements[current]]
+        // Parents come before their children, so each step moves to a lower index.
+        while let index = elements[current].parent, index >= 0, index < current {
+            current = index
+            if isUsable(elements[index], screenSize: screenSize) { chain.append(elements[index]) }
+        }
+        return chain
+    }
+
+    /// Whether an element can be picked or enclosed: it has an area, and covers less than 90% of
+    /// the screen, since "the whole screen" says nothing useful.
+    private static func isUsable(_ element: ElementSnapshot, screenSize: CGSize) -> Bool {
+        !element.frame.isEmpty && area(element.frame) < screenSize.width * screenSize.height * 0.9
     }
 
     /// How far `element` has moved on a fresh read of the screen; nil when it isn't found there, or
@@ -235,6 +262,9 @@ enum ElementSelection {
 
     /// Whether an element has a label, an identifier, or, for a group, named contents: something a
     /// report can call it.
+    ///
+    /// A value alone, such as a slider's "50%" or the text typed in a field, isn't, since it isn't in
+    /// the code; such an element is left out of what a drawing encloses and of what holds it.
     private static func hasName(_ element: ElementSnapshot) -> Bool {
         element.label?.nonEmpty != nil || element.identifier?.nonEmpty != nil || element.contents?.isEmpty == false
     }

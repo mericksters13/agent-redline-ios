@@ -639,7 +639,7 @@ final class DebugSession {
                 enclosing: encloses,
                 heldBy: ElementSelection.holding(frame, excluding: encloses, in: elements, screenSize: readSize),
                 screen: screen,
-                captureID: fileCapture(screenImage, element: nil, frame: frame)
+                captureID: fileCapture(screenImage, element: nil, frame: frame, strokes: drawnStrokes)
             )
         } else {
             guard let element = selected else { return }
@@ -652,7 +652,7 @@ final class DebugSession {
                 ancestors: Array(levels.dropFirst(levelIndex + 1)),
                 screen: screen,
                 attachments: [],
-                captureID: fileCapture(screenImage, element: element, frame: frame)
+                captureID: fileCapture(screenImage, element: element, frame: frame, strokes: [])
             )
         }
         // A failed save keeps the card open with the text for another try: a note missing from
@@ -673,7 +673,7 @@ final class DebugSession {
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             return
         }
-        thumbnails[id] = Self.crop(screenImage, around: frame)
+        thumbnails[id] = Self.crop(screenImage, around: frame, isDrawing: annotation.kind == .drawing)
         notesThisVisit.insert(id)
         if let screenController { noteControllers.setObject(screenController, forKey: id as NSUUID) }
         annotations.append(annotation)
@@ -1425,7 +1425,7 @@ final class DebugSession {
     ///
     /// Returns the capture the new note belongs to. `frame` is the area the note marks: its element's
     /// frame, or the box around its drawing.
-    private func fileCapture(_ image: UIImage, element: ElementSnapshot?, frame: CGRect) -> UUID {
+    private func fileCapture(_ image: UIImage, element: ElementSnapshot?, frame: CGRect, strokes: [[CGPoint]]) -> UUID {
         let capture = Capture(
             id: UUID(),
             file: "capture-\(UUID().uuidString).png",
@@ -1439,6 +1439,7 @@ final class DebugSession {
             image: image.cgImage,
             element: element,
             frame: frame,
+            strokes: strokes,
             screen: screen,
             screens: &screens,
             annotations: &annotations
@@ -1509,16 +1510,20 @@ final class DebugSession {
         let group = record.captures.filter { $0.group == capture.group }
         let band = ScreenComposition.band(for: group)
         let outlines = annotations.enumerated().compactMap { index, other -> ReportRenderer.Outline? in
-            guard let otherCapture = other.captureID.flatMap({ id in group.first { $0.id == id } }),
-                let frame = other.frame,
+            guard let otherCapture = other.captureID.flatMap({ id in group.first { $0.id == id } }) else {
+                return nil
+            }
+            let style: ReportRenderer.Outline.Style = other.id == annotation.id ? .current : .quiet
+            // A drawing's strokes are placed one by one: one can be over a bar, another over the content.
+            guard other.strokes.isEmpty else {
+                let strokes = ScreenComposition.position(of: other.strokes, from: otherCapture, on: capture, band: band)
+                guard let rect = Annotation.bounds(of: strokes) else { return nil }
+                return ReportRenderer.Outline(number: index + 1, rect: rect, style: style, strokes: strokes)
+            }
+            guard let frame = other.frame,
                 let rect = ScreenComposition.position(of: frame, from: otherCapture, on: capture, band: band)
             else { return nil }
-            return ReportRenderer.Outline(
-                number: index + 1,
-                rect: rect,
-                style: other.id == annotation.id ? .current : .quiet,
-                strokes: Annotation.strokes(other.strokes, from: frame, to: rect)
-            )
+            return ReportRenderer.Outline(number: index + 1, rect: rect, style: style)
         }
         let snapshot = ReportRenderer.render(plan, captures: [capture.id: image], outlines: outlines, scale: 2)
         fullImages.setObject(snapshot, forKey: key)
@@ -1529,7 +1534,7 @@ final class DebugSession {
     /// the note card when it is hidden behind the keyboard or the card.
     func selectedElementPreview() -> UIImage? {
         guard let frame = noteFrame, let image = screenImage else { return nil }
-        return Self.crop(image, around: frame)
+        return Self.crop(image, around: frame, isDrawing: isNotingDrawing)
     }
 
     // MARK: - Thumbnails and previews
@@ -1582,27 +1587,44 @@ final class DebugSession {
         return UIImage(cgImage: image).preparingThumbnail(of: size)
     }
 
-    /// A square crop for a thumbnail.
+    /// A square crop for a thumbnail, of `Annotation.thumbnailArea(around:isDrawing:on:)`.
     ///
-    /// A wide element keeps its leading end and a tall one its top, where the icon and title
-    /// usually are; the middle of a row is often empty. `frame` is in the points of the screen
-    /// the image was taken of, which may have been a different size or orientation from the
-    /// screen now.
-    private static func crop(_ image: UIImage, around frame: CGRect) -> UIImage? {
+    /// `frame` is in the points of the screen the image was taken of, which may have been a
+    /// different size or orientation from the screen now. Where a drawing's square reaches past
+    /// the screen's edge, the thumbnail is black there, so all of the drawing still shows.
+    private static func crop(_ image: UIImage, around frame: CGRect, isDrawing: Bool) -> UIImage? {
         guard let cgImage = image.cgImage else { return nil }
         let scale = AppWindows.screenshotScale
-        var area = frame.insetBy(dx: -12, dy: -12)
-        let side = min(area.width, area.height)
-        area.size = CGSize(width: side, height: side)
-        let crop = CGRect(
+        let screen = CGSize(width: CGFloat(cgImage.width) / scale, height: CGFloat(cgImage.height) / scale)
+        let area = Annotation.thumbnailArea(around: frame, isDrawing: isDrawing, on: screen)
+        let square = CGRect(
             x: area.minX * scale,
             y: area.minY * scale,
             width: area.width * scale,
             height: area.height * scale
         )
-        .intersection(CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        let crop = square.intersection(CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
         guard !crop.isEmpty, let cropped = cgImage.cropping(to: crop) else { return nil }
-        return thumbnailBitmap(cropped)
+        guard isDrawing, crop.width < square.width - 1 || crop.height < square.height - 1 else {
+            return thumbnailBitmap(cropped)
+        }
+        let ratio = min(thumbnailSide / square.width, 1)
+        let side = (square.width * ratio).rounded()
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
+            UIColor.black.setFill()
+            UIRectFill(CGRect(x: 0, y: 0, width: side, height: side))
+            UIImage(cgImage: cropped).draw(
+                in: CGRect(
+                    x: (crop.minX - square.minX) * ratio,
+                    y: (crop.minY - square.minY) * ratio,
+                    width: crop.width * ratio,
+                    height: crop.height * ratio
+                )
+            )
+        }
     }
 
     /// The top of an attached image, square, where a screen's title usually is.
@@ -1621,7 +1643,7 @@ final class DebugSession {
         if let cached = thumbnails[annotation.id] { return cached }
         if let captureID = annotation.captureID, let frame = annotation.frame {
             guard let (_, capture) = capture(withID: captureID), let image = captureImage(capture),
-                let thumbnail = Self.crop(image, around: frame)
+                let thumbnail = Self.crop(image, around: frame, isDrawing: annotation.kind == .drawing)
             else { return nil }
             thumbnails[annotation.id] = thumbnail
             return thumbnail
@@ -1629,7 +1651,8 @@ final class DebugSession {
         guard let first = annotation.attachments.first,
             let image = UIImage(contentsOfFile: store.draftDirectory.appending(path: first).path(percentEncoded: false))
         else { return nil }
-        let thumbnail = annotation.element.map { Self.crop(image, around: $0.frame) } ?? Self.topSquare(of: image)
+        let thumbnail =
+            annotation.element.map { Self.crop(image, around: $0.frame, isDrawing: false) } ?? Self.topSquare(of: image)
         guard let thumbnail else { return nil }
         thumbnails[annotation.id] = thumbnail
         return thumbnail

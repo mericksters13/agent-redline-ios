@@ -73,16 +73,17 @@ enum ReportBuilder {
                     images[capture.id] = image
                 }
                 let outlines = notes.compactMap { note -> ReportRenderer.Outline? in
-                    guard let number = numbers[note.id], let frame = note.frame,
-                        let captureID = note.captureID,
-                        let rect = plan.position(of: frame, from: captureID)
-                    else { return nil }
-                    return ReportRenderer.Outline(
-                        number: number,
-                        rect: rect,
-                        style: .normal,
-                        strokes: Annotation.strokes(note.strokes, from: frame, to: rect)
-                    )
+                    guard let number = numbers[note.id], let captureID = note.captureID else { return nil }
+                    // A drawing's strokes are placed one by one: one can be over a bar, another over the content.
+                    guard note.strokes.isEmpty else {
+                        let strokes = plan.position(of: note.strokes, from: captureID)
+                        guard let rect = Annotation.bounds(of: strokes) else { return nil }
+                        return ReportRenderer.Outline(number: number, rect: rect, style: .normal, strokes: strokes)
+                    }
+                    guard let frame = note.frame, let rect = plan.position(of: frame, from: captureID) else {
+                        return nil
+                    }
+                    return ReportRenderer.Outline(number: number, rect: rect, style: .normal)
                 }
                 screenNotes += outlines.map(\.number)
 

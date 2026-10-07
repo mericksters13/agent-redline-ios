@@ -479,6 +479,76 @@ struct ElementSelectionTests {
         #expect(enclosed == elements)
     }
 
+    @Test func aValueAloneDoesNotNameAnElement() {
+        // A slider with no label or identifier: "50%" isn't in the code to search for.
+        let slider = ElementSnapshot(
+            role: "Slider",
+            label: nil,
+            value: "50%",
+            identifier: nil,
+            className: nil,
+            isContainer: false,
+            frame: CGRect(x: 40, y: 600, width: 320, height: 44)
+        )
+        let elements = card + [slider]
+        let strokes = [loop(around: slider.frame)]
+        #expect(ElementSelection.enclosed(by: strokes, in: elements, screenSize: screen).isEmpty)
+        let inside = CGRect(x: 100, y: 610, width: 40, height: 20)
+        #expect(ElementSelection.holding(inside, excluding: [], in: elements, screenSize: screen).isEmpty)
+    }
+
+    @Test func aNamedWrapperTheSizeOfAnUnlabeledControlIsEnclosedAndHolds() {
+        let wrapper = element(
+            role: "Group",
+            label: nil,
+            frame: CGRect(x: 40, y: 600, width: 320, height: 44),
+            identifier: "upload.progress",
+            isContainer: true
+        )
+        let slider = ElementSnapshot(
+            role: "Slider",
+            label: nil,
+            value: "50%",
+            identifier: nil,
+            className: nil,
+            isContainer: false,
+            frame: CGRect(x: 41, y: 601, width: 318, height: 42),
+            parent: 0
+        )
+        let elements = [wrapper, slider]
+        let enclosed = ElementSelection.enclosed(by: [loop(around: wrapper.frame)], in: elements, screenSize: screen)
+        #expect(names(enclosed) == ["upload.progress"])
+        let inside = CGRect(x: 100, y: 610, width: 40, height: 20)
+        #expect(
+            names(ElementSelection.holding(inside, excluding: [], in: elements, screenSize: screen)) == [
+                "upload.progress"
+            ]
+        )
+    }
+
+    @Test func aGroupNamedOnlyByAValueInsideAddsNothing() {
+        var group = element(
+            role: "Group",
+            label: nil,
+            frame: CGRect(x: 40, y: 590, width: 320, height: 64),
+            isContainer: true
+        )
+        group.contents = ["50%"]
+        group.contentCount = 1
+        let slider = ElementSnapshot(
+            role: "Slider",
+            label: nil,
+            value: "50%",
+            identifier: nil,
+            className: nil,
+            isContainer: false,
+            frame: CGRect(x: 60, y: 600, width: 280, height: 44),
+            parent: 0
+        )
+        let strokes = [loop(around: group.frame)]
+        #expect(ElementSelection.enclosed(by: strokes, in: [group, slider], screenSize: screen).isEmpty)
+    }
+
     @Test func aDrawingIsHeldByTheElementsAroundIt() {
         let gap = CGRect(x: 60, y: 350, width: 40, height: 40)
         #expect(

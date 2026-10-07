@@ -49,6 +49,7 @@ enum CaptureMerge {
     ///   - image: its pixels.
     ///   - element: the element the new note is about; nil for a drawing.
     ///   - frame: the area the new note marks: the element's frame, or the box around the drawing.
+    ///   - strokes: for a drawing, its strokes, each placed on its own when the screen is stitched.
     ///   - screen: the screen the capture is of.
     ///   - screens: the draft's screens, updated.
     ///   - annotations: the draft's notes, updated when earlier notes move onto the new capture.
@@ -59,6 +60,7 @@ enum CaptureMerge {
         image: CGImage?,
         element: ElementSnapshot?,
         frame: CGRect,
+        strokes: [[CGPoint]],
         screen: ScreenInfo,
         screens: inout [ScreenRecord],
         annotations: inout [Annotation],
@@ -92,7 +94,7 @@ enum CaptureMerge {
             if !keepsEarlierStates(
                 stitching: capture,
                 image: image,
-                newNoteFrame: frame,
+                newNoteAreas: Annotation.areas(element: element, strokes: strokes),
                 onto: group,
                 annotations: annotations,
                 loadImage: loadImage
@@ -155,11 +157,12 @@ enum CaptureMerge {
     /// highest or lowest. Where that covers an earlier note's element, the element must look
     /// identical in it; after a segment switch, or a change in a bar, it doesn't, and the scrolled
     /// capture starts a new snapshot instead. The same holds the other way for the new note: on a
-    /// bar an earlier capture would draw, its element must look identical in that capture.
+    /// bar an earlier capture would draw, its element must look identical in that capture. A
+    /// drawing's strokes are checked one by one, as the snapshot places them.
     static func keepsEarlierStates(
         stitching capture: Capture,
         image: CGImage?,
-        newNoteFrame: CGRect,
+        newNoteAreas: [CGRect],
         onto group: [Capture],
         annotations: [Annotation],
         loadImage: (_ capture: Capture) -> CGImage?
@@ -173,11 +176,11 @@ enum CaptureMerge {
             return CGRect(x: 0, y: segment.sourceMinY, width: capture.size.width, height: segment.height)
         }
         // A new note on a bar that an earlier capture draws.
-        if newNoteFrame.midY < band.lowerBound || newNoteFrame.midY > band.upperBound {
+        for frame in newNoteAreas where frame.midY < band.lowerBound || frame.midY > band.upperBound {
             for segment in [plan.segments.first, plan.segments.last] {
                 guard let segment, segment.captureID != capture.id else { continue }
                 let bar = CGRect(x: 0, y: segment.sourceMinY, width: capture.size.width, height: segment.height)
-                let shown = newNoteFrame.intersection(bar)
+                let shown = frame.intersection(bar)
                 guard !shown.isNull, shown.height >= 1 else { continue }
                 guard let owner = group.first(where: { $0.id == segment.captureID }), let ownerImage = loadImage(owner),
                     looksIdentical(shown, in: image, of: capture, as: shown, in: ownerImage, of: owner)
@@ -185,39 +188,46 @@ enum CaptureMerge {
             }
         }
         for annotation in annotations {
-            guard let source = group.first(where: { $0.id == annotation.captureID }), let from = source.scroll,
-                let frame = annotation.frame
-            else { continue }
+            guard let source = group.first(where: { $0.id == annotation.captureID }), let from = source.scroll else {
+                continue
+            }
             // The marked pixels as the note was made, and where the new capture would draw them.
             var compared: [(shown: CGRect, drawn: CGRect)] = []
-            // The element's content rows that both captures show between the bars.
-            let top = max(
-                from.contentY(ofScreenY: max(frame.minY, band.lowerBound)),
-                to.contentY(ofScreenY: band.lowerBound)
-            )
-            let bottom = min(
-                from.contentY(ofScreenY: min(frame.maxY, band.upperBound)),
-                to.contentY(ofScreenY: band.upperBound)
-            )
-            if bottom - top >= 1 {
-                let height = bottom - top
-                compared.append(
-                    (
-                        shown: CGRect(
-                            x: frame.minX,
-                            y: from.screenY(ofContentY: top),
-                            width: frame.width,
-                            height: height
-                        ),
-                        drawn: CGRect(x: frame.minX, y: to.screenY(ofContentY: top), width: frame.width, height: height)
-                    )
+            for frame in Annotation.areas(element: annotation.element, strokes: annotation.strokes) {
+                // The element's content rows that both captures show between the bars.
+                let top = max(
+                    from.contentY(ofScreenY: max(frame.minY, band.lowerBound)),
+                    to.contentY(ofScreenY: band.lowerBound)
                 )
-            }
-            // A note on a bar stays where it was made, over the bar the new capture would draw.
-            if frame.midY < band.lowerBound || frame.midY > band.upperBound {
-                for bar in bars {
-                    let shown = frame.intersection(bar)
-                    if !shown.isNull, shown.height >= 1 { compared.append((shown: shown, drawn: shown)) }
+                let bottom = min(
+                    from.contentY(ofScreenY: min(frame.maxY, band.upperBound)),
+                    to.contentY(ofScreenY: band.upperBound)
+                )
+                if bottom - top >= 1 {
+                    let height = bottom - top
+                    compared.append(
+                        (
+                            shown: CGRect(
+                                x: frame.minX,
+                                y: from.screenY(ofContentY: top),
+                                width: frame.width,
+                                height: height
+                            ),
+                            drawn: CGRect(
+                                x: frame.minX,
+                                y: to.screenY(ofContentY: top),
+                                width: frame.width,
+                                height: height
+                            )
+                        )
+                    )
+                }
+                // A note on a bar stays where it was made, over the bar the new capture would draw.
+                if frame.midY < band.lowerBound || frame.midY > band.upperBound {
+                    for bar in bars {
+                        let shown = frame.intersection(bar)
+                        if !shown.isNull, shown.height >= 1 { compared.append((shown: shown, drawn: shown)) }
+                    }
                 }
             }
             guard !compared.isEmpty else { continue }

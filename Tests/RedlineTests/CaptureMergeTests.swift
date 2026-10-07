@@ -35,6 +35,7 @@ struct CaptureMergeTests {
                 image: image,
                 element: element,
                 frame: element.frame,
+                strokes: [],
                 screen: ScreenInfo(title: "Patterns", viewController: "NavigationStackHostingController"),
                 screens: &screens,
                 annotations: &annotations
@@ -57,17 +58,17 @@ struct CaptureMergeTests {
             return id
         }
 
-        /// Adds a drawing: a box drawn around `area`, as it is on `state`.
+        /// Adds a drawing: a box drawn around each of `areas`, as they are on `state`.
         @discardableResult
-        mutating func addDrawing(on state: GrowthScreen, around area: CGRect) throws -> UUID {
-            let outer = area.insetBy(dx: -10, dy: -10)
-            let strokes = [
-                [
+        mutating func addDrawing(on state: GrowthScreen, around areas: CGRect...) throws -> UUID {
+            let strokes = areas.map { area in
+                let outer = area.insetBy(dx: -10, dy: -10)
+                return [
                     CGPoint(x: outer.minX, y: outer.minY), CGPoint(x: outer.maxX, y: outer.minY),
                     CGPoint(x: outer.maxX, y: outer.maxY), CGPoint(x: outer.minX, y: outer.maxY),
                     CGPoint(x: outer.minX, y: outer.minY),
                 ]
-            ]
+            }
             let frame = try #require(Annotation.bounds(of: strokes))
             let image = try state.image()
             let capture = Capture(
@@ -84,6 +85,7 @@ struct CaptureMergeTests {
                 image: image,
                 element: nil,
                 frame: frame,
+                strokes: strokes,
                 screen: ScreenInfo(title: "Patterns", viewController: "NavigationStackHostingController"),
                 screens: &screens,
                 annotations: &annotations
@@ -175,6 +177,22 @@ struct CaptureMergeTests {
         let banner = try draft.addNote(on: GrowthScreen(segment: .head, showsBanner: true), label: "Back up your data")
         #expect(draft.captureID(of: drawing) == draft.captureID(of: banner))
         #expect(draft.snapshots == [[1, 2]])
+    }
+
+    @Test func aStrokeOnATabBarIsCheckedWhenMostOfTheDrawingIsOnTheContent() throws {
+        // The drawing's box is mostly over the content, but its second stroke is on the tab bar, which
+        // the scrolled capture draws differently.
+        var draft = Draft()
+        try draft.addDrawing(
+            on: GrowthScreen(segment: .length),
+            around: GrowthScreen.sleepCard,
+            GrowthScreen.insightsTab
+        )
+        try draft.addNote(
+            on: GrowthScreen(segment: .length, scrollOffset: 100, selectsInsights: true),
+            identifier: "sleep.card"
+        )
+        #expect(draft.snapshots == [[1], [2]])
     }
 
     @Test func scrollsMatchWithinTwoPointsOnTheSameView() {

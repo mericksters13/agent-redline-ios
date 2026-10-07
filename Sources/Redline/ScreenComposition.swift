@@ -159,6 +159,18 @@ enum ScreenComposition {
         return moved.midY >= band.lowerBound && moved.midY <= band.upperBound ? moved : nil
     }
 
+    /// Where a drawing made on one capture shows on another capture of the same group, stroke by
+    /// stroke: strokes over the bars stay, strokes over the content move with it, and strokes
+    /// scrolled out of that capture's view are left out.
+    static func position(
+        of strokes: [[CGPoint]],
+        from source: Capture,
+        on target: Capture,
+        band: ClosedRange<CGFloat>?
+    ) -> [[CGPoint]] {
+        Annotation.strokes(strokes) { position(of: $0, from: source, on: target, band: band) }
+    }
+
     /// How many screens tall a snapshot can be and still be sent whole.
     ///
     /// Agents shrink large images (Claude to about 1,568 pixels on the long side); at two screens
