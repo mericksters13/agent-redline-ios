@@ -242,6 +242,10 @@ VStack(alignment: .leading) {
   <img src="docs/images/redline-larger-before-after.jpg" width="880" alt="Two screenshots of the demo's recipe title block in annotate mode. Left, without the modifiers: tapping the summary selects only the summary text, and the note card offers no Larger. Right, with them: after Larger, the outline covers the title and the summary, and the note card names the group detail.titles.">
 </p>
 
+**When `.contain` adds no element.** SwiftUI creates a new element when the container holds several elements, none, or one element with no children. When it wraps exactly one element that already has children, such as a single card that is already a container, SwiftUI changes that element instead, so Larger gains no new step. Put the modifiers on that inner element.
+
+**These modifiers ship in your Release build.** Redline is Debug-only, but the modifiers are part of your views. `.contain` makes VoiceOver move through the container's children together before the next element, so add it where the views form one group, such as a card or a form section, and check the order with VoiceOver. An identifier changes nothing VoiceOver reads.
+
 **Set both, not just the identifier.** On a container with no element of its own, SwiftUI copies the identifier onto each child instead of naming the container. In the demo, `.accessibilityIdentifier("detail.stats")` alone on the stats grid left the grid unreachable and gave every stat cell the identifier `detail.stats`.
 
 **What merges or hides elements:**
@@ -250,11 +254,11 @@ VStack(alignment: .leading) {
 - `.accessibilityElement(children: .ignore)` replaces the children with one element that you label.
 - A `Button` or `NavigationLink` merges its label into one element.
 - `.accessibilityHidden(true)` removes a view and its children. Redline also skips views that are hidden, nearly transparent, or clipped out of view.
-- `Canvas`, Metal and custom drawing have no child elements. Pick the enclosing view, or attach a snapshot of the whole screen with the capture button.
+- `Canvas`, Metal and custom drawing have no child elements. To make their parts pickable, give the view synthetic children with `accessibilityChildren(children:)`, such as one per bar of a chart, or replace its elements with `accessibilityRepresentation(representation:)`. Redline outlines each synthetic child at the frame of the view that describes it, and Larger steps out to the drawing. Otherwise, pick the enclosing view, or attach a snapshot of the whole screen with the capture button.
 
 **UIKit.** Set `accessibilityIdentifier` on the view. A view with an identifier or a label becomes a group that Larger can reach; set `isAccessibilityElement = true` to make it one element instead.
 
-**Apple's documentation:** [Accessibility fundamentals](https://developer.apple.com/documentation/swiftui/accessibility-fundamentals), [`accessibilityIdentifier(_:)`](https://developer.apple.com/documentation/swiftui/view/accessibilityidentifier(_:)), [`accessibilityElement(children:)`](https://developer.apple.com/documentation/swiftui/view/accessibilityelement(children:)), [`AccessibilityChildBehavior`](https://developer.apple.com/documentation/swiftui/accessibilitychildbehavior), and UIKit's [`accessibilityIdentifier`](https://developer.apple.com/documentation/uikit/uiaccessibilityidentification/accessibilityidentifier).
+**Apple's documentation:** [Accessibility fundamentals](https://developer.apple.com/documentation/swiftui/accessibility-fundamentals), [`accessibilityIdentifier(_:)`](https://developer.apple.com/documentation/swiftui/view/accessibilityidentifier(_:)), [`accessibilityElement(children:)`](https://developer.apple.com/documentation/swiftui/view/accessibilityelement(children:)), [`AccessibilityChildBehavior`](https://developer.apple.com/documentation/swiftui/accessibilitychildbehavior), [`accessibilityChildren(children:)`](https://developer.apple.com/documentation/swiftui/view/accessibilitychildren(children:)), [`accessibilityRepresentation(representation:)`](https://developer.apple.com/documentation/swiftui/view/accessibilityrepresentation(representation:)), and UIKit's [`accessibilityIdentifier`](https://developer.apple.com/documentation/uikit/uiaccessibilityidentification/accessibilityidentifier).
 
 </details>
 
