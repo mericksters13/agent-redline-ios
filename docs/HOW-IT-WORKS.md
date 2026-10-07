@@ -69,11 +69,11 @@ When Redline starts, it also sends on the reports no chat took while it was stop
 Each report is a folder in `~/Library/Application Support/Redline/inbox/<bundle ID>`, named by the report ID and the end of the device ID, such as `20261004-142233-0E12001C`:
 
 - `report.md`: a summary for the agent, with the app and version, the device and iOS version, each screen's notes, and which snapshot shows each note.
-- `report.json`: the same in full, with each element's frame, role, label, value, identifier and class, the named elements that hold it, and where its outline sits in its snapshot.
+- `report.json`: the same in full, with each element's frame, role, label, value, identifier and class, the named elements that hold it, and where its outline sits in its snapshot. A drawing lists the named elements it encloses instead of one element, and its strokes are drawn in its snapshot.
 - The snapshots, each named by a UUID. There is one per screen, with every note on it outlined. A screen you scrolled while noting is stitched into one tall snapshot, cut between rows into parts when it is taller than about two screens.
 - The attachments: photos, and whole screens from the capture button, each as its own file.
 
-When a screen's content changed between notes, such as a switched segment, earlier notes move onto the newer snapshot if their elements look the same there. The others keep a snapshot of the earlier state. In the chat's message, a line under such a snapshot's path says what it shows, such as `Editor, earlier state, before the screen changed` or `Editor, part 2 of 2`.
+When a screen's content changed between notes, such as a switched segment, earlier notes move onto the newer snapshot if their elements look the same there, and drawings if the area they cover looks the same and the screen didn't scroll. The others keep a snapshot of the earlier state. In the chat's message, a line under such a snapshot's path says what it shows, such as `Editor, earlier state, before the screen changed` or `Editor, part 2 of 2`.
 
 ## What the installer checks and runs
 

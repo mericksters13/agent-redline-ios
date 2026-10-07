@@ -59,5 +59,11 @@ struct ImagePlan: Equatable, Sendable {
             height: frame.height
         )
     }
+
+    /// Where a drawing made on `capture` sits in this snapshot, stroke by stroke: a stroke over a
+    /// bar stays on the bar, and one over the content moves with the content.
+    func position(of strokes: [[CGPoint]], from captureID: UUID) -> [[CGPoint]] {
+        Annotation.strokes(strokes) { position(of: $0, from: captureID) }
+    }
 }
 #endif

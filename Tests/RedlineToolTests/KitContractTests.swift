@@ -287,7 +287,7 @@ struct KitContractTests {
                     id: "s1",
                     title: "Editor",
                     viewController: nil,
-                    notes: [1],
+                    notes: [1, 3],
                     snapshots: [
                         .init(
                             file: "screen-1.jpg",
@@ -295,7 +295,7 @@ struct KitContractTests {
                             parts: 1,
                             stitchedFrom: 1,
                             isEarlierState: false,
-                            notes: [1],
+                            notes: [1, 3],
                             width: 10,
                             height: 20
                         )
@@ -331,6 +331,22 @@ struct KitContractTests {
                     outline: nil,
                     attachments: ["note-2.jpg"]
                 ),
+                .init(
+                    number: 3,
+                    kind: .drawing,
+                    note: "Cramped",
+                    createdAt: date,
+                    title: "Drawing around Save",
+                    element: nil,
+                    ancestors: [form],
+                    screen: "s1",
+                    screenTitle: "Editor",
+                    snapshot: "screen-1.jpg",
+                    outline: .init(x: 1, y: 2, width: 3, height: 4),
+                    attachments: [],
+                    encloses: [element],
+                    enclosedCount: 13
+                ),
             ],
             destination: .init(agent: "codex", chat: "t-1", title: "Fix it", newChat: nil)
         )
@@ -341,16 +357,22 @@ struct KitContractTests {
         #expect(listing.app?.sourceFile == "/w/App/AppMain.swift")
         #expect(listing.destination?.agent == "codex" && listing.destination?.chat == "t-1")
         #expect(listing.screens?.first?.title == "Editor")
-        #expect(listing.screens?.first?.snapshots.first?.notes == [1])
+        #expect(listing.screens?.first?.snapshots.first?.notes == [1, 3])
         #expect(listing.items?.first?.element?.identifier == "editor.save")
         #expect(listing.items?.first?.ancestors?.first?.contents == ["Title", "Save"])
         #expect(listing.items?.first?.ancestors?.first?.description == #"Group "Title" and "Save""#)
-        #expect(listing.items?.last?.attachments == ["note-2.jpg"])
+        #expect(listing.items?.last?.encloses?.first?.identifier == "editor.save")
+        #expect(listing.items?.last?.enclosedCount == 13)
+        #expect(listing.items?[1].attachments == ["note-2.jpg"])
 
         // Every reader gets the whole report, not its fallback.
         #expect(ReportContent.snapshots(in: folder).map(\.lastPathComponent) == ["screen-1.jpg", "note-2.jpg"])
         #expect(HubWindowModel.snapshots(in: folder).map(\.title) == ["Editor", "Photo"])
-        #expect(HubWindowModel.notes(in: folder).map(\.text) == ["Save: Too small", "Photo: No note"])
+        #expect(
+            HubWindowModel.notes(in: folder).map(\.text) == [
+                "Save: Too small", "Photo: No note", "Drawing around Save: Cramped",
+            ]
+        )
         #expect(
             Routing.destination(of: folder, bundleID: "com.example.app") { _, _ in
                 HubMessage.ChatList(agents: [], chats: [])
@@ -367,6 +389,11 @@ struct KitContractTests {
         let text = ReportContent.text(for: InboxReport(folder: folder, source: source, claim: nil))
         #expect(text.hasPrefix("UI report from Test iPhone · Example"))
         #expect(text.contains(#"1. Save (Button, editor.save), in Group "Title" and "Save": Too small"#))
+        #expect(
+            text.contains(
+                #"3. Drawing around Save, enclosing Button "Save" (editor.save) and 12 more, in Group "Title" and "Save": Cramped"#
+            )
+        )
     }
 
     @Test func everyReaderUsesTheSnapshotNamesTheReportGives() throws {

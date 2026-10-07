@@ -37,26 +37,7 @@ enum ReportBuilder {
         let scale = ReportRenderer.sendScale
         let numbers = Dictionary(uniqueKeysWithValues: input.annotations.enumerated().map { ($1.id, $0 + 1) })
         var items = Dictionary(
-            uniqueKeysWithValues: input.annotations.enumerated().map { index, annotation in
-                (
-                    index + 1,
-                    Report.Item(
-                        number: index + 1,
-                        kind: annotation.kind,
-                        note: annotation.note,
-                        createdAt: annotation.createdAt,
-                        // The element's whole name: the agent searches the code for it, so nothing is cut short.
-                        title: annotation.element?.fullName ?? annotation.title,
-                        element: annotation.element,
-                        ancestors: annotation.ancestors,
-                        screen: nil,
-                        screenTitle: annotation.screen?.title,
-                        snapshot: nil,
-                        outline: nil,
-                        attachments: []
-                    )
-                )
-            }
+            uniqueKeysWithValues: input.annotations.enumerated().map { ($0 + 1, Report.Item($1, number: $0 + 1)) }
         )
 
         // Screens in the order of their first note.
@@ -92,10 +73,16 @@ enum ReportBuilder {
                     images[capture.id] = image
                 }
                 let outlines = notes.compactMap { note -> ReportRenderer.Outline? in
-                    guard let number = numbers[note.id], let frame = note.element?.frame,
-                        let captureID = note.captureID,
-                        let rect = plan.position(of: frame, from: captureID)
-                    else { return nil }
+                    guard let number = numbers[note.id], let captureID = note.captureID else { return nil }
+                    // A drawing's strokes are placed one by one: one can be over a bar, another over the content.
+                    guard note.strokes.isEmpty else {
+                        let strokes = plan.position(of: note.strokes, from: captureID)
+                        guard let rect = Annotation.bounds(of: strokes) else { return nil }
+                        return ReportRenderer.Outline(number: number, rect: rect, style: .normal, strokes: strokes)
+                    }
+                    guard let frame = note.frame, let rect = plan.position(of: frame, from: captureID) else {
+                        return nil
+                    }
                     return ReportRenderer.Outline(number: number, rect: rect, style: .normal)
                 }
                 screenNotes += outlines.map(\.number)
@@ -109,7 +96,7 @@ enum ReportBuilder {
                 let parts = ScreenComposition.parts(
                     height: plan.size.height,
                     maxHeight: group[0].size.height * ScreenComposition.screensPerSnapshot,
-                    keepingWhole: outlines.map(\.rect),
+                    keepingWhole: outlines.flatMap { $0.marked() },
                     avoiding: onScreen,
                     preferring: plan.gaps.map(\.rect.midY)
                 )
@@ -144,20 +131,27 @@ enum ReportBuilder {
                             parts: parts.count,
                             stitchedFrom: plan.stitchedFrom,
                             isEarlierState: earlier,
-                            notes: outlines.filter { $0.rect.intersects(shown) }.map(\.number).sorted(),
+                            notes: outlines.filter { $0.marked().contains { $0.intersects(shown) } }.map(\.number)
+                                .sorted(),
                             width: Int((image.size.width * image.scale).rounded()),
                             height: Int((image.size.height * image.scale).rounded()),
                             scrolledPast: skipped > 0 ? Int(skipped.rounded()) : nil
                         )
                     )
                 }
-                // Each note points at the part that shows most of its outline.
+                // Each note points at the part that shows most of what it marks, and at that part's share
+                // of it: a drawing's strokes can be far apart, with nothing marked between them.
                 for outline in outlines {
-                    let best =
-                        parts.indices.max { overlap(outline.rect, parts[$0]) < overlap(outline.rect, parts[$1]) } ?? 0
+                    let marked = outline.marked()
+                    func shown(in rows: ClosedRange<CGFloat>) -> CGFloat {
+                        marked.map { overlap($0, rows) }.reduce(0, +)
+                    }
+                    let best = parts.indices.max { shown(in: parts[$0]) < shown(in: parts[$1]) } ?? 0
                     guard files.indices.contains(best) else { continue }
                     let file = files[best]
-                    let rect = outline.rect.offsetBy(dx: 0, dy: -parts[best].lowerBound)
+                    let inPart = marked.filter { overlap($0, parts[best]) > 0 }
+                    let area = inPart.dropFirst().reduce(inPart.first ?? outline.rect) { $0.union($1) }
+                    let rect = area.offsetBy(dx: 0, dy: -parts[best].lowerBound)
                     items[outline.number]?.screen = screenID
                     items[outline.number]?.snapshot = file
                     items[outline.number]?.outline = Report.Box(

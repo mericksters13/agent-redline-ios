@@ -318,6 +318,47 @@ struct ScreenCompositionTests {
         #expect(ScreenComposition.position(of: farUp, from: top, on: lower, band: band) == nil)
     }
 
+    @Test func aDrawingIsPlacedStrokeByStrokeInAStitchedSnapshot() throws {
+        let top = capture(-62)
+        let lower = capture(400)
+        let plan = try #require(ScreenComposition.plan(for: [top, lower]))
+        // On the lower capture: a loop around a bar item that dips into the list stays on the bar,
+        // whole; a loop around the first row that grazes the bar moves with the list, whole, 462
+        // points lower.
+        let barItem = [CGPoint(x: 300, y: 20), CGPoint(x: 360, y: 45), CGPoint(x: 300, y: 70)]
+        let firstRow = [CGPoint(x: 20, y: 55), CGPoint(x: 380, y: 100), CGPoint(x: 20, y: 140)]
+        #expect(
+            plan.position(of: [barItem, firstRow], from: lower.id) == [
+                barItem, firstRow.map { CGPoint(x: $0.x, y: $0.y + 462) },
+            ]
+        )
+        // Over the home indicator: with the bottom bars, at the bottom of the snapshot.
+        let bottom = [CGPoint(x: 100, y: 850), CGPoint(x: 200, y: 860)]
+        #expect(
+            plan.position(of: [bottom], from: top.id) == [
+                [CGPoint(x: 100, y: plan.footerY + 11), CGPoint(x: 200, y: plan.footerY + 21)]
+            ]
+        )
+    }
+
+    @Test func aDrawingShowsOnAnotherCaptureOnlyWhereItWasInView() {
+        let top = capture(-62)
+        let lower = capture(400)
+        let band = ScreenComposition.band(for: [top, lower])
+        // The bar's stroke stays, the list's moves up 462 points, and one scrolled out of view goes.
+        let bar = [CGPoint(x: 50, y: 20), CGPoint(x: 80, y: 40)]
+        let list = [CGPoint(x: 50, y: 600), CGPoint(x: 80, y: 700)]
+        let gone = [CGPoint(x: 50, y: 90), CGPoint(x: 80, y: 120)]
+        #expect(
+            ScreenComposition.position(of: [bar, list, gone], from: top, on: lower, band: band) == [
+                bar, [CGPoint(x: 50, y: 138), CGPoint(x: 80, y: 238)],
+            ]
+        )
+        #expect(
+            ScreenComposition.position(of: [bar, list, gone], from: top, on: top, band: band) == [bar, list, gone]
+        )
+    }
+
     // MARK: - Parts
 
     /// Two phone screens: the most a snapshot can be before it's split.

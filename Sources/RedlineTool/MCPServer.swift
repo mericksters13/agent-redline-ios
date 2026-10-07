@@ -30,9 +30,9 @@ final class MCPServer: Sendable {
 
     static let instructions = """
         Delivers UI reports the user sends from their iPhone or a simulator with Redline, for the app this project builds. \
-        A report has numbered notes about elements on screen, and snapshots where each note's element is outlined in red with the same number. \
+        A report has numbered notes about elements on screen, and snapshots where each note's element is outlined, or its drawing drawn, in red with the same number. \
         Call check_messages when the user mentions a report, notes, snapshots or screenshots from their phone, or asks you to check. \
-        Find the code for a note by the element's identifier or label, and its parents.
+        Find the code for a note by the element's identifier or label, and its parents; for a drawing, by the elements it encloses.
         """
 
     /// A parsed request, handed to the queue or thread that answers it.

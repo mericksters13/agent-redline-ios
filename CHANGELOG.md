@@ -10,6 +10,7 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ### Added
 
+- Draw on the screen to annotate. The pen in the annotate bar switches touches to drawing, with Undo and Done in the bar. Done numbers the drawing and opens the note card, which lists the named elements inside it. The report shows the strokes in the snapshot and lists those elements for the agent.
 - A container with `.accessibilityElement(children: .contain)` and no identifier or label can be picked. It is named after what it holds, such as `"Beyond the sky" and 2 more`, in the note card and the report.
 
 ## [0.1.2] - 2026-10-06
