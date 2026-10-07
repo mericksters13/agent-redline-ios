@@ -28,6 +28,14 @@ enum ReportRenderer {
         var style: Style
         /// For a drawing, its strokes, in the snapshot's points; drawn instead of a box around `rect`.
         var strokes: [[CGPoint]] = []
+
+        /// What the note marks: `rect`, or for a drawing the box around each stroke, so a stitched
+        /// snapshot's rows between strokes far apart don't count as marked.
+        ///
+        /// Goes through every point of a drawing's strokes.
+        func marked() -> [CGRect] {
+            strokes.isEmpty ? [rect] : strokes.compactMap { Annotation.bounds(of: [$0]) }
+        }
     }
 
     /// Draws the rows `rows` of the plan's snapshot, all of it by default.
@@ -89,8 +97,11 @@ enum ReportRenderer {
                     )
                 )
             }
-            for outline in outlines where outline.rect.insetBy(dx: -12, dy: -12).intersects(visible) {
-                draw(outline, within: visible)
+            for outline in outlines {
+                // The number goes by what shows of the note in these rows.
+                let shown = outline.marked().filter { $0.insetBy(dx: -12, dy: -12).intersects(visible) }
+                guard let first = shown.first else { continue }
+                draw(outline, badgeBy: shown.dropFirst().reduce(first) { $0.union($1) }, within: visible)
             }
         }
         guard let pixels = image.cgImage else { return image }
@@ -149,11 +160,11 @@ enum ReportRenderer {
         text.draw(at: CGPoint(x: gap.midX - size.width / 2, y: gap.midY - size.height / 2), withAttributes: attributes)
     }
 
-    /// A red outline, or the drawing's red strokes, with the note's number in a red circle at its
-    /// top-left corner.
+    /// A red outline, or the drawing's red strokes, with the note's number in a red circle at the
+    /// top-left corner of `anchor`, the part of the note that shows.
     ///
     /// Red reads on almost any app and is the usual color for markup.
-    private static func draw(_ outline: Outline, within visible: CGRect) {
+    private static func draw(_ outline: Outline, badgeBy anchor: CGRect, within visible: CGRect) {
         let quiet = outline.style == .quiet
         let red = UIColor.systemRed.withAlphaComponent(quiet ? 0.55 : 1)
         red.setStroke()
@@ -175,8 +186,8 @@ enum ReportRenderer {
 
         let diameter: CGFloat = 22
         let center = CGPoint(
-            x: min(max(outline.rect.minX - 3, visible.minX + diameter / 2 + 2), visible.maxX - diameter / 2 - 2),
-            y: min(max(outline.rect.minY - 3, visible.minY + diameter / 2 + 2), visible.maxY - diameter / 2 - 2)
+            x: min(max(anchor.minX - 3, visible.minX + diameter / 2 + 2), visible.maxX - diameter / 2 - 2),
+            y: min(max(anchor.minY - 3, visible.minY + diameter / 2 + 2), visible.maxY - diameter / 2 - 2)
         )
         let badge = CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter)
         UIColor.white.withAlphaComponent(quiet ? 0.7 : 1).setFill()

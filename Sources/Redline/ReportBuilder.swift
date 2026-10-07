@@ -96,7 +96,7 @@ enum ReportBuilder {
                 let parts = ScreenComposition.parts(
                     height: plan.size.height,
                     maxHeight: group[0].size.height * ScreenComposition.screensPerSnapshot,
-                    keepingWhole: outlines.map(\.rect),
+                    keepingWhole: outlines.flatMap { $0.marked() },
                     avoiding: onScreen,
                     preferring: plan.gaps.map(\.rect.midY)
                 )
@@ -131,20 +131,27 @@ enum ReportBuilder {
                             parts: parts.count,
                             stitchedFrom: plan.stitchedFrom,
                             isEarlierState: earlier,
-                            notes: outlines.filter { $0.rect.intersects(shown) }.map(\.number).sorted(),
+                            notes: outlines.filter { $0.marked().contains { $0.intersects(shown) } }.map(\.number)
+                                .sorted(),
                             width: Int((image.size.width * image.scale).rounded()),
                             height: Int((image.size.height * image.scale).rounded()),
                             scrolledPast: skipped > 0 ? Int(skipped.rounded()) : nil
                         )
                     )
                 }
-                // Each note points at the part that shows most of its outline.
+                // Each note points at the part that shows most of what it marks, and at that part's share
+                // of it: a drawing's strokes can be far apart, with nothing marked between them.
                 for outline in outlines {
-                    let best =
-                        parts.indices.max { overlap(outline.rect, parts[$0]) < overlap(outline.rect, parts[$1]) } ?? 0
+                    let marked = outline.marked()
+                    func shown(in rows: ClosedRange<CGFloat>) -> CGFloat {
+                        marked.map { overlap($0, rows) }.reduce(0, +)
+                    }
+                    let best = parts.indices.max { shown(in: parts[$0]) < shown(in: parts[$1]) } ?? 0
                     guard files.indices.contains(best) else { continue }
                     let file = files[best]
-                    let rect = outline.rect.offsetBy(dx: 0, dy: -parts[best].lowerBound)
+                    let inPart = marked.filter { overlap($0, parts[best]) > 0 }
+                    let area = inPart.dropFirst().reduce(inPart.first ?? outline.rect) { $0.union($1) }
+                    let rect = area.offsetBy(dx: 0, dy: -parts[best].lowerBound)
                     items[outline.number]?.screen = screenID
                     items[outline.number]?.snapshot = file
                     items[outline.number]?.outline = Report.Box(
