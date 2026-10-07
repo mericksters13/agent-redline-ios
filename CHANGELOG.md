@@ -4,14 +4,16 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
-### Changed
-
-- The note card shows the path from the outermost element enclosing your pick to the element you tapped, and tapping a step selects that element. It replaces the Larger and Smaller buttons, which showed only when there was somewhere to go. When nothing encloses the pick, the card says "Nothing larger to select".
+## [0.1.3] - 2026-10-07
 
 ### Added
 
 - Draw on the screen to annotate. The pen in the annotate bar switches touches to drawing, with Undo and Done in the bar. Done numbers the drawing and opens the note card, which lists the named elements inside it. The report shows the strokes in the snapshot and lists those elements for the agent.
 - A container with `.accessibilityElement(children: .contain)` and no identifier or label can be picked. It is named after what it holds, such as `"Beyond the sky" and 2 more`, in the note card and the report.
+
+### Changed
+
+- The note card shows the path from the outermost element enclosing your pick to the element you tapped, and tapping a step selects that element. It replaces the Larger and Smaller buttons, which showed only when there was somewhere to go. When nothing encloses the pick, the card says "Nothing larger to select".
 
 ## [0.1.2] - 2026-10-06
 
@@ -46,7 +48,8 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 First public release.
 
-[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.2...HEAD
+[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.3...HEAD
+[0.1.3]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.2...0.1.3
 [0.1.2]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.1...0.1.2
 [0.1.1]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.0...0.1.1
 [0.1.0]: https://github.com/mericksters13/agent-redline-ios/releases/tag/0.1.0
