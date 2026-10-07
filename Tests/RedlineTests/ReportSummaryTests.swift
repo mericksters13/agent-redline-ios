@@ -107,5 +107,35 @@ struct ReportSummaryTests {
             )
         )
     }
+
+    @Test func aGroupWithNoNameIsDescribedByWhatItHolds() {
+        var card = ElementSnapshot(
+            role: "Group",
+            label: nil,
+            value: nil,
+            identifier: nil,
+            className: nil,
+            isContainer: true,
+            frame: .zero
+        )
+        card.contents = ["Beyond the sky", "Tricks and bigger patterns", "Unlock the rest"]
+        card.contentCount = 3
+        var report = Fixtures.report(id: "r")
+        report.items[0].ancestors = [card]
+        #expect(
+            ReportSummary.markdown(report).contains(
+                #"(Button, identifier `save`), in Group "Beyond the sky" and 2 more: "#
+            )
+        )
+
+        report.items[0].title = card.fullName ?? ""
+        report.items[0].element = card
+        report.items[0].ancestors = []
+        #expect(
+            ReportSummary.markdown(report).contains(
+                #"1. **"Beyond the sky" and 2 more** (Group, holding "Beyond the sky", "Tricks and bigger patterns", "Unlock the rest"): Cut off."#
+            )
+        )
+    }
 }
 #endif

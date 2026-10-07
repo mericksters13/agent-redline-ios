@@ -81,6 +81,15 @@ enum AccessibilityTree {
             return result.count - 1
         }
 
+        /// Names the group at `index` after the named elements read inside it, which come right after
+        /// it, each parent before its children.
+        func nameUnnamedGroup(at index: Int) {
+            let inside = result[(index + 1)...].filter { !$0.isContainer }.compactMap(\.fullName)
+            guard !inside.isEmpty else { return }
+            result[index].contents = Array(inside.prefix(ElementSnapshot.contentsLength))
+            result[index].contentCount = inside.count
+        }
+
         func visit(_ object: NSObject, depth: Int, parent: Int?, clip: CGRect) {
             if stopAtFirst, !result.isEmpty { return }
             guard depth < 80, visited.insert(ObjectIdentifier(object)).inserted else { return }
@@ -93,11 +102,21 @@ enum AccessibilityTree {
             }
 
             var parent = parent
+            var unnamedGroup: Int?
             if object.isAccessibilityElement {
                 parent = append(object, isContainer: false, parent: parent, clip: clip) ?? parent
             } else if identifier(of: object) != nil || object.accessibilityLabel?.nonEmpty != nil {
                 // Named groups let the note box step up from a leaf to its card or section.
                 parent = append(object, isContainer: true, parent: parent, clip: clip) ?? parent
+            } else if !(object is UIView), hasChildren(object) {
+                // A SwiftUI container made with `.accessibilityElement(children: .contain)`, with no
+                // name: SwiftUI makes these only where asked, so they don't crowd the levels. It is
+                // named after what it holds once its children are read.
+                unnamedGroup = append(object, isContainer: true, parent: parent, clip: clip)
+                parent = unnamedGroup ?? parent
+            }
+            defer {
+                if let unnamedGroup { nameUnnamedGroup(at: unnamedGroup) }
             }
 
             if let children = object.accessibilityElements {
@@ -247,6 +266,13 @@ enum AccessibilityTree {
         if traits.contains(.image) { return "Image" }
         if traits.contains(.staticText) { return "Text" }
         return isContainer ? "Group" : "Element"
+    }
+
+    /// Whether `object` holds accessibility elements of its own.
+    private static func hasChildren(_ object: NSObject) -> Bool {
+        if let children = object.accessibilityElements { return !children.isEmpty }
+        let count = object.accessibilityElementCount()
+        return count > 0 && count != NSNotFound
     }
 
     /// SwiftUI's accessibility nodes answer `accessibilityIdentifier` without

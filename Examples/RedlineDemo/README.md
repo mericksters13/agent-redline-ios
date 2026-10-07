@@ -31,7 +31,7 @@ On a device, Redline finds a new install on its next scan, within 30 minutes. To
 
 - **Annotate and send.** Tap the floating Redline button, tap an element, write a note and tap Add note. Notes collect across tabs until you send them, so add a few on different screens, then open the notes tray and tap Send. The first time, pick your session in Send to.
 - **Read the identifiers.** Key elements have accessibility identifiers, such as `list.sort`, `detail.start`, `form.save` and `uikit.submit`, so a note in your session reads like `Start cooking (Button, detail.start): ...`.
-- **Resize the selection.** After you tap an element, Larger selects the element that encloses it and Smaller steps back toward the one you tapped.
+- **Select an enclosing element.** After you tap a stat on the Tonight tab, the note card's path reads `detail.stats`, then the stat. Tap `detail.stats` to select the whole grid.
 - **Pick UIKit views.** On the UIKit tab, annotate the text field, the segmented control, the switch and the Add to list button. Each note carries the view's label and identifier, as it does for SwiftUI elements.
 - **Send a screenshot.** Take a screenshot in the build. A thumbnail appears beside the floating button; tap it to add a note and send it with its snapshot.
 - **Find the planted bugs.** Three screens each have one visible UI bug. Report each one you find and ask your agent to fix it. The bugs stay in the repository on purpose, so keep those fixes in your clone.

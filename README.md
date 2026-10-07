@@ -190,7 +190,7 @@ The first report sent from an iPhone triggers the one-time iOS local network pro
 
 - **Floating button.** Tap it to enter annotate mode. Drag it anywhere; it snaps to the nearest edge. Press and hold it to list the reports sent from this device.
 - **Annotate mode.** Routes taps to Redline instead of the build, and draws a light red border around the screen. Its controls sit in a black bar at the top.
-  - Tap an element to select it. Larger selects the enclosing element; Smaller steps back toward the one you tapped. A card or section that Larger skips needs an element of its own: see [Make containers pickable](#make-containers-pickable).
+  - Tap an element to select it. The note card shows the path from the outermost element enclosing it to the one you tapped; tap a step to select that element instead. When nothing encloses it, the card says "Nothing larger to select". A card or section missing from the path needs an element of its own: see [Make containers pickable](#make-containers-pickable).
   - Write a note and tap Add note. Notes collect across screens until you send them.
   - Tap the close button in the bar to exit annotate mode. Unsent notes stay.
 - **Notes tray.** Lists unsent notes; tap the screen name in the bar to open it. Tap a note to view it full screen with its snapshot, or tap its trash button to delete it. Unsent notes persist on the device, across a killed process and a reinstall from a rebuild.
@@ -204,7 +204,7 @@ The first report sent from an iPhone triggers the one-time iOS local network pro
 
 ### Make containers pickable
 
-Redline picks from your build's accessibility tree. Buttons, text and controls are always in it. A card, section or custom component built from stacks usually isn't, so Larger skips it. Two modifiers fix that.
+Redline picks from your build's accessibility tree. Buttons, text and controls are always in it. A card, section or custom component built from stacks usually isn't, so it's missing from the path in the note card. One modifier makes it pickable, and a second names it.
 
 <details>
 <summary><b>The accessibility tree, accessibility identifiers, and how to expose a container</b></summary>
@@ -215,13 +215,13 @@ Redline picks from your build's accessibility tree. Buttons, text and controls a
 
 **Accessibility identifiers.** An `accessibilityIdentifier` is a string for code, not for people. VoiceOver never reads it, and it doesn't change when your copy or language does. UI tests use it to find elements. Redline puts it in each note, `Label (Role, identifier)`, so your agent searches your source for it instead of guessing from display text that can repeat or be localized.
 
-**What you can pick.** A tap selects the innermost element under your finger. Larger steps out to the next enclosing element that has an identifier or a label, and Smaller steps back. A container with no element of its own can't be reached.
+**What you can pick.** A tap selects the innermost element under your finger, and the note card's path lists every element enclosing it, outermost first. Tap a step to select it. A container with no element of its own isn't in the tree, so it isn't in the path.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/redline-accessibility-tree-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/redline-accessibility-tree-light.svg">
-    <img src="docs/images/redline-accessibility-tree-light.svg" width="880" alt="Two columns. Left: a VStack holding two Text views; in the accessibility tree both texts sit directly under the screen, so tapping a text picks only that text and there is no Larger. Right: the same VStack with .accessibilityElement(children: .contain) and .accessibilityIdentifier(&quot;detail.titles&quot;); in the tree it becomes a group named detail.titles holding the two texts, so after tapping a text, Larger picks the whole stack.">
+    <img src="docs/images/redline-accessibility-tree-light.svg" width="880" alt="Two columns. Left: a VStack holding two Text views; in the accessibility tree both texts sit directly under the screen, so tapping a text picks only that text, and the note card says Nothing larger to select. Right: the same VStack with .accessibilityElement(children: .contain) and .accessibilityIdentifier(&quot;detail.titles&quot;); in the tree it becomes a group named detail.titles holding the two texts, so after tapping a text, the path in the note card lists detail.titles, and tapping it picks the whole stack.">
   </picture>
 </p>
 
@@ -236,17 +236,19 @@ VStack(alignment: .leading) {
 .accessibilityIdentifier("detail.titles")
 ```
 
-`.contain` makes the stack an element that keeps its children pickable, and the identifier names it. Tap a child, then Larger selects the whole stack. In the [demo](Examples/RedlineDemo), with and without the two modifiers:
+`.contain` makes the stack an element that keeps its children pickable, and the identifier names it. Tap a child, and the path lists `detail.titles`; tap that to select the whole stack.
+
+With `.contain` alone, the stack is pickable but has no name of its own, so Redline names it after what it holds, such as `"Lemon Herb Chicken" and "Weeknight dinner…"`, and the report lists those names for your agent to search for. The identifier gives your agent something exact. In the [demo](Examples/RedlineDemo), with and without the two modifiers:
 
 <p align="center">
-  <img src="docs/images/redline-larger-before-after.jpg" width="880" alt="Two screenshots of the demo's recipe title block in annotate mode. Left, without the modifiers: tapping the summary selects only the summary text, and the note card offers no Larger. Right, with them: after Larger, the outline covers the title and the summary, and the note card names the group detail.titles.">
+  <img src="docs/images/redline-container-before-after.jpg" width="880" alt="Two screenshots of the demo's recipe title block in annotate mode. Left, without the modifiers: tapping the summary selects only the summary text, and the note card says Nothing larger to select. Right, with them: the note card's path reads detail.titles, then the summary; with detail.titles selected, the outline covers the title and the summary.">
 </p>
 
-**When `.contain` adds no element.** SwiftUI creates a new element when the container holds several elements, none, or one element with no children. When it wraps exactly one element that already has children, such as a single card that is already a container, SwiftUI changes that element instead, so Larger gains no new step. Put the modifiers on that inner element.
+**When `.contain` adds no element.** SwiftUI creates a new element when the container holds several elements, none, or one element with no children. When it wraps exactly one element that already has children, such as a single card that is already a container, SwiftUI changes that element instead, so the path gains no new step. Put the modifiers on that inner element.
 
 **These modifiers ship in your Release build.** Redline is Debug-only, but the modifiers are part of your views. `.contain` makes VoiceOver move through the container's children together before the next element, so add it where the views form one group, such as a card or a form section, and check the order with VoiceOver. An identifier changes nothing VoiceOver reads.
 
-**Set both, not just the identifier.** On a container with no element of its own, SwiftUI copies the identifier onto each child instead of naming the container. In the demo, `.accessibilityIdentifier("detail.stats")` alone on the stats grid left the grid unreachable and gave every stat cell the identifier `detail.stats`.
+**Set both, not just the identifier.** On a container with no element of its own, SwiftUI copies the identifier onto each child instead of naming the container. In the demo, `.accessibilityIdentifier("detail.stats")` alone on the stats grid left the grid out of the path and gave every stat cell the identifier `detail.stats`.
 
 **What merges or hides elements:**
 
@@ -254,9 +256,9 @@ VStack(alignment: .leading) {
 - `.accessibilityElement(children: .ignore)` replaces the children with one element that you label.
 - A `Button` or `NavigationLink` merges its label into one element.
 - `.accessibilityHidden(true)` removes a view and its children. Redline also skips views that are hidden, nearly transparent, or clipped out of view.
-- `Canvas`, Metal and custom drawing have no child elements. To make their parts pickable, give the view synthetic children with `accessibilityChildren(children:)`, such as one per bar of a chart, or replace its elements with `accessibilityRepresentation(representation:)`. Redline outlines each synthetic child at the frame of the view that describes it, and Larger steps out to the drawing. Otherwise, pick the enclosing view, or attach a snapshot of the whole screen with the capture button.
+- `Canvas`, Metal and custom drawing have no child elements. To make their parts pickable, give the view synthetic children with `accessibilityChildren(children:)`, such as one per bar of a chart, or replace its elements with `accessibilityRepresentation(representation:)`. Redline outlines each synthetic child at the frame of the view that describes it, and the path leads out to the drawing. Otherwise, pick the enclosing view, or attach a snapshot of the whole screen with the capture button.
 
-**UIKit.** Set `accessibilityIdentifier` on the view. A view with an identifier or a label becomes a group that Larger can reach; set `isAccessibilityElement = true` to make it one element instead.
+**UIKit.** Set `accessibilityIdentifier` on the view. A view with an identifier or a label becomes a group in the path; set `isAccessibilityElement = true` to make it one element instead.
 
 **Apple's documentation:** [Accessibility fundamentals](https://developer.apple.com/documentation/swiftui/accessibility-fundamentals), [`accessibilityIdentifier(_:)`](https://developer.apple.com/documentation/swiftui/view/accessibilityidentifier(_:)), [`accessibilityElement(children:)`](https://developer.apple.com/documentation/swiftui/view/accessibilityelement(children:)), [`AccessibilityChildBehavior`](https://developer.apple.com/documentation/swiftui/accessibilitychildbehavior), [`accessibilityChildren(children:)`](https://developer.apple.com/documentation/swiftui/view/accessibilitychildren(children:)), [`accessibilityRepresentation(representation:)`](https://developer.apple.com/documentation/swiftui/view/accessibilityrepresentation(representation:)), and UIKit's [`accessibilityIdentifier`](https://developer.apple.com/documentation/uikit/uiaccessibilityidentification/accessibilityidentifier).
 

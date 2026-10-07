@@ -76,12 +76,18 @@ enum ReportSummary {
             if let label = element.label, label != item.title {
                 details.append("label \"\(label)\"")
             }
+            // A group with no name of its own: what it holds is what to search the source for.
+            if element.label == nil, element.identifier == nil, let contents = element.contents {
+                details.append("holding " + contents.map { "\"\($0)\"" }.joined(separator: ", "))
+            }
             text += " (\(details.joined(separator: ", ")))"
         }
         // The elements holding it, such as the row or card with the identifier, tell apart
         // elements that share a label.
         let inside = item.ancestors.compactMap { ancestor -> String? in
-            guard ancestor.label != nil || ancestor.identifier != nil else { return nil }
+            if ancestor.label == nil, ancestor.identifier == nil {
+                return ancestor.contentsName.map { "\(ancestor.role) \($0)" }
+            }
             return [ancestor.role, ancestor.label.map { "\"\($0)\"" }, ancestor.identifier.map { "`\($0)`" }]
                 .compactMap { $0 }.joined(separator: " ")
         }

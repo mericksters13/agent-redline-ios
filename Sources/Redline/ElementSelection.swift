@@ -23,9 +23,17 @@ struct ElementSnapshot: Codable, Equatable, Sendable {
     ///
     /// Not saved: it means nothing outside that read.
     var parent: Int? = nil
+    /// The names of the first elements inside a group with no identifier or label of its own.
+    ///
+    /// Such a group, such as a SwiftUI container with `.accessibilityElement(children: .contain)`, is
+    /// named after them. Nil otherwise.
+    var contents: [String]? = nil
+    /// How many named elements the group holds, of which `contents` lists the first.
+    var contentCount: Int? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case role, label, value, identifier, className, isContainer, frame, updatesFrequently
+        case role, label, value, identifier, className, isContainer, frame, updatesFrequently, contents,
+            contentCount
     }
 
     /// The role headers have, which marks a screen's title.
@@ -34,12 +42,28 @@ struct ElementSnapshot: Codable, Equatable, Sendable {
     /// The longest a name runs in chips and lists, in characters, before it's cut short.
     static let shortNameLength = 34
 
-    /// The element's whole name: its label, else its identifier, else its value.
+    /// The element's whole name: its label, else its identifier, else its value, else, for a group
+    /// with none of those, what it holds, such as `"Beyond the sky" and 2 more`.
     ///
     /// Nil when it has none.
     var fullName: String? {
-        label?.nonEmpty ?? identifier?.nonEmpty ?? value?.nonEmpty
+        label?.nonEmpty ?? identifier?.nonEmpty ?? value?.nonEmpty ?? contentsName
     }
+
+    /// `"Beyond the sky"`, `"Beyond the sky" and "Unlock"`, or `"Beyond the sky" and 2 more`, from
+    /// `contents`; nil when the group holds nothing named.
+    var contentsName: String? {
+        guard let first = contents?.first else { return nil }
+        let count = max(contentCount ?? 0, contents?.count ?? 0)
+        switch count {
+        case ...1: return "\"\(first)\""
+        case 2: return "\"\(first)\" and \"\(contents?.dropFirst().first ?? "")\""
+        default: return "\"\(first)\" and \(count - 1) more"
+        }
+    }
+
+    /// How many names a group keeps in `contents`.
+    static let contentsLength = 3
 
     /// The element's own name, shortened for chips and lists, or nil when it has none.
     var shortName: String? {
@@ -109,8 +133,12 @@ enum ElementSelection {
                 return unique(hits.filter { $0.role == target.role && $0.label == target.label }, for: target)
             }
         }
-        guard let label = target.label?.nonEmpty else { return nil }
-        return unique(elements.filter { $0.role == target.role && $0.label == label }, for: target)
+        if let label = target.label?.nonEmpty {
+            return unique(elements.filter { $0.role == target.role && $0.label == label }, for: target)
+        }
+        // A group with no name of its own is known by what it holds.
+        guard let contents = target.contents, !contents.isEmpty else { return nil }
+        return unique(elements.filter { $0.role == target.role && $0.contents == contents }, for: target)
     }
 
     /// The only hit, or the only one in the saved element's place.

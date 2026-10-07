@@ -142,9 +142,13 @@ enum ReportContent {
     private static func line(_ item: Note) -> String {
         let element = item.element
         let name = element?.label ?? element?.identifier ?? item.title
-        let details = [element?.role, element?.identifier == name ? nil : element?.identifier].compactMap { $0 }.joined(
-            separator: ", "
-        )
+        // A group with no name of its own: what it holds is what to search the source for.
+        let holding = element.flatMap { element -> String? in
+            guard element.label == nil, element.identifier == nil, let contents = element.contents else { return nil }
+            return "holding " + contents.map { "\"\($0)\"" }.joined(separator: ", ")
+        }
+        let details = [element?.role, element?.identifier == name ? nil : element?.identifier, holding]
+            .compactMap { $0 }.joined(separator: ", ")
         let inside = item.ancestors.compactMap(\.description)
         let note = item.note.isEmpty ? "No note" : item.note
         return "\(item.number). \(name)\(details.isEmpty ? "" : " (\(details))")"
