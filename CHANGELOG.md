@@ -4,6 +4,8 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-09
+
 ### Fixed
 
 - The Send to > Codex picker includes chats created through Codex. Internal reviews, automations and subagents remain excluded.
@@ -52,7 +54,8 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 First public release.
 
-[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.3...HEAD
+[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.4...HEAD
+[0.1.4]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.3...0.1.4
 [0.1.3]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.2...0.1.3
 [0.1.2]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.1...0.1.2
 [0.1.1]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.0...0.1.1
