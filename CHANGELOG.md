@@ -4,6 +4,8 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-09
+
 ### Fixed
 
 - Opening the note keyboard keeps the captured app behind the selected element or drawing. The outline stays with the capture while the host app resizes, including when Cancel or Add note dismisses the keyboard.
@@ -53,7 +55,8 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 First public release.
 
-[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.3...HEAD
+[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.4...HEAD
+[0.1.4]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.3...0.1.4
 [0.1.3]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.2...0.1.3
 [0.1.2]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.1...0.1.2
 [0.1.1]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.0...0.1.1
