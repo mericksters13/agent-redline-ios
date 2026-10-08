@@ -6,6 +6,7 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ### Fixed
 
+- Opening the note keyboard keeps the captured app behind the selected element or drawing. The outline stays with the capture while the host app resizes, including when Cancel or Add note dismisses the keyboard.
 - The Send to > Codex picker includes chats created through Codex. Internal reviews, automations and subagents remain excluded.
 
 ## [0.1.3] - 2026-10-07

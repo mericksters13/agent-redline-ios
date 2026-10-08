@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		00155F906603BF079E2B195D /* Recipe+Samples.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFF33899274A81BA9EB8C611 /* Recipe+Samples.swift */; };
 		359A87BC2E283507CA9CDC18 /* MealPlanForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23D7D3C0B4BF6506A7E3D9A3 /* MealPlanForm.swift */; };
+		35F89A6EEEEE96261695796D /* KeyboardLayoutScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1768F46014CAAD5825230848 /* KeyboardLayoutScreen.swift */; };
 		367D89D3F3C39A5281CDCCB0 /* Redline in Frameworks */ = {isa = PBXBuildFile; productRef = AEA991A3DF5BCC972A9A718B /* Redline */; };
 		63D8A25CA80767A6EDCDFCC5 /* Recipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = B922AB2C09A42EC4A6DDFBC3 /* Recipe.swift */; };
 		720A25828B0989A872BC278D /* UIKitScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D14268BA71835D2CAB2FD72 /* UIKitScreen.swift */; };
@@ -20,6 +21,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		1768F46014CAAD5825230848 /* KeyboardLayoutScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardLayoutScreen.swift; sourceTree = "<group>"; };
 		23D7D3C0B4BF6506A7E3D9A3 /* MealPlanForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealPlanForm.swift; sourceTree = "<group>"; };
 		3715FE57C4C02AA67B1CC818 /* ShoppingListViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingListViewController.swift; sourceTree = "<group>"; };
 		37EEB31CFE0D2B45207525E0 /* RecipeList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipeList.swift; sourceTree = "<group>"; };
@@ -57,6 +59,7 @@
 			isa = PBXGroup;
 			children = (
 				527356366A0272DF8E3E5CFF /* DemoTabs.swift */,
+				1768F46014CAAD5825230848 /* KeyboardLayoutScreen.swift */,
 				23D7D3C0B4BF6506A7E3D9A3 /* MealPlanForm.swift */,
 				B922AB2C09A42EC4A6DDFBC3 /* Recipe.swift */,
 				CFF33899274A81BA9EB8C611 /* Recipe+Samples.swift */,
@@ -139,6 +142,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C73B1782A974F6A79817CBD0 /* DemoTabs.swift in Sources */,
+				35F89A6EEEEE96261695796D /* KeyboardLayoutScreen.swift in Sources */,
 				359A87BC2E283507CA9CDC18 /* MealPlanForm.swift in Sources */,
 				00155F906603BF079E2B195D /* Recipe+Samples.swift in Sources */,
 				63D8A25CA80767A6EDCDFCC5 /* Recipe.swift in Sources */,
