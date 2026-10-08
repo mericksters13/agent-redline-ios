@@ -47,6 +47,15 @@ struct OverlayView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
+            if session.screenReadIsCurrent, let image = session.noteBackground {
+                Image(uiImage: image)
+                    .resizable()
+                    .frame(width: width, height: session.screenSize.height)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .transition(.identity)
+            }
+
             if session.mode.isAnnotating {
                 touchSurface
                 // Frames from before a rotation would land on the wrong spots.

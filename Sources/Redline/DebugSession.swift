@@ -123,6 +123,10 @@ final class DebugSession {
     /// True from the moment the note card asks for the keyboard until the keyboard
     /// reports its frame, so the card can open where it will end up.
     private(set) var isAwaitingKeyboard = false
+    /// The captured app behind an element or drawing note, kept until the keyboard has closed.
+    ///
+    /// The host app can resize for Redline's keyboard; its live layout would no longer match the capture.
+    private(set) var noteBackground: UIImage?
     /// Center of the floating button, in screen points.
     ///
     /// Nil until the window has a size.
@@ -261,10 +265,11 @@ final class DebugSession {
     @ObservationIgnored private var toastTimer: Task<Void, Never>?
     @ObservationIgnored private var hintTimer: Task<Void, Never>?
     @ObservationIgnored private var keyboardWait: Task<Void, Never>?
+    @ObservationIgnored private var keyboardAnimationDuration = 0.25
     @ObservationIgnored private var suggestionTimer: Task<Void, Never>?
     /// True while a finger is down in pick mode.
     @ObservationIgnored private var isTouchDown = false
-    /// Waits for scrolling to settle after pick mode opens, then reads the screen; nil once read.
+    /// Waits for scrolling or keyboard dismissal to settle, then reads the screen; nil once read.
     @ObservationIgnored private var settling: Task<Void, Never>?
     /// The latest touch made while `settling` runs, replayed against its read.
     @ObservationIgnored private var settlingTouch: (point: CGPoint, isLifted: Bool)?
@@ -449,10 +454,15 @@ final class DebugSession {
         setMode(.picking)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         if AccessibilityTree.automation == .unavailable { showHint(.swiftUIUnreadable) }
-        settling?.cancel()
         settlingTouch = nil
+        settleScreen(after: .milliseconds(60), scrollViews: scrollViews)
+    }
+
+    /// Reads the live app after it stops moving, then replays a pick made while it settled.
+    private func settleScreen(after delay: Duration, scrollViews: [UIScrollView]) {
+        settling?.cancel()
         settling = Task {
-            try? await Task.sleep(for: .milliseconds(60))
+            try? await Task.sleep(for: delay)
             var positions = AppWindows.scrollPositions(of: scrollViews)
             for _ in 0..<27 where !Task.isCancelled && (mode == .picking || mode == .drawing) {
                 try? await Task.sleep(for: .milliseconds(16))
@@ -462,6 +472,7 @@ final class DebugSession {
             }
             guard !Task.isCancelled else { return }
             settling = nil
+            noteBackground = nil
             // The pen was tapped while the screen settled: read it for the saved-note markers.
             if mode == .drawing {
                 readScreen()
@@ -490,6 +501,7 @@ final class DebugSession {
         markers = []
         elements = []
         screenImage = nil
+        noteBackground = nil
         drawnStrokes = []
         encloses = []
         setMode(.idle)
@@ -581,7 +593,7 @@ final class DebugSession {
 
     /// Reads the screen as it is under the drawing, then opens the note card for it.
     func finishDrawing() {
-        guard mode == .drawing, !strokes.isEmpty else { return }
+        guard mode == .drawing, settling == nil, !strokes.isEmpty else { return }
         readScreen()
         encloses = ElementSelection.enclosed(by: strokes, in: elements, screenSize: readSize)
         drawingBox = Annotation.bounds(of: strokes)
@@ -1843,6 +1855,7 @@ final class DebugSession {
     private func beginNoting() {
         noteError = nil
         isAwaitingKeyboard = keyboardTop == .infinity
+        noteBackground = pending == nil ? screenImage : nil
         setMode(.noting)
         // A hardware keyboard never shows the on-screen one; stop waiting for it. Only this card's
         // wait may end it, not one left from a card closed moments ago.
@@ -1863,6 +1876,17 @@ final class DebugSession {
         isAwaitingKeyboard = false
         noteError = nil
         setMode(next)
+        if noteBackground != nil {
+            settleAfterKeyboard()
+        }
+    }
+
+    /// Keep the capture visible through dismissal, then read the restored host layout.
+    private func settleAfterKeyboard() {
+        settleScreen(
+            after: .seconds(max(keyboardAnimationDuration, 0.2)) + .milliseconds(100),
+            scrollViews: AppWindows.scrollViews(in: appWindows())
+        )
     }
 
     private func beginAttachmentNote(_ attachment: PendingAttachment, returningTo next: Mode = .picking) {
@@ -2057,6 +2081,7 @@ final class DebugSession {
     /// Moves the note card with the keyboard, on the keyboard's own timing curve.
     private func updateKeyboard(_ frame: CGRect?, duration: Double) {
         let visible = frame.map { $0.minY < screenSize.height && $0.height > 0 } ?? false
+        keyboardAnimationDuration = duration
         // The keyboard reports the same frame again and again; publish and save only changes.
         withAnimation(.timingCurve(0.38, 0.7, 0.125, 1, duration: max(duration, 0.2))) {
             if visible, let frame {
@@ -2069,6 +2094,11 @@ final class DebugSession {
             } else if keyboardTop != .infinity {
                 keyboardTop = .infinity
             }
+        }
+        // The hide notification can arrive after the card disappears. Restart the wait on its
+        // actual timing, so the capture never reveals the host partway through its resize.
+        if !visible, mode != .noting, noteBackground != nil {
+            settleAfterKeyboard()
         }
     }
 }

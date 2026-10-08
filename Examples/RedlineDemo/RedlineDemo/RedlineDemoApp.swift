@@ -6,8 +6,14 @@ import SwiftUI
 struct RedlineDemoApp: App {
     var body: some Scene {
         WindowGroup {
-            DemoTabs()
-                .redline()  // Debug builds only: in Release, .redline() returns the view unchanged.
+            Group {
+                if UserDefaults.standard.bool(forKey: "RedlineKeyboardLayoutDemo") {
+                    KeyboardLayoutScreen()
+                } else {
+                    DemoTabs()
+                }
+            }
+            .redline()  // Debug builds only: in Release, .redline() returns the view unchanged.
         }
     }
 }
