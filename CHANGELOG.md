@@ -4,6 +4,10 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Fixed
+
+- The Send to > Codex picker includes chats created through Codex. Internal reviews, automations and subagents remain excluded.
+
 ## [0.1.3] - 2026-10-07
 
 ### Added

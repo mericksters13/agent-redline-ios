@@ -17,7 +17,7 @@ struct CodexThreadsTests {
         #expect(CodexThreads.newestDatabase(in: root.appending(path: "missing")) == nil)
     }
 
-    @Test func codexChatsLeaveOutWhatCodexRunsOnItsOwn() async throws {
+    @Test func codexChatsIncludeCreatedChatsAndExcludeInternalWork() async throws {
         let database = root.appending(path: "state_5.sqlite")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let now = Int64(Date.now.timeIntervalSince1970 * 1000)
@@ -28,6 +28,11 @@ struct CodexThreadsTests {
             INSERT INTO threads VALUES ('t-user', 'Fix the paywall', 'Fix the paywall', 'fix it', '/p', \(now), 0, NULL, 'user', 'vscode');
             INSERT INTO threads VALUES ('t-older', '', '', 'Why is the outline wide', '/p', \(now - 1000), 0, NULL, NULL, 'vscode');
             INSERT INTO threads VALUES ('t-no-source', 'Tidy the list', '', '', '/p', \(now - 2000), 0, NULL, NULL, NULL);
+            INSERT INTO threads VALUES ('t-created', 'Review the copy', '', '', '/p', \(now - 3000), 0, NULL, 'agent_created_thread', 'vscode');
+            INSERT INTO threads VALUES ('t-created-role', 'Internal review', '', '', '/p', \(now), 0, 'reviewer', 'agent_created_thread', 'vscode');
+            INSERT INTO threads VALUES ('t-created-subagent', 'Worker', '', '', '/p', \(now), 0, NULL, 'agent_created_thread', '{"subagent":{"other":"worker"}}');
+            INSERT INTO threads VALUES ('t-created-archived', 'Archived review', '', '', '/p', \(now), 1, NULL, 'agent_created_thread', 'vscode');
+            INSERT INTO threads VALUES ('t-created-stale', 'Stale review', '', '', '/p', \(old), 0, NULL, 'agent_created_thread', 'vscode');
             INSERT INTO threads VALUES ('t-guardian', 'Guardian review', '', '', '/p', \(now), 0, NULL, 'guardian_review', '{"subagent":{"other":"guardian"}}');
             INSERT INTO threads VALUES ('t-auto', 'Nightly', '', '', '/p', \(now), 0, NULL, 'automation', 'vscode');
             INSERT INTO threads VALUES ('t-archived', 'Old', '', '', '/p', \(now), 1, NULL, 'user', 'vscode');
@@ -35,7 +40,7 @@ struct CodexThreadsTests {
             """
         try await runProcess("/usr/bin/sqlite3", [database.path, sql])
         let threads = CodexThreads.recent(in: database)
-        #expect(threads.map(\.id) == ["t-user", "t-older", "t-no-source"])
+        #expect(threads.map(\.id) == ["t-user", "t-older", "t-no-source", "t-created"])
         // A chat without a name goes by its first message.
         #expect(threads[1].title == "Why is the outline wide")
         // The viewer reopens a Codex chat in the folder Codex keeps for it.
