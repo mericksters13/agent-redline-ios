@@ -28,6 +28,100 @@ struct HandoffTests {
         #expect(!FileManager.default.fileExists(atPath: file.path))
     }
 
+    @Test func aNewCodexChatWaitsUntilTheAppCanStartItsTurn() {
+        var starts = 0
+        var opens = 0
+        var waits = 0
+        let outcome = Handoff.startCodexTurnWhenOpen(
+            startTurn: {
+                starts += 1
+                return starts < 4 ? .notOpen : .started
+            },
+            openChat: { opens += 1 },
+            wait: { waits += 1 }
+        )
+        #expect(outcome == .started)
+        #expect(starts == 4)
+        #expect(opens == 1)
+        #expect(waits == 3)
+    }
+
+    @Test func aCodexAppThatIsNotRunningOpensBeforeItReceivesTheReport() {
+        let outcomes: [CodexApp.Outcome] = [.notRunning, .notRunning, .notOpen, .started]
+        var starts = 0
+        var opens = 0
+        let outcome = Handoff.startCodexTurnWhenOpen(
+            startTurn: {
+                defer { starts += 1 }
+                return outcomes[starts]
+            },
+            openChat: { opens += 1 },
+            wait: {}
+        )
+        #expect(outcome == .started)
+        #expect(starts == 4)
+        #expect(opens == 1)
+    }
+
+    @Test func aCodexTurnThatMayHaveStartedIsNeverSentAgain() {
+        for terminalOutcome in [CodexApp.Outcome.started, .failed("The Codex app didn't answer")] {
+            var starts = 0
+            let outcome = Handoff.startCodexTurnWhenOpen(
+                startTurn: {
+                    starts += 1
+                    return terminalOutcome
+                },
+                openChat: { Issue.record("A handled chat must not be opened again") },
+                wait: { Issue.record("A handled chat must not be retried") }
+            )
+            #expect(outcome == terminalOutcome)
+            #expect(starts == 1)
+        }
+        var starts = 0
+        let outcome = Handoff.startCodexTurnWhenOpen(
+            startTurn: {
+                starts += 1
+                return starts == 1 ? .notOpen : .failed("The Codex app didn't answer")
+            },
+            openChat: {},
+            wait: {}
+        )
+        #expect(outcome == .failed("The Codex app didn't answer"))
+        #expect(starts == 2)
+    }
+
+    @Test func aCodexChatThatNeverOpensStopsWaiting() {
+        var starts = 0
+        var waits = 0
+        let outcome = Handoff.startCodexTurnWhenOpen(
+            startTurn: {
+                starts += 1
+                return .notOpen
+            },
+            openChat: {},
+            wait: { waits += 1 }
+        )
+        #expect(outcome == .notOpen)
+        #expect(starts == 31)
+        #expect(waits == 30)
+    }
+
+    @Test func aCodexChatThatCannotBeOpenedIsNotSentTheReportAgain() {
+        var starts = 0
+        let outcome = Handoff.startCodexTurnWhenOpen(
+            startTurn: {
+                starts += 1
+                return .notOpen
+            },
+            openChat: { throw Handoff.OpenError.openFailed },
+            wait: { Issue.record("Opening failed, so no retry should wait") }
+        )
+        #expect(
+            outcome == .failed("Couldn't open the Codex chat: \(Handoff.OpenError.openFailed.localizedDescription)")
+        )
+        #expect(starts == 1)
+    }
+
     @Test func chatsOpenInTheirAgentsAppWhenItIsInstalled() {
         #expect(
             Handoff.appLink(

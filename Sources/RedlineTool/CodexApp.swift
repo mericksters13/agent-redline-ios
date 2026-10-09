@@ -14,6 +14,8 @@ enum CodexApp {
     /// How starting a turn went.
     enum Outcome: Equatable {
         case started
+        /// No connection was made, so the app can be opened and the turn tried safely.
+        case notRunning
         /// No Codex window has the chat open.
         case notOpen
         case failed(String)
@@ -56,7 +58,7 @@ enum CodexApp {
     ) -> Outcome {
         let deadline = ContinuousClock.now + .milliseconds(Int(timeout * 1000))
         guard let connection = Connection(path: socketPath, deadline: deadline) else {
-            return .failed("The Codex app isn't running")
+            return .notRunning
         }
         guard let client = connection.introduce() else { return .failed("The Codex app didn't answer") }
 

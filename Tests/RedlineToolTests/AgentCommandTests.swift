@@ -23,6 +23,40 @@ struct AgentCommandTests {
         )
     }
 
+    @Test func aCodexDesktopStartupLeavesTheReportForTheApp() {
+        let snapshot = URL(filePath: "/tmp/report.jpg")
+        let arguments = AgentCommand.arguments(
+            .codex,
+            folder: "/worktree",
+            prompt: "Investigate the broken button",
+            snapshots: [snapshot],
+            isCodexAppInstalled: true
+        )
+        #expect(arguments.prefix(3) == ["exec", "-C", "/worktree"])
+        #expect(arguments.contains("read-only"))
+        #expect(!arguments.contains("-i"))
+        #expect(!arguments.contains(snapshot.path))
+        #expect(!arguments.contains("Investigate the broken button"))
+        #expect(arguments.last?.contains("Do not inspect files or use tools") == true)
+        #expect(arguments.last?.contains("Reply with just: Ready.") == true)
+    }
+
+    @Test func aCodexStartupWithoutTheAppStillReceivesTheReport() {
+        let arguments = AgentCommand.arguments(
+            .codex,
+            folder: "/worktree",
+            prompt: "Investigate the broken button",
+            snapshots: [URL(filePath: "/tmp/report.jpg")],
+            isCodexAppInstalled: false
+        )
+        #expect(arguments.suffix(4) == ["-i", "/tmp/report.jpg", "--", "Investigate the broken button"])
+        #expect(arguments.contains("read-only"))
+        #expect(
+            AgentCommand.arguments(.claude, folder: "/worktree", prompt: "Ready", isCodexAppInstalled: true)
+                == ["-p", "Ready", "--permission-mode", "plan", "--output-format", "json"]
+        )
+    }
+
     @Test func theClaudeCommandIsFoundInTheHomeFolderFromHOME() throws {
         let home = TemporaryFolder("agent-command-home")
         let bin = home.url.appending(path: ".local/bin", directoryHint: .isDirectory)

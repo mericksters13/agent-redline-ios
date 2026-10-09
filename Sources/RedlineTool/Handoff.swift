@@ -292,25 +292,33 @@ final class Handoff: Sendable {
         let source = report.source
         let chat = Self.claimant(id: ChatID.make(.codex, thread), agent: .codex, folder: "", bundleID: source.bundleID)
         guard claim(report, for: chat) else { return }
+        sendClaimedReportToCodex(report, thread: thread)
+    }
+
+    /// Also used after a new chat's startup command exits, while its original claim still holds.
+    private func sendClaimedReportToCodex(
+        _ report: InboxReport,
+        thread: String,
+        pick: String? = nil,
+        kind: ChatDelivery.Kind = .sent
+    ) {
+        let source = report.source
         // Off the handoff queue: an app that doesn't answer holds this for its timeout, and
         // opening the chat waits seconds more, while other reports go on. The claim covers it.
         DispatchQueue.global(qos: .utility).async { [self] in
+            defer { pickSettled(pick) }
             let snapshots = ReportContent.snapshots(in: report.folder)
             let text = ReportContent.text(for: report)
-            var outcome = CodexApp.startTurn(thread: thread, text: text, snapshots: snapshots)
-            if outcome == .notOpen {
-                hub.log("The Codex chat for report \(source.reportID) isn't open; opening it")
-                do {
+            let outcome = Self.startCodexTurnWhenOpen(
+                startTurn: { CodexApp.startTurn(thread: thread, text: text, snapshots: snapshots) },
+                openChat: {
+                    hub.log("The Codex chat for report \(source.reportID) isn't open; opening it")
                     try Self.openURL(
                         Self.appLink(.codex, id: thread, isClaudeAppInstalled: false, isCodexAppInstalled: true)
                             ?? "codex://threads/\(thread)"
                     )
-                } catch {
-                    hub.log("Couldn't open the Codex chat \(thread): \(error.localizedDescription)")
                 }
-                Thread.sleep(forTimeInterval: 5)
-                outcome = CodexApp.startTurn(thread: thread, text: text, snapshots: snapshots)
-            }
+            )
             if outcome == .started {
                 handedOver(report)
                 hub.log("Sent report \(source.reportID) with \(snapshots.count) snapshots to the Codex chat \(thread)")
@@ -319,7 +327,7 @@ final class Handoff: Sendable {
                         agent: .codex,
                         chat: thread,
                         title: CodexThreads.title(of: thread, in: CodexThreads.newestDatabase()) ?? "Codex chat",
-                        kind: .sent
+                        kind: kind
                     ),
                     for: report
                 )
@@ -338,7 +346,10 @@ final class Handoff: Sendable {
             )
             do {
                 // Addressed before it's let go, so no other chat takes it in between.
-                try Inbox.setRecipient(ReportRecipient(chat: chat.id, agent: chat.agent, folder: ""), of: report.folder)
+                try Inbox.setRecipient(
+                    ReportRecipient(chat: ChatID.make(.codex, thread), agent: Agent.codex.rawValue, folder: ""),
+                    of: report.folder
+                )
             } catch {
                 hub.log(
                     "Couldn't address report \(source.reportID) to the Codex chat \(thread): \(error.localizedDescription)"
@@ -353,6 +364,30 @@ final class Handoff: Sendable {
                 message: "Goes to the Codex chat with your next message there."
             )
         }
+    }
+
+    /// Retries only an app that is not running or a chat that no window can handle yet.
+    ///
+    /// A failure or timeout may have started the turn, so it must not be retried and risk giving
+    /// the report twice.
+    static func startCodexTurnWhenOpen(
+        startTurn: () -> CodexApp.Outcome,
+        openChat: () throws -> Void,
+        wait: () -> Void = { Thread.sleep(forTimeInterval: 1) }
+    ) -> CodexApp.Outcome {
+        var outcome = startTurn()
+        guard outcome == .notOpen || outcome == .notRunning else { return outcome }
+        do {
+            try openChat()
+        } catch {
+            return .failed("Couldn't open the Codex chat: \(error.localizedDescription)")
+        }
+        for _ in 0..<30 {
+            wait()
+            outcome = startTurn()
+            if outcome != .notOpen && outcome != .notRunning { return outcome }
+        }
+        return outcome
     }
 
     /// Opens a Claude Code chat the claude command made: in the desktop app with
@@ -593,9 +628,16 @@ final class Handoff: Sendable {
                 }
             let output = report.folder.appending(path: Inbox.newChatOutputFile)
             FileManager.default.createFile(atPath: output.path, contents: nil)
+            let opensInCodex = agent == .codex && AgentCommand.isCodexAppInstalled()
             let process = Process()
             process.executableURL = executable
-            process.arguments = AgentCommand.arguments(agent, folder: workFolder, prompt: prompt, snapshots: snapshots)
+            process.arguments = AgentCommand.arguments(
+                agent,
+                folder: workFolder,
+                prompt: prompt,
+                snapshots: snapshots,
+                isCodexAppInstalled: opensInCodex
+            )
             process.currentDirectoryURL = URL(filePath: workFolder)
             process.environment = ProcessInfo.processInfo.environment.merging([AgentHooks.startedByHub: "1"]) { $1 }
             process.standardInput = FileHandle.nullDevice
@@ -656,6 +698,12 @@ final class Handoff: Sendable {
                 }
                 switch agent {
                 case .codex:
+                    if opensInCodex {
+                        // The command has exited and released the chat. Keep the report claimed
+                        // until the desktop app takes it, then send later reports for this pick.
+                        sendClaimedReportToCodex(report, thread: started.chat, pick: pick, kind: .newChat)
+                        return
+                    }
                     // The chat has the report: it was its first message. A Claude Code chat has it only once
                     // it is sent into the open chat.
                     handedOver(report)
@@ -680,7 +728,7 @@ final class Handoff: Sendable {
                 try process.run()
                 hub.log("Started a \(agent.name) chat in \(workFolder) for report \(source.reportID)")
                 Self.notify(
-                    title: "\(agent.name) is looking into a report",
+                    title: opensInCodex ? "Starting a Codex chat" : "\(agent.name) is looking into a report",
                     message: "From \(source.deviceName), in worktree \(place)."
                 )
             } catch {

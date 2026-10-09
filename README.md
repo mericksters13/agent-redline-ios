@@ -20,7 +20,7 @@ Redline is a SwiftUI annotation tool for agentic iOS development. Add `.redline(
   </picture>
 </p>
 
-Version 0.1.4, early development. Works with Claude Code and Codex only.
+Version 0.1.5, early development. Works with Claude Code and Codex only.
 
 ## How it works
 
@@ -284,7 +284,7 @@ A report goes to the session you picked in Send to. With no pick, Redline uses t
 - **No session works there:** Redline starts a new one.
 - **Several sessions work there, or the worktree isn't on this Mac**, such as for a build made on another Mac: the report waits in the inbox until a session takes it (see [Troubleshooting](#troubleshooting)).
 
-**New sessions.** Redline creates a worktree from your repository's main branch, on a branch named `report/<report ID>`, and starts the session there. A new Codex session starts with `codex exec` in a read-only sandbox, then opens in the Codex app. A new Claude Code session opens in the Claude app and receives the report there, with your usual permission settings. Without its agent's app, a new session opens in Terminal.
+**New sessions.** Redline creates a worktree from your repository's main branch, on a branch named `report/<report ID>`, and starts the session there. A new Codex session uses `codex exec` in a read-only sandbox only to create the chat, then releases it before the Codex app opens it and receives the report with its snapshots. Without the Codex app, the command looks into the report before opening the session in Terminal. A new Claude Code session opens in the Claude app and receives the report there, with your usual permission settings. Without its agent's app, a new session opens in Terminal.
 
 - A new session starts from main, not from the build's branch. When the build's worktree isn't on main, the picker says so under New chat, such as "Built from feature/growth-card. A new chat starts from main." If the bug exists only on that branch, pick that branch's session instead.
 - With no pick, Redline uses the agent you last used for this bundle ID, or else the first agent that can start a session. Picking New chat lets you choose the agent, and later reports with that pick go to the same session. Picking New chat again starts another.
