@@ -256,7 +256,7 @@ With `.contain` alone, the stack is pickable but has no name of its own, so Redl
 
 - `.accessibilityElement(children: .combine)` merges a container's children into one element. The demo's stat cells use it, so a tap selects the whole cell, not its title or value.
 - `.accessibilityElement(children: .ignore)` replaces the children with one element that you label.
-- A `Button` or `NavigationLink` merges its label into one element.
+- A `Button` or `NavigationLink` can merge its label into one element. The demo keeps its custom `RecipeRow` outside a `NavigationLink` label and uses `.accessibilityElement(children: .contain)` on the cell itself. Each row exposes its icon, a nested title-and-summary group, and its duration. Tapping the row opens the recipe; the title also has a default accessibility action and button trait so assistive technologies can open it.
 - `.accessibilityHidden(true)` removes a view and its children. Redline also skips views that are hidden, nearly transparent, or clipped out of view.
 - `Canvas`, Metal and custom drawing have no child elements. To make their parts pickable, give the view synthetic children with `accessibilityChildren(children:)`, such as one per bar of a chart, or replace its elements with `accessibilityRepresentation(representation:)`. Redline outlines each synthetic child at the frame of the view that describes it, and the path leads out to the drawing. Otherwise, pick the enclosing view, or attach a snapshot of the whole screen with the capture button.
 
