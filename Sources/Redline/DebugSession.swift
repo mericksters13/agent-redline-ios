@@ -109,8 +109,15 @@ final class DebugSession {
     private(set) var mode = Mode.idle
     private(set) var annotations: [Annotation] = []
     /// What's under the finger, innermost first. `levelIndex` picks one of them.
-    private(set) var levels: [ElementSnapshot] = []
+    private(set) var levels: [ElementSnapshot] = [] {
+        didSet { if levels.isEmpty { hierarchy = nil } }
+    }
     private(set) var levelIndex = 0
+    /// Frozen with the original pick, so browsing children cannot widen the tree.
+    private(set) var hierarchy: ElementHierarchy? {
+        didSet { hierarchySelectionIndex = selected.flatMap { hierarchy?.elements.lastIndex(of: $0) } }
+    }
+    private(set) var hierarchySelectionIndex: Int?
     /// Numbered markers for annotations already made on the current screen.
     private(set) var markers: [Marker] = []
     var noteText = ""
@@ -535,10 +542,11 @@ final class DebugSession {
         }
         hover(at: point)
         isTouchDown = false
-        guard selected != nil else {
+        guard let selected else {
             nudge()
             return
         }
+        hierarchy = ElementHierarchy(touched: selected, in: elements)
         noteText = ""
         pending = nil
         notingReturnMode = .picking
@@ -549,6 +557,18 @@ final class DebugSession {
     func selectLevel(_ index: Int) {
         guard levels.indices.contains(index), index != levelIndex else { return }
         levelIndex = index
+        // A deliberate choice in the compact path can choose a different enclosing group.
+        hierarchy = ElementHierarchy(touched: levels[index], in: hierarchy?.elements ?? elements)
+        selectionFeedback.selectionChanged()
+    }
+
+    func selectHierarchyElement(_ index: Int) {
+        guard mode == .noting, screenReadIsCurrent, let hierarchy, hierarchy.element(at: index) != nil,
+            index != hierarchySelectionIndex
+        else { return }
+        levels = ElementSelection.levels(from: index, in: hierarchy.elements, screenSize: readSize)
+        levelIndex = 0
+        hierarchySelectionIndex = index
         selectionFeedback.selectionChanged()
     }
 

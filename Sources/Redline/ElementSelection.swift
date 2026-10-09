@@ -100,15 +100,22 @@ enum ElementSelection {
             hit = nearest
         }
         guard let hit else { return [] }
+        return levels(from: hit, in: elements, screenSize: screenSize)
+    }
 
-        var levels = [elements[hit]]
-        var current = hit
+    /// The compact path for an explicitly selected node, without another geometric hit test.
+    static func levels(from index: Int, in elements: [ElementSnapshot], screenSize: CGSize) -> [ElementSnapshot] {
+        guard elements.indices.contains(index) else { return [] }
+        var levels = [elements[index]]
+        var current = index
         // Parents come before their children, so each step moves to a lower index.
         while let index = elements[current].parent, index >= 0, index < current, levels.count < 8 {
             current = index
             let element = elements[index]
             // A label and the row wrapping it at the same size are one level, not two.
-            guard isUsable(element), let innermost = levels.last, !isSameBox(innermost.frame, element.frame) else {
+            guard isUsable(element, screenSize: screenSize), let innermost = levels.last,
+                !isSameBox(innermost.frame, element.frame)
+            else {
                 continue
             }
             levels.append(element)
