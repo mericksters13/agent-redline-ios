@@ -116,7 +116,9 @@ struct HandoffTests {
             openChat: { throw Handoff.OpenError.openFailed },
             wait: { Issue.record("Opening failed, so no retry should wait") }
         )
-        #expect(outcome == .failed("Couldn't open the Codex chat: \(Handoff.OpenError.openFailed.localizedDescription)"))
+        #expect(
+            outcome == .failed("Couldn't open the Codex chat: \(Handoff.OpenError.openFailed.localizedDescription)")
+        )
         #expect(starts == 1)
     }
 

@@ -367,8 +367,9 @@ final class Handoff: Sendable {
     }
 
     /// Retries only an app that is not running or a chat that no window can handle yet.
-    /// A failure or timeout may have started
-    /// the turn, so it must not be retried and risk giving the report twice.
+    ///
+    /// A failure or timeout may have started the turn, so it must not be retried and risk giving
+    /// the report twice.
     static func startCodexTurnWhenOpen(
         startTurn: () -> CodexApp.Outcome,
         openChat: () throws -> Void,

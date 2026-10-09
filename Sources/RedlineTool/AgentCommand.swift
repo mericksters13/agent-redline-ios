@@ -80,7 +80,8 @@ enum AgentCommand {
         // Snapshots go in with the prompt; "--" ends them, so the prompt isn't read as one.
         case .codex:
             // Release the CLI's ownership before the desktop app receives the actual report.
-            let firstMessage = isCodexAppInstalled
+            let firstMessage =
+                isCodexAppInstalled
                 ? "A UI report from the user's device comes in the next message in the desktop app. Do not inspect files or use tools. Reply with just: Ready."
                 : prompt
             let images = isCodexAppInstalled ? [] : snapshots
