@@ -195,7 +195,7 @@ struct CodexAppTests {
                 socketPath: "/tmp/no-such-\(UUID().uuidString.prefix(6)).sock",
                 timeout: 1
             )
-                == .failed("The Codex app isn't running")
+                == .notRunning
         )
     }
 

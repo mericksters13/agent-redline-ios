@@ -67,14 +67,25 @@ enum AgentCommand {
     }
 
     /// The arguments that start a chat in `folder` with `prompt`, read-only, printing JSON.
-    static func arguments(_ agent: Agent, folder: String, prompt: String, snapshots: [URL] = []) -> [String] {
+    static func arguments(
+        _ agent: Agent,
+        folder: String,
+        prompt: String,
+        snapshots: [URL] = [],
+        isCodexAppInstalled: Bool = false
+    ) -> [String] {
         switch agent {
         case .claude:
-            ["-p", prompt, "--permission-mode", "plan", "--output-format", "json"]
+            return ["-p", prompt, "--permission-mode", "plan", "--output-format", "json"]
         // Snapshots go in with the prompt; "--" ends them, so the prompt isn't read as one.
         case .codex:
-            ["exec", "-C", folder, "--sandbox", "read-only", "--skip-git-repo-check", "--json"]
-                + snapshots.flatMap { ["-i", $0.path] } + ["--", prompt]
+            // Release the CLI's ownership before the desktop app receives the actual report.
+            let firstMessage = isCodexAppInstalled
+                ? "A UI report from the user's device comes in the next message in the desktop app. Do not inspect files or use tools. Reply with just: Ready."
+                : prompt
+            let images = isCodexAppInstalled ? [] : snapshots
+            return ["exec", "-C", folder, "--sandbox", "read-only", "--skip-git-repo-check", "--json"]
+                + images.flatMap { ["-i", $0.path] } + ["--", firstMessage]
         }
     }
 
