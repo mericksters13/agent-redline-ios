@@ -23,6 +23,7 @@ struct OverlayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isNoteFocused: Bool
     @State private var isHierarchyExpanded = false
+    @ScaledMetric(relativeTo: .caption) private var noteBadgeSize: CGFloat = 26
     @State private var cardHeight: CGFloat = 0
     /// The note card's element row and text field, which scroll when the card is capped.
     @State private var noteContentHeight: CGFloat = 0
@@ -596,7 +597,7 @@ struct OverlayView: View {
             HStack(spacing: 12) {
                 if let pending {
                     attachmentPreview(pending)
-                } else if isElementHidden, let preview = session.selectedElementPreview() {
+                } else if !isHierarchyExpanded, isElementHidden, let preview = session.selectedElementPreview() {
                     // The element is behind the keyboard or this card, so show what was picked.
                     Image(uiImage: preview)
                         .resizable()
@@ -614,7 +615,7 @@ struct OverlayView: View {
                         }
                         .accessibilityHidden(true)
                 } else {
-                    NumberBadge(number: session.nextNumber, size: 26)
+                    NumberBadge(number: session.nextNumber, size: noteBadgeSize)
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(isHierarchyExpanded ? "Hierarchy" : noteCardTitle(pending: pending))
@@ -660,7 +661,8 @@ struct OverlayView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.black)
                         .padding(.horizontal, 18)
-                        .frame(height: 38)
+                        .padding(.vertical, 8)
+                        .frame(minHeight: 38)
                         .background(Color.white, in: Capsule(style: .continuous))
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
