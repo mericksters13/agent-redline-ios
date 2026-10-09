@@ -4,6 +4,12 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-10
+
+### Fixed
+
+- New Codex report chats open in the desktop app before the agent investigates the report, so you can answer questions and continue in the same chat. This fixes the "This is open in another app" lock during report delivery.
+
 ## [0.1.4] - 2026-10-09
 
 ### Fixed
@@ -55,7 +61,8 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 First public release.
 
-[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.4...HEAD
+[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.5...HEAD
+[0.1.5]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.4...0.1.5
 [0.1.4]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.3...0.1.4
 [0.1.3]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.2...0.1.3
 [0.1.2]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.1...0.1.2
