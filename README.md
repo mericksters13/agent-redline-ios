@@ -134,6 +134,22 @@ The checklist names the steps only you can take, each with its command. The usua
 
 On first launch, macOS asks whether Redline may show notifications. If your projects live in `~/Documents`, macOS also asks for access to that folder. Allow it: Redline reads each session's project folder to learn which bundle IDs it builds. If macOS reports a new background item, that is Redline's login item.
 
+### Check what is still missing
+
+Run `redline doctor` after installing, after an update, or when reports do not arrive. If this terminal cannot find `redline`, use `~/.local/bin/redline doctor` first.
+
+It checks the selected Xcode and its components, Swift, the installed command and PATH, the Redline app, the running hub, and your supported agents' command sign-in and user configuration. Each **Needs you** item gives a fix. An absent agent is **Skipped** when it has not been configured; you only need Claude Code or Codex.
+
+Doctor is read-only. It does not install anything, change settings, migrate reports, open apps, start the hub, send a message, or request permissions. It exits with `1` when an automatic check needs attention and `0` when none does. Exit `0` does not prove report delivery.
+
+The **Check yourself** section covers the steps it cannot verify:
+
+- Trust the Codex **Report delivery** hook in `/hooks`, or start a new Claude Code chat so it loads the MCP server.
+- Open Redline and allow **Local Network** when asked. If denied, enable Redline in System Settings > Privacy & Security > Local Network. Allow Documents access when your projects are there. Notifications are optional.
+- Add the Redline library and `.redline()` to your iOS 18+ SwiftUI app, and run a **Debug** build.
+- For a physical iPhone, pair it with Xcode and accept the trust prompts. Enable Developer Mode in Settings > Privacy & Security, restart, and confirm Enable. Keep the iPhone and Mac on the same local network. Allow your app's Local Network prompt; if denied, enable the app in Settings > Privacy & Security > Local Network. After installing the app for the first time, quit and reopen Redline to rescan. Skip these device steps for a simulator.
+- Send a first note and confirm its text and snapshot arrive in the selected chat.
+
 ## Try the demo
 
 [`Examples/RedlineDemo`](Examples/RedlineDemo) is an Xcode project with `.redline()` on its root view, a UIKit screen and three planted UI bugs to find. Clone this repository, open a Claude Code or Codex session in it, and run `Examples/RedlineDemo/RedlineDemo.xcodeproj` on a device or simulator. [Its README](Examples/RedlineDemo/README.md) covers device signing and what to try.
@@ -379,6 +395,7 @@ Install Xcode and select it: `sudo xcode-select -s /Applications/Xcode.app`.
 
 | Command | What it does |
 |---|---|
+| `redline doctor` | Checks setup without changing it; lists missing steps, fixes, and what you must check yourself. |
 | `redline status` | Shows whether Redline is running, the bundle IDs it accepts, the addresses and port builds connect to, each iPhone's state and the inbox. |
 | `redline check` | Prints the reports waiting for this project's bundle IDs. Printing claims them, so no other session receives them. |
 | `redline wait` | Waits for the next report for this project's bundle IDs, then prints it. |

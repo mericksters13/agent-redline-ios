@@ -56,11 +56,11 @@ enum ClaudeCLI {
     ///
     /// Parks the caller's thread while the command runs, for at most 10 seconds each time.
     static func checkReadiness(of claude: URL, isClaudeAppInstalled: Bool) -> Readiness {
-        guard let output = runForOutput(claude, ["--version"]) else { return .doesNotRun }
+        guard let output = CommandOutput.run(claude, ["--version"]) else { return .doesNotRun }
         let missing = needs(
             isInstalled: true,
             version: version(in: output) ?? [],
-            isSignedIn: runForOutput(claude, ["auth", "status"]) != nil,
+            isSignedIn: CommandOutput.run(claude, ["auth", "status"]) != nil,
             isClaudeAppInstalled: isClaudeAppInstalled
         )
         return missing.first.map { .needs($0) } ?? .ready
@@ -99,8 +99,8 @@ enum ClaudeCLI {
             }
             return needs(
                 isInstalled: true,
-                version: runForOutput(claude, ["--version"]).flatMap { version(in: $0) } ?? [],
-                isSignedIn: runForOutput(claude, ["auth", "status"]) != nil,
+                version: CommandOutput.run(claude, ["--version"]).flatMap { version(in: $0) } ?? [],
+                isSignedIn: CommandOutput.run(claude, ["auth", "status"]) != nil,
                 isClaudeAppInstalled: isClaudeAppInstalled
             )
         }
@@ -183,46 +183,5 @@ enum ClaudeCLI {
         return numbers.count == 3 ? numbers : nil
     }
 
-    /// The command's output when it succeeds.
-    ///
-    /// One still running after `timeout` is stopped and counts as failed: the hub asks from its
-    /// hand-off queue and the panel from its check queue, which a stalled command would hold up.
-    private static func runForOutput(
-        _ executable: URL,
-        _ arguments: [String],
-        timeout: TimeInterval = 10
-    ) -> String? {
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        let exited = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in exited.signal() }
-        do {
-            try process.run()
-        } catch {
-            printError("Couldn't run \(executable.path): \(error.localizedDescription)")
-            return nil
-        }
-        // Read while it runs, so a long output can't fill the pipe and hold it up.
-        let read = DispatchSemaphore(value: 0)
-        let output = Mutex(Data())
-        DispatchQueue.global(qos: .utility).async {
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            output.withLock { $0 = data }
-            read.signal()
-        }
-        // Parks the caller's thread, the hand-off queue, the panel's check queue or setup's main
-        // thread and never a Task, for at most `timeout`.
-        let deadline = DispatchTime.now() + timeout
-        guard exited.wait(timeout: deadline) == .success, read.wait(timeout: deadline) == .success else {
-            process.terminate()
-            return nil
-        }
-        guard process.terminationStatus == 0 else { return nil }
-        return output.withLock { String(decoding: $0, as: UTF8.self) }
-    }
 }
 #endif
