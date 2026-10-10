@@ -110,7 +110,10 @@ final class DebugSession {
     private(set) var annotations: [Annotation] = []
     /// The selected element followed by its captured ancestors, innermost first.
     private(set) var levels: [ElementSnapshot] = [] {
-        didSet { if levels.isEmpty { hierarchy = nil } }
+        didSet {
+            if levels.isEmpty { hierarchy = nil }
+            refreshSelectedLayout()
+        }
     }
     /// Frozen with the original pick, so browsing children cannot widen the tree.
     private(set) var hierarchy: ElementHierarchy? {
@@ -119,8 +122,10 @@ final class DebugSession {
     private(set) var hierarchySelectionIndex: Int?
     /// Numbered markers for annotations already made on the current screen.
     private(set) var markers: [Marker] = []
-    private var layoutInspection = LayoutInspection()
-    var selectedLayout: LayoutInspection.Report { layoutInspection.report(selected) }
+    @ObservationIgnored private var layoutInspection = LayoutInspection()
+    /// Recomputed only when the captured screen or selected component changes.
+    private(set) var selectedLayout = LayoutInspection.Report(message: "Select a component to inspect its layout.")
+    @ObservationIgnored private var layoutPreview: UIImage?
     var showsLayoutPrototype: Bool { SwiftUILayoutInspector.isEnabled }
     private(set) var selectedPadding: Set<LayoutInspection.Edge> = []
 
@@ -1573,20 +1578,24 @@ final class DebugSession {
         return Self.crop(image, around: frame, isDrawing: isNotingDrawing)
     }
 
-    /// The captured component and its padding, excluding surrounding frame space.
-    func selectedLayoutPreview() -> UIImage? {
+    /// The cached component and its padding, excluding surrounding frame space.
+    func selectedLayoutPreview() -> UIImage? { layoutPreview }
+
+    private func refreshSelectedLayout() {
+        selectedLayout = layoutInspection.report(selected)
+        layoutPreview = nil
         guard let bounds = selectedLayout.geometry?.bounds, let image = screenImage,
             CGRect(origin: .zero, size: image.size).contains(bounds),
             let source = image.cgImage
-        else { return nil }
+        else { return }
         let pixels = CGRect(
             x: bounds.minX * image.scale,
             y: bounds.minY * image.scale,
             width: bounds.width * image.scale,
             height: bounds.height * image.scale
         ).integral
-        guard let cropped = source.cropping(to: pixels) else { return nil }
-        return UIImage(cgImage: cropped, scale: image.scale, orientation: .up)
+        guard let cropped = source.cropping(to: pixels) else { return }
+        layoutPreview = UIImage(cgImage: cropped, scale: image.scale, orientation: .up)
     }
 
     // MARK: - Thumbnails and previews
@@ -1910,16 +1919,21 @@ final class DebugSession {
     private func beginNoting() {
         selectedPadding = []
         noteError = nil
-        isAwaitingKeyboard = keyboardTop == .infinity
+        isAwaitingKeyboard = !showsLayoutPrototype && keyboardTop == .infinity
         noteBackground = pending == nil ? screenImage : nil
         setMode(.noting)
         // A hardware keyboard never shows the on-screen one; stop waiting for it. Only this card's
         // wait may end it, not one left from a card closed moments ago.
         keyboardWait?.cancel()
-        keyboardWait = Task {
-            try? await Task.sleep(for: .seconds(0.8))
-            guard !Task.isCancelled, isAwaitingKeyboard else { return }
-            withAnimation(.smooth(duration: 0.25)) { isAwaitingKeyboard = false }
+        keyboardWait = nil
+        if isAwaitingKeyboard {
+            keyboardWait = Task {
+                do {
+                    try await Task.sleep(for: .seconds(0.8))
+                } catch { return }
+                guard !Task.isCancelled, isAwaitingKeyboard else { return }
+                withAnimation(.smooth(duration: 0.25)) { isAwaitingKeyboard = false }
+            }
         }
     }
 
@@ -2052,13 +2066,7 @@ final class DebugSession {
         let previousController = screenController
         let previousScreen = screen
         elements = AccessibilityTree.elements(under: roots, screenBounds: window.bounds)
-        layoutInspection = SwiftUILayoutInspector.capture(in: appWindows)
-        if showsLayoutPrototype,
-            let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
-            let data = try? JSONEncoder().encode(elements)
-        {
-            try? data.write(to: folder.appendingPathComponent("layout-elements.json"))
-        }
+        layoutInspection = SwiftUILayoutInspector.capture(in: appWindows, elements: elements)
         screen = AccessibilityTree.screen(of: screenWindow, elements: elements)
         screenController = AccessibilityTree.topController(of: screenWindow)
         // The app can still move on by itself, after a timer or a network response. Notes
@@ -2067,6 +2075,7 @@ final class DebugSession {
             notesThisVisit = []
         }
         screenImage = AppWindows.screenshot(of: appWindows, bounds: window.bounds)
+        refreshSelectedLayout()
         scrollState = AppWindows.mainScrollState(under: roots, screenBounds: window.bounds)
         readSize = window.bounds.size
         refreshMarkers()

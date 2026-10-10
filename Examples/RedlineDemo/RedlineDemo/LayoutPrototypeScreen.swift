@@ -35,9 +35,17 @@ struct LayoutPrototypeScreen: View {
                 Text("Overlap").padding(4)
                 Text("Overlap").padding(18).background(.yellow.opacity(0.5))
             }
-            Text("Visible content")
-                .padding(9)
-                .accessibilityRepresentation { Text("Synthetic selection") }
+            if UserDefaults.standard.bool(forKey: "RedlineLayoutButtonDemo") {
+                Button("Continue") {}
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 8)
+                    .frame(width: 160, height: 44, alignment: .leading)
+                    .background(.blue.opacity(0.15))
+            } else {
+                Text("Visible content")
+                    .padding(9)
+                    .accessibilityRepresentation { Text("Synthetic selection") }
+            }
             Spacer()
         }
         .padding(20)

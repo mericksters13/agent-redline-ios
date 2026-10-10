@@ -186,20 +186,21 @@ struct LayoutInspection: Equatable, Sendable {
             return Report(message: "Layout unavailable. Enable layout inspection before the app opens.")
         }
         guard let element else { return Report(message: "Select a component to inspect its layout.") }
-        let candidates = nodes.indices.filter { index in
-            let node = nodes[index]
-            switch element.role {
-            case "Text", "Header":
-                return node.type == "Text" && node.text != nil && node.text == element.label
-            case "Button":
-                return (node.type == "Text" && node.text != nil && node.text == element.label)
-                    || ((node.type.hasPrefix("Button<") || node.type.hasPrefix("KeyboardShortcutBindingBehavior<"))
-                        && descendantText(at: index).contains(element.label ?? ""))
-            case "Image": return node.type == "Image"
-            case "Group":
-                return element.isContainer
-                    && ["HStack<", "VStack<", "ZStack<", "Grid<"].contains { node.type.hasPrefix($0) }
-            default: return false
+        let candidates: [Int]
+        if element.role == "Button" {
+            candidates = buttonCandidates(label: element.label)
+        } else {
+            candidates = nodes.indices.filter { index in
+                let node = nodes[index]
+                switch element.role {
+                case "Text", "Header":
+                    return node.type == "Text" && node.text != nil && node.text == element.label
+                case "Image": return node.type == "Image"
+                case "Group":
+                    return element.isContainer
+                        && ["HStack<", "VStack<", "ZStack<", "Grid<"].contains { node.type.hasPrefix($0) }
+                default: return false
+                }
             }
         }
         let geometryMatches = candidates.filter { index in
@@ -213,7 +214,11 @@ struct LayoutInspection: Equatable, Sendable {
         let textMatches =
             ["Text", "Header"].contains(element.role)
             ? candidates.filter { nodes[$0].type == "Text" && nodes[$0].text == element.label } : []
-        let matches = geometryMatches.isEmpty ? textMatches : geometryMatches
+        let matchingNodes = Set(geometryMatches)
+        let componentMatches =
+            element.role == "Button"
+            ? Set(geometryMatches.map { buttonOwner(at: $0, among: matchingNodes) }) : matchingNodes
+        let matches = geometryMatches.isEmpty ? textMatches : Array(componentMatches)
         guard matches.count == 1, let matched = matches.first else {
             return Report(
                 message: matches.isEmpty
@@ -221,7 +226,7 @@ struct LayoutInspection: Equatable, Sendable {
                     : "Multiple views match this selection. Measurements unavailable."
             )
         }
-        let verified = geometryMatches.count == 1
+        let verified = componentMatches.count == 1
         let identity = nodes[matched].type == "Text" ? "text and bounds" : "component bounds"
         var report = Report(
             message: verified ? "Matched by \(identity) · Experimental" : "Text match only · Position unverified"
@@ -346,12 +351,48 @@ struct LayoutInspection: Equatable, Sendable {
         return nil
     }
 
-    private func descendantText(at index: Int) -> Set<String> {
-        var result = Set<String>()
-        for candidate in nodes.indices where nodes[candidate].text != nil {
-            if path(from: candidate).contains(index), let text = nodes[candidate].text { result.insert(text) }
+    /// A plain button can render its text without a separate text box.
+    ///
+    /// Keep that label's identity only under a sized control, without borrowing its bounds for the text.
+    func canCaptureButtonLabel(below parent: Int?) -> Bool {
+        guard let parent else { return false }
+        return path(from: parent, componentOnly: true).contains { index in
+            Self.isButton(nodes[index].type)
+                && nodes[index].frame.map { $0.width > 0 && $0.height > 0 } == true
         }
-        return result
+    }
+
+    /// Walk only the labels that match this selection, instead of scanning every label for every button.
+    private func buttonCandidates(label: String?) -> [Int] {
+        guard let label else { return [] }
+        let labels = nodes.indices.filter { nodes[$0].type == "Text" && nodes[$0].text == label }
+        var result = Set(labels)
+        for index in labels {
+            for ancestor in path(from: index).dropFirst() where Self.isButton(nodes[ancestor].type) {
+                result.insert(ancestor)
+            }
+        }
+        return result.sorted()
+    }
+
+    /// A control and its rendered label or single-child control wrappers describe one component.
+    ///
+    /// Unowned labels and separate controls remain separate matches, including coincident bounds.
+    private func buttonOwner(at index: Int, among matches: Set<Int>) -> Int {
+        var owner = index
+        if nodes[index].type == "Text",
+            let control = path(from: index).dropFirst().first(where: { Self.isButton(nodes[$0].type) }),
+            matches.contains(control)
+        {
+            owner = control
+        }
+        return path(from: owner, componentOnly: true).last {
+            matches.contains($0) && Self.isButton(nodes[$0].type)
+        } ?? owner
+    }
+
+    private static func isButton(_ type: String) -> Bool {
+        type.hasPrefix("Button<") || type.hasPrefix("KeyboardShortcutBindingBehavior<")
     }
 
     /// Only translations have a verified mapping in this prototype.

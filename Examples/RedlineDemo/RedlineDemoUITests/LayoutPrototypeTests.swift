@@ -56,10 +56,44 @@ final class LayoutPrototypeTests: XCTestCase {
 
     private func expandPreview(in app: XCUIApplication) {
         guard !app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.exists else { return }
-        let disclosure = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "Padding & frame", "Frame")).firstMatch
+        let disclosure = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "Padding & frame", "Frame")
+        ).firstMatch
         XCTAssertTrue(disclosure.waitForExistence(timeout: 5))
         disclosure.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.waitForExistence(timeout: 5)
+        )
+    }
+
+    func testPlainButtonLayoutInspection() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-RedlineLayoutPrototype", "YES", "-RedlineLayoutActivation", "early",
+            "-RedlineLayoutButtonDemo", "YES",
+        ]
+        app.launchEnvironment["SWIFTUI_VIEW_DEBUG"] = "0"
+        app.launch()
+        let button = app.buttons["Continue"]
+        XCTAssertTrue(button.waitForExistence(timeout: 10))
+        let target = button.frame
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: target.midX, dy: target.midY)).tap()
+        let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        XCTAssertTrue(result.label.contains("Matched by"), result.label)
+        XCTAssertFalse(result.label.contains("Multiple views"), result.label)
+        XCTAssertTrue(result.label.contains("160"), result.label)
+        expandPreview(in: app)
+        let left = app.buttons["RedlinePaddingLeft"]
+        XCTAssertTrue(left.waitForExistence(timeout: 5))
+        XCTAssertTrue(left.label.contains("8 pt"), left.label)
+        left.tap()
+        XCTAssertTrue(app.staticTexts["RedlineLayoutContext"].label.contains("Left padding: 8 pt"))
+        attach("Plain button padding and frame", in: app)
+        app.buttons["Cancel"].tap()
+        app.terminate()
     }
 
     func testLayoutTabOnNormalLaunch() {
@@ -76,7 +110,9 @@ final class LayoutPrototypeTests: XCTestCase {
         XCTAssertTrue(result.contains("Padding: Horizontal · 16 pt"), result)
         tabs.buttons["Recipes"].tap()
         XCTAssertTrue(app.navigationBars["Recipes"].exists)
-        let recipe = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "list.row.", ".summary")).firstMatch
+        let recipe = app.staticTexts.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "list.row.", ".summary")
+        ).firstMatch
         _ = inspect(recipe.label, in: app)
         app.terminate()
     }
@@ -86,11 +122,14 @@ final class LayoutPrototypeTests: XCTestCase {
         app.launch()
         let title = app.buttons["list.row.black-bean-tacos.title"]
         XCTAssertTrue(title.waitForExistence(timeout: 10))
-        for (name, element) in [("Recipe summary", app.staticTexts["list.row.black-bean-tacos.summary"]),
-                                ("Recipe title", title),
-                                ("Recipe icon", app.images["list.row.black-bean-tacos.icon"]),
-                                ("Recipe row", app.otherElements["list.row.black-bean-tacos"])] {
-            let center = name == "Recipe row"
+        for (name, element) in [
+            ("Recipe summary", app.staticTexts["list.row.black-bean-tacos.summary"]),
+            ("Recipe title", title),
+            ("Recipe icon", app.images["list.row.black-bean-tacos.icon"]),
+            ("Recipe row", app.otherElements["list.row.black-bean-tacos"]),
+        ] {
+            let center =
+                name == "Recipe row"
                 ? CGVector(dx: element.frame.minX + element.frame.width * 0.75, dy: element.frame.maxY - 8)
                 : CGVector(dx: element.frame.midX, dy: element.frame.midY)
             app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
@@ -111,7 +150,9 @@ final class LayoutPrototypeTests: XCTestCase {
                     XCTAssertFalse(app.buttons["RedlinePadding" + edge].exists)
                 }
                 XCTAssertFalse(app.staticTexts["Padding measurements unavailable."].exists)
-                XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Frame")).firstMatch.exists)
+                XCTAssertTrue(
+                    app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Frame")).firstMatch.exists
+                )
                 if name == "Recipe summary" {
                     XCTAssertTrue(result.label.contains("Frame: Width 150 pt"), result.label)
                 } else if name == "Recipe icon" {
@@ -142,9 +183,12 @@ final class LayoutPrototypeTests: XCTestCase {
         // A fresh capture after scrolling must use the changed content offset.
         let scroll = app.scrollViews.firstMatch
         scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
-            .press(forDuration: 0.1,
-                   thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45)),
-                   withVelocity: .slow, thenHoldForDuration: 0.3)
+            .press(
+                forDuration: 0.1,
+                thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.3
+            )
         let scrolledCenter = CGVector(dx: start.frame.midX, dy: start.frame.midY)
         XCTAssertTrue(start.isHittable)
         XCTAssertGreaterThan(start.frame.minY, app.navigationBars.firstMatch.frame.maxY)
@@ -161,10 +205,12 @@ final class LayoutPrototypeTests: XCTestCase {
 
     func testMeasuredOverlayStates() {
         let app = launch("early")
-        for (label, expected) in [("Fixed", "Frame: 180 × 44 pt"), ("Nested", "Leading 5 pt"),
-                                  ("Flexible", "Measured frame"), ("Default padding", "Padding: System default"),
-                                  ("Left", "Layout priority: 3"), ("Overlap", "Multiple views"),
-                                  ("Synthetic selection", "No matching rendered view")] {
+        for (label, expected) in [
+            ("Fixed", "Frame: 180 × 44 pt"), ("Nested", "Leading 5 pt"),
+            ("Flexible", "Measured frame"), ("Default padding", "Padding: System default"),
+            ("Left", "Layout priority: 3"), ("Overlap", "Multiple views"),
+            ("Synthetic selection", "No matching rendered view"),
+        ] {
             XCTAssertTrue(inspect(label, in: app).contains(expected))
         }
         app.terminate()
@@ -185,7 +231,10 @@ final class LayoutPrototypeTests: XCTestCase {
                 XCTAssertTrue(fixed.contains("Matched by text and bounds"), fixed)
                 XCTAssertFalse(fixed.contains("_FrameLayout"), fixed)
                 XCTAssertFalse(fixed.contains("SwiftUI"), fixed)
-                for label in ["Nested", "Flexible", "Default padding", "Left", "Right", "Duplicate", "Overlap", "Synthetic selection"] {
+                for label in [
+                    "Nested", "Flexible", "Default padding", "Left", "Right", "Duplicate", "Overlap",
+                    "Synthetic selection",
+                ] {
                     let text = inspect(label, in: app)
                     print("LAYOUT_RESULT activation=\(activation) \(label): \(text)")
                     if label == "Nested" {
@@ -193,7 +242,10 @@ final class LayoutPrototypeTests: XCTestCase {
                         XCTAssertTrue(text.contains("Frame: 120 × 36 pt"), text)
                     }
                     if label == "Flexible" {
-                        for expected in ["Min 100 pt", "Ideal 160 pt", "Fill available space", "Min 40 pt", "Alignment: Trailing", "Top 7 pt", "Measured frame"] {
+                        for expected in [
+                            "Min 100 pt", "Ideal 160 pt", "Fill available space", "Min 40 pt", "Alignment: Trailing",
+                            "Top 7 pt", "Measured frame",
+                        ] {
                             XCTAssertTrue(text.contains(expected), text)
                         }
                     }
@@ -216,7 +268,9 @@ final class LayoutPrototypeTests: XCTestCase {
                         XCTAssertTrue(text.contains("Layout priority: 3"), text)
                     }
                     if label == "Right" { XCTAssertFalse(text.contains("Layout priority: 3"), text) }
-                    if label == "Synthetic selection" { XCTAssertTrue(text.contains("No matching rendered view"), text) }
+                    if label == "Synthetic selection" {
+                        XCTAssertTrue(text.contains("No matching rendered view"), text)
+                    }
                 }
                 // Repeat a previously selected sample to catch stale selection data.
                 XCTAssertEqual(inspect("Fixed", in: app), fixed)
@@ -255,7 +309,6 @@ final class LayoutPrototypeTests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
     }
-
 
     func testHierarchyAndCollapsiblePreview() {
         let app = launch("early")
@@ -325,7 +378,8 @@ final class LayoutPrototypeTests: XCTestCase {
             let target = app.staticTexts.matching(identifier: label).firstMatch
             let targetFrame = target.frame
             let point = CGVector(dx: targetFrame.midX, dy: targetFrame.midY)
-            let report = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch
+            let report = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue"))
+                .firstMatch
             XCTAssertTrue(report.waitForExistence(timeout: 10))
             report.tap()
             app.coordinate(withNormalizedOffset: .zero).withOffset(point).tap()
@@ -334,8 +388,10 @@ final class LayoutPrototypeTests: XCTestCase {
             func check(_ state: String) {
                 Thread.sleep(forTimeInterval: 0.4)
                 let frame = card.frame
-                XCTAssertTrue(frame.maxY <= targetFrame.minY - 7 || frame.minY >= targetFrame.maxY + 7,
-                              "\(label) \(state): card \(frame) overlaps target \(targetFrame)")
+                XCTAssertTrue(
+                    frame.maxY <= targetFrame.minY - 7 || frame.minY >= targetFrame.maxY + 7,
+                    "\(label) \(state): card \(frame) overlaps target \(targetFrame)"
+                )
                 XCTAssertTrue(app.buttons["Add note"].isHittable)
                 attach("\(label) form \(state)", in: app)
             }
@@ -344,11 +400,16 @@ final class LayoutPrototypeTests: XCTestCase {
             let title = card.staticTexts.matching(identifier: label).firstMatch
             let note = app.descendants(matching: .any)["RedlineNoteText"].firstMatch
             XCTAssertLessThanOrEqual(title.frame.minY - card.frame.minY, 32, "Extra space above the component name")
-            XCTAssertLessThanOrEqual(app.buttons["Add note"].frame.minY - note.frame.maxY, 28,
-                                     "Extra space between the note and footer")
+            XCTAssertLessThanOrEqual(
+                app.buttons["Add note"].frame.minY - note.frame.maxY,
+                28,
+                "Extra space between the note and footer"
+            )
             expandPreview(in: app)
             check("expanded")
-            let disclosure = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "Padding & frame", "Frame")).firstMatch
+            let disclosure = app.buttons.matching(
+                NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "Padding & frame", "Frame")
+            ).firstMatch
             let scroll = app.scrollViews["RedlineNoteScroll"]
             for _ in 0..<3 where !disclosure.isHittable { scroll.swipeDown() }
             disclosure.tap()
@@ -375,8 +436,10 @@ final class LayoutPrototypeTests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.exists)
         let card = app.descendants(matching: .any)["RedlineNoteCard"].firstMatch
         let frame = card.frame
-        XCTAssertTrue(frame.maxY <= targetFrame.minY - 7 || frame.minY >= targetFrame.maxY + 7,
-                      "Typing: card \(frame) overlaps target \(targetFrame)")
+        XCTAssertTrue(
+            frame.maxY <= targetFrame.minY - 7 || frame.minY >= targetFrame.maxY + 7,
+            "Typing: card \(frame) overlaps target \(targetFrame)"
+        )
         // Automation may expose an offscreen keyboard when text entry uses a hardware keyboard.
         let visibleBottom = min(app.frame.maxY, app.keyboards.firstMatch.frame.minY)
         XCTAssertLessThanOrEqual(frame.maxY, visibleBottom - 7)
@@ -411,17 +474,26 @@ final class LayoutPrototypeTests: XCTestCase {
             app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: x, dy: element.frame.midY))
         }
         attach("Hierarchy before dragging", in: app)
-        coordinate(first).press(forDuration: 0.35, thenDragTo: coordinate(last),
-                                withVelocity: .slow, thenHoldForDuration: 0.2)
+        coordinate(first).press(
+            forDuration: 0.35,
+            thenDragTo: coordinate(last),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.2
+        )
         XCTAssertEqual(last.value as? String, "Selected")
         XCTAssertNotEqual(first.value as? String, "Selected")
         attach("Hierarchy after downward traversal", in: app)
-        coordinate(last).press(forDuration: 0.35, thenDragTo: coordinate(first),
-                               withVelocity: .slow, thenHoldForDuration: 0.2)
+        coordinate(last).press(
+            forDuration: 0.35,
+            thenDragTo: coordinate(first),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.2
+        )
         XCTAssertEqual(first.value as? String, "Selected")
         XCTAssertNotEqual(last.value as? String, "Selected")
         attach("Hierarchy after reverse traversal", in: app)
-        let branch = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "RedlineHierarchyBranch")).firstMatch
+        let branch = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "RedlineHierarchyBranch"))
+            .firstMatch
         let count = rows.count
         branch.tap()
         XCTAssertEqual(rows.count, 1)
@@ -489,8 +561,14 @@ final class LayoutPrototypeTests: XCTestCase {
         top.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
         bottom.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
         let verticalContext = app.staticTexts["RedlineLayoutContext"]
-        XCTAssertTrue(verticalContext.label.contains("Top padding: 16 pt (measured; system default)"), verticalContext.label)
-        XCTAssertTrue(verticalContext.label.contains("Bottom padding: 16 pt (measured; system default)"), verticalContext.label)
+        XCTAssertTrue(
+            verticalContext.label.contains("Top padding: 16 pt (measured; system default)"),
+            verticalContext.label
+        )
+        XCTAssertTrue(
+            verticalContext.label.contains("Bottom padding: 16 pt (measured; system default)"),
+            verticalContext.label
+        )
         app.buttons["Cancel"].tap()
         app.buttons["Close annotate mode"].tap()
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()

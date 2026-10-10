@@ -446,6 +446,66 @@ struct LayoutInspectionTests {
         #expect(inspection.report(selected).geometry?.padding.isEmpty == true)
     }
 
+    @Test func aButtonAndItsOwnLabelAreOneMatch() {
+        let bounds = CGRect(x: 20, y: 100, width: 100, height: 44)
+        let inspection = LayoutInspection(nodes: [
+            .init(type: "Button<Text>", settings: [], parent: nil, childCount: 1, frame: bounds),
+            .init(type: "Text", text: "Continue", settings: [], parent: 0, childCount: 0, frame: bounds),
+        ])
+        var selected = element("Continue", role: "Button")
+        selected.frame = bounds
+        let result = inspection.report(selected)
+        #expect(result.geometry?.content == bounds)
+        #expect(result.message.contains("component bounds"))
+    }
+
+    @Test func matchingControlWrappersKeepTheOuterComponentPadding() {
+        let bounds = CGRect(x: 20, y: 100, width: 100, height: 44)
+        let inspection = LayoutInspection(nodes: [
+            .init(
+                type: "_PaddingLayout",
+                settings: [],
+                parent: nil,
+                childCount: 1,
+                frame: bounds.insetBy(dx: -8, dy: 0),
+                layout: [.padding(.init(top: 0, leading: 8, bottom: 0, trailing: 8))]
+            ),
+            .init(type: "Button<Text>", settings: [], parent: 0, childCount: 1, frame: bounds),
+            .init(type: "KeyboardShortcutBindingBehavior<Text>", settings: [], parent: 1, childCount: 1, frame: bounds),
+            .init(type: "Text", text: "Continue", settings: [], parent: 2, childCount: 0, frame: bounds),
+        ])
+        var selected = element("Continue", role: "Button")
+        selected.frame = bounds
+        #expect(inspection.report(selected).context(for: [.left]) == "Left padding: 8 pt (measured)")
+    }
+
+    @Test func separateOverlappingButtonsStayAmbiguous() {
+        let bounds = CGRect(x: 20, y: 100, width: 100, height: 44)
+        let inspection = LayoutInspection(nodes: [
+            .init(type: "Button<Text>", settings: [], parent: nil, childCount: 1, frame: bounds),
+            .init(type: "Text", text: "Continue", settings: [], parent: 0, childCount: 0, frame: bounds),
+            .init(type: "Button<Text>", settings: [], parent: nil, childCount: 1, frame: bounds),
+            .init(type: "Text", text: "Continue", settings: [], parent: 2, childCount: 0, frame: bounds),
+        ])
+        var selected = element("Continue", role: "Button")
+        selected.frame = bounds
+        let result = inspection.report(selected)
+        #expect(result.geometry == nil)
+        #expect(result.message.contains("Multiple views"))
+    }
+
+    @Test func anUnownedButtonLabelDoesNotDisappearBehindAnotherControlMatch() {
+        let bounds = CGRect(x: 20, y: 100, width: 100, height: 44)
+        let inspection = LayoutInspection(nodes: [
+            .init(type: "Button<Text>", settings: [], parent: nil, childCount: 1, frame: bounds),
+            .init(type: "Text", text: "Continue", settings: [], parent: 0, childCount: 0, frame: bounds),
+            .init(type: "Text", text: "Continue", settings: [], parent: nil, childCount: 0, frame: bounds),
+        ])
+        var selected = element("Continue", role: "Button")
+        selected.frame = bounds
+        #expect(inspection.report(selected).geometry == nil)
+    }
+
     @Test func styledButtonOwnsItsOuterPadding() {
         let button = CGRect(x: 60, y: 708, width: 326, height: 50)
         let inspection = LayoutInspection(nodes: [
@@ -541,6 +601,33 @@ struct LayoutInspectionTests {
         #expect(result.geometry?.padding.isEmpty == true)
         #expect(result.geometry?.bounds == text)
         #expect(result.rows.contains(.init(title: "Padding", value: "System default")))
+    }
+
+    @Test func plainButtonLabelCanMatchWithoutInventingTextBounds() {
+        let button = CGRect(x: 28, y: 650, width: 69, height: 20)
+        let inspection = LayoutInspection(nodes: [
+            .init(
+                type: "KeyboardShortcutBindingBehavior<Label>",
+                settings: [],
+                parent: nil,
+                childCount: 1,
+                frame: button
+            ),
+            .init(type: "AccessibilityAttachmentModifier", settings: [], parent: 0, childCount: 1),
+            .init(type: "Text", text: "Continue", settings: [], parent: 1, childCount: 0),
+        ])
+        #expect(inspection.canCaptureButtonLabel(below: 1))
+        var selected = element("Continue", role: "Button")
+        selected.frame = button
+        #expect(inspection.report(selected).geometry?.content == button)
+        selected.role = "Text"
+        #expect(inspection.report(selected).geometry == nil)
+        var unrendered = inspection
+        unrendered.nodes[0].frame = nil
+        #expect(!unrendered.canCaptureButtonLabel(below: 1))
+        var branching = inspection
+        branching.nodes[1].childCount = 2
+        #expect(!branching.canCaptureButtonLabel(below: 2))
     }
 
     @Test func capturedTranslationsIncludeNavigationAndScrollOffsets() {

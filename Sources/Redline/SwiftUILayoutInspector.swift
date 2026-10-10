@@ -19,8 +19,15 @@ enum SwiftUILayoutInspector {
         return defaults.bool(forKey: "RedlineLayoutInspection") || defaults.bool(forKey: "RedlineLayoutPrototype")
     }
 
-    static func capture(in windows: [UIWindow]) -> LayoutInspection {
-        guard isEnabled else { return LayoutInspection() }
+    private static var diagnosticsTask: Task<Void, Never>?
+
+    static func capture(in windows: [UIWindow], elements: [ElementSnapshot]) -> LayoutInspection {
+        guard isEnabled else {
+            diagnosticsTask?.cancel()
+            return LayoutInspection()
+        }
+        let exportsDiagnostics = UserDefaults.standard.bool(forKey: "RedlineLayoutDiagnostics")
+        if !exportsDiagnostics { diagnosticsTask?.cancel() }
         var result = LayoutInspection()
         var serialized: [Data] = []
         func append(
@@ -61,9 +68,10 @@ enum SwiftUILayoutInspector {
                                 && parent.map {
                                     result.nodes[$0].type == "AccessibilityAttachmentModifier"
                                         && result.nodes[$0].frame.map { $0.width > 0 && $0.height > 0 } == true
-                                } == true))
+                                } == true)
+                            || (properties[.size] == nil && result.canCaptureButtonLabel(below: parent)))
                         ? value.flatMap { text(in: $0) } : nil,
-                    settings: isLayoutNode(type) ? value.map { settings(in: $0) } ?? [] : [],
+                    settings: exportsDiagnostics && isLayoutNode(type) ? value.map { settings(in: $0) } ?? [] : [],
                     parent: parent,
                     childCount: children.count,
                     frame: validGeometry
@@ -101,7 +109,7 @@ enum SwiftUILayoutInspector {
             guard let host = view as? any HostingLayoutDebugSource else { return false }
             let roots = host._viewDebugData()
             let data = _ViewDebug.serializedData(roots)
-            if let data { serialized.append(data) }
+            if let data, exportsDiagnostics { serialized.append(data) }
             let descriptions = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [[String: Any]] ?? []
             for (index, root) in roots.enumerated() {
                 append(
@@ -115,19 +123,33 @@ enum SwiftUILayoutInspector {
             return true
         }
         for window in windows { visit(window) }
-        // Opt-in local evidence only; this data never enters a Redline report.
-        if let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            for (index, data) in serialized.enumerated() {
-                try? data.write(to: folder.appendingPathComponent("layout-tree-\(index).json"))
+        // Export is separately opt-in and does not run file I/O on the main actor.
+        if exportsDiagnostics,
+            let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        {
+            let previous = diagnosticsTask
+            previous?.cancel()
+            let inspection = result
+            let trees = serialized
+            diagnosticsTask = Task(priority: .utility) {
+                // Let an in-flight write finish before replacing it, so older captures cannot win.
+                await previous?.value
+                guard !Task.isCancelled else { return }
+                do {
+                    try await LayoutInspectionDiagnostics.write(
+                        inspection,
+                        trees: trees,
+                        elements: elements,
+                        to: folder
+                    )
+                } catch is CancellationError {
+                    // A newer capture replaces this export.
+                } catch {
+                    Log.accessibility.error(
+                        "Couldn't export layout diagnostics: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
             }
-            let debugLines = result.nodes.enumerated().map { index, node in
-                "\(index) parent=\(String(describing: node.parent)) \(node.type) text=\(String(describing: node.text)) frame=\(String(describing: node.frame)) \(node.settings)"
-            }
-            try? debugLines.joined(separator: "\n").write(
-                to: folder.appendingPathComponent("layout-nodes.txt"),
-                atomically: true,
-                encoding: .utf8
-            )
         }
         return result
     }
