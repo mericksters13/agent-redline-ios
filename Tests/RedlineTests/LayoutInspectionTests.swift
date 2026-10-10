@@ -159,7 +159,7 @@ struct LayoutInspectionTests {
         #expect(result.geometry?.content == text)
         #expect(result.geometry?.frame == box)
         #expect(result.geometry?.bounds == padded)
-        #expect(result.geometry?.padding == [.init(inner: text, outer: padded, isSystemDefault: false)])
+        #expect(result.geometry?.padding == [.init(inner: text, outer: padded, systemDefaultEdges: [])])
         #expect(result.summary.contains("Padding: Horizontal · 16 pt"))
         #expect(result.summary.contains("Frame: 180 × 44 pt"))
         #expect(!result.summary.contains("_FrameLayout"))
@@ -280,7 +280,7 @@ struct LayoutInspectionTests {
             geometry: .init(
                 content: content,
                 frame: nil,
-                padding: [.init(inner: content, outer: outer, isSystemDefault: false)]
+                padding: [.init(inner: content, outer: outer, systemDefaultEdges: [])]
             )
         )
         #expect(report.geometry?.paddingLabel(on: .top) == "0 pt")
@@ -293,7 +293,7 @@ struct LayoutInspectionTests {
         let fractional = LayoutInspection.Geometry(
             content: content,
             frame: nil,
-            padding: [.init(inner: content, outer: content.insetBy(dx: -0.5, dy: 0), isSystemDefault: false)]
+            padding: [.init(inner: content, outer: content.insetBy(dx: -0.5, dy: 0), systemDefaultEdges: [])]
         )
         #expect(fractional.paddingLabel(on: .left) == "0.5 pt")
         let annotation = Annotation(
@@ -320,8 +320,8 @@ struct LayoutInspectionTests {
                 content: content,
                 frame: nil,
                 padding: [
-                    .init(inner: content, outer: inner, isSystemDefault: false),
-                    .init(inner: inner, outer: outer, isSystemDefault: false),
+                    .init(inner: content, outer: inner, systemDefaultEdges: []),
+                    .init(inner: inner, outer: outer, systemDefaultEdges: []),
                 ]
             )
         )
@@ -332,7 +332,13 @@ struct LayoutInspectionTests {
             geometry: .init(
                 content: content,
                 frame: nil,
-                padding: [.init(inner: content, outer: content.insetBy(dx: -16, dy: -16), isSystemDefault: true)]
+                padding: [
+                    .init(
+                        inner: content,
+                        outer: content.insetBy(dx: -16, dy: -16),
+                        systemDefaultEdges: Set(LayoutInspection.Edge.allCases)
+                    )
+                ]
             )
         )
         #expect(system.context(for: [.top]) == "Top padding: 16 pt (measured; system default)")
@@ -628,6 +634,83 @@ struct LayoutInspectionTests {
         var branching = inspection
         branching.nodes[1].childCount = 2
         #expect(!branching.canCaptureButtonLabel(below: 2))
+    }
+
+    @Test(arguments: ["VStack<Text>", "HStack<Text>", "ZStack<Text>", "Grid<Text>"])
+    func aSingleChildContainerKeepsItsOwnPaddingAndFrame(_ type: String) {
+        let content = CGRect(x: 43, y: 33, width: 60, height: 20)
+        let container = CGRect(x: 22, y: 22, width: 156, height: 36)
+        let inspection = LayoutInspection(nodes: [
+            .init(
+                type: "_PaddingLayout",
+                settings: [],
+                parent: nil,
+                childCount: 1,
+                frame: container.insetBy(dx: -12, dy: -12),
+                layout: [.padding(.init(top: 12, leading: 12, bottom: 12, trailing: 12))]
+            ),
+            .init(
+                type: type,
+                settings: [],
+                parent: 0,
+                childCount: 1,
+                frame: container,
+                layout: [.stack(axis: "Vertical", spacing: 4, alignment: "center")]
+            ),
+            .init(type: "Tree", settings: [], parent: 1, childCount: 1),
+            .init(
+                type: "_PaddingLayout",
+                settings: [],
+                parent: 2,
+                childCount: 1,
+                frame: content.insetBy(dx: -3, dy: -3),
+                layout: [.padding(.init(top: 3, leading: 3, bottom: 3, trailing: 3))]
+            ),
+            .init(type: "Text", text: "Only child", settings: [], parent: 3, childCount: 0, frame: content),
+        ])
+        var selected = element("Only child")
+        selected.frame = content
+        let report = inspection.report(selected)
+        #expect(report.geometry?.bounds == content.insetBy(dx: -3, dy: -3))
+        #expect(report.context(for: [.left]) == "Left padding: 3 pt (measured)")
+        #expect(!report.rows.contains(.init(title: "Padding", value: "All sides · 12 pt")))
+        #expect(report.ancestors.contains(.init(title: "Padding", value: "All sides · 12 pt")))
+        selected.frame = container
+        #expect(inspection.report(selected).geometry == nil)
+        selected.role = "Group"
+        selected.isContainer = true
+        #expect(inspection.report(selected).geometry?.bounds == container.insetBy(dx: -12, dy: -12))
+    }
+
+    @Test func partialDefaultPaddingProvenanceBelongsOnlyToTheDefaultEdges() {
+        let content = CGRect(x: 30, y: 20, width: 60, height: 20)
+        let inspection = LayoutInspection(nodes: [
+            .init(
+                type: "_PaddingLayout",
+                settings: [],
+                parent: nil,
+                childCount: 1,
+                frame: content.insetBy(dx: -16, dy: 0),
+                layout: [.padding(.init(top: 0, leading: nil, bottom: 0, trailing: nil))]
+            ),
+            .init(type: "Text", text: "Default horizontal", settings: [], parent: 0, childCount: 0, frame: content),
+        ])
+        var selected = element("Default horizontal")
+        selected.frame = content
+        let report = inspection.report(selected)
+        #expect(report.context(for: [.top]) == "Top padding: 0 pt (measured)")
+        #expect(report.context(for: [.left]) == "Left padding: 16 pt (measured; system default)")
+    }
+
+    @Test func singleHorizontalDefaultProvenanceUsesTheMeasuredPhysicalSide() {
+        let content = CGRect(x: 30, y: 20, width: 60, height: 20)
+        let insets = LayoutInspection.Insets(top: 0, leading: nil, bottom: 0, trailing: 0)
+        let left = CGRect(x: 14, y: 20, width: 76, height: 20)
+        let right = CGRect(x: 30, y: 20, width: 76, height: 20)
+        #expect(insets.systemDefaultEdges(inner: content, outer: left) == [.left])
+        #expect(insets.systemDefaultEdges(inner: content, outer: right) == [.right])
+        let ambiguous = LayoutInspection.Insets(top: 0, leading: nil, bottom: 0, trailing: 16)
+        #expect(ambiguous.systemDefaultEdges(inner: content, outer: content.insetBy(dx: -16, dy: 0)).isEmpty)
     }
 
     @Test func capturedTranslationsIncludeNavigationAndScrollOffsets() {

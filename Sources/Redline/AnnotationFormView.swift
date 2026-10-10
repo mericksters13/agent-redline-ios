@@ -83,9 +83,9 @@ struct AnnotationFormView: View {
         )
         .padding(.leading, panelLeading)
         .padding(.top, space.bounds.lowerBound)
-        .onAppear { isNoteFocused = !session.showsLayoutPrototype }
+        .onAppear { isNoteFocused = !session.showsElementLayoutInspection }
         .onChange(of: isHierarchyExpanded) { _, expanded in
-            isNoteFocused = !expanded && !session.showsLayoutPrototype
+            isNoteFocused = !expanded && !session.showsElementLayoutInspection
             if !expanded {
                 isHierarchyTraversing = false
                 hierarchyDragTop = nil
@@ -236,7 +236,7 @@ struct AnnotationFormView: View {
                 }
             }
 
-            if session.showsLayoutPrototype, pending == nil, !session.isNotingDrawing {
+            if session.showsElementLayoutInspection {
                 LayoutInspectorView(
                     report: session.selectedLayout,
                     image: session.selectedLayoutPreview(),

@@ -30,6 +30,27 @@ struct LayoutInspectionDiagnosticsTests {
         #expect(saved == [element])
     }
 
+    @Test func fewerHostsRemoveOnlyObsoleteIndexedTrees() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "LayoutDiagnostics-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try await LayoutInspectionDiagnostics.write(
+            LayoutInspection(),
+            trees: [Data(), Data(), Data()],
+            elements: [],
+            to: folder
+        )
+        let unrelated = folder.appending(path: "layout-tree-not-an-index.json")
+        try Data("Keep".utf8).write(to: unrelated)
+        let latest = Data("Latest".utf8)
+        try await LayoutInspectionDiagnostics.write(LayoutInspection(), trees: [latest], elements: [], to: folder)
+        #expect(try Data(contentsOf: folder.appending(path: "layout-tree-0.json")) == latest)
+        #expect(!FileManager.default.fileExists(atPath: folder.appending(path: "layout-tree-1.json").path))
+        #expect(!FileManager.default.fileExists(atPath: folder.appending(path: "layout-tree-2.json").path))
+        #expect(try Data(contentsOf: unrelated) == Data("Keep".utf8))
+        try await LayoutInspectionDiagnostics.write(LayoutInspection(), trees: [], elements: [], to: folder)
+        #expect(!FileManager.default.fileExists(atPath: folder.appending(path: "layout-tree-0.json").path))
+    }
+
     @Test func aFailedExportReportsItsError() async throws {
         let file = FileManager.default.temporaryDirectory.appending(path: "LayoutDiagnostics-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: file) }

@@ -29,6 +29,7 @@ enum SwiftUILayoutInspector {
         let exportsDiagnostics = UserDefaults.standard.bool(forKey: "RedlineLayoutDiagnostics")
         if !exportsDiagnostics { diagnosticsTask?.cancel() }
         var result = LayoutInspection()
+        var renderedTextIndices: Set<Int> = []
         var serialized: [Data] = []
         func append(
             _ data: _ViewDebug.Data,
@@ -59,18 +60,20 @@ enum SwiftUILayoutInspector {
             let value = properties[.value]
             let type = properties[.type].map { String(describing: $0) } ?? "unknown"
             let index = result.nodes.count
+            let capturesText =
+                type == "Text"
+                && ((properties[.size] as? CGSize).map { $0.width > 0 && $0.height > 0 } == true
+                    || (properties[.size] == nil
+                        && parent.map {
+                            result.nodes[$0].type == "AccessibilityAttachmentModifier"
+                                && result.nodes[$0].frame.map { $0.width > 0 && $0.height > 0 } == true
+                        } == true)
+                    || (properties[.size] == nil && result.canCaptureButtonLabel(below: parent)))
+            if capturesText { renderedTextIndices.insert(index) }
             result.nodes.append(
                 LayoutInspection.Node(
                     type: type,
-                    text: type == "Text"
-                        && ((properties[.size] as? CGSize).map { $0.width > 0 && $0.height > 0 } == true
-                            || (properties[.size] == nil
-                                && parent.map {
-                                    result.nodes[$0].type == "AccessibilityAttachmentModifier"
-                                        && result.nodes[$0].frame.map { $0.width > 0 && $0.height > 0 } == true
-                                } == true)
-                            || (properties[.size] == nil && result.canCaptureButtonLabel(below: parent)))
-                        ? value.flatMap { text(in: $0) } : nil,
+                    text: capturesText ? value.flatMap { text(in: $0) } : nil,
                     settings: exportsDiagnostics && isLayoutNode(type) ? value.map { settings(in: $0) } ?? [] : [],
                     parent: parent,
                     childCount: children.count,
@@ -95,6 +98,18 @@ enum SwiftUILayoutInspector {
                     inheritedOffset: offset,
                     geometryIsValid: validGeometry
                 )
+            }
+            // The renderer's attributed string has already resolved localization and interpolation.
+            // Replace only the nearest rendered Text's identity; accessibility-only text stays excluded.
+            if type == "StyledTextContentView", let label = value.flatMap({ resolvedText(in: $0) }) {
+                var ancestor = parent
+                while let current = ancestor {
+                    if result.nodes[current].type == "Text" {
+                        if renderedTextIndices.contains(current) { result.nodes[current].text = label }
+                        break
+                    }
+                    ancestor = result.nodes[current].parent
+                }
             }
         }
         @discardableResult
@@ -160,6 +175,16 @@ enum SwiftUILayoutInspector {
             "LayoutPriorityLayout", "_TraitWritingModifier<LayoutPriorityTraitKey>",
         ].contains(type)
             || ["HStack<", "VStack<", "ZStack<"].contains { type.hasPrefix($0) }
+    }
+
+    private static func resolvedText(in value: Any, depth: Int = 0) -> String? {
+        if let attributed = value as? NSAttributedString { return attributed.string }
+        if let attributed = value as? AttributedString { return String(attributed.characters) }
+        guard depth < 12 else { return nil }
+        for child in Mirror(reflecting: value).children {
+            if let label = resolvedText(in: child.value, depth: depth + 1) { return label }
+        }
+        return nil
     }
 
     private static func text(in value: Any, depth: Int = 0) -> String? {

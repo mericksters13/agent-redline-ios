@@ -66,6 +66,79 @@ final class LayoutPrototypeTests: XCTestCase {
         )
     }
 
+    func testLocalizedTextLayoutInspection() {
+        for (fixture, label, isButton) in [
+            ("localized", "Exemple traduit", false),
+            ("interpolated", "Compteur : 3", false),
+            ("localizedButton", "Exemple traduit", true),
+        ] {
+            let app = XCUIApplication()
+            app.launchArguments = [
+                "-RedlineLayoutPrototype", "YES", "-RedlineLayoutActivation", "early",
+                "-RedlineLayoutReviewFixture", fixture, "-AppleLanguages", "(fr)", "-AppleLocale", "fr_FR",
+            ]
+            app.launchEnvironment["SWIFTUI_VIEW_DEBUG"] = "0"
+            app.launch()
+            let target = isButton ? app.buttons[label] : app.staticTexts[label]
+            XCTAssertTrue(target.waitForExistence(timeout: 10))
+            let box = target.frame
+            app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: box.midX, dy: box.midY)).tap()
+            let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
+            XCTAssertTrue(result.waitForExistence(timeout: 5))
+            XCTAssertTrue(result.label.contains("Matched by"), result.label)
+            XCTAssertTrue(result.label.contains("Padding: Horizontal · 8 pt"), result.label)
+            expandPreview(in: app)
+            let left = app.buttons["RedlinePaddingLeft"]
+            XCTAssertTrue(left.label.contains("8 pt"), left.label)
+            left.tap()
+            XCTAssertTrue(app.staticTexts["RedlineLayoutContext"].label.contains("Left padding: 8 pt"))
+            attach("Localized " + fixture, in: app)
+            app.terminate()
+        }
+    }
+
+    func testSingleChildContainerPaddingOwnership() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-RedlineLayoutPrototype", "YES", "-RedlineLayoutActivation", "early",
+            "-RedlineLayoutReviewFixture", "singleChild",
+        ]
+        app.launchEnvironment["SWIFTUI_VIEW_DEBUG"] = "0"
+        app.launch()
+        let result = inspect("Only child", in: app)
+        XCTAssertTrue(result.contains("Matched by"), result)
+        XCTAssertTrue(result.contains("Padding: All sides · 3 pt"), result)
+        XCTAssertFalse(result.contains("All sides · 12 pt"), result)
+        XCTAssertFalse(result.contains("Frame: 180 × 60 pt"), result)
+        app.terminate()
+    }
+
+    func testDrawingNoteAutofocusWithLayoutInspection() {
+        let app = launch("early")
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.buttons["Draw on the screen"].tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.3))
+            .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.4)))
+        app.buttons["Done drawing, add a note"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["RedlineNoteText"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch.exists)
+        attach("Drawing note retains autofocus", in: app)
+        app.terminate()
+    }
+
+    func testScreenshotNoteAutofocusWithLayoutInspection() {
+        let app = launch("early")
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.buttons["Capture this screen"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["RedlineNoteText"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch.exists)
+        attach("Screenshot note retains autofocus", in: app)
+        app.terminate()
+    }
+
     func testPlainButtonLayoutInspection() {
         let app = XCUIApplication()
         app.launchArguments = [

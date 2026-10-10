@@ -19,6 +19,25 @@ struct LayoutInspection: Equatable, Sendable {
         var bottom: CGFloat?
         var trailing: CGFloat?
 
+        /// Attribute logical horizontal defaults only when the measured sides establish their mapping.
+        func systemDefaultEdges(inner: CGRect, outer: CGRect) -> Set<Edge> {
+            var result: Set<Edge> = []
+            if top == nil { result.insert(.top) }
+            if bottom == nil { result.insert(.bottom) }
+            let left = inner.minX - outer.minX
+            let right = outer.maxX - inner.maxX
+            if leading == nil && trailing == nil {
+                result.formUnion([.left, .right])
+            } else if leading == nil, let trailing {
+                if abs(right - trailing) < 0.05 && abs(left - trailing) >= 0.05 { result.insert(.left) }
+                if abs(left - trailing) < 0.05 && abs(right - trailing) >= 0.05 { result.insert(.right) }
+            } else if trailing == nil, let leading {
+                if abs(left - leading) < 0.05 && abs(right - leading) >= 0.05 { result.insert(.right) }
+                if abs(right - leading) < 0.05 && abs(left - leading) >= 0.05 { result.insert(.left) }
+            }
+            return result
+        }
+
         var summary: String {
             if top == nil && leading == nil && bottom == nil && trailing == nil { return "System default" }
             if top == bottom, top == leading, top == trailing, let top {
@@ -107,7 +126,8 @@ struct LayoutInspection: Equatable, Sendable {
     struct PaddingRegion: Equatable, Sendable {
         var inner: CGRect
         var outer: CGRect
-        var isSystemDefault: Bool
+        var systemDefaultEdges: Set<Edge> = []
+        var isSystemDefault: Bool { !systemDefaultEdges.isEmpty }
     }
 
     enum Edge: String, CaseIterable, Sendable {
@@ -151,10 +171,11 @@ struct LayoutInspection: Equatable, Sendable {
 
         func context(for edges: Set<Edge>) -> String {
             guard let geometry, !geometry.padding.isEmpty else { return "" }
-            let provenance =
-                geometry.padding.contains(where: \.isSystemDefault) ? "measured; system default" : "measured"
             return Edge.allCases.filter(edges.contains).compactMap { edge in
-                geometry.paddingLabel(on: edge).map { "\(edge.title) padding: \($0) (\(provenance))" }
+                let provenance =
+                    geometry.padding.contains { $0.systemDefaultEdges.contains(edge) }
+                    ? "measured; system default" : "measured"
+                return geometry.paddingLabel(on: edge).map { "\(edge.title) padding: \($0) (\(provenance))" }
             }.joined(separator: "\n")
         }
 
@@ -237,7 +258,7 @@ struct LayoutInspection: Equatable, Sendable {
         var ancestor = false
         for index in path(from: matched) {
             let node = nodes[index]
-            if index != matched && (node.childCount > 1 || node.type == "AccessibilityContainerModifier") {
+            if index != matched && Self.isComponentBoundary(node) {
                 ancestor = true
             }
             for setting in node.layout {
@@ -255,7 +276,13 @@ struct LayoutInspection: Equatable, Sendable {
                 case .padding(let insets):
                     if let inner, let bounds, bounds.contains(inner), bounds != inner {
                         let isDefault = [insets.top, insets.leading, insets.bottom, insets.trailing].contains(nil)
-                        padding.append(PaddingRegion(inner: inner, outer: bounds, isSystemDefault: isDefault))
+                        padding.append(
+                            PaddingRegion(
+                                inner: inner,
+                                outer: bounds,
+                                systemDefaultEdges: insets.systemDefaultEdges(inner: inner, outer: bounds)
+                            )
+                        )
                         if isDefault {
                             report.rows.append(
                                 Row(
@@ -299,7 +326,7 @@ struct LayoutInspection: Equatable, Sendable {
         var result: [Int] = []
         while let index = current, nodes.indices.contains(index), visited.insert(index).inserted {
             if componentOnly && index != start
-                && (nodes[index].childCount > 1 || nodes[index].type == "AccessibilityContainerModifier")
+                && Self.isComponentBoundary(nodes[index])
             {
                 break
             }
@@ -356,7 +383,9 @@ struct LayoutInspection: Equatable, Sendable {
     /// Keep that label's identity only under a sized control, without borrowing its bounds for the text.
     func canCaptureButtonLabel(below parent: Int?) -> Bool {
         guard let parent else { return false }
-        return path(from: parent, componentOnly: true).contains { index in
+        return path(from: parent).prefix {
+            nodes[$0].childCount == 1 && nodes[$0].type != "AccessibilityContainerModifier"
+        }.contains { index in
             Self.isButton(nodes[index].type)
                 && nodes[index].frame.map { $0.width > 0 && $0.height > 0 } == true
         }
@@ -386,9 +415,21 @@ struct LayoutInspection: Equatable, Sendable {
         {
             owner = control
         }
-        return path(from: owner, componentOnly: true).last {
+        return path(from: owner).prefix {
+            $0 == owner || (nodes[$0].childCount == 1 && nodes[$0].type != "AccessibilityContainerModifier")
+        }.last {
             matches.contains($0) && Self.isButton(nodes[$0].type)
         } ?? owner
+    }
+
+    /// Semantic containers own their layout even when their current contents have one child.
+    private static func isComponentBoundary(_ node: Node) -> Bool {
+        node.childCount > 1 || node.type == "AccessibilityContainerModifier"
+            || [
+                "HStack<", "VStack<", "ZStack<", "Grid<", "GridRow<", "LazyHStack<", "LazyVStack<", "LazyHGrid<",
+                "LazyVGrid<",
+            ]
+            .contains { node.type.hasPrefix($0) }
     }
 
     private static func isButton(_ type: String) -> Bool {

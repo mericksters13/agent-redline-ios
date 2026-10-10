@@ -127,6 +127,9 @@ final class DebugSession {
     private(set) var selectedLayout = LayoutInspection.Report(message: "Select a component to inspect its layout.")
     @ObservationIgnored private var layoutPreview: UIImage?
     var showsLayoutPrototype: Bool { SwiftUILayoutInspector.isEnabled }
+    var showsElementLayoutInspection: Bool {
+        showsLayoutPrototype && pending == nil && !isNotingDrawing && selected != nil
+    }
     private(set) var selectedPadding: Set<LayoutInspection.Edge> = []
 
     func togglePadding(_ edge: LayoutInspection.Edge) {
@@ -1919,7 +1922,7 @@ final class DebugSession {
     private func beginNoting() {
         selectedPadding = []
         noteError = nil
-        isAwaitingKeyboard = !showsLayoutPrototype && keyboardTop == .infinity
+        isAwaitingKeyboard = !showsElementLayoutInspection && keyboardTop == .infinity
         noteBackground = pending == nil ? screenImage : nil
         setMode(.noting)
         // A hardware keyboard never shows the on-screen one; stop waiting for it. Only this card's

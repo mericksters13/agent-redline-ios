@@ -149,6 +149,7 @@ jobs:
             -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
             -only-testing:RedlineDemoUITests/LayoutPrototypeTests/testLayoutTabOnNormalLaunch \
             -only-testing:RedlineDemoUITests/LayoutPrototypeTests/testPlainButtonLayoutInspection \
+            -only-testing:RedlineDemoUITests/LayoutPrototypeTests/testLocalizedTextLayoutInspection \
             -collect-test-diagnostics never test CODE_SIGNING_ALLOWED=NO
 
   scripts:

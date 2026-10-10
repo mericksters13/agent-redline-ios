@@ -1,7 +1,9 @@
 #if REDLINE
 import SwiftUI
 
-/// Fixtures are independent of the inspector. No modifier constants are passed to Redline.
+/// Fixtures are independent of the inspector.
+///
+/// No modifier constants are passed to Redline.
 struct LayoutPrototypeScreen: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -35,7 +37,33 @@ struct LayoutPrototypeScreen: View {
                 Text("Overlap").padding(4)
                 Text("Overlap").padding(18).background(.yellow.opacity(0.5))
             }
-            if UserDefaults.standard.bool(forKey: "RedlineLayoutButtonDemo") {
+            if UserDefaults.standard.string(forKey: "RedlineLayoutReviewFixture") == "singleChild" {
+                VStack {
+                    Text("Only child").padding(3).background(.cyan.opacity(0.15))
+                }
+                .padding(12)
+                .frame(width: 180, height: 60)
+                .background(.blue.opacity(0.15))
+            } else if UserDefaults.standard.string(forKey: "RedlineLayoutReviewFixture") == "localized" {
+                Text("review.title", tableName: "LayoutFixtures")
+                    .padding(.horizontal, 8)
+                    .frame(width: 160, height: 44, alignment: .leading)
+                    .background(.blue.opacity(0.15))
+            } else if UserDefaults.standard.string(forKey: "RedlineLayoutReviewFixture") == "interpolated" {
+                Text("review.count \(3)", tableName: "LayoutFixtures")
+                    .padding(.horizontal, 8)
+                    .frame(width: 160, height: 44, alignment: .leading)
+                    .background(.blue.opacity(0.15))
+            } else if UserDefaults.standard.string(forKey: "RedlineLayoutReviewFixture") == "localizedButton" {
+                Button {
+                } label: {
+                    Text("review.title", tableName: "LayoutFixtures")
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .frame(width: 160, height: 44, alignment: .leading)
+                .background(.blue.opacity(0.15))
+            } else if UserDefaults.standard.bool(forKey: "RedlineLayoutButtonDemo") {
                 Button("Continue") {}
                     .buttonStyle(.plain)
                     .padding(.horizontal, 8)
