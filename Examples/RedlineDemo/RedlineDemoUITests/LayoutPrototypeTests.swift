@@ -319,6 +319,75 @@ final class LayoutPrototypeTests: XCTestCase {
         app.terminate()
     }
 
+    func testFormAvoidsSelectedComponent() {
+        for label in ["Fixed", "Flexible", "Default padding", "Duplicate"] {
+            let app = launch("early")
+            let target = app.staticTexts.matching(identifier: label).firstMatch
+            let targetFrame = target.frame
+            let point = CGVector(dx: targetFrame.midX, dy: targetFrame.midY)
+            let report = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch
+            XCTAssertTrue(report.waitForExistence(timeout: 10))
+            report.tap()
+            app.coordinate(withNormalizedOffset: .zero).withOffset(point).tap()
+            let card = app.descendants(matching: .any)["RedlineNoteCard"].firstMatch
+            XCTAssertTrue(card.waitForExistence(timeout: 5))
+            func check(_ state: String) {
+                Thread.sleep(forTimeInterval: 0.4)
+                let frame = card.frame
+                XCTAssertTrue(frame.maxY <= targetFrame.minY - 7 || frame.minY >= targetFrame.maxY + 7,
+                              "\(label) \(state): card \(frame) overlaps target \(targetFrame)")
+                XCTAssertTrue(app.buttons["Add note"].isHittable)
+                attach("\(label) form \(state)", in: app)
+            }
+            check("collapsed")
+            let collapsedHeight = card.frame.height
+            let title = card.staticTexts.matching(identifier: label).firstMatch
+            let note = app.descendants(matching: .any)["RedlineNoteText"].firstMatch
+            XCTAssertLessThanOrEqual(title.frame.minY - card.frame.minY, 32, "Extra space above the component name")
+            XCTAssertLessThanOrEqual(app.buttons["Add note"].frame.minY - note.frame.maxY, 28,
+                                     "Extra space between the note and footer")
+            expandPreview(in: app)
+            check("expanded")
+            let disclosure = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "Padding & frame", "Frame")).firstMatch
+            let scroll = app.scrollViews["RedlineNoteScroll"]
+            for _ in 0..<3 where !disclosure.isHittable { scroll.swipeDown() }
+            disclosure.tap()
+            check("collapsed again")
+            XCTAssertEqual(card.frame.height, collapsedHeight, accuracy: 1)
+            app.buttons["Cancel"].tap()
+            app.terminate()
+        }
+    }
+
+    func testFormPlacementWhileTyping() {
+        let app = launch("early")
+        let target = app.staticTexts["Flexible"]
+        let targetFrame = target.frame
+        let report = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch
+        XCTAssertTrue(report.waitForExistence(timeout: 10))
+        report.tap()
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: targetFrame.midX, dy: targetFrame.midY)).tap()
+        let note = app.descendants(matching: .any)["RedlineNoteText"].firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 5))
+        note.tap()
+        note.typeText("Keep the component visible while I write.\nA second line.\nA third line.")
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        let card = app.descendants(matching: .any)["RedlineNoteCard"].firstMatch
+        let frame = card.frame
+        XCTAssertTrue(frame.maxY <= targetFrame.minY - 7 || frame.minY >= targetFrame.maxY + 7,
+                      "Typing: card \(frame) overlaps target \(targetFrame)")
+        // Automation may expose an offscreen keyboard when text entry uses a hardware keyboard.
+        let visibleBottom = min(app.frame.maxY, app.keyboards.firstMatch.frame.minY)
+        XCTAssertLessThanOrEqual(frame.maxY, visibleBottom - 7)
+        XCTAssertTrue(app.buttons["Add note"].isHittable)
+        XCTAssertTrue((note.value as? String)?.contains("A third line.") == true)
+        attach("Form stays clear with growing draft", in: app)
+        app.buttons["Cancel"].tap()
+        app.buttons["Close annotate mode"].tap()
+        app.terminate()
+    }
+
     func testHierarchyDragSelection() {
         let app = XCUIApplication()
         app.launch()

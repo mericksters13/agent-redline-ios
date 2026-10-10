@@ -34,8 +34,6 @@ struct OverlayView: View {
     @State private var noteContentHeight: CGFloat = 0
     /// The note card's error line and buttons, which never scroll.
     @State private var noteFooterHeight: CGFloat = 0
-    /// The card's height when it opened, before any typing.
-    @State private var openingCardHeight: CGFloat = 0
     @State private var islandHeight: CGFloat = 52
     @State private var tagWidth: CGFloat = 140
     @State private var listContentHeight: CGFloat = 0
@@ -501,12 +499,12 @@ struct OverlayView: View {
 
     private var noteCard: some View {
         let pending = session.pending
-        // Worked out once per pass: where the card goes, and so whether it hides the element.
-        let height = cardHeight == 0 ? Self.estimatedCardHeight : cardHeight
-        let top = hierarchyDragTop ?? session.noteCardTop(height: height, reservedHeight: reservedCardHeight)
+        let space = noteCardSpace
+        let height = min(cardHeight == 0 ? Self.estimatedCardHeight : cardHeight,
+                         space.bounds.upperBound - space.bounds.lowerBound)
+        let top = space.anchorsBottom ? space.bounds.upperBound - height : space.bounds.lowerBound
         return VStack(alignment: .leading, spacing: 14) {
-            // Scrolls only when the card is taller than the space above the keyboard, such
-            // as in landscape or at large text sizes, so the buttons below stay in reach.
+            // Keep the selected component visible while long content scrolls above the footer.
             ScrollView {
                 noteCardContent(pending: pending, isElementHidden: isElementHidden(cardTop: top, cardHeight: height))
                     .onGeometryChange(for: CGFloat.self) {
@@ -520,6 +518,9 @@ struct OverlayView: View {
             .animation(reduceMotion ? nil : .smooth(duration: 0.3)) { content in
                 content.frame(height: noteScrollHeight)
             }
+            // Clamp immediately when the keyboard reduces the slot, even during a height animation.
+            .frame(maxHeight: noteScrollRoom)
+            .fixedSize(horizontal: false, vertical: true)
             .clipped()
             .onGeometryChange(for: CGRect.self) {
                 $0.frame(in: .global)
@@ -538,16 +539,20 @@ struct OverlayView: View {
         .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.3), radius: 18, y: 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("RedlineNoteCard")
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .global)
         } action: { frame in
             noteCardFrame = frame
             cardHeight = frame.height
-            // Wait for the real content height; the first pass uses an estimate.
-            if openingCardHeight == 0, noteContentHeight > 0 { openingCardHeight = frame.height }
         }
+        // Align the actual card inside the free slot. This keeps its edge outside the target
+        // throughout an animated resize, without depending on the previous measured height.
+        .frame(height: space.bounds.upperBound - space.bounds.lowerBound,
+               alignment: space.anchorsBottom ? .bottom : .top)
         .padding(.leading, panelLeading)
-        .padding(.top, top)
+        .padding(.top, space.bounds.lowerBound)
         .onAppear { isNoteFocused = !session.showsLayoutPrototype }
         .onChange(of: isHierarchyExpanded) { _, expanded in
             isNoteFocused = !expanded && !session.showsLayoutPrototype
@@ -555,17 +560,12 @@ struct OverlayView: View {
                 isHierarchyTraversing = false
                 hierarchyDragTop = nil
             }
-            openingCardHeight = 0
-        }
-        .onChange(of: isLayoutPreviewExpanded) { _, _ in
-            openingCardHeight = 0
         }
         .onDisappear {
             isHierarchyExpanded = false
             isHierarchyTraversing = false
             hierarchyDragTop = nil
             cardHeight = 0
-            openingCardHeight = 0
             noteContentHeight = 0
             noteFooterHeight = 0
         }
@@ -612,17 +612,30 @@ struct OverlayView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The scrolling part's height: all of it when the card fits, otherwise what is left once the
-    /// card's padding, spacing and buttons are in.
+    /// Enough room for a scrollable content row plus the fixed footer, spacing and padding.
+    private var noteCardMinimumHeight: CGFloat { 44 + (noteFooterHeight == 0 ? 44 : noteFooterHeight) + 14 + 32 }
+
+    private var noteCardSpace: (bounds: ClosedRange<CGFloat>, anchorsBottom: Bool) {
+        let space = session.noteCardSpace(height: cardHeight == 0 ? Self.estimatedCardHeight : cardHeight,
+                                          minimumHeight: noteCardMinimumHeight,
+                                          showsHierarchy: isHierarchyExpanded)
+        if let top = hierarchyDragTop, space.bounds.contains(top),
+           space.bounds.upperBound - top >= noteCardMinimumHeight {
+            return (top...space.bounds.upperBound, false)
+        }
+        return space
+    }
+
+    /// Only the upper content scrolls; Cancel and Add note stay in reach.
     private var noteScrollHeight: CGFloat {
         let content = noteContentHeight == 0 ? 120 : noteContentHeight
+        return min(content, noteScrollRoom)
+    }
+
+    private var noteScrollRoom: CGFloat {
         let footer = noteFooterHeight == 0 ? 44 : noteFooterHeight
-        var room = session.noteCardMaxHeight - 32 - 14 - footer
-        if let top = hierarchyDragTop {
-            let bottom = min(session.noteKeyboardTop, session.screenSize.height - session.safeAreaInsets.bottom)
-            room = min(room, bottom - NoteCardPlacement.margin - top - 32 - 14 - footer)
-        }
-        return max(min(content, room), 44)
+        let bounds = noteCardSpace.bounds
+        return max(bounds.upperBound - bounds.lowerBound - 32 - 14 - footer, 0)
     }
 
     private func noteCardContent(pending: DebugSession.PendingAttachment?, isElementHidden: Bool) -> some View {
@@ -829,13 +842,6 @@ struct OverlayView: View {
         let card = CGRect(x: panelLeading, y: cardTop, width: panelWidth, height: height)
         let center = CGPoint(x: frame.midX, y: frame.midY)
         return center.y >= visibleBottom || card.contains(center)
-    }
-
-    /// The height the card can reach while typing: three more lines than it opened with,
-    /// the text field's limit.
-    private var reservedCardHeight: CGFloat {
-        let opening = openingCardHeight == 0 ? Self.estimatedCardHeight : openingCardHeight
-        return opening + 3 * UIFont.preferredFont(forTextStyle: .body).lineHeight
     }
 
     // MARK: - Notes list

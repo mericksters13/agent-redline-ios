@@ -1713,22 +1713,23 @@ final class DebugSession {
         isAwaitingKeyboard ? screenSize.height - expectedKeyboardHeight : keyboardTop
     }
 
-    /// The note card's top edge.
-    func noteCardTop(height: CGFloat, reservedHeight: CGFloat) -> CGFloat {
-        NoteCardPlacement.top(
-            // After a rotation the picked frame points at the wrong place; the card shows
-            // a crop of the element instead.
-            element: screenReadIsCurrent ? noteFrame : nil,
-            height: height,
-            reservedHeight: reservedHeight,
-            top: safeAreaTop,
-            bottom: noteCardBottom
-        )
-    }
-
-    /// The tallest the note card can be and still fit whole above the keyboard.
-    var noteCardMaxHeight: CGFloat {
-        NoteCardPlacement.maxHeight(top: safeAreaTop, bottom: noteCardBottom)
+    /// Keep the form in a usable slot above or below the component. While browsing a local
+    /// hierarchy, prefer a slot clear of its whole owner so selecting children keeps the rows steady.
+    func noteCardSpace(height: CGFloat, minimumHeight: CGFloat, showsHierarchy: Bool)
+        -> (bounds: ClosedRange<CGFloat>, anchorsBottom: Bool) {
+        let element = screenReadIsCurrent ? noteFrame : nil
+        if showsHierarchy, let element, let hierarchy {
+            let owner = hierarchy.elements[hierarchy.root].frame
+            let space = NoteCardPlacement.space(element: owner, minimumHeight: minimumHeight, height: height,
+                                                top: safeAreaTop, bottom: noteCardBottom)
+            if owner.contains(element),
+               space.bounds.upperBound <= owner.minY - NoteCardPlacement.margin ||
+               space.bounds.lowerBound >= owner.maxY + NoteCardPlacement.margin {
+                return space
+            }
+        }
+        return NoteCardPlacement.space(element: element, minimumHeight: minimumHeight, height: height,
+                                       top: safeAreaTop, bottom: noteCardBottom)
     }
 
     /// The lowest the note card's bottom may go: the keyboard, or the home indicator without one.
