@@ -51,4 +51,23 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: >-
           UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
-    scheme: {}
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) REDLINE"
+    scheme:
+      testTargets:
+        - RedlineDemoUITests
+  RedlineDemoUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [RedlineDemoUITests]
+    dependencies:
+      - target: RedlineDemo
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.agentredline.demo.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: ""
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) REDLINE"

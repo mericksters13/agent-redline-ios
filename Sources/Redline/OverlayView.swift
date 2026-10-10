@@ -531,7 +531,7 @@ struct OverlayView: View {
         }
         .padding(.leading, panelLeading)
         .padding(.top, top)
-        .onAppear { isNoteFocused = true }
+        .onAppear { isNoteFocused = !session.showsLayoutPrototype }
         .onChange(of: isHierarchyExpanded) { _, expanded in
             isNoteFocused = !expanded
             openingCardHeight = 0
@@ -648,6 +648,13 @@ struct OverlayView: View {
                     .disabled(!session.screenReadIsCurrent)
                     .transition(.identity)
                 }
+            }
+
+            if session.showsLayoutPrototype, pending == nil, !session.isNotingDrawing {
+                Text(session.layoutInspectionText)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(Mono.text)
+                    .accessibilityIdentifier("RedlineLayoutInspection")
             }
 
             if !isHierarchyExpanded {

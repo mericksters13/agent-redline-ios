@@ -119,6 +119,9 @@ final class DebugSession {
     private(set) var hierarchySelectionIndex: Int?
     /// Numbered markers for annotations already made on the current screen.
     private(set) var markers: [Marker] = []
+    private var layoutInspection = LayoutInspection()
+    var layoutInspectionText: String { layoutInspection.describe(selected) }
+    var showsLayoutPrototype: Bool { SwiftUILayoutInspector.isEnabled }
     var noteText = ""
     /// The note showing in the full-screen viewer.
     private(set) var viewerID: UUID?
@@ -2003,6 +2006,12 @@ final class DebugSession {
         let previousController = screenController
         let previousScreen = screen
         elements = AccessibilityTree.elements(under: roots, screenBounds: window.bounds)
+        layoutInspection = SwiftUILayoutInspector.capture(in: appWindows)
+        if showsLayoutPrototype,
+           let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+           let data = try? JSONEncoder().encode(elements) {
+            try? data.write(to: folder.appendingPathComponent("layout-elements.json"))
+        }
         screen = AccessibilityTree.screen(of: screenWindow, elements: elements)
         screenController = AccessibilityTree.topController(of: screenWindow)
         // The app can still move on by itself, after a timer or a network response. Notes
