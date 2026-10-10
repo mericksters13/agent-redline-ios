@@ -222,9 +222,10 @@ enum ElementSelection {
         return chain
     }
 
-    /// Whether an element can be picked or enclosed: it has an area, and covers less than 90% of
-    /// the screen, since "the whole screen" says nothing useful.
-    private static func isUsable(_ element: ElementSnapshot, screenSize: CGSize) -> Bool {
+    /// Whether an element is local enough to pick, enclose or use as a hierarchy owner.
+    ///
+    /// Empty frames and elements covering almost the whole screen are excluded.
+    static func isUsable(_ element: ElementSnapshot, screenSize: CGSize) -> Bool {
         !element.frame.isEmpty && area(element.frame) < screenSize.width * screenSize.height * 0.9
     }
 

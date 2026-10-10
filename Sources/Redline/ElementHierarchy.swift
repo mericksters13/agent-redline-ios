@@ -1,7 +1,7 @@
 #if REDLINE
 import Foundation
 
-/// The captured subtree nearest a touch.
+/// The captured subtree of the nearest local owner of a touch.
 ///
 /// Choosing another node does not change its root.
 struct ElementHierarchy {
@@ -17,10 +17,12 @@ struct ElementHierarchy {
     let root: Int
     private let children: [[Int]]
 
-    init?(touched: ElementSnapshot, in elements: [ElementSnapshot]) {
+    init?(touched: ElementSnapshot, in elements: [ElementSnapshot], screenSize: CGSize) {
         guard let index = elements.lastIndex(of: touched) else { return nil }
         self.elements = elements
-        if !touched.isContainer, let parent = touched.parent, parent >= 0, parent < index {
+        if let parent = touched.parent, parent >= 0, parent < index,
+            ElementSelection.isUsable(elements[parent], screenSize: screenSize)
+        {
             root = parent
         } else {
             root = index

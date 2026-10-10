@@ -544,7 +544,7 @@ final class DebugSession {
             nudge()
             return
         }
-        hierarchy = ElementHierarchy(touched: selected, in: elements)
+        hierarchy = ElementHierarchy(touched: selected, in: elements, screenSize: readSize)
         noteText = ""
         pending = nil
         notingReturnMode = .picking
