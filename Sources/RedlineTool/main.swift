@@ -95,7 +95,11 @@ if arguments.first == "doctor" {
         exit(64)
     }
     let checks = Doctor.checks()
-    print(Doctor.text(for: checks, version: version))
+    let color = Doctor.usesColor(
+        isTerminal: isatty(STDOUT_FILENO) != 0,
+        environment: ProcessInfo.processInfo.environment
+    )
+    print(Doctor.text(for: checks, version: version, color: color))
     exit(Doctor.exitCode(for: checks))
 }
 

@@ -138,7 +138,9 @@ On first launch, macOS asks whether Redline may show notifications. If your proj
 
 Run `redline doctor` after installing, after an update, or when reports do not arrive. If this terminal cannot find `redline`, use `~/.local/bin/redline doctor` first.
 
-It checks the selected Xcode and its components, Swift, the installed command and PATH, the Redline app, the running hub, and your supported agents' command sign-in and user configuration. Each **Needs you** item gives a fix. An absent agent is **Skipped** when it has not been configured; you only need Claude Code or Codex.
+It checks the selected Xcode and its components, Swift, the installed command and PATH, the Redline app, the running hub, and your supported agents' command sign-in and user configuration. Completed checks show a green check mark and **Done**; missing or incomplete steps show a red x and **Incomplete**, with a fix. An absent agent is **Skipped** when it has not been configured; you only need Claude Code or Codex.
+
+Piped output keeps the marks and labels without color codes. Set `NO_COLOR=1` to disable color in a terminal.
 
 Doctor is read-only. It does not install anything, change settings, migrate reports, open apps, start the hub, send a message, or request permissions. It exits with `1` when an automatic check needs attention and `0` when none does. Exit `0` does not prove report delivery.
 

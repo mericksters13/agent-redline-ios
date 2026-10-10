@@ -7,7 +7,7 @@ import Foundation
 enum Doctor {
     enum Status: String, Sendable {
         case done = "Done"
-        case needsYou = "Needs you"
+        case needsYou = "Incomplete"
         case skipped = "Skipped"
         case check = "Check yourself"
     }
@@ -416,13 +416,32 @@ enum Doctor {
         checks.contains { $0.status == .needsYou } ? 1 : 0
     }
 
-    static func text(for checks: [Check], version: String) -> String {
+    static func usesColor(isTerminal: Bool, environment: [String: String]) -> Bool {
+        isTerminal && environment["TERM"] != "dumb" && environment["NO_COLOR"]?.isEmpty != false
+    }
+
+    static func text(for checks: [Check], version: String, color: Bool = false) -> String {
         let automatic = checks.filter { $0.status != .check }
         let manual = checks.filter { $0.status == .check }
         func lines(_ checks: [Check]) -> String {
-            checks.map { "[\($0.status.rawValue)] \($0.name)\n  \($0.detail.replacing("\n", with: "\n  "))" }.joined(
-                separator: "\n\n"
-            )
+            checks.map { check in
+                let marker: String
+                let ansi: String
+                switch check.status {
+                case .done:
+                    marker = "✓ "
+                    ansi = "\u{1B}[32m"
+                case .needsYou:
+                    marker = "✗ "
+                    ansi = "\u{1B}[31m"
+                case .skipped, .check:
+                    marker = ""
+                    ansi = ""
+                }
+                let heading = "\(marker)[\(check.status.rawValue)] \(check.name)"
+                let styled = color && !ansi.isEmpty ? "\(ansi)\(heading)\u{1B}[0m" : heading
+                return "\(styled)\n  \(check.detail.replacing("\n", with: "\n  "))"
+            }.joined(separator: "\n\n")
         }
         let missing = checks.filter { $0.status == .needsYou }.count
         let summary =

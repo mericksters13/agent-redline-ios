@@ -155,7 +155,7 @@ End with a short message that gives:
    - `claude auth login` (or `claude update`), when the `claude` command isn't signed in or is too old for the Claude app.
    - In Codex, open `/hooks` and trust "Report delivery".
    - Open a new terminal window, when the installer added `~/.local/bin` to `PATH`.
-2. After the Mac installer finishes, run `redline doctor` (or `~/.local/bin/redline doctor` if PATH is not ready) and pass on its **Needs you** fixes and **Check yourself** steps. It does not change the Mac; exit `0` only means its automatic checks found no missing steps.
+2. After the Mac installer finishes, run `redline doctor` (or `~/.local/bin/redline doctor` if PATH is not ready) and pass on its **Incomplete** fixes and **Check yourself** steps. Completed checks have a green check mark; missing or incomplete steps have a red x. It does not change the Mac; exit `0` only means its automatic checks found no missing steps.
 3. Start a new Claude Code chat in the project, or restart this one: a chat loads Redline's MCP server when it starts. A Codex chat registers the next time the user sends it a message.
 4. Open Redline and allow Local Network and, when projects are there, Documents access. If Local Network was denied, enable Redline in System Settings > Privacy & Security > Local Network. Notifications are optional.
 5. Run the Debug build on a simulator or a physical iPhone. For an iPhone, pair it with Xcode, accept trust prompts, and enable Developer Mode in Settings > Privacy & Security; restart and confirm Enable. Keep it on the Mac's local network and allow the app's Local Network prompt. If denied, enable the app in Settings > Privacy & Security > Local Network. After the first install, quit and reopen Redline to rescan.

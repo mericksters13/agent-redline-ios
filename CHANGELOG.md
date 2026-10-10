@@ -6,7 +6,7 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ### Added
 
-- `redline doctor` checks Mac and agent setup without changing it, lists fixes for missing steps, and includes the permissions, trust, app integration and first-report steps you must check yourself.
+- `redline doctor` checks Mac and agent setup without changing it, marks completed checks in green with a check mark and incomplete checks in red with an x, lists fixes for missing steps, and includes the permissions, trust, app integration and first-report steps you must check yourself.
 
 ## [0.1.5] - 2026-10-10
 

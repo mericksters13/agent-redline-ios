@@ -161,6 +161,37 @@ struct DoctorTests {
         #expect(text.contains("confirm your first report arrives"))
     }
 
+    @Test func plainOutputKeepsStatusMarksAndDoesNotColorUnverifiedChecks() {
+        let checks = [
+            Doctor.Check(status: .done, name: "Xcode", detail: "Ready."),
+            Doctor.Check(status: .needsYou, name: "Hub", detail: "Open Redline."),
+            Doctor.Check(status: .skipped, name: "Optional agent", detail: "Not needed."),
+            Doctor.Check(status: .check, name: "Permission", detail: "Not verified."),
+        ]
+        let plain = Doctor.text(for: checks, version: "test")
+        #expect(plain.contains("✓ [Done] Xcode"))
+        #expect(plain.contains("✗ [Incomplete] Hub"))
+        #expect(!plain.contains("\u{1B}"))
+
+        let colored = Doctor.text(for: checks, version: "test", color: true)
+        #expect(colored.contains("\u{1B}[32m✓ [Done] Xcode\u{1B}[0m\n  Ready."))
+        #expect(colored.contains("\u{1B}[31m✗ [Incomplete] Hub\u{1B}[0m\n  Open Redline."))
+        #expect(!colored.contains("\u{1B}[32m[Skipped]"))
+        #expect(!colored.contains("\u{1B}[31m[Check yourself]"))
+        #expect(
+            colored.replacing("\u{1B}[32m", with: "").replacing("\u{1B}[31m", with: "")
+                .replacing("\u{1B}[0m", with: "") == plain
+        )
+    }
+
+    @Test func colorRespectsRedirectionAndTerminalPreferences() {
+        #expect(Doctor.usesColor(isTerminal: true, environment: ["TERM": "xterm-256color"]))
+        #expect(!Doctor.usesColor(isTerminal: false, environment: ["TERM": "xterm-256color"]))
+        #expect(!Doctor.usesColor(isTerminal: true, environment: ["TERM": "dumb"]))
+        #expect(!Doctor.usesColor(isTerminal: true, environment: ["NO_COLOR": "1"]))
+        #expect(Doctor.usesColor(isTerminal: true, environment: ["NO_COLOR": ""]))
+    }
+
     @Test func doctorRunsBeforeOldDataMigrationAndLeavesSettingsUntouched() async throws {
         let home = temporary.url
         let old = home.appending(path: "Library/Application Support/Agentic Debugging/marker")
@@ -189,6 +220,7 @@ struct DoctorTests {
         }
         #expect(output?.contains("Redline doctor") == true)
         #expect(output?.contains("Doctor exit: 1") == true)
+        #expect(output?.contains("\u{1B}") == false)
         #expect(try String(contentsOf: old, encoding: .utf8) == "old data")
         #expect(try Data(contentsOf: hooks) == before)
         #expect(
