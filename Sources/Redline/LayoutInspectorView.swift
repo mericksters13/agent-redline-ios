@@ -19,16 +19,20 @@ struct LayoutInspectorView: View {
                     LayoutSnapshotView(geometry: geometry, image: image, selected: selected, toggle: toggle)
                         .padding(.top, 8)
                     if !geometry.padding.isEmpty {
-                        Text(geometry.padding.contains(where: \.isSystemDefault)
-                             ? "System default padding · Showing measured spacing"
-                             : "Tap a red measurement line to include padding in the note.")
-                            .font(.caption)
-                            .foregroundStyle(Mono.secondary)
-                            .padding(.top, 8)
+                        Text(
+                            geometry.padding.contains(where: \.isSystemDefault)
+                                ? "System default padding · Showing measured spacing"
+                                : "Tap a red measurement line to include padding in the note."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(Mono.secondary)
+                        .padding(.top, 8)
                     }
                 } label: {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(geometry.padding.isEmpty ? "Frame" : "Padding & frame").font(.subheadline).foregroundStyle(Mono.text)
+                        Text(geometry.padding.isEmpty ? "Frame" : "Padding & frame").font(.subheadline).foregroundStyle(
+                            Mono.text
+                        )
                         Text(previewSummary(geometry)).font(.caption).foregroundStyle(Mono.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -55,17 +59,24 @@ struct LayoutInspectorView: View {
                         if !report.ancestors.isEmpty {
                             DisclosureGroup(isExpanded: $showsParent) {
                                 VStack(alignment: .leading, spacing: 10) {
-                                    ForEach(Array(report.ancestors.enumerated()), id: \.offset) { _, row in setting(row) }
+                                    ForEach(Array(report.ancestors.enumerated()), id: \.offset) { _, row in setting(row)
+                                    }
                                 }
                                 .padding(.top, 8)
                                 .accessibilityElement(children: .combine)
-                                .accessibilityLabel(report.ancestors.map { "\($0.title): \($0.value)" }.joined(separator: "\n"))
+                                .accessibilityLabel(
+                                    report.ancestors.map { "\($0.title): \($0.value)" }.joined(separator: "\n")
+                                )
                                 .accessibilityIdentifier("RedlineParentLayout")
-                            } label: { disclosureTitle("Parent layout") }
+                            } label: {
+                                disclosureTitle("Parent layout")
+                            }
                         }
                     }
                     .padding(.top, 8)
-                } label: { disclosureTitle("Layout details") }
+                } label: {
+                    disclosureTitle("Layout details")
+                }
                 .tint(Mono.secondary)
             }
             Text(report.message)
@@ -79,7 +90,8 @@ struct LayoutInspectorView: View {
     private func previewSummary(_ geometry: LayoutInspection.Geometry) -> String {
         let padding = report.rows.filter { $0.title == "Padding" }.map(\.value).joined(separator: " + ")
         let box = geometry.frame ?? geometry.bounds
-        let size = "\(geometry.frame == nil ? "Captured size" : "Frame") \(LayoutInspection.number(box.width)) × \(LayoutInspection.number(box.height)) pt"
+        let size =
+            "\(geometry.frame == nil ? "Captured size" : "Frame") \(LayoutInspection.number(box.width)) × \(LayoutInspection.number(box.height)) pt"
         return [padding, size].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
@@ -90,7 +102,10 @@ struct LayoutInspectorView: View {
     @ViewBuilder
     private func setting(_ row: LayoutInspection.Row) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 3) { title(row.title); value(row.value) }
+            VStack(alignment: .leading, spacing: 3) {
+                title(row.title)
+                value(row.value)
+            }
         } else {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 title(row.title).frame(width: 108, alignment: .leading)

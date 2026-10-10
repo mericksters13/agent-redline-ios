@@ -16,8 +16,10 @@ struct HierarchyTraversalGesture: UIGestureRecognizerRepresentable {
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                               shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
             // Buttons can track a press, while a recognized hold owns scrolling pans.
             !(otherGestureRecognizer is UIPanGestureRecognizer && otherGestureRecognizer.view is UIScrollView)
         }

@@ -21,19 +21,34 @@ struct LayoutInspection: Equatable, Sendable {
 
         var summary: String {
             if top == nil && leading == nil && bottom == nil && trailing == nil { return "System default" }
-            if top == bottom, top == leading, top == trailing, let top { return "All sides · \(LayoutInspection.points(top))" }
-            if top == 0 && bottom == 0 && leading == trailing { return "Horizontal · \(leading.map(LayoutInspection.points) ?? "System default")" }
-            if leading == 0 && trailing == 0 && top == bottom { return "Vertical · \(top.map(LayoutInspection.points) ?? "System default")" }
+            if top == bottom, top == leading, top == trailing, let top {
+                return "All sides · \(LayoutInspection.points(top))"
+            }
+            if top == 0 && bottom == 0 && leading == trailing {
+                return "Horizontal · \(leading.map(LayoutInspection.points) ?? "System default")"
+            }
+            if leading == 0 && trailing == 0 && top == bottom {
+                return "Vertical · \(top.map(LayoutInspection.points) ?? "System default")"
+            }
             return [("Top", top), ("Leading", leading), ("Bottom", bottom), ("Trailing", trailing)]
-                .filter { $0.1 != 0 }.map { "\($0.0) \($0.1.map(LayoutInspection.points) ?? "System default")" }.joined(separator: " · ")
+                .filter { $0.1 != 0 }.map { "\($0.0) \($0.1.map(LayoutInspection.points) ?? "System default")" }.joined(
+                    separator: " · "
+                )
         }
     }
 
     enum Setting: Equatable, Sendable {
         case padding(Insets)
         case frame(width: CGFloat?, height: CGFloat?, alignment: String)
-        case flexibleFrame(minWidth: CGFloat?, idealWidth: CGFloat?, maxWidth: CGFloat?,
-                           minHeight: CGFloat?, idealHeight: CGFloat?, maxHeight: CGFloat?, alignment: String)
+        case flexibleFrame(
+            minWidth: CGFloat?,
+            idealWidth: CGFloat?,
+            maxWidth: CGFloat?,
+            minHeight: CGFloat?,
+            idealHeight: CGFloat?,
+            maxHeight: CGFloat?,
+            alignment: String
+        )
         case stack(axis: String, spacing: CGFloat?, alignment: String)
         case priority(Double)
 
@@ -46,22 +61,38 @@ struct LayoutInspection: Equatable, Sendable {
                 if let width, let height {
                     size = "\(LayoutInspection.number(width)) × \(LayoutInspection.number(height)) pt"
                 } else {
-                    size = "\(width.map { "Width " + LayoutInspection.points($0) } ?? "Natural width") · \(height.map { "Height " + LayoutInspection.points($0) } ?? "Natural height")"
+                    size =
+                        "\(width.map { "Width " + LayoutInspection.points($0) } ?? "Natural width") · \(height.map { "Height " + LayoutInspection.points($0) } ?? "Natural height")"
                 }
-                return [Row(title: "Frame", value: size), Row(title: "Alignment", value: LayoutInspection.readableAlignment(alignment))]
-            case .flexibleFrame(let minWidth, let idealWidth, let maxWidth, let minHeight, let idealHeight, let maxHeight, let alignment):
+                return [
+                    Row(title: "Frame", value: size),
+                    Row(title: "Alignment", value: LayoutInspection.readableAlignment(alignment)),
+                ]
+            case .flexibleFrame(
+                let minWidth,
+                let idealWidth,
+                let maxWidth,
+                let minHeight,
+                let idealHeight,
+                let maxHeight,
+                let alignment
+            ):
                 func bounds(_ minimum: CGFloat?, _ ideal: CGFloat?, _ maximum: CGFloat?) -> String {
                     [("Min", minimum), ("Ideal", ideal), ("Max", maximum)].compactMap { label, value in
                         value.map { $0.isInfinite ? "Fill available space" : "\(label) \(LayoutInspection.points($0))" }
                     }.joined(separator: " · ")
                 }
-                return [Row(title: "Width", value: bounds(minWidth, idealWidth, maxWidth)),
-                        Row(title: "Height", value: bounds(minHeight, idealHeight, maxHeight)),
-                        Row(title: "Alignment", value: LayoutInspection.readableAlignment(alignment))].filter { !$0.value.isEmpty }
+                return [
+                    Row(title: "Width", value: bounds(minWidth, idealWidth, maxWidth)),
+                    Row(title: "Height", value: bounds(minHeight, idealHeight, maxHeight)),
+                    Row(title: "Alignment", value: LayoutInspection.readableAlignment(alignment)),
+                ].filter { !$0.value.isEmpty }
             case .stack(let axis, let spacing, let alignment):
-                return [Row(title: "Parent stack", value: axis),
-                        Row(title: "Spacing", value: spacing.map(LayoutInspection.points) ?? "System default"),
-                        Row(title: "Alignment", value: LayoutInspection.readableAlignment(alignment))]
+                return [
+                    Row(title: "Parent stack", value: axis),
+                    Row(title: "Spacing", value: spacing.map(LayoutInspection.points) ?? "System default"),
+                    Row(title: "Alignment", value: LayoutInspection.readableAlignment(alignment)),
+                ]
             case .priority(let value):
                 return [Row(title: "Layout priority", value: LayoutInspection.number(CGFloat(value)))]
             }
@@ -120,7 +151,8 @@ struct LayoutInspection: Equatable, Sendable {
 
         func context(for edges: Set<Edge>) -> String {
             guard let geometry, !geometry.padding.isEmpty else { return "" }
-            let provenance = geometry.padding.contains(where: \.isSystemDefault) ? "measured; system default" : "measured"
+            let provenance =
+                geometry.padding.contains(where: \.isSystemDefault) ? "measured; system default" : "measured"
             return Edge.allCases.filter(edges.contains).compactMap { edge in
                 geometry.paddingLabel(on: edge).map { "\(edge.title) padding: \($0) (\(provenance))" }
             }.joined(separator: "\n")
@@ -150,7 +182,9 @@ struct LayoutInspection: Equatable, Sendable {
     }
 
     func report(_ element: ElementSnapshot?) -> Report {
-        guard !nodes.isEmpty else { return Report(message: "Layout unavailable. Enable layout inspection before the app opens.") }
+        guard !nodes.isEmpty else {
+            return Report(message: "Layout unavailable. Enable layout inspection before the app opens.")
+        }
         guard let element else { return Report(message: "Select a component to inspect its layout.") }
         let candidates = nodes.indices.filter { index in
             let node = nodes[index]
@@ -163,7 +197,8 @@ struct LayoutInspection: Equatable, Sendable {
                         && descendantText(at: index).contains(element.label ?? ""))
             case "Image": return node.type == "Image"
             case "Group":
-                return element.isContainer && ["HStack<", "VStack<", "ZStack<", "Grid<"].contains { node.type.hasPrefix($0) }
+                return element.isContainer
+                    && ["HStack<", "VStack<", "ZStack<", "Grid<"].contains { node.type.hasPrefix($0) }
             default: return false
             }
         }
@@ -175,28 +210,41 @@ struct LayoutInspection: Equatable, Sendable {
             }
         }
         // Labels support an unverified text candidate. Other roles require a unique bounds match.
-        let textMatches = ["Text", "Header"].contains(element.role)
+        let textMatches =
+            ["Text", "Header"].contains(element.role)
             ? candidates.filter { nodes[$0].type == "Text" && nodes[$0].text == element.label } : []
         let matches = geometryMatches.isEmpty ? textMatches : geometryMatches
         guard matches.count == 1, let matched = matches.first else {
-            return Report(message: matches.isEmpty ? "No matching rendered view. Measurements unavailable."
-                          : "Multiple views match this selection. Measurements unavailable.")
+            return Report(
+                message: matches.isEmpty
+                    ? "No matching rendered view. Measurements unavailable."
+                    : "Multiple views match this selection. Measurements unavailable."
+            )
         }
         let verified = geometryMatches.count == 1
         let identity = nodes[matched].type == "Text" ? "text and bounds" : "component bounds"
-        var report = Report(message: verified ? "Matched by \(identity) · Experimental" : "Text match only · Position unverified")
+        var report = Report(
+            message: verified ? "Matched by \(identity) · Experimental" : "Text match only · Position unverified"
+        )
         var inner = renderedBounds(at: matched)
         var padding: [PaddingRegion] = []
         var frame: CGRect?
         var ancestor = false
         for index in path(from: matched) {
             let node = nodes[index]
-            if index != matched && (node.childCount > 1 || node.type == "AccessibilityContainerModifier") { ancestor = true }
+            if index != matched && (node.childCount > 1 || node.type == "AccessibilityContainerModifier") {
+                ancestor = true
+            }
             for setting in node.layout {
-                if ancestor { report.ancestors.append(contentsOf: setting.rows); continue }
-                report.rows.append(contentsOf: setting.rows.map { row in
-                    Row(title: row.title == "Parent stack" ? "Stack" : row.title, value: row.value)
-                })
+                if ancestor {
+                    report.ancestors.append(contentsOf: setting.rows)
+                    continue
+                }
+                report.rows.append(
+                    contentsOf: setting.rows.map { row in
+                        Row(title: row.title == "Parent stack" ? "Stack" : row.title, value: row.value)
+                    }
+                )
                 let bounds = renderedBounds(at: index)
                 switch setting {
                 case .padding(let insets):
@@ -204,10 +252,17 @@ struct LayoutInspection: Equatable, Sendable {
                         let isDefault = [insets.top, insets.leading, insets.bottom, insets.trailing].contains(nil)
                         padding.append(PaddingRegion(inner: inner, outer: bounds, isSystemDefault: isDefault))
                         if isDefault {
-                            report.rows.append(Row(title: "Measured padding", value: Insets(
-                                top: inner.minY - bounds.minY, leading: inner.minX - bounds.minX,
-                                bottom: bounds.maxY - inner.maxY, trailing: bounds.maxX - inner.maxX
-                            ).summary))
+                            report.rows.append(
+                                Row(
+                                    title: "Measured padding",
+                                    value: Insets(
+                                        top: inner.minY - bounds.minY,
+                                        leading: inner.minX - bounds.minX,
+                                        bottom: bounds.maxY - inner.maxY,
+                                        trailing: bounds.maxX - inner.maxX
+                                    ).summary
+                                )
+                            )
                         }
                     }
                 case .frame, .flexibleFrame:
@@ -221,8 +276,13 @@ struct LayoutInspection: Equatable, Sendable {
             report.geometry = Geometry(content: content, frame: frame, padding: padding)
             if !report.rows.contains(where: { $0.title == "Frame" }) {
                 let bounds = frame ?? padding.last?.outer ?? content
-                report.rows.insert(Row(title: frame == nil ? "Rendered size" : "Measured frame",
-                                       value: "\(Self.number(bounds.width)) × \(Self.number(bounds.height)) pt"), at: 0)
+                report.rows.insert(
+                    Row(
+                        title: frame == nil ? "Rendered size" : "Measured frame",
+                        value: "\(Self.number(bounds.width)) × \(Self.number(bounds.height)) pt"
+                    ),
+                    at: 0
+                )
             }
         }
         return report
@@ -233,7 +293,11 @@ struct LayoutInspection: Equatable, Sendable {
         var visited = Set<Int>()
         var result: [Int] = []
         while let index = current, nodes.indices.contains(index), visited.insert(index).inserted {
-            if componentOnly && index != start && (nodes[index].childCount > 1 || nodes[index].type == "AccessibilityContainerModifier") { break }
+            if componentOnly && index != start
+                && (nodes[index].childCount > 1 || nodes[index].type == "AccessibilityContainerModifier")
+            {
+                break
+            }
             result.append(index)
             current = nodes[index].parent
         }
@@ -241,6 +305,7 @@ struct LayoutInspection: Equatable, Sendable {
     }
 
     /// The runtime can attach a component's box to its accessibility or background wrapper.
+    ///
     /// Stop before a layout owner so a child never borrows an ancestor stack's bounds.
     private func renderedBounds(at index: Int) -> CGRect? {
         guard nodes.indices.contains(index) else { return nil }
@@ -250,23 +315,29 @@ struct LayoutInspection: Equatable, Sendable {
         while let current = parent, nodes.indices.contains(current), visited.insert(current).inserted {
             let node = nodes[current]
             guard node.childCount == 1,
-                  node.type == "AccessibilityAttachmentModifier"
+                node.type == "AccessibilityAttachmentModifier"
                     || node.type.hasPrefix("_BackgroundStyleModifier<")
-                    || node.type.hasPrefix("_InsettableBackgroundShapeModifier<") else { break }
+                    || node.type.hasPrefix("_InsettableBackgroundShapeModifier<")
+            else { break }
             if let frame = node.frame, frame.width > 0, frame.height > 0 { return frame }
             parent = node.parent
         }
         // Explicit runtime insets establish the outer box even when that modifier omits it.
         if case .padding(let insets) = nodes[index].layout.first,
-           let top = insets.top, let leading = insets.leading,
-           let bottom = insets.bottom, let trailing = insets.trailing,
-           [top, leading, bottom, trailing].allSatisfy({ $0.isFinite && $0 >= 0 }) {
+            let top = insets.top, let leading = insets.leading,
+            let bottom = insets.bottom, let trailing = insets.trailing,
+            [top, leading, bottom, trailing].allSatisfy({ $0.isFinite && $0 >= 0 })
+        {
             var child = nodes.indices.first { nodes[$0].parent == index }
             while let current = child, nodes.indices.contains(current), visited.insert(current).inserted {
                 let node = nodes[current]
                 if let inner = node.frame, inner.width > 0, inner.height > 0 {
-                    return CGRect(x: inner.minX - leading, y: inner.minY - top,
-                                  width: inner.width + leading + trailing, height: inner.height + top + bottom)
+                    return CGRect(
+                        x: inner.minX - leading,
+                        y: inner.minY - top,
+                        width: inner.width + leading + trailing,
+                        height: inner.height + top + bottom
+                    )
                 }
                 guard node.childCount == 1, node.layout.isEmpty else { break }
                 child = nodes.indices.first { nodes[$0].parent == current }
@@ -283,14 +354,19 @@ struct LayoutInspection: Equatable, Sendable {
         return result
     }
 
-    /// Only translations have a verified mapping in this prototype. Other transforms stay unavailable.
+    /// Only translations have a verified mapping in this prototype.
+    ///
+    /// Other transforms stay unavailable.
     static func debugTranslation(_ value: [String: Any]) -> CGPoint? {
         guard let adjustment = value["positionAdjustment"] as? [Double], adjustment.count == 2,
-              let items = value["items"] as? [[String: Any]] else { return nil }
+            let items = value["items"] as? [[String: Any]]
+        else { return nil }
         var offset = CGPoint(x: -adjustment[0], y: -adjustment[1])
         for item in items {
             if item.isEmpty { continue }
-            guard item.count == 1, let translation = item["translation"] as? [Double], translation.count == 2 else { return nil }
+            guard item.count == 1, let translation = item["translation"] as? [Double], translation.count == 2 else {
+                return nil
+            }
             offset.x += translation[0]
             offset.y += translation[1]
         }

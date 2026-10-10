@@ -96,26 +96,37 @@ struct ElementHierarchyView: View {
                     }
                     .onGeometryChange(for: CGRect.self) {
                         $0.frame(in: .global)
-                    } action: { rowFrames[row.id] = $0 }
+                    } action: {
+                        rowFrames[row.id] = $0
+                    }
                     .transition(.identity)
                 }
             }
             .frame(minWidth: max(availableWidth, CGFloat(depth) * indentation + 180), alignment: .leading)
             .contentShape(Rectangle())
-            .gesture(HierarchyTraversalGesture { point in
-                traversingChanged(point != nil)
-                if let point, let index = hierarchy.row(at: point, frames: rowFrames,
-                                                       visibleBounds: visibleBounds.intersection(viewport),
-                                                       collapsing: collapsed) {
-                    select(index)
+            .gesture(
+                HierarchyTraversalGesture { point in
+                    traversingChanged(point != nil)
+                    if let point,
+                        let index = hierarchy.row(
+                            at: point,
+                            frames: rowFrames,
+                            visibleBounds: visibleBounds.intersection(viewport),
+                            collapsing: collapsed
+                        )
+                    {
+                        select(index)
+                    }
                 }
-            })
+            )
         }
         .accessibilityIdentifier("RedlineHierarchy")
         .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .global)
-        } action: { viewport = $0 }
+        } action: {
+            viewport = $0
+        }
         .onDisappear { traversingChanged(false) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Hierarchy of \(hierarchy.elements[hierarchy.root].fullName ?? "the selected element")")

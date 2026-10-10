@@ -52,8 +52,12 @@ struct ElementHierarchy {
     }
 
     /// Drag selection uses displayed row bounds, excluding clipped and collapsed rows.
-    func row(at point: CGPoint, frames: [Int: CGRect], visibleBounds: CGRect,
-             collapsing collapsed: Set<Int> = []) -> Int? {
+    func row(
+        at point: CGPoint,
+        frames: [Int: CGRect],
+        visibleBounds: CGRect,
+        collapsing collapsed: Set<Int> = []
+    ) -> Int? {
         guard visibleBounds.contains(point) else { return nil }
         return rows(collapsing: collapsed).first { frames[$0.id]?.contains(point) == true }?.id
     }

@@ -126,7 +126,8 @@ final class DebugSession {
 
     func togglePadding(_ edge: LayoutInspection.Edge) {
         guard mode == .noting, showsLayoutPrototype, !isNotingDrawing,
-              selectedLayout.geometry?.paddingLabel(on: edge) != nil else { return }
+            selectedLayout.geometry?.paddingLabel(on: edge) != nil
+        else { return }
         if !selectedPadding.insert(edge).inserted { selectedPadding.remove(edge) }
         selectionFeedback.selectionChanged()
     }
@@ -628,7 +629,8 @@ final class DebugSession {
     // MARK: - Notes
 
     func saveNote() {
-        let note = showsLayoutPrototype && pending == nil && !isNotingDrawing
+        let note =
+            showsLayoutPrototype && pending == nil && !isNotingDrawing
             ? selectedLayout.note(noteText, including: selectedPadding)
             : noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         if let pending {
@@ -1574,10 +1576,15 @@ final class DebugSession {
     /// The captured component and its padding, excluding surrounding frame space.
     func selectedLayoutPreview() -> UIImage? {
         guard let bounds = selectedLayout.geometry?.bounds, let image = screenImage,
-              CGRect(origin: .zero, size: image.size).contains(bounds),
-              let source = image.cgImage else { return nil }
-        let pixels = CGRect(x: bounds.minX * image.scale, y: bounds.minY * image.scale,
-                            width: bounds.width * image.scale, height: bounds.height * image.scale).integral
+            CGRect(origin: .zero, size: image.size).contains(bounds),
+            let source = image.cgImage
+        else { return nil }
+        let pixels = CGRect(
+            x: bounds.minX * image.scale,
+            y: bounds.minY * image.scale,
+            width: bounds.width * image.scale,
+            height: bounds.height * image.scale
+        ).integral
         guard let cropped = source.cropping(to: pixels) else { return nil }
         return UIImage(cgImage: cropped, scale: image.scale, orientation: .up)
     }
@@ -1713,23 +1720,37 @@ final class DebugSession {
         isAwaitingKeyboard ? screenSize.height - expectedKeyboardHeight : keyboardTop
     }
 
-    /// Keep the form in a usable slot above or below the component. While browsing a local
-    /// hierarchy, prefer a slot clear of its whole owner so selecting children keeps the rows steady.
+    /// Keep the form in a usable slot above or below the component.
+    ///
+    /// While browsing a local hierarchy, prefer a slot clear of its whole owner so selecting
+    /// children keeps the rows steady.
     func noteCardSpace(height: CGFloat, minimumHeight: CGFloat, showsHierarchy: Bool)
-        -> (bounds: ClosedRange<CGFloat>, anchorsBottom: Bool) {
+        -> (bounds: ClosedRange<CGFloat>, anchorsBottom: Bool)
+    {
         let element = screenReadIsCurrent ? noteFrame : nil
         if showsHierarchy, let element, let hierarchy {
             let owner = hierarchy.elements[hierarchy.root].frame
-            let space = NoteCardPlacement.space(element: owner, minimumHeight: minimumHeight, height: height,
-                                                top: safeAreaTop, bottom: noteCardBottom)
+            let space = NoteCardPlacement.space(
+                element: owner,
+                minimumHeight: minimumHeight,
+                height: height,
+                top: safeAreaTop,
+                bottom: noteCardBottom
+            )
             if owner.contains(element),
-               space.bounds.upperBound <= owner.minY - NoteCardPlacement.margin ||
-               space.bounds.lowerBound >= owner.maxY + NoteCardPlacement.margin {
+                space.bounds.upperBound <= owner.minY - NoteCardPlacement.margin
+                    || space.bounds.lowerBound >= owner.maxY + NoteCardPlacement.margin
+            {
                 return space
             }
         }
-        return NoteCardPlacement.space(element: element, minimumHeight: minimumHeight, height: height,
-                                       top: safeAreaTop, bottom: noteCardBottom)
+        return NoteCardPlacement.space(
+            element: element,
+            minimumHeight: minimumHeight,
+            height: height,
+            top: safeAreaTop,
+            bottom: noteCardBottom
+        )
     }
 
     /// The lowest the note card's bottom may go: the keyboard, or the home indicator without one.
@@ -2033,8 +2054,9 @@ final class DebugSession {
         elements = AccessibilityTree.elements(under: roots, screenBounds: window.bounds)
         layoutInspection = SwiftUILayoutInspector.capture(in: appWindows)
         if showsLayoutPrototype,
-           let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
-           let data = try? JSONEncoder().encode(elements) {
+            let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+            let data = try? JSONEncoder().encode(elements)
+        {
             try? data.write(to: folder.appendingPathComponent("layout-elements.json"))
         }
         screen = AccessibilityTree.screen(of: screenWindow, elements: elements)

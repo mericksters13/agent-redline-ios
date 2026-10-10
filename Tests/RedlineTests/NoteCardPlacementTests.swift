@@ -10,9 +10,15 @@ struct NoteCardPlacementTests {
     private let minimum: CGFloat = 134
 
     private func space(_ element: CGRect?, height: CGFloat = 200, bottom: CGFloat = 538)
-        -> (bounds: ClosedRange<CGFloat>, anchorsBottom: Bool) {
-        NoteCardPlacement.space(element: element, minimumHeight: minimum, height: height,
-                                top: statusBar, bottom: bottom)
+        -> (bounds: ClosedRange<CGFloat>, anchorsBottom: Bool)
+    {
+        NoteCardPlacement.space(
+            element: element,
+            minimumHeight: minimum,
+            height: height,
+            top: statusBar,
+            bottom: bottom
+        )
     }
 
     private func element(y: CGFloat, height: CGFloat = 60) -> CGRect {
@@ -83,8 +89,13 @@ struct NoteCardPlacementTests {
     }
 
     @Test func aTallerFooterRequiresEnoughSpaceForAUsableContentRow() {
-        let slot = NoteCardPlacement.space(element: element(y: 230, height: 140), minimumHeight: 180,
-                                           height: 200, top: statusBar, bottom: keyboardTop)
+        let slot = NoteCardPlacement.space(
+            element: element(y: 230, height: 140),
+            minimumHeight: 180,
+            height: 200,
+            top: statusBar,
+            bottom: keyboardTop
+        )
         #expect(slot.bounds == 70...530)
     }
 
@@ -97,15 +108,22 @@ struct NoteCardPlacementTests {
                 for y in stride(from: 0.0, through: 874.0, by: 10) {
                     let picked = element(y: y, height: elementHeight)
                     for contentHeight in [150.0, 266.0, 600.0] {
-                        let slot = NoteCardPlacement.space(element: picked, minimumHeight: minimum,
-                                                           height: contentHeight, top: safeTop, bottom: bottom)
+                        let slot = NoteCardPlacement.space(
+                            element: picked,
+                            minimumHeight: minimum,
+                            height: contentHeight,
+                            top: safeTop,
+                            bottom: bottom
+                        )
                         let height = min(contentHeight, slot.bounds.upperBound - slot.bounds.lowerBound)
                         let top = slot.anchorsBottom ? slot.bounds.upperBound - height : slot.bounds.lowerBound
                         #expect(top >= start)
                         #expect(top + height <= end + 0.001)
                         if picked.minY - 8 - start >= minimum || end - picked.maxY - 8 >= minimum {
-                            #expect(top + height <= picked.minY - 8 + 0.001 || top >= picked.maxY + 8,
-                                    "Form \(top)...\(top + height) covers component \(picked)")
+                            #expect(
+                                top + height <= picked.minY - 8 + 0.001 || top >= picked.maxY + 8,
+                                "Form \(top)...\(top + height) covers component \(picked)"
+                            )
                         }
                     }
                 }

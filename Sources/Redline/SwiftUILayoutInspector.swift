@@ -9,7 +9,9 @@ private protocol HostingLayoutDebugSource: AnyObject {
 
 extension _UIHostingView: HostingLayoutDebugSource {}
 
-/// Uses an underscored debug API and reflected storage. Both may change between OS versions.
+/// Uses an underscored debug API and reflected storage.
+///
+/// Both may change between OS versions.
 @MainActor
 enum SwiftUILayoutInspector {
     static var isEnabled: Bool {
@@ -21,14 +23,23 @@ enum SwiftUILayoutInspector {
         guard isEnabled else { return LayoutInspection() }
         var result = LayoutInspection()
         var serialized: [Data] = []
-        func append(_ data: _ViewDebug.Data, description: [String: Any]?, parent: Int?, host: UIView, depth: Int,
-                    inheritedOffset: CGPoint? = nil, geometryIsValid: Bool = true) {
+        func append(
+            _ data: _ViewDebug.Data,
+            description: [String: Any]?,
+            parent: Int?,
+            host: UIView,
+            depth: Int,
+            inheritedOffset: CGPoint? = nil,
+            geometryIsValid: Bool = true
+        ) {
             // Retain deeply nested styled labels while bounding recursion.
             guard depth < 256 else { return }
             let mirror = Mirror(reflecting: data)
-            let properties = mirror.children.first { $0.label == "data" }?.value
+            let properties =
+                mirror.children.first { $0.label == "data" }?.value
                 as? [_ViewDebug.Property: Any] ?? [:]
-            let children = mirror.children.first { $0.label == "childData" }?.value
+            let children =
+                mirror.children.first { $0.label == "childData" }?.value
                 as? [_ViewDebug.Data] ?? []
             let descriptions = description?["children"] as? [[String: Any]] ?? []
             let transform = (description?["properties"] as? [[String: Any]])?.first {
@@ -41,28 +52,41 @@ enum SwiftUILayoutInspector {
             let value = properties[.value]
             let type = properties[.type].map { String(describing: $0) } ?? "unknown"
             let index = result.nodes.count
-            result.nodes.append(LayoutInspection.Node(
-                type: type,
-                text: type == "Text" && ((properties[.size] as? CGSize).map { $0.width > 0 && $0.height > 0 } == true
-                    || (properties[.size] == nil && parent.map {
-                        result.nodes[$0].type == "AccessibilityAttachmentModifier"
-                            && result.nodes[$0].frame.map { $0.width > 0 && $0.height > 0 } == true
-                    } == true)) ? value.flatMap { text(in: $0) } : nil,
-                settings: isLayoutNode(type) ? value.map { settings(in: $0) } ?? [] : [],
-                parent: parent,
-                childCount: children.count,
-                frame: validGeometry ? (properties[.position] as? CGPoint).flatMap { position in
-                    (properties[.size] as? CGSize).map { size in
-                        let box = CGRect(origin: position, size: size)
-                        // Serialized translations include the host and navigation/scroll coordinate spaces.
-                        return offset.map { box.offsetBy(dx: $0.x, dy: $0.y) } ?? host.convert(box, to: nil)
-                    }
-                } : nil,
-                layout: isLayoutNode(type) ? value.map { layout(in: $0) } ?? [] : []
-            ))
+            result.nodes.append(
+                LayoutInspection.Node(
+                    type: type,
+                    text: type == "Text"
+                        && ((properties[.size] as? CGSize).map { $0.width > 0 && $0.height > 0 } == true
+                            || (properties[.size] == nil
+                                && parent.map {
+                                    result.nodes[$0].type == "AccessibilityAttachmentModifier"
+                                        && result.nodes[$0].frame.map { $0.width > 0 && $0.height > 0 } == true
+                                } == true))
+                        ? value.flatMap { text(in: $0) } : nil,
+                    settings: isLayoutNode(type) ? value.map { settings(in: $0) } ?? [] : [],
+                    parent: parent,
+                    childCount: children.count,
+                    frame: validGeometry
+                        ? (properties[.position] as? CGPoint).flatMap { position in
+                            (properties[.size] as? CGSize).map { size in
+                                let box = CGRect(origin: position, size: size)
+                                // Serialized translations include the host and navigation/scroll coordinate spaces.
+                                return offset.map { box.offsetBy(dx: $0.x, dy: $0.y) } ?? host.convert(box, to: nil)
+                            }
+                        } : nil,
+                    layout: isLayoutNode(type) ? value.map { layout(in: $0) } ?? [] : []
+                )
+            )
             for (childIndex, child) in children.enumerated() {
-                append(child, description: descriptions.indices.contains(childIndex) ? descriptions[childIndex] : nil,
-                       parent: index, host: host, depth: depth + 1, inheritedOffset: offset, geometryIsValid: validGeometry)
+                append(
+                    child,
+                    description: descriptions.indices.contains(childIndex) ? descriptions[childIndex] : nil,
+                    parent: index,
+                    host: host,
+                    depth: depth + 1,
+                    inheritedOffset: offset,
+                    geometryIsValid: validGeometry
+                )
             }
         }
         @discardableResult
@@ -80,8 +104,13 @@ enum SwiftUILayoutInspector {
             if let data { serialized.append(data) }
             let descriptions = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [[String: Any]] ?? []
             for (index, root) in roots.enumerated() {
-                append(root, description: descriptions.indices.contains(index) ? descriptions[index] : nil,
-                       parent: nil, host: view, depth: 0)
+                append(
+                    root,
+                    description: descriptions.indices.contains(index) ? descriptions[index] : nil,
+                    parent: nil,
+                    host: view,
+                    depth: 0
+                )
             }
             return true
         }
@@ -95,15 +124,19 @@ enum SwiftUILayoutInspector {
                 "\(index) parent=\(String(describing: node.parent)) \(node.type) text=\(String(describing: node.text)) frame=\(String(describing: node.frame)) \(node.settings)"
             }
             try? debugLines.joined(separator: "\n").write(
-                to: folder.appendingPathComponent("layout-nodes.txt"), atomically: true, encoding: .utf8
+                to: folder.appendingPathComponent("layout-nodes.txt"),
+                atomically: true,
+                encoding: .utf8
             )
         }
         return result
     }
 
     private static func isLayoutNode(_ type: String) -> Bool {
-        ["_PaddingLayout", "_FrameLayout", "_FlexFrameLayout", "_HStackLayout", "_VStackLayout", "_ZStackLayout",
-         "LayoutPriorityLayout", "_TraitWritingModifier<LayoutPriorityTraitKey>"].contains(type)
+        [
+            "_PaddingLayout", "_FrameLayout", "_FlexFrameLayout", "_HStackLayout", "_VStackLayout", "_ZStackLayout",
+            "LayoutPriorityLayout", "_TraitWritingModifier<LayoutPriorityTraitKey>",
+        ].contains(type)
             || ["HStack<", "VStack<", "ZStack<"].contains { type.hasPrefix($0) }
     }
 
@@ -140,18 +173,38 @@ enum SwiftUILayoutInspector {
         case "_PaddingLayout":
             guard let edges = field("edges") as? Edge.Set else { return [] }
             let insets = field("insets") as? EdgeInsets
-            return [.padding(.init(top: edges.contains(.top) ? insets?.top : 0,
-                                  leading: edges.contains(.leading) ? insets?.leading : 0,
-                                  bottom: edges.contains(.bottom) ? insets?.bottom : 0,
-                                  trailing: edges.contains(.trailing) ? insets?.trailing : 0))]
+            return [
+                .padding(
+                    .init(
+                        top: edges.contains(.top) ? insets?.top : 0,
+                        leading: edges.contains(.leading) ? insets?.leading : 0,
+                        bottom: edges.contains(.bottom) ? insets?.bottom : 0,
+                        trailing: edges.contains(.trailing) ? insets?.trailing : 0
+                    )
+                )
+            ]
         case "_FrameLayout":
             return [.frame(width: scalar("width"), height: scalar("height"), alignment: alignment)]
         case "_FlexFrameLayout":
-            return [.flexibleFrame(minWidth: scalar("minWidth"), idealWidth: scalar("idealWidth"), maxWidth: scalar("maxWidth"),
-                                   minHeight: scalar("minHeight"), idealHeight: scalar("idealHeight"), maxHeight: scalar("maxHeight"), alignment: alignment)]
+            return [
+                .flexibleFrame(
+                    minWidth: scalar("minWidth"),
+                    idealWidth: scalar("idealWidth"),
+                    maxWidth: scalar("maxWidth"),
+                    minHeight: scalar("minHeight"),
+                    idealHeight: scalar("idealHeight"),
+                    maxHeight: scalar("maxHeight"),
+                    alignment: alignment
+                )
+            ]
         case "_HStackLayout", "_VStackLayout", "_ZStackLayout":
-            return [.stack(axis: type == "_HStackLayout" ? "Horizontal" : type == "_VStackLayout" ? "Vertical" : "Overlapping",
-                           spacing: scalar("spacing"), alignment: alignment)]
+            return [
+                .stack(
+                    axis: type == "_HStackLayout" ? "Horizontal" : type == "_VStackLayout" ? "Vertical" : "Overlapping",
+                    spacing: scalar("spacing"),
+                    alignment: alignment
+                )
+            ]
         case "LayoutPriorityLayout":
             return scalar("priority").map { [.priority(Double($0))] } ?? []
         case "_TraitWritingModifier<LayoutPriorityTraitKey>":
@@ -166,13 +219,19 @@ enum SwiftUILayoutInspector {
         guard depth < 8 else { return [] }
         let type = String(describing: Swift.type(of: value))
         let mirror = Mirror(reflecting: value)
-        if ["_PaddingLayout", "_FrameLayout", "_FlexFrameLayout", "_HStackLayout", "_VStackLayout", "_ZStackLayout", "LayoutPriorityLayout"].contains(type)
-            || type == "_TraitWritingModifier<LayoutPriorityTraitKey>" {
+        if [
+            "_PaddingLayout", "_FrameLayout", "_FlexFrameLayout", "_HStackLayout", "_VStackLayout", "_ZStackLayout",
+            "LayoutPriorityLayout",
+        ].contains(type)
+            || type == "_TraitWritingModifier<LayoutPriorityTraitKey>"
+        {
             let fields = mirror.children.map { child in
                 let name = child.label ?? "value"
                 var formatted = format(child.value)
-                if formatted == "unspecified", (type == "_PaddingLayout" && name == "insets")
-                    || (type.hasSuffix("StackLayout") && name == "spacing") {
+                if formatted == "unspecified",
+                    (type == "_PaddingLayout" && name == "insets")
+                        || (type.hasSuffix("StackLayout") && name == "spacing")
+                {
                     formatted += " (system default)"
                 }
                 return "\(name)=\(formatted)"
@@ -189,10 +248,12 @@ enum SwiftUILayoutInspector {
             return mirror.children.first.map { format($0.value) } ?? "unspecified"
         }
         if let alignment = value as? Alignment {
-            for (name, candidate) in [("center", Alignment.center), ("leading", .leading), ("trailing", .trailing),
-                                      ("top", .top), ("bottom", .bottom), ("topLeading", .topLeading),
-                                      ("topTrailing", .topTrailing), ("bottomLeading", .bottomLeading),
-                                      ("bottomTrailing", .bottomTrailing)] where alignment == candidate { return name }
+            for (name, candidate) in [
+                ("center", Alignment.center), ("leading", .leading), ("trailing", .trailing),
+                ("top", .top), ("bottom", .bottom), ("topLeading", .topLeading),
+                ("topTrailing", .topTrailing), ("bottomLeading", .bottomLeading),
+                ("bottomTrailing", .bottomTrailing),
+            ] where alignment == candidate { return name }
             return "custom alignment"
         }
         if let alignment = value as? HorizontalAlignment {

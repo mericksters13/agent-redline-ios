@@ -500,8 +500,10 @@ struct OverlayView: View {
     private var noteCard: some View {
         let pending = session.pending
         let space = noteCardSpace
-        let height = min(cardHeight == 0 ? Self.estimatedCardHeight : cardHeight,
-                         space.bounds.upperBound - space.bounds.lowerBound)
+        let height = min(
+            cardHeight == 0 ? Self.estimatedCardHeight : cardHeight,
+            space.bounds.upperBound - space.bounds.lowerBound
+        )
         let top = space.anchorsBottom ? space.bounds.upperBound - height : space.bounds.lowerBound
         return VStack(alignment: .leading, spacing: 14) {
             // Keep the selected component visible while long content scrolls above the footer.
@@ -524,7 +526,9 @@ struct OverlayView: View {
             .clipped()
             .onGeometryChange(for: CGRect.self) {
                 $0.frame(in: .global)
-            } action: { noteScrollFrame = $0 }
+            } action: {
+                noteScrollFrame = $0
+            }
 
             noteCardFooter(pending: pending)
                 .onGeometryChange(for: CGFloat.self) {
@@ -549,8 +553,10 @@ struct OverlayView: View {
         }
         // Align the actual card inside the free slot. This keeps its edge outside the target
         // throughout an animated resize, without depending on the previous measured height.
-        .frame(height: space.bounds.upperBound - space.bounds.lowerBound,
-               alignment: space.anchorsBottom ? .bottom : .top)
+        .frame(
+            height: space.bounds.upperBound - space.bounds.lowerBound,
+            alignment: space.anchorsBottom ? .bottom : .top
+        )
         .padding(.leading, panelLeading)
         .padding(.top, space.bounds.lowerBound)
         .onAppear { isNoteFocused = !session.showsLayoutPrototype }
@@ -616,11 +622,14 @@ struct OverlayView: View {
     private var noteCardMinimumHeight: CGFloat { 44 + (noteFooterHeight == 0 ? 44 : noteFooterHeight) + 14 + 32 }
 
     private var noteCardSpace: (bounds: ClosedRange<CGFloat>, anchorsBottom: Bool) {
-        let space = session.noteCardSpace(height: cardHeight == 0 ? Self.estimatedCardHeight : cardHeight,
-                                          minimumHeight: noteCardMinimumHeight,
-                                          showsHierarchy: isHierarchyExpanded)
+        let space = session.noteCardSpace(
+            height: cardHeight == 0 ? Self.estimatedCardHeight : cardHeight,
+            minimumHeight: noteCardMinimumHeight,
+            showsHierarchy: isHierarchyExpanded
+        )
         if let top = hierarchyDragTop, space.bounds.contains(top),
-           space.bounds.upperBound - top >= noteCardMinimumHeight {
+            space.bounds.upperBound - top >= noteCardMinimumHeight
+        {
             return (top...space.bounds.upperBound, false)
         }
         return space
@@ -643,7 +652,9 @@ struct OverlayView: View {
             HStack(spacing: 12) {
                 if let pending {
                     attachmentPreview(pending)
-                } else if !session.showsLayoutPrototype, !isHierarchyExpanded, isElementHidden, let preview = session.selectedElementPreview() {
+                } else if !session.showsLayoutPrototype, !isHierarchyExpanded, isElementHidden,
+                    let preview = session.selectedElementPreview()
+                {
                     // The element is behind the keyboard or this card, so show what was picked.
                     Image(uiImage: preview)
                         .resizable()
@@ -702,9 +713,13 @@ struct OverlayView: View {
             }
 
             if session.showsLayoutPrototype, pending == nil, !session.isNotingDrawing {
-                LayoutInspectorView(report: session.selectedLayout, image: session.selectedLayoutPreview(),
-                                    selected: session.selectedPadding, toggle: session.togglePadding,
-                                    isPreviewExpanded: $isLayoutPreviewExpanded)
+                LayoutInspectorView(
+                    report: session.selectedLayout,
+                    image: session.selectedLayoutPreview(),
+                    selected: session.selectedPadding,
+                    toggle: session.togglePadding,
+                    isPreviewExpanded: $isLayoutPreviewExpanded
+                )
             }
 
             if !isHierarchyExpanded {

@@ -96,14 +96,18 @@ struct ElementHierarchyTests {
     }
 
     @Test func dragSelectionUsesVisibleRowBoundsWithoutSelectingClippedOrUnownedRows() throws {
-        let elements = [node("Root", group: true), node("First", parent: 0),
-                        node("Second", parent: 0), node("Other root", group: true)]
+        let elements = [
+            node("Root", group: true), node("First", parent: 0),
+            node("Second", parent: 0), node("Other root", group: true),
+        ]
         let tree = try #require(ElementHierarchy(touched: elements[0], in: elements, screenSize: screenSize))
         let viewport = CGRect(x: 20, y: 100, width: 200, height: 110)
-        let frames = [0: CGRect(x: 20, y: 100, width: 200, height: 44),
-                      1: CGRect(x: 20, y: 144, width: 200, height: 44),
-                      2: CGRect(x: 20, y: 188, width: 200, height: 44),
-                      3: CGRect(x: 20, y: 100, width: 200, height: 44)]
+        let frames = [
+            0: CGRect(x: 20, y: 100, width: 200, height: 44),
+            1: CGRect(x: 20, y: 144, width: 200, height: 44),
+            2: CGRect(x: 20, y: 188, width: 200, height: 44),
+            3: CGRect(x: 20, y: 100, width: 200, height: 44),
+        ]
         #expect(tree.row(at: CGPoint(x: 100, y: 120), frames: frames, visibleBounds: viewport) == 0)
         #expect(tree.row(at: CGPoint(x: 100, y: 170), frames: frames, visibleBounds: viewport) == 1)
         #expect(tree.row(at: CGPoint(x: 100, y: 200), frames: frames, visibleBounds: viewport) == 2)
@@ -113,13 +117,17 @@ struct ElementHierarchyTests {
     }
 
     @Test func collapsedRowsCannotBeSelectedFromStaleDragFrames() throws {
-        let elements = [node("Root", group: true), node("Branch", parent: 0, group: true),
-                        node("Child", parent: 1), node("Sibling", parent: 0)]
+        let elements = [
+            node("Root", group: true), node("Branch", parent: 0, group: true),
+            node("Child", parent: 1), node("Sibling", parent: 0),
+        ]
         let tree = try #require(ElementHierarchy(touched: elements[0], in: elements, screenSize: screenSize))
         let viewport = CGRect(x: 20, y: 100, width: 200, height: 200)
         let child = CGRect(x: 20, y: 188, width: 200, height: 44)
         #expect(tree.row(at: CGPoint(x: 100, y: 200), frames: [2: child], visibleBounds: viewport) == 2)
-        #expect(tree.row(at: CGPoint(x: 100, y: 200), frames: [2: child], visibleBounds: viewport, collapsing: [1]) == nil)
+        #expect(
+            tree.row(at: CGPoint(x: 100, y: 200), frames: [2: child], visibleBounds: viewport, collapsing: [1]) == nil
+        )
     }
 
     @Test func explicitSelectionUsesNodeIdentityWhenFramesOverlap() {

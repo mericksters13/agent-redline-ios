@@ -23,8 +23,11 @@ struct LayoutSnapshotView: View {
                 paddingConstraint(.top)
                 GeometryReader { proxy in
                     let box = geometry.bounds
-                    let scale = min(max(proxy.size.width - 138, 1) / max(box.width, 1),
-                                    86 / max(box.height, 1), 3)
+                    let scale = min(
+                        max(proxy.size.width - 138, 1) / max(box.width, 1),
+                        86 / max(box.height, 1),
+                        3
+                    )
                     HStack(spacing: 4) {
                         paddingConstraint(.left).frame(width: 62)
                         preview.frame(width: box.width * scale + 6, height: box.height * scale + 6)
@@ -36,10 +39,12 @@ struct LayoutSnapshotView: View {
                 paddingConstraint(.bottom)
             }
             let box = geometry.frame ?? geometry.bounds
-            Text("\(geometry.frame == nil ? "Captured size" : "Frame") · \(LayoutInspection.number(box.width)) × \(LayoutInspection.number(box.height)) pt")
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(Mono.secondary)
+            Text(
+                "\(geometry.frame == nil ? "Captured size" : "Frame") · \(LayoutInspection.number(box.width)) × \(LayoutInspection.number(box.height)) pt"
+            )
+            .font(.caption)
+            .monospacedDigit()
+            .foregroundStyle(Mono.secondary)
         }
     }
 
@@ -48,7 +53,9 @@ struct LayoutSnapshotView: View {
         let isSelected = selected.contains(edge)
         let isVertical = edge == .top || edge == .bottom
         let color = value == nil ? Mono.secondary : Color(uiColor: .systemRed)
-        return Button { toggle(edge) } label: {
+        return Button {
+            toggle(edge)
+        } label: {
             Group {
                 if isVertical {
                     HStack(spacing: 8) {
@@ -95,9 +102,14 @@ struct LayoutSnapshotView: View {
     private func measurementLine(vertical: Bool, selected: Bool, color: Color) -> some View {
         Canvas { context, size in
             let start = vertical ? CGPoint(x: size.width / 2, y: 2) : CGPoint(x: 2, y: size.height / 2)
-            let end = vertical ? CGPoint(x: size.width / 2, y: size.height - 2) : CGPoint(x: size.width - 2, y: size.height / 2)
-            context.stroke(dimension(from: start, to: end, vertical: vertical, tick: 6),
-                           with: .color(color), lineWidth: selected ? 3 : 1.5)
+            let end =
+                vertical
+                ? CGPoint(x: size.width / 2, y: size.height - 2) : CGPoint(x: size.width - 2, y: size.height / 2)
+            context.stroke(
+                dimension(from: start, to: end, vertical: vertical, tick: 6),
+                with: .color(color),
+                lineWidth: selected ? 3 : 1.5
+            )
         }
         .accessibilityHidden(true)
     }
@@ -123,8 +135,12 @@ struct LayoutSnapshotView: View {
                 Image(uiImage: image).resizable().frame(width: size.width, height: size.height)
                 Canvas { context, _ in
                     func local(_ rect: CGRect) -> CGRect {
-                        CGRect(x: (rect.minX - box.minX) * scale, y: (rect.minY - box.minY) * scale,
-                               width: rect.width * scale, height: rect.height * scale)
+                        CGRect(
+                            x: (rect.minX - box.minX) * scale,
+                            y: (rect.minY - box.minY) * scale,
+                            width: rect.width * scale,
+                            height: rect.height * scale
+                        )
                     }
                     for region in geometry.padding {
                         var band = Path(local(region.outer))
@@ -137,10 +153,34 @@ struct LayoutSnapshotView: View {
                             let outer = region.outer
                             let band: CGRect
                             switch edge {
-                            case .top: band = CGRect(x: outer.minX, y: outer.minY, width: outer.width, height: max(inner.minY - outer.minY, 0))
-                            case .right: band = CGRect(x: inner.maxX, y: inner.minY, width: max(outer.maxX - inner.maxX, 0), height: inner.height)
-                            case .bottom: band = CGRect(x: outer.minX, y: inner.maxY, width: outer.width, height: max(outer.maxY - inner.maxY, 0))
-                            case .left: band = CGRect(x: outer.minX, y: inner.minY, width: max(inner.minX - outer.minX, 0), height: inner.height)
+                            case .top:
+                                band = CGRect(
+                                    x: outer.minX,
+                                    y: outer.minY,
+                                    width: outer.width,
+                                    height: max(inner.minY - outer.minY, 0)
+                                )
+                            case .right:
+                                band = CGRect(
+                                    x: inner.maxX,
+                                    y: inner.minY,
+                                    width: max(outer.maxX - inner.maxX, 0),
+                                    height: inner.height
+                                )
+                            case .bottom:
+                                band = CGRect(
+                                    x: outer.minX,
+                                    y: inner.maxY,
+                                    width: outer.width,
+                                    height: max(outer.maxY - inner.maxY, 0)
+                                )
+                            case .left:
+                                band = CGRect(
+                                    x: outer.minX,
+                                    y: inner.minY,
+                                    width: max(inner.minX - outer.minX, 0),
+                                    height: inner.height
+                                )
                             }
                             context.fill(Path(local(band)), with: .color(.red.opacity(0.4)))
                         }
