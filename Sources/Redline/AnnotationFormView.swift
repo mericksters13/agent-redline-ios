@@ -176,7 +176,8 @@ struct AnnotationFormView: View {
             HStack(spacing: 12) {
                 if let pending {
                     attachmentPreview(pending)
-                } else if !session.showsLayoutPrototype, !isHierarchyExpanded, isElementHidden,
+                } else if !session.showsElementLayoutInspection || session.selectedLayoutPreview() == nil,
+                    !isHierarchyExpanded, isElementHidden,
                     let preview = session.selectedElementPreview()
                 {
                     // The element is behind the keyboard or this card, so show what was picked.

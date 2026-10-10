@@ -31,7 +31,9 @@ struct OverlayView: View {
     private var width: CGFloat { session.screenSize.width }
     private var panelWidth: CGFloat { min(width - 24, 420) }
     private var panelLeading: CGFloat {
-        if session.showsLayoutPrototype, width > session.screenSize.height { return width - panelWidth - 12 }
+        if session.mode == .noting, session.showsElementLayoutInspection, width > session.screenSize.height {
+            return width - panelWidth - 12
+        }
         return (width - panelWidth) / 2
     }
     private var islandWidth: CGFloat { min(width - 24, 380) }

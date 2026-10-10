@@ -66,6 +66,57 @@ final class LayoutPrototypeTests: XCTestCase {
         )
     }
 
+    func testLandscapeNonLayoutNotesStayCentered() {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for drawing in [false, true] {
+            let app = launch("early")
+            app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+            if drawing {
+                app.buttons["Draw on the screen"].tap()
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.3))
+                    .press(
+                        forDuration: 0.1,
+                        thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.4))
+                    )
+                app.buttons["Done drawing, add a note"].tap()
+            } else {
+                app.buttons["Capture this screen"].tap()
+            }
+            let card = app.otherElements["RedlineNoteCard"]
+            XCTAssertTrue(card.waitForExistence(timeout: 5))
+            XCTAssertEqual(card.frame.midX, app.frame.midX, accuracy: 2)
+            XCTAssertFalse(app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch.exists)
+            attach(drawing ? "Centered landscape drawing note" : "Centered landscape screenshot note", in: app)
+            app.terminate()
+        }
+    }
+
+    func testUnsupportedSelectionFormOverlap() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-RedlineLayoutPrototype", "YES", "-RedlineLayoutActivation", "early",
+            "-RedlineLayoutReviewFixture", "unsupported",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+        app.launchEnvironment["SWIFTUI_VIEW_DEBUG"] = "0"
+        app.launch()
+        let target = app.staticTexts["Unsupported panel"]
+        XCTAssertTrue(target.waitForExistence(timeout: 10))
+        let box = target.frame
+        XCTAssertGreaterThan(box.height, app.frame.height * 0.8)
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: box.midX, dy: box.midY)).tap()
+        let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        XCTAssertTrue(result.label.contains("No matching rendered view"), result.label)
+        XCTAssertFalse(app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.exists)
+        XCTAssertTrue(app.otherElements["RedlineNoteCard"].frame.contains(CGPoint(x: box.midX, y: box.midY)))
+        // The decorative thumbnail is accessibility-hidden; inspect it in this captured header.
+        attach("Unavailable layout selection preview", in: app)
+        app.terminate()
+    }
+
     func testLocalizedTextLayoutInspection() {
         for (fixture, label, isButton) in [
             ("localized", "Exemple traduit", false),
