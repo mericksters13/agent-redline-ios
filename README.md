@@ -144,7 +144,7 @@ Doctor checks the Mac requirements for your first report:
 - Redline can read the project's app targets, including their build-settings files.
 - Redline can write, read and remove a temporary file in its report inbox.
 - Redline can start its Bonjour discovery operation, which requires Local Network access.
-- A project chat is available through Codex's delivery handshake or a running Claude Code session's socket.
+- A chat whose project builds the app is available through Codex's delivery handshake or a running Claude Code session's socket. A chat in another checkout of the same app counts too, just as it does in the report's chat picker. Connection failures are reported separately from a missing project chat.
 
 File and network checks run inside the Redline Mac app, using that app's access. They do not borrow Terminal's permissions. Doctor creates and removes a temporary storage probe; it does not contact an iOS app, submit a report, send a chat message, change agent settings, or install anything. macOS may show an access prompt during a check. Allow it and rerun doctor. If access is blocked, doctor gives the relevant setting or file-access fix. An unavailable check stays incomplete.
 

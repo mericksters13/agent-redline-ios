@@ -116,9 +116,20 @@ enum DoctorRuntime {
         )
     }
 
-    static func destinationCheck(project: URL, agent: String, available: [Agent] = ChatDirectory.agents())
-        -> Doctor.Check
-    {
+    static func destinationCheck(
+        project: URL,
+        bundleIDs: [String],
+        agent: String,
+        available: [Agent] = ChatDirectory.agents(),
+        codexChats: () -> [CodexThreads.CodexThread] = { CodexThreads.recent(in: CodexThreads.newestDatabase()) },
+        claudeChats: () -> [ClaudeSessions.Session] = { ClaudeSessions.openSessions() },
+        codexHandshake: () -> CodexApp.Handshake = { CodexApp.checkHandshake(timeout: 2) },
+        claudeConnection: (ClaudeSessions.Session) -> Bool = { session in
+            guard let socket = UnixSocket.connect(path: session.socket) else { return false }
+            close(socket)
+            return true
+        }
+    ) -> Doctor.Check {
         let requested = Agent(rawValue: agent)
         let name = requested?.name ?? "Codex or Claude Code"
         guard available.contains(where: { requested == nil || $0 == requested }) else {
@@ -128,34 +139,66 @@ enum DoctorRuntime {
                 detail: "Install \(name) on this Mac, open a chat for this app project, then rerun doctor."
             )
         }
-        let root = Worktree.root(of: project.path)
-        if requested != .claude, available.contains(.codex) {
-            let chats = CodexThreads.recent(in: CodexThreads.newestDatabase())
-                .filter { Worktree.root(of: $0.folder) == root }
-            if !chats.isEmpty, CodexApp.checkHandshake(timeout: 2) == .answered {
-                return Doctor.Check(
-                    status: .done,
-                    name: "Report destination",
-                    detail: "Codex has a chat for this project and answered Redline's delivery handshake."
-                )
+        // Match the app targets, as the report's chat picker does. A chat in another checkout
+        // can receive this app's reports too; the worktree is a preference, not a requirement.
+        let appIDs = Set(bundleIDs)
+        var folders = [project.resolvingSymlinksInPath().standardizedFileURL.path: bundleIDs]
+        func buildsApp(_ folder: String) -> Bool {
+            let url = URL(filePath: folder).resolvingSymlinksInPath().standardizedFileURL
+            let ids: [String]
+            if let known = folders[url.path] {
+                ids = known
+            } else {
+                ids = ProjectApps.bundleIDs(in: url)
+                folders[url.path] = ids
             }
+            return !appIDs.isDisjoint(with: ids)
         }
-        if requested != .codex, available.contains(.claude) {
-            for session in ClaudeSessions.openSessions() where Worktree.root(of: session.folder) == root {
-                if let socket = UnixSocket.connect(path: session.socket) {
-                    close(socket)
+        var failures: [String] = []
+        if requested != .claude, available.contains(.codex) {
+            if codexChats().contains(where: { buildsApp($0.folder) }) {
+                switch codexHandshake() {
+                case .answered:
                     return Doctor.Check(
                         status: .done,
                         name: "Report destination",
-                        detail: "A running Claude Code chat for this project accepts a connection from Redline."
+                        detail: "Codex has a chat for this app and answered Redline's delivery handshake."
+                    )
+                case .notListening:
+                    failures.append(
+                        "Redline found a Codex chat for this app, but could not connect to the Codex app. Reopen Codex, then rerun doctor."
+                    )
+                case .notAnswering:
+                    failures.append(
+                        "Redline found a Codex chat for this app, but Codex did not answer the delivery handshake. Restart Codex, then rerun doctor. If this persists, update Redline and Codex."
                     )
                 }
+            }
+        }
+        if requested != .codex, available.contains(.claude) {
+            var found = false
+            for session in claudeChats() where buildsApp(session.folder) {
+                found = true
+                if claudeConnection(session) {
+                    return Doctor.Check(
+                        status: .done,
+                        name: "Report destination",
+                        detail: "A running Claude Code chat for this app accepts a connection from Redline."
+                    )
+                }
+            }
+            if found {
+                failures.append(
+                    "Redline found a running Claude Code chat for this app, but could not connect to its delivery socket. Restart that Claude Code chat, then rerun doctor."
+                )
             }
         }
         return Doctor.Check(
             status: .needsYou,
             name: "Report destination",
-            detail: "Open a chat in \(name) for this app project. Keep it open, then rerun doctor."
+            detail: failures.isEmpty
+                ? "Redline could not find a chat for the app targets in \(project.path). Open a chat in \(name) for this app; another checkout of the same app also works. Then rerun doctor."
+                : failures.joined(separator: " ")
         )
     }
 }

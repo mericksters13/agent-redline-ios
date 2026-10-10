@@ -762,7 +762,7 @@ final class Hub: @unchecked Sendable {
         checks.append(DoctorRuntime.storageCheck(paths: paths))
         checks.append(DoctorRuntime.networkCheck())
         if !ids.isEmpty, error == nil {
-            checks.append(DoctorRuntime.destinationCheck(project: project, agent: request.agent))
+            checks.append(DoctorRuntime.destinationCheck(project: project, bundleIDs: ids, agent: request.agent))
         }
         return DoctorConnection.Reply(id: request.id, pid: getpid(), isMacApp: true, checks: checks)
     }

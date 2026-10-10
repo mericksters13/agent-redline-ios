@@ -168,12 +168,157 @@ struct DoctorTests {
     }
 
     @Test func aMissingSelectedAgentDoesNotPassBecauseAnotherAgentIsInstalled() {
-        let check = DoctorRuntime.destinationCheck(project: temporary.url, agent: "claude", available: [.codex])
+        let check = DoctorRuntime.destinationCheck(
+            project: temporary.url,
+            bundleIDs: ["com.example.app"],
+            agent: "claude",
+            available: [.codex]
+        )
         #expect(check.status == .needsYou)
         #expect(check.detail.contains("Install Claude Code"))
-        let neither = DoctorRuntime.destinationCheck(project: temporary.url, agent: "auto", available: [])
+        let neither = DoctorRuntime.destinationCheck(
+            project: temporary.url,
+            bundleIDs: ["com.example.app"],
+            agent: "auto",
+            available: []
+        )
         #expect(neither.status == .needsYou)
         #expect(neither.detail.contains("Install Codex or Claude Code"))
+    }
+
+    private func appProject(_ name: String, bundleID: String = "com.example.app") throws -> URL {
+        let folder = temporary.url.appending(path: name)
+        try write(
+            "targets:\n  App:\n    settings:\n      PRODUCT_BUNDLE_IDENTIFIER: \(bundleID)\n",
+            to: folder.appending(path: "project.yml")
+        )
+        return folder
+    }
+
+    @Test func aCodexChatInAnotherCheckoutOfTheAppCounts() throws {
+        let project = try appProject("worktree")
+        let checkout = try appProject("checkout")
+        try write("gitdir: ../checkout/.git/worktrees/worktree", to: project.appending(path: ".git"))
+        try FileManager.default.createDirectory(at: checkout.appending(path: ".git"), withIntermediateDirectories: true)
+        #expect(Worktree.root(of: project.path) != Worktree.root(of: checkout.path))
+        var handshakes = 0
+        let check = DoctorRuntime.destinationCheck(
+            project: project,
+            bundleIDs: ["com.example.app"],
+            agent: "codex",
+            available: [.codex],
+            codexChats: { [.init(id: "chat", title: "App", folder: checkout.path, updatedAt: .now)] },
+            claudeChats: {
+                Issue.record("The unselected agent must not be checked")
+                return []
+            },
+            codexHandshake: {
+                handshakes += 1
+                return .answered
+            }
+        )
+        #expect(check.status == .done)
+        #expect(handshakes == 1)
+    }
+
+    @Test func aClaudeChatInAnotherCheckoutCountsWhenCodexCannotConnect() throws {
+        let project = try appProject("worktree")
+        let checkout = try appProject("checkout")
+        let session = ClaudeSessions.Session(id: "chat", folder: checkout.path, socket: "test-socket", updatedAt: .now)
+        let check = DoctorRuntime.destinationCheck(
+            project: project,
+            bundleIDs: ["com.example.app"],
+            agent: "auto",
+            available: [.codex, .claude],
+            codexChats: { [.init(id: "codex-chat", title: "App", folder: checkout.path, updatedAt: .now)] },
+            claudeChats: { [session] },
+            codexHandshake: { .notListening },
+            claudeConnection: {
+                #expect($0 == session)
+                return true
+            }
+        )
+        #expect(check.status == .done)
+        #expect(check.detail.contains("Claude Code"))
+    }
+
+    @Test func aChatForAnotherAppInTheSameRepositoryDoesNotCount() throws {
+        let project = try appProject("selected-app")
+        let other = try appProject("other-app", bundleID: "com.example.other")
+        try FileManager.default.createDirectory(
+            at: temporary.url.appending(path: ".git"),
+            withIntermediateDirectories: true
+        )
+        #expect(Worktree.root(of: project.path) == Worktree.root(of: other.path))
+        let check = DoctorRuntime.destinationCheck(
+            project: project,
+            bundleIDs: ["com.example.app"],
+            agent: "codex",
+            available: [.codex],
+            codexChats: { [.init(id: "other", title: "Other", folder: other.path, updatedAt: .now)] },
+            codexHandshake: {
+                Issue.record("An unrelated app must not pass via the handshake")
+                return .answered
+            }
+        )
+        #expect(check.status == .needsYou)
+        #expect(check.detail.contains(project.path))
+        #expect(check.detail.contains("could not find a chat"))
+    }
+
+    @Test(arguments: [CodexApp.Handshake.notListening, .notAnswering])
+    func aKnownCodexChatReportsTheConnectionFailure(_ result: CodexApp.Handshake) throws {
+        let project = try appProject("app")
+        let check = DoctorRuntime.destinationCheck(
+            project: project,
+            bundleIDs: ["com.example.app"],
+            agent: "codex",
+            available: [.codex],
+            codexChats: { [.init(id: "chat", title: "App", folder: project.path, updatedAt: .now)] },
+            codexHandshake: { result }
+        )
+        #expect(check.status == .needsYou)
+        #expect(check.detail.contains("found a Codex chat"))
+        #expect(!check.detail.contains("Open a chat"))
+        #expect(check.detail.contains(result == .notListening ? "could not connect" : "did not answer"))
+    }
+
+    @Test func aKnownClaudeChatReportsTheConnectionFailure() throws {
+        let project = try appProject("app")
+        let check = DoctorRuntime.destinationCheck(
+            project: project,
+            bundleIDs: ["com.example.app"],
+            agent: "claude",
+            available: [.codex, .claude],
+            codexChats: {
+                Issue.record("The unselected agent must not be checked")
+                return []
+            },
+            claudeChats: { [.init(id: "chat", folder: project.path, socket: "test-socket", updatedAt: .now)] },
+            claudeConnection: { _ in false }
+        )
+        #expect(check.status == .needsYou)
+        #expect(check.detail.contains("found a running Claude Code chat"))
+        #expect(check.detail.contains("delivery socket"))
+        #expect(!check.detail.contains("Open a chat"))
+    }
+
+    @Test func chatProjectsAreReadAgainAfterTheirAppTargetsChange() throws {
+        let project = try appProject("worktree")
+        let checkout = try appProject("checkout")
+        func check() -> Doctor.Check {
+            DoctorRuntime.destinationCheck(
+                project: project,
+                bundleIDs: ["com.example.app"],
+                agent: "codex",
+                available: [.codex],
+                codexChats: { [.init(id: "chat", title: "App", folder: checkout.path, updatedAt: .now)] },
+                codexHandshake: { .answered }
+            )
+        }
+        #expect(check().status == .done)
+        _ = try appProject("checkout", bundleID: "com.example.changed")
+        #expect(check().status == .needsYou)
     }
 
     @Test func colorRespectsRedirectionAndTerminalPreferences() {

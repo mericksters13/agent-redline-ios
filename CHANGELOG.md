@@ -6,7 +6,7 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ### Added
 
-- `redline doctor` checks the Mac requirements for a first report: the running app, project-file access, report storage, Local Network access and a project chat. Access checks run in the Redline Mac app, without contacting an iOS app. Completed checks have a green check mark; incomplete steps have a red x and an action. Use `--project` and `--agent` to select the project and destination.
+- `redline doctor` checks the Mac requirements for a first report: the running app, project-file access, report storage, Local Network access and a chat that builds the app, including chats in other checkouts. Access checks run in the Redline Mac app, without contacting an iOS app. Completed checks have a green check mark; incomplete steps have a red x and an action that distinguishes a missing chat from a failed connection. Use `--project` and `--agent` to select the project and destination.
 
 ## [0.1.5] - 2026-10-10
 
