@@ -54,6 +54,14 @@ final class LayoutPrototypeTests: XCTestCase {
         add(attachment)
     }
 
+    private func expandPreview(in app: XCUIApplication) {
+        guard !app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.exists else { return }
+        let disclosure = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "Padding & frame", "Frame")).firstMatch
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5))
+        disclosure.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.waitForExistence(timeout: 5))
+    }
+
     func testLayoutTabOnNormalLaunch() {
         let app = XCUIApplication()
         app.launchEnvironment["SWIFTUI_VIEW_DEBUG"] = "0"
@@ -90,6 +98,7 @@ final class LayoutPrototypeTests: XCTestCase {
             let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
             XCTAssertTrue(result.waitForExistence(timeout: 5))
             XCTAssertTrue(result.label.contains("Matched by"), result.label)
+            expandPreview(in: app)
             XCTAssertTrue(app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.exists)
             if name == "Recipe row" {
                 XCTAssertTrue(result.label.contains("Padding: Vertical · 4 pt"), result.label)
@@ -236,6 +245,7 @@ final class LayoutPrototypeTests: XCTestCase {
         let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
         XCTAssertTrue(result.waitForExistence(timeout: 5))
         XCTAssertTrue(result.label.contains("Frame: 180 × 44 pt"), result.label)
+        expandPreview(in: app)
         app.buttons["RedlinePaddingLeft"].tap()
         XCTAssertTrue(app.staticTexts["RedlineLayoutContext"].label.contains("Left padding: 16 pt (measured)"))
         // Allow the native pressed appearance to settle before capturing.
@@ -253,6 +263,11 @@ final class LayoutPrototypeTests: XCTestCase {
         let center = CGVector(dx: fixture.frame.midX, dy: fixture.frame.midY)
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
         app.coordinate(withNormalizedOffset: .zero).withOffset(center).tap()
+        XCTAssertFalse(app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["RedlinePaddingLeft"].exists)
+        XCTAssertTrue(app.buttons["Add note"].isHittable)
+        attach("Snapshot collapsed by default", in: app)
+        expandPreview(in: app)
         let left = app.buttons["RedlinePaddingLeft"]
         XCTAssertTrue(left.waitForExistence(timeout: 5), app.debugDescription)
         left.tap()
@@ -304,12 +319,70 @@ final class LayoutPrototypeTests: XCTestCase {
         app.terminate()
     }
 
+    func testHierarchyDragSelection() {
+        let app = XCUIApplication()
+        app.launch()
+        let row = app.otherElements["list.row.black-bean-tacos"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        let point = CGVector(dx: row.frame.minX + row.frame.width * 0.75, dy: row.frame.maxY - 8)
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.coordinate(withNormalizedOffset: .zero).withOffset(point).tap()
+        XCTAssertTrue(app.buttons["RedlineShowHierarchy"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.exists)
+        attach("Recipe row snapshot starts collapsed", in: app)
+        app.buttons["RedlineShowHierarchy"].tap()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "RedlineHierarchyRow"))
+        XCTAssertGreaterThan(rows.count, 3)
+        let first = rows.element(boundBy: 0)
+        let last = rows.element(boundBy: rows.count - 1)
+        XCTAssertTrue(first.isHittable)
+        XCTAssertTrue(last.isHittable)
+        let x = app.frame.midX
+        func coordinate(_ element: XCUIElement) -> XCUICoordinate {
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: x, dy: element.frame.midY))
+        }
+        attach("Hierarchy before dragging", in: app)
+        coordinate(first).press(forDuration: 0.35, thenDragTo: coordinate(last),
+                                withVelocity: .slow, thenHoldForDuration: 0.2)
+        XCTAssertEqual(last.value as? String, "Selected")
+        XCTAssertNotEqual(first.value as? String, "Selected")
+        attach("Hierarchy after downward traversal", in: app)
+        coordinate(last).press(forDuration: 0.35, thenDragTo: coordinate(first),
+                               withVelocity: .slow, thenHoldForDuration: 0.2)
+        XCTAssertEqual(first.value as? String, "Selected")
+        XCTAssertNotEqual(last.value as? String, "Selected")
+        attach("Hierarchy after reverse traversal", in: app)
+        let branch = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "RedlineHierarchyBranch")).firstMatch
+        let count = rows.count
+        branch.tap()
+        XCTAssertEqual(rows.count, 1)
+        branch.tap()
+        XCTAssertEqual(rows.count, count)
+        last.tap()
+        XCTAssertEqual(last.value as? String, "Selected")
+        first.tap()
+        XCTAssertEqual(first.value as? String, "Selected")
+        expandPreview(in: app)
+        let beforeScroll = first.frame.minY
+        app.scrollViews["RedlineHierarchy"].swipeUp(velocity: .fast)
+        XCTAssertLessThan(first.frame.minY, beforeScroll - 20)
+        XCTAssertEqual(first.value as? String, "Selected")
+        attach("Hierarchy ordinary swipe scrolls", in: app)
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.buttons["RedlineShowHierarchy"].exists)
+        XCTAssertTrue(app.buttons["Add note"].isHittable)
+        app.buttons["Cancel"].tap()
+        app.buttons["Close annotate mode"].tap()
+        app.terminate()
+    }
+
     func testRepeatedFlexiblePreviewToggles() {
         let app = launch("early")
         let fixture = app.staticTexts["Flexible"]
         let center = CGVector(dx: fixture.frame.midX, dy: fixture.frame.midY)
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
         app.coordinate(withNormalizedOffset: .zero).withOffset(center).tap()
+        expandPreview(in: app)
         let top = app.buttons["RedlinePaddingTop"]
         XCTAssertTrue(top.waitForExistence(timeout: 5))
         top.tap()
@@ -340,6 +413,7 @@ final class LayoutPrototypeTests: XCTestCase {
         let app = launch("early")
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
         app.staticTexts["Default padding"].tap()
+        expandPreview(in: app)
         let top = app.buttons["RedlinePaddingTop"]
         let bottom = app.buttons["RedlinePaddingBottom"]
         XCTAssertTrue(top.waitForExistence(timeout: 5))

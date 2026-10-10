@@ -23,7 +23,11 @@ struct OverlayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isNoteFocused: Bool
     @State private var isHierarchyExpanded = false
-    @State private var isLayoutPreviewExpanded = true
+    @State private var isLayoutPreviewExpanded = false
+    @State private var isHierarchyTraversing = false
+    @State private var hierarchyDragTop: CGFloat?
+    @State private var noteCardFrame: CGRect = .zero
+    @State private var noteScrollFrame: CGRect = .zero
     @ScaledMetric(relativeTo: .caption) private var noteBadgeSize: CGFloat = 26
     @State private var cardHeight: CGFloat = 0
     /// The note card's element row and text field, which scroll when the card is capped.
@@ -499,7 +503,7 @@ struct OverlayView: View {
         let pending = session.pending
         // Worked out once per pass: where the card goes, and so whether it hides the element.
         let height = cardHeight == 0 ? Self.estimatedCardHeight : cardHeight
-        let top = session.noteCardTop(height: height, reservedHeight: reservedCardHeight)
+        let top = hierarchyDragTop ?? session.noteCardTop(height: height, reservedHeight: reservedCardHeight)
         return VStack(alignment: .leading, spacing: 14) {
             // Scrolls only when the card is taller than the space above the keyboard, such
             // as in landscape or at large text sizes, so the buttons below stay in reach.
@@ -517,6 +521,9 @@ struct OverlayView: View {
                 content.frame(height: noteScrollHeight)
             }
             .clipped()
+            .onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .global)
+            } action: { noteScrollFrame = $0 }
 
             noteCardFooter(pending: pending)
                 .onGeometryChange(for: CGFloat.self) {
@@ -531,18 +538,23 @@ struct OverlayView: View {
         .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.3), radius: 18, y: 8)
-        .onGeometryChange(for: CGFloat.self) {
-            $0.size.height
-        } action: { height in
-            cardHeight = height
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: { frame in
+            noteCardFrame = frame
+            cardHeight = frame.height
             // Wait for the real content height; the first pass uses an estimate.
-            if openingCardHeight == 0, noteContentHeight > 0 { openingCardHeight = height }
+            if openingCardHeight == 0, noteContentHeight > 0 { openingCardHeight = frame.height }
         }
         .padding(.leading, panelLeading)
         .padding(.top, top)
         .onAppear { isNoteFocused = !session.showsLayoutPrototype }
         .onChange(of: isHierarchyExpanded) { _, expanded in
             isNoteFocused = !expanded && !session.showsLayoutPrototype
+            if !expanded {
+                isHierarchyTraversing = false
+                hierarchyDragTop = nil
+            }
             openingCardHeight = 0
         }
         .onChange(of: isLayoutPreviewExpanded) { _, _ in
@@ -550,6 +562,8 @@ struct OverlayView: View {
         }
         .onDisappear {
             isHierarchyExpanded = false
+            isHierarchyTraversing = false
+            hierarchyDragTop = nil
             cardHeight = 0
             openingCardHeight = 0
             noteContentHeight = 0
@@ -603,7 +617,11 @@ struct OverlayView: View {
     private var noteScrollHeight: CGFloat {
         let content = noteContentHeight == 0 ? 120 : noteContentHeight
         let footer = noteFooterHeight == 0 ? 44 : noteFooterHeight
-        let room = session.noteCardMaxHeight - 32 - 14 - footer
+        var room = session.noteCardMaxHeight - 32 - 14 - footer
+        if let top = hierarchyDragTop {
+            let bottom = min(session.noteKeyboardTop, session.screenSize.height - session.safeAreaInsets.bottom)
+            room = min(room, bottom - NoteCardPlacement.margin - top - 32 - 14 - footer)
+        }
         return max(min(content, room), 44)
     }
 
@@ -656,7 +674,14 @@ struct OverlayView: View {
                         hierarchy: hierarchy,
                         selectedIndex: session.hierarchySelectionIndex,
                         availableWidth: panelWidth - 32,
-                        select: session.selectHierarchyElement
+                        visibleBounds: noteScrollFrame,
+                        select: session.selectHierarchyElement,
+                        traversingChanged: { traversing in
+                            guard traversing != isHierarchyTraversing else { return }
+                            // Keep the rows under the finger while the selected app frame changes.
+                            hierarchyDragTop = traversing ? noteCardFrame.minY : nil
+                            isHierarchyTraversing = traversing
+                        }
                     )
                     .disabled(!session.screenReadIsCurrent)
                     .transition(.identity)

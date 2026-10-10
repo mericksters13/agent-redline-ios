@@ -6,8 +6,12 @@ struct ElementHierarchyView: View {
     let hierarchy: ElementHierarchy
     let selectedIndex: Int?
     let availableWidth: CGFloat
+    let visibleBounds: CGRect
     let select: (Int) -> Void
+    let traversingChanged: (Bool) -> Void
     @State private var collapsed: Set<Int> = []
+    @State private var rowFrames: [Int: CGRect] = [:]
+    @State private var viewport: CGRect = .zero
     @ScaledMetric(relativeTo: .footnote) private var indentation: CGFloat = 18
 
     var body: some View {
@@ -32,6 +36,7 @@ struct ElementHierarchyView: View {
                             .accessibilityLabel(
                                 "\(collapsed.contains(row.id) ? "Expand" : "Collapse") \(row.element.fullName ?? row.element.role)"
                             )
+                            .accessibilityIdentifier("RedlineHierarchyBranch\(row.id)")
                         } else {
                             Color.clear.frame(width: 44)
                         }
@@ -55,6 +60,9 @@ struct ElementHierarchyView: View {
                             "\(row.element.fullName ?? row.element.role), \(row.element.role), level \(row.branches.count + 1)"
                         )
                         .accessibilityAddTraits(row.id == selectedIndex ? .isSelected : [])
+                        .accessibilityValue(row.id == selectedIndex ? "Selected" : "")
+                        .accessibilityHint("Press and drag across rows to select a component.")
+                        .accessibilityIdentifier("RedlineHierarchyRow\(row.id)")
                     }
                     .overlay(alignment: .leading) {
                         GeometryReader { geometry in
@@ -86,12 +94,29 @@ struct ElementHierarchyView: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                     }
+                    .onGeometryChange(for: CGRect.self) {
+                        $0.frame(in: .global)
+                    } action: { rowFrames[row.id] = $0 }
                     .transition(.identity)
                 }
             }
             .frame(minWidth: max(availableWidth, CGFloat(depth) * indentation + 180), alignment: .leading)
+            .contentShape(Rectangle())
+            .gesture(HierarchyTraversalGesture { point in
+                traversingChanged(point != nil)
+                if let point, let index = hierarchy.row(at: point, frames: rowFrames,
+                                                       visibleBounds: visibleBounds.intersection(viewport),
+                                                       collapsing: collapsed) {
+                    select(index)
+                }
+            })
         }
+        .accessibilityIdentifier("RedlineHierarchy")
         .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: { viewport = $0 }
+        .onDisappear { traversingChanged(false) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Hierarchy of \(hierarchy.elements[hierarchy.root].fullName ?? "the selected element")")
     }
