@@ -6,6 +6,7 @@ struct ElementPathView: View {
     @Bindable var session: DebugSession
     @Binding var isExpanded: Bool
     let availableWidth: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if isExpanded, let hierarchy = session.hierarchy {
@@ -16,9 +17,16 @@ struct ElementPathView: View {
                 select: session.selectHierarchyElement
             )
             .disabled(!session.screenReadIsCurrent)
+            .transition(
+                reduceMotion
+                    ? .opacity.animation(.easeOut(duration: 0.15))
+                    : .opacity.combined(with: .offset(y: -8))
+            )
         } else if session.hierarchy != nil {
             Button {
-                isExpanded = true
+                withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) {
+                    isExpanded = true
+                }
             } label: {
                 HStack {
                     Text("View hierarchy")
@@ -32,6 +40,7 @@ struct ElementPathView: View {
                 .contentShape(Rectangle())
             }
             .disabled(!session.screenReadIsCurrent)
+            .transition(.opacity.animation(.easeOut(duration: 0.15)))
         }
     }
 }

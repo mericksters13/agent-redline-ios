@@ -648,6 +648,7 @@ struct OverlayView: View {
                     .focused($isNoteFocused)
                     .padding(12)
                     .background(Mono.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .transition(.opacity.animation(.easeOut(duration: 0.15)))
             }
         }
     }
@@ -657,15 +658,19 @@ struct OverlayView: View {
             if isHierarchyExpanded {
                 HStack {
                     Spacer()
-                    Button("Done") { isHierarchyExpanded = false }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.black)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 8)
-                        .frame(minHeight: 38)
-                        .background(Color.white, in: Capsule(style: .continuous))
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
+                    Button("Done") {
+                        withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) {
+                            isHierarchyExpanded = false
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.black)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 8)
+                    .frame(minHeight: 38)
+                    .background(Color.white, in: Capsule(style: .continuous))
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
             } else {
                 if let error = session.noteError {
