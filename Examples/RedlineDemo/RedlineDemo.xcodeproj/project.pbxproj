@@ -7,10 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		452ED3431E154C62B0902549 /* LayoutFixtures.strings in Resources */ = {isa = PBXBuildFile; fileRef = 4A707325872D40C3B16BB558 /* LayoutFixtures.strings */; };
 		00155F906603BF079E2B195D /* Recipe+Samples.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFF33899274A81BA9EB8C611 /* Recipe+Samples.swift */; };
 		359A87BC2E283507CA9CDC18 /* MealPlanForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23D7D3C0B4BF6506A7E3D9A3 /* MealPlanForm.swift */; };
 		35F89A6EEEEE96261695796D /* KeyboardLayoutScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1768F46014CAAD5825230848 /* KeyboardLayoutScreen.swift */; };
 		367D89D3F3C39A5281CDCCB0 /* Redline in Frameworks */ = {isa = PBXBuildFile; productRef = AEA991A3DF5BCC972A9A718B /* Redline */; };
+		57C1A1102256BBFA7E3A9165 /* LayoutPrototypeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B3F3AA3B8FC328FA50C8F45 /* LayoutPrototypeTests.swift */; };
+		5E766F34C65B5CEB4F0412E3 /* LayoutPrototypeScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8851309D11100EC94F55333 /* LayoutPrototypeScreen.swift */; };
 		63D8A25CA80767A6EDCDFCC5 /* Recipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = B922AB2C09A42EC4A6DDFBC3 /* Recipe.swift */; };
 		720A25828B0989A872BC278D /* UIKitScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D14268BA71835D2CAB2FD72 /* UIKitScreen.swift */; };
 		957DB01595D95B36A9681720 /* RecipeDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = A610AA3FD2570F43C634A544 /* RecipeDetail.swift */; };
@@ -20,7 +23,19 @@
 		F9D1E595200488DEAD2929E8 /* RedlineDemoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8271331F3DBC3EB9BA901DBD /* RedlineDemoApp.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		E70A43292E830DD03653BE23 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 64005B6212A88E0AFF9D0776 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7FDF08E5F5F324B5D043B536;
+			remoteInfo = RedlineDemo;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		C46ECF1548DB4C94BE49D32D /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/LayoutFixtures.strings; sourceTree = "<group>"; };
+		AFC07E1E5B1348009E63D8A7 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/LayoutFixtures.strings; sourceTree = "<group>"; };
 		1768F46014CAAD5825230848 /* KeyboardLayoutScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardLayoutScreen.swift; sourceTree = "<group>"; };
 		23D7D3C0B4BF6506A7E3D9A3 /* MealPlanForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealPlanForm.swift; sourceTree = "<group>"; };
 		3715FE57C4C02AA67B1CC818 /* ShoppingListViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingListViewController.swift; sourceTree = "<group>"; };
@@ -28,11 +43,14 @@
 		527356366A0272DF8E3E5CFF /* DemoTabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoTabs.swift; sourceTree = "<group>"; };
 		5D14268BA71835D2CAB2FD72 /* UIKitScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIKitScreen.swift; sourceTree = "<group>"; };
 		8271331F3DBC3EB9BA901DBD /* RedlineDemoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedlineDemoApp.swift; sourceTree = "<group>"; };
+		8B3F3AA3B8FC328FA50C8F45 /* LayoutPrototypeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutPrototypeTests.swift; sourceTree = "<group>"; };
 		A610AA3FD2570F43C634A544 /* RecipeDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipeDetail.swift; sourceTree = "<group>"; };
 		A9113A5C870035C3CB793EDD /* Redline */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Redline; path = ../..; sourceTree = SOURCE_ROOT; };
 		B922AB2C09A42EC4A6DDFBC3 /* Recipe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Recipe.swift; sourceTree = "<group>"; };
+		BFFCDFB30AC86E4E3F4DEC17 /* RedlineDemoUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RedlineDemoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CB66A2D5FEAD65F3AA051785 /* RedlineDemo.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RedlineDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CFF33899274A81BA9EB8C611 /* Recipe+Samples.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Recipe+Samples.swift"; sourceTree = "<group>"; };
+		E8851309D11100EC94F55333 /* LayoutPrototypeScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutPrototypeScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -47,10 +65,19 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0DDEC5BD37EC2EE9BEC26EA4 /* RedlineDemoUITests */ = {
+			isa = PBXGroup;
+			children = (
+				8B3F3AA3B8FC328FA50C8F45 /* LayoutPrototypeTests.swift */,
+			);
+			path = RedlineDemoUITests;
+			sourceTree = "<group>";
+		};
 		5A1F1D1E21CB790CF2618931 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				CB66A2D5FEAD65F3AA051785 /* RedlineDemo.app */,
+				BFFCDFB30AC86E4E3F4DEC17 /* RedlineDemoUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -60,6 +87,8 @@
 			children = (
 				527356366A0272DF8E3E5CFF /* DemoTabs.swift */,
 				1768F46014CAAD5825230848 /* KeyboardLayoutScreen.swift */,
+				E8851309D11100EC94F55333 /* LayoutPrototypeScreen.swift */,
+				4A707325872D40C3B16BB558 /* LayoutFixtures.strings */,
 				23D7D3C0B4BF6506A7E3D9A3 /* MealPlanForm.swift */,
 				B922AB2C09A42EC4A6DDFBC3 /* Recipe.swift */,
 				CFF33899274A81BA9EB8C611 /* Recipe+Samples.swift */,
@@ -77,6 +106,7 @@
 			children = (
 				A9113A5C870035C3CB793EDD /* Redline */,
 				75B8AC26BA7EA1D93D10A70B /* RedlineDemo */,
+				0DDEC5BD37EC2EE9BEC26EA4 /* RedlineDemoUITests */,
 				5A1F1D1E21CB790CF2618931 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -84,12 +114,31 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		11B6E7514F03AE42B9682724 /* RedlineDemoUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 26896A736FDAD0979E286D79 /* Build configuration list for PBXNativeTarget "RedlineDemoUITests" */;
+			buildPhases = (
+				479F7B807596107694135564 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D7A2F50D3A5E445F8137BB73 /* PBXTargetDependency */,
+			);
+			name = RedlineDemoUITests;
+			packageProductDependencies = (
+			);
+			productName = RedlineDemoUITests;
+			productReference = BFFCDFB30AC86E4E3F4DEC17 /* RedlineDemoUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		7FDF08E5F5F324B5D043B536 /* RedlineDemo */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 695C72E3456E23155720549C /* Build configuration list for PBXNativeTarget "RedlineDemo" */;
 			buildPhases = (
 				B63D0E760FABB0F339FDE24C /* Sources */,
 				CADE9575098F565D70C1CD8A /* Frameworks */,
+				AA8AC7B4638B4CF49C74A2AD /* Resources */,
 			);
 			buildRules = (
 			);
@@ -112,6 +161,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
+					11B6E7514F03AE42B9682724 = {
+						ProvisioningStyle = Automatic;
+						TestTargetID = 7FDF08E5F5F324B5D043B536;
+					};
 					7FDF08E5F5F324B5D043B536 = {
 						ProvisioningStyle = Automatic;
 					};
@@ -123,6 +176,7 @@
 			knownRegions = (
 				Base,
 				en,
+				fr,
 			);
 			mainGroup = 93922FEB1D19730BA18D4E3D;
 			minimizedProjectReferenceProxies = 1;
@@ -132,17 +186,50 @@
 			projectRoot = "";
 			targets = (
 				7FDF08E5F5F324B5D043B536 /* RedlineDemo */,
+				11B6E7514F03AE42B9682724 /* RedlineDemoUITests */,
 			);
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		AA8AC7B4638B4CF49C74A2AD /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				452ED3431E154C62B0902549 /* LayoutFixtures.strings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXVariantGroup section */
+		4A707325872D40C3B16BB558 /* LayoutFixtures.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				C46ECF1548DB4C94BE49D32D /* en */,
+				AFC07E1E5B1348009E63D8A7 /* fr */,
+			);
+			name = LayoutFixtures.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
 /* Begin PBXSourcesBuildPhase section */
+		479F7B807596107694135564 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				57C1A1102256BBFA7E3A9165 /* LayoutPrototypeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B63D0E760FABB0F339FDE24C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				C73B1782A974F6A79817CBD0 /* DemoTabs.swift in Sources */,
 				35F89A6EEEEE96261695796D /* KeyboardLayoutScreen.swift in Sources */,
+				5E766F34C65B5CEB4F0412E3 /* LayoutPrototypeScreen.swift in Sources */,
 				359A87BC2E283507CA9CDC18 /* MealPlanForm.swift in Sources */,
 				00155F906603BF079E2B195D /* Recipe+Samples.swift in Sources */,
 				63D8A25CA80767A6EDCDFCC5 /* Recipe.swift in Sources */,
@@ -156,7 +243,52 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		D7A2F50D3A5E445F8137BB73 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7FDF08E5F5F324B5D043B536 /* RedlineDemo */;
+			targetProxy = E70A43292E830DD03653BE23 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		01E7ED3071B3D8EC12C8AF74 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.agentredline.demo.uitests;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) REDLINE";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = RedlineDemo;
+			};
+			name = Debug;
+		};
+		615CC009DD0B837D60FA6370 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.agentredline.demo.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = RedlineDemo;
+			};
+			name = Release;
+		};
 		63BB6CD7C4D01387297B43FC /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -256,6 +388,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.agentredline.demo;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) REDLINE";
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
@@ -327,6 +460,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		26896A736FDAD0979E286D79 /* Build configuration list for PBXNativeTarget "RedlineDemoUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				01E7ED3071B3D8EC12C8AF74 /* Debug */,
+				615CC009DD0B837D60FA6370 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		2FFEE1A4E8F624AB91391AC9 /* Build configuration list for PBXProject "RedlineDemo" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

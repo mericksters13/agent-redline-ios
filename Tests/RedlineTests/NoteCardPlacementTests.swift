@@ -3,21 +3,21 @@ import Foundation
 import Testing
 @testable import Redline
 
-/// An iPhone 17 Pro in portrait: 874 pt tall, status bar to 62, keyboard top at 538.
 struct NoteCardPlacementTests {
     private let statusBar: CGFloat = 62
     private let keyboardTop: CGFloat = 538
     private let homeIndicatorTop: CGFloat = 840
-    private let height: CGFloat = 200
-    private let reserved: CGFloat = 266
+    private let minimum: CGFloat = 134
 
-    private func place(_ element: CGRect?, height: CGFloat? = nil, bottom: CGFloat? = nil) -> CGFloat {
-        NoteCardPlacement.top(
+    private func space(_ element: CGRect?, height: CGFloat = 200, bottom: CGFloat = 538)
+        -> (bounds: ClosedRange<CGFloat>, anchorsBottom: Bool)
+    {
+        NoteCardPlacement.space(
             element: element,
-            height: height ?? self.height,
-            reservedHeight: reserved,
+            minimumHeight: minimum,
+            height: height,
             top: statusBar,
-            bottom: bottom ?? keyboardTop
+            bottom: bottom
         )
     }
 
@@ -25,87 +25,115 @@ struct NoteCardPlacementTests {
         CGRect(x: 20, y: y, width: 360, height: height)
     }
 
-    @Test func anElementNearTheTopGetsTheCardBelowIt() {
-        #expect(place(element(y: 100)) == 168)
+    @Test func anElementNearTheTopGetsTheSpaceBelowIt() {
+        let slot = space(element(y: 100))
+        #expect(slot.bounds == 168...530)
+        #expect(!slot.anchorsBottom)
     }
 
-    @Test func anElementLowerDownGetsTheCardAboveIt() {
-        #expect(place(element(y: 420)) == 212)
+    @Test func anElementLowerDownGetsTheSpaceAboveIt() {
+        let slot = space(element(y: 420))
+        #expect(slot.bounds == 70...412)
+        #expect(slot.anchorsBottom)
     }
 
-    @Test func anElementUnderTheKeyboardGetsTheCardRestingOnTheKeyboard() {
-        let tabBar = element(y: 780, height: 50)
-        #expect(place(tabBar) == keyboardTop - 8 - height)
+    @Test func anElementUnderTheKeyboardGetsTheWholeVisibleSpace() {
+        let slot = space(element(y: 780, height: 50))
+        #expect(slot.bounds == 70...530)
+        #expect(slot.anchorsBottom)
     }
 
-    @Test func whenNeitherSideFitsTheCardHidesTheLeastOfTheElement() {
-        // In the middle: resting on the keyboard would hide 60 pt of it, the top 36 pt.
-        #expect(place(element(y: 300)) == statusBar + 8)
-        // A tall element: the top position hides less of it than resting on the keyboard.
-        #expect(place(element(y: 120, height: 400)) == statusBar + 8)
-        // Lower in the middle band: resting on the keyboard hides less.
-        #expect(place(element(y: 215, height: 60)) == keyboardTop - 8 - height)
+    @Test func aFormThatCannotFitAtFullHeightStillUsesAClearSide() {
+        // Neither side fits the old 266 pt reservation, but 222 pt above is usable.
+        let slot = space(element(y: 300), height: 600)
+        #expect(slot.bounds == 70...292)
+        #expect(slot.anchorsBottom)
+    }
+
+    @Test func theLargerUsableSideWinsAndEqualSidesPreferBelow() {
+        let picked = element(y: 230, height: 140)
+        let slot = space(picked)
+        #expect(slot.bounds == 378...530)
+        #expect(!slot.anchorsBottom)
+        let above = space(element(y: 260, height: 140))
+        #expect(above.bounds == 70...252)
+        #expect(above.anchorsBottom)
+    }
+
+    @Test func aGrowingNoteKeepsTheSameSideAndBoundary() {
+        for picked in [element(y: 100), element(y: 420)] {
+            let short = space(picked, height: 150)
+            let tall = space(picked, height: 600)
+            #expect(short.bounds == tall.bounds)
+            #expect(short.anchorsBottom == tall.anchorsBottom)
+        }
+    }
+
+    @Test func overlapIsAllowedOnlyWhenNeitherSideHoldsTheMinimumForm() {
+        let picked = element(y: 120, height: 400)
+        let slot = space(picked)
+        #expect(slot.bounds == 70...530)
+        #expect(!slot.anchorsBottom)
     }
 
     @Test func editingFromTheListRestsOnTheKeyboard() {
-        #expect(place(nil) == keyboardTop - 8 - height)
+        let slot = space(nil)
+        #expect(slot.bounds == 70...530)
+        #expect(slot.anchorsBottom)
     }
 
-    @Test func withoutAKeyboardTheCardUsesTheSpaceAboveTheHomeIndicator() {
-        #expect(place(element(y: 300), bottom: homeIndicatorTop) == 368)
+    @Test func withoutAKeyboardTheFormUsesTheSpaceAboveTheHomeIndicator() {
+        let slot = space(element(y: 300), bottom: homeIndicatorTop)
+        #expect(slot.bounds == 368...832)
+        #expect(!slot.anchorsBottom)
     }
 
-    @Test func aGrowingNoteBelowTheElementStaysBelowIt() {
-        let picked = element(y: 100)
-        #expect(place(picked, height: 200) == 168)
-        #expect(place(picked, height: 266) == 168)
+    @Test func aTallerFooterRequiresEnoughSpaceForAUsableContentRow() {
+        let slot = NoteCardPlacement.space(
+            element: element(y: 230, height: 140),
+            minimumHeight: 180,
+            height: 200,
+            top: statusBar,
+            bottom: keyboardTop
+        )
+        #expect(slot.bounds == 70...530)
     }
 
-    @Test func aGrowingNoteAboveTheElementGrowsUpwardKeepingItsBottom() {
-        let picked = element(y: 420)
-        let short = place(picked, height: 200)
-        let tall = place(picked, height: 266)
-        #expect(short + 200 == tall + 266)
-        #expect(short + 200 == 412)
-    }
-
-    @Test func theCardNeverGoesUnderTheKeyboardOrTheStatusBar() {
-        for keyboard in [keyboardTop, 600, homeIndicatorTop] {
+    @Test func cappedFormsRemainClearWheneverEitherSideIsUsable() {
+        for bottom in [193.0, 538.0, 600.0, 840.0] {
+            let safeTop = bottom == 193 ? 0.0 : 62.0
+            let start = safeTop + 8
+            let end = bottom - 8
             for elementHeight in [20.0, 60.0, 200.0, 500.0] {
                 for y in stride(from: 0.0, through: 874.0, by: 10) {
-                    for cardHeight in [150.0, 200.0, 266.0] {
-                        let top = place(element(y: y, height: elementHeight), height: cardHeight, bottom: keyboard)
-                        #expect(top >= statusBar + 8, "top \(top) for element at \(y)")
-                        #expect(
-                            top + cardHeight <= keyboard - 8 + 0.001,
-                            "bottom \(top + cardHeight) for element at \(y)"
+                    let picked = element(y: y, height: elementHeight)
+                    for contentHeight in [150.0, 266.0, 600.0] {
+                        let slot = NoteCardPlacement.space(
+                            element: picked,
+                            minimumHeight: minimum,
+                            height: contentHeight,
+                            top: safeTop,
+                            bottom: bottom
                         )
+                        let height = min(contentHeight, slot.bounds.upperBound - slot.bounds.lowerBound)
+                        let top = slot.anchorsBottom ? slot.bounds.upperBound - height : slot.bounds.lowerBound
+                        #expect(top >= start)
+                        #expect(top + height <= end + 0.001)
+                        if picked.minY - 8 - start >= minimum || end - picked.maxY - 8 >= minimum {
+                            #expect(
+                                top + height <= picked.minY - 8 + 0.001 || top >= picked.maxY + 8,
+                                "Form \(top)...\(top + height) covers component \(picked)"
+                            )
+                        }
                     }
                 }
             }
         }
     }
 
-    @Test func aCardCappedAtTheMaxHeightFitsWholeInLandscapeWithTheKeyboardUp() {
-        // An iPhone 17 Pro in landscape: 402 pt tall, no status bar, keyboard top at 193.
-        let landscapeKeyboardTop: CGFloat = 193
-        let height = NoteCardPlacement.maxHeight(top: 0, bottom: landscapeKeyboardTop)
-        #expect(height == 177)
-        for y in stride(from: 0.0, through: 402.0, by: 10) {
-            let top = NoteCardPlacement.top(
-                element: CGRect(x: 20, y: y, width: 300, height: 44),
-                height: height,
-                reservedHeight: 266,
-                top: 0,
-                bottom: landscapeKeyboardTop
-            )
-            #expect(top >= 8)
-            #expect(top + height <= landscapeKeyboardTop - 8)
-        }
-    }
-
-    @Test func aCardTallerThanTheSpaceKeepsItsTopVisible() {
-        #expect(place(element(y: 300), height: 600) == statusBar + 8)
+    @Test func unavailableViewportProducesAnEmptySpace() {
+        let slot = NoteCardPlacement.space(element: nil, minimumHeight: minimum, height: 200, top: 100, bottom: 100)
+        #expect(slot.bounds.lowerBound == slot.bounds.upperBound)
     }
 }
 #endif

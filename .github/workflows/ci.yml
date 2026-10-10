@@ -122,6 +122,36 @@ jobs:
       - name: Build the demo app in Debug
         run: xcodebuild -project Examples/RedlineDemo/RedlineDemo.xcodeproj -scheme RedlineDemo -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/demo build CODE_SIGNING_ALLOWED=NO
 
+      # Exercise runtime activation and actual selection, not just compilation of the private adapter.
+      - name: Smoke test layout inspection in the demo
+        run: |
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/simulators.json"
+          simulator=$(python3 - "$RUNNER_TEMP/simulators.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1]) as source:
+              devices = json.load(source)["devices"]
+          runtimes = sorted(
+              (tuple(map(int, runtime.rsplit("iOS-", 1)[1].split("-"))), runtime)
+              for runtime in devices if ".iOS-" in runtime
+          )
+          for version, runtime in runtimes:
+              if version[0] < 26:
+                  continue
+              for device in devices[runtime]:
+                  if device["isAvailable"] and device["name"].startswith("iPhone"):
+                      print(device["udid"])
+                      sys.exit(0)
+          sys.exit("No available iPhone simulator running iOS 26 or later")
+          PY
+          )
+          xcodebuild -project Examples/RedlineDemo/RedlineDemo.xcodeproj -scheme RedlineDemo -configuration Debug \
+            -destination "platform=iOS Simulator,id=$simulator" -derivedDataPath .build/demo \
+            -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
+            -only-testing:RedlineDemoUITests/LayoutPrototypeTests/testLayoutTabOnNormalLaunch \
+            -only-testing:RedlineDemoUITests/LayoutPrototypeTests/testPlainButtonLayoutInspection \
+            -only-testing:RedlineDemoUITests/LayoutPrototypeTests/testLocalizedTextLayoutInspection \
+            -collect-test-diagnostics never test CODE_SIGNING_ALLOWED=NO
+
   scripts:
     name: Scripts
     runs-on: ubuntu-latest

@@ -1,6 +1,6 @@
 # Redline Demo
 
-Redline Demo is an iOS app for trying Redline end to end: a recipe browser with `.redline()` on its root view, four tabs to annotate and three planted UI bugs to find. It references the Redline package in this repository by local path (`../..`), so every build compiles the kit from your checkout.
+Redline Demo is an iOS app for trying Redline end to end: a recipe browser with `.redline()` on its root view, sample tabs to annotate and three planted UI bugs to find. It references the Redline package in this repository by local path (`../..`), so every build compiles the kit from your checkout.
 
 The npm package doesn't include the demo. Clone the repository to get it.
 
@@ -10,6 +10,7 @@ The npm package doesn't include the demo. Clone the repository to get it.
 | Tonight | A recipe's detail view, which scrolls well past one screen: header, stats grid, Start cooking button, ingredients and method. | SwiftUI |
 | Plan | A form with text fields, a date picker, a toggle, a picker and a Save button. | SwiftUI |
 | UIKit | A shopping list built from `UILabel`, `UITextField`, `UISegmentedControl`, `UISwitch` and `UIButton`, in a `UIViewController` hosted with `UIViewControllerRepresentable`. | UIKit |
+| Layout (Debug) | Fixed, flexible, nested, and default-padding samples for trying the captured component and constraint visualizer. | SwiftUI |
 
 ## Run it
 
@@ -30,6 +31,7 @@ On a device, Redline finds a new install on its next scan, within 30 minutes. To
 ## What to try
 
 - **Annotate and send.** Tap the floating Redline button, tap an element, write a note and tap Add note. Notes collect across tabs until you send them, so add a few on different screens, then open the notes tray and tap Send. The first time, pick your session in Send to.
+- **Inspect padding and frame.** Open Layout in a Debug build, tap Redline, then a sample. The annotation form shows its captured component, red padding measurements, and frame size. Tap a measurement to include it in the note; use the layers icon for hierarchy and the Padding & frame chevron to collapse the preview. Layout inspection activates when the demo starts; no launch arguments are needed. [Supported behavior and research controls](LAYOUT-PROTOTYPE.md) describe the experimental runtime limits.
 - **Read the identifiers.** Key elements have accessibility identifiers, such as `list.sort`, `detail.start`, `form.save` and `uikit.submit`, so a note in your session reads like `Start cooking (Button, detail.start): ...`.
 - **Select an enclosing element.** After you tap a stat on the Tonight tab, the note card's path reads `detail.stats`, then the stat. Tap `detail.stats` to select the whole grid.
 - **Pick UIKit views.** On the UIKit tab, annotate the text field, the segmented control, the switch and the Add to list button. Each note carries the view's label and identifier, as it does for SwiftUI elements.

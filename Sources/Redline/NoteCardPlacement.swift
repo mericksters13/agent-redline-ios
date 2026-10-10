@@ -1,57 +1,40 @@
 #if REDLINE
 import Foundation
 
-/// Where the note card sits while you type: next to the picked element when it
-/// fits, never under the keyboard or the status bar, and hiding as little of the
-/// element as possible when it can't sit beside it.
+/// The vertical space available to a note card, clear of the selected component when possible.
 enum NoteCardPlacement {
     static let margin: CGFloat = 8
 
-    /// The tallest the card can be and still sit whole between `top` and `bottom`.
+    /// Choose a usable side independently of the content height, so expanding or typing cannot
+    /// move the form through the component.
     ///
-    /// The overlay caps the card at this height and scrolls its upper part, so Cancel and Add note
-    /// stay above the keyboard even in landscape or at large text sizes.
-    static func maxHeight(top: CGFloat, bottom: CGFloat) -> CGFloat {
-        max(bottom - top - 2 * margin, 0)
-    }
-
-    /// The card's top edge, in screen points.
-    /// - Parameters:
-    ///   - element: the picked element's frame, or nil when editing a note from the list.
-    ///   - height: the card's current height.
-    ///   - reservedHeight: the height the card can grow to while typing. The side is
-    ///     chosen for this height, so a growing note never flips the card to the other side.
-    ///   - top: the highest the card may go, usually the bottom of the status bar.
-    ///   - bottom: the lowest the card's bottom may go: the top of the keyboard, or the
-    ///     home indicator when no keyboard is up.
-    /// - Returns: The card's top edge, in screen points.
-    static func top(element: CGRect?, height: CGFloat, reservedHeight: CGFloat, top: CGFloat, bottom: CGFloat)
-        -> CGFloat
-    {
-        let reserved = max(height, reservedHeight)
-        let minTop = top + margin
-        let maxBottom = bottom - margin
-        // The card resting right on the keyboard.
-        let restingTop = maxBottom - height
-        // Taller than the space left, which the cap above should prevent: keep its top visible.
-        guard restingTop > minTop else { return minTop }
-        // Editing from the list: no element on screen, so sit on the keyboard like a composer.
-        guard let element else { return restingTop }
-
-        // Below the element, with room to grow downward.
-        if element.maxY + margin + reserved <= maxBottom {
-            return max(element.maxY + margin, minTop)
+    /// The caller caps and scrolls the content in this space.
+    /// If neither side holds the minimum usable form, use the viewport and hide as little as possible.
+    static func space(
+        element: CGRect?,
+        minimumHeight: CGFloat,
+        height: CGFloat,
+        top: CGFloat,
+        bottom: CGFloat
+    ) -> (bounds: ClosedRange<CGFloat>, anchorsBottom: Bool) {
+        let start = top + margin
+        let end = max(start, bottom - margin)
+        guard let element else { return (start...end, true) }
+        let aboveEnd = min(max(element.minY - margin, start), end)
+        let belowStart = min(max(element.maxY + margin, start), end)
+        let above = aboveEnd - start
+        let below = end - belowStart
+        if below >= minimumHeight, below >= above {
+            return (belowStart...end, false)
         }
-        // Above the element, growing upward. An element under the keyboard ends up here too,
-        // and the card then rests on the keyboard.
-        if element.minY - margin - reserved >= minTop {
-            return min(element.minY - margin - height, restingTop)
+        if above >= minimumHeight {
+            return (start...aboveEnd, true)
         }
-        // Neither side fits: rest on the keyboard or at the top, whichever hides less of the element.
+        let cappedHeight = min(height, end - start)
         let overlap: (CGFloat) -> CGFloat = { cardTop in
-            max(0, min(cardTop + reserved, element.maxY) - max(cardTop, element.minY))
+            max(0, min(cardTop + cappedHeight, element.maxY) - max(cardTop, element.minY))
         }
-        return overlap(maxBottom - reserved) <= overlap(minTop) ? restingTop : minTop
+        return (start...end, overlap(end - cappedHeight) <= overlap(start))
     }
 }
 #endif

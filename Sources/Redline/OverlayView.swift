@@ -21,28 +21,21 @@ private enum Markup {
 struct OverlayView: View {
     @Bindable var session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @FocusState private var isNoteFocused: Bool
-    @State private var isHierarchyExpanded = false
-    @ScaledMetric(relativeTo: .caption) private var noteBadgeSize: CGFloat = 26
-    @State private var cardHeight: CGFloat = 0
-    /// The note card's element row and text field, which scroll when the card is capped.
-    @State private var noteContentHeight: CGFloat = 0
-    /// The note card's error line and buttons, which never scroll.
-    @State private var noteFooterHeight: CGFloat = 0
-    /// The card's height when it opened, before any typing.
-    @State private var openingCardHeight: CGFloat = 0
+    @State private var isLayoutPreviewExpanded = false
     @State private var islandHeight: CGFloat = 52
     @State private var tagWidth: CGFloat = 140
     @State private var listContentHeight: CGFloat = 0
     /// The finger on the floating button, from touch down to lift.
     @State private var press: ButtonPress?
 
-    /// The note card's usual height, used until it has been measured.
-    private static let estimatedCardHeight: CGFloat = 190
-
     private var width: CGFloat { session.screenSize.width }
     private var panelWidth: CGFloat { min(width - 24, 420) }
-    private var panelLeading: CGFloat { (width - panelWidth) / 2 }
+    private var panelLeading: CGFloat {
+        if session.mode == .noting, session.showsElementLayoutInspection, width > session.screenSize.height {
+            return width - panelWidth - 12
+        }
+        return (width - panelWidth) / 2
+    }
     private var islandWidth: CGFloat { min(width - 24, 380) }
     private var islandTop: CGFloat { session.safeAreaTop + 4 }
     private var islandBottom: CGFloat { islandTop + islandHeight }
@@ -81,14 +74,23 @@ struct OverlayView: View {
             if session.mode == .picking || session.mode == .noting, session.screenReadIsCurrent,
                 let element = session.selected
             {
-                outline(element.frame, weight: 2.5)
+                if session.showsLayoutPrototype, let geometry = session.selectedLayout.geometry {
+                    outline(geometry.content, weight: 2.5)
+                } else {
+                    outline(element.frame, weight: 2.5)
+                }
                 if session.mode == .picking {
                     nameTag(element)
                 }
             }
 
             if session.mode == .noting {
-                noteCard
+                AnnotationFormView(
+                    session: session,
+                    panelWidth: panelWidth,
+                    panelLeading: panelLeading,
+                    isLayoutPreviewExpanded: $isLayoutPreviewExpanded
+                )
             }
 
             if session.mode == .tray {
@@ -483,314 +485,6 @@ struct OverlayView: View {
         if count == 0 { return "\(session.screenTitle). Tap an element to add a note." }
         if session.mode == .tray { return "Hide notes" }
         return "Show " + countPhrase(count, singular: "note", plural: "notes")
-    }
-
-    // MARK: - Note card
-
-    private var noteCard: some View {
-        let pending = session.pending
-        // Worked out once per pass: where the card goes, and so whether it hides the element.
-        let height = cardHeight == 0 ? Self.estimatedCardHeight : cardHeight
-        let top = session.noteCardTop(height: height, reservedHeight: reservedCardHeight)
-        return VStack(alignment: .leading, spacing: 14) {
-            // Scrolls only when the card is taller than the space above the keyboard, such
-            // as in landscape or at large text sizes, so the buttons below stay in reach.
-            ScrollView {
-                noteCardContent(pending: pending, isElementHidden: isElementHidden(cardTop: top, cardHeight: height))
-                    .onGeometryChange(for: CGFloat.self) {
-                        $0.size.height
-                    } action: {
-                        noteContentHeight = $0
-                    }
-            }
-            .scrollBounceBehavior(.basedOnSize)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.3)) { content in
-                content.frame(height: noteScrollHeight)
-            }
-            .clipped()
-
-            noteCardFooter(pending: pending)
-                .onGeometryChange(for: CGFloat.self) {
-                    $0.size.height
-                } action: {
-                    noteFooterHeight = $0
-                }
-        }
-        .buttonStyle(.plain)
-        .padding(16)
-        .frame(width: panelWidth)
-        .background(Mono.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
-        .shadow(color: .black.opacity(0.3), radius: 18, y: 8)
-        .onGeometryChange(for: CGFloat.self) {
-            $0.size.height
-        } action: { height in
-            cardHeight = height
-            // Wait for the real content height; the first pass uses an estimate.
-            if openingCardHeight == 0, noteContentHeight > 0 { openingCardHeight = height }
-        }
-        .padding(.leading, panelLeading)
-        .padding(.top, top)
-        .onAppear { isNoteFocused = true }
-        .onChange(of: isHierarchyExpanded) { _, expanded in
-            isNoteFocused = !expanded
-            openingCardHeight = 0
-        }
-        .onDisappear {
-            isHierarchyExpanded = false
-            cardHeight = 0
-            openingCardHeight = 0
-            noteContentHeight = 0
-            noteFooterHeight = 0
-        }
-    }
-
-    private func noteCardTitle(pending: DebugSession.PendingAttachment?) -> String {
-        if let pending {
-            return Annotation.title(
-                kind: pending.kind,
-                element: nil,
-                screen: pending.screen,
-                snapshotCount: pending.count
-            )
-        }
-        if session.isNotingDrawing {
-            return Annotation.title(
-                kind: .drawing,
-                element: nil,
-                screen: session.screen,
-                snapshotCount: 1,
-                encloses: session.encloses,
-                enclosedCount: session.encloses.count
-            )
-        }
-        return session.selected?.shortName ?? "Unnamed element"
-    }
-
-    private func noteCardSubtitle(pending: DebugSession.PendingAttachment?) -> String {
-        if let pending { return Annotation.subtitle(kind: pending.kind, element: nil, screen: pending.screen) }
-        if session.isNotingDrawing { return Annotation.subtitle(kind: .drawing, element: nil, screen: session.screen) }
-        return session.selected?.role ?? "Element"
-    }
-
-    /// What the drawing encloses, where an element's card shows its path: the agent finds the code
-    /// by these names.
-    private var enclosedLine: some View {
-        let shown = session.encloses.prefix(3).compactMap(\.shortName)
-        let more = session.encloses.count - shown.count
-        let names = shown.joined(separator: ", ") + (more > 0 ? " and \(more) more" : "")
-        return Text(shown.isEmpty ? "Nothing named inside the drawing" : "Encloses \(names)")
-            .font(.footnote)
-            .foregroundStyle(Mono.secondary)
-            .lineLimit(2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// The scrolling part's height: all of it when the card fits, otherwise what is left once the
-    /// card's padding, spacing and buttons are in.
-    private var noteScrollHeight: CGFloat {
-        let content = noteContentHeight == 0 ? 120 : noteContentHeight
-        let footer = noteFooterHeight == 0 ? 44 : noteFooterHeight
-        let room = session.noteCardMaxHeight - 32 - 14 - footer
-        return max(min(content, room), 44)
-    }
-
-    private func noteCardContent(pending: DebugSession.PendingAttachment?, isElementHidden: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                if let pending {
-                    attachmentPreview(pending)
-                } else if !isHierarchyExpanded, isElementHidden, let preview = session.selectedElementPreview() {
-                    // The element is behind the keyboard or this card, so show what was picked.
-                    Image(uiImage: preview)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 44, height: 44)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(
-                                Mono.hairline,
-                                lineWidth: 1
-                            )
-                        )
-                        .overlay(alignment: .topLeading) {
-                            NumberBadge(number: session.nextNumber, size: 20).offset(x: -6, y: -6)
-                        }
-                        .accessibilityHidden(true)
-                } else {
-                    NumberBadge(number: session.nextNumber, size: noteBadgeSize)
-                }
-                if pending == nil, !session.isNotingDrawing, session.hierarchy != nil, !isHierarchyExpanded {
-                    Button {
-                        isHierarchyExpanded = true
-                    } label: {
-                        noteCardName(pending: pending, showsDisclosure: true)
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                            .contentShape(Rectangle())
-                    }
-                    .disabled(!session.screenReadIsCurrent)
-                    .accessibilityHint("View hierarchy")
-                } else {
-                    noteCardName(pending: pending, showsDisclosure: false)
-                }
-            }
-
-            if pending == nil {
-                if session.isNotingDrawing {
-                    enclosedLine
-                } else if isHierarchyExpanded, let hierarchy = session.hierarchy {
-                    ElementHierarchyView(
-                        hierarchy: hierarchy,
-                        selectedIndex: session.hierarchySelectionIndex,
-                        availableWidth: panelWidth - 32,
-                        select: session.selectHierarchyElement
-                    )
-                    .disabled(!session.screenReadIsCurrent)
-                    .transition(.identity)
-                }
-            }
-
-            if !isHierarchyExpanded {
-                TextField("What's wrong?", text: $session.noteText, axis: .vertical)
-                    .font(.body)
-                    .foregroundStyle(Mono.text)
-                    .tint(Color.white)
-                    .lineLimit(2...5)
-                    .focused($isNoteFocused)
-                    .padding(12)
-                    .background(Mono.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .transition(.identity)
-            }
-        }
-    }
-
-    private func noteCardName(pending: DebugSession.PendingAttachment?, showsDisclosure: Bool) -> some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(isHierarchyExpanded ? "Hierarchy" : noteCardTitle(pending: pending))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Mono.text)
-                if !isHierarchyExpanded {
-                    Text(noteCardSubtitle(pending: pending))
-                        .font(.caption)
-                        .foregroundStyle(Mono.secondary)
-                }
-            }
-            .lineLimit(1)
-            if showsDisclosure {
-                Image(systemName: "chevron.down")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Mono.secondary)
-                    .accessibilityHidden(true)
-            }
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func noteCardFooter(pending: DebugSession.PendingAttachment?) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if isHierarchyExpanded {
-                HStack {
-                    Spacer()
-                    Button("Done") { isHierarchyExpanded = false }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.black)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 8)
-                        .frame(minHeight: 38)
-                        .background(Color.white, in: Capsule(style: .continuous))
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-            } else {
-                if let error = session.noteError {
-                    Text(error)
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(Mono.text)
-                }
-
-                HStack {
-                    Button("Cancel") { session.cancelNote() }
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Mono.secondary)
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                    Spacer()
-                    Button {
-                        session.saveNote()
-                    } label: {
-                        Text(primaryNoteAction(sendsReport: pending?.sendsReport == true))
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.black)
-                            .padding(.horizontal, 18)
-                            .frame(height: 38)
-                            .background(Color.white, in: Capsule(style: .continuous))
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
-                    }
-                }
-            }
-        }
-    }
-
-    /// A suggested screenshot's note box sends the report, with the rest of the draft.
-    private func primaryNoteAction(sendsReport: Bool) -> String {
-        guard sendsReport else { return "Add note" }
-        let count = session.annotations.count + 1
-        return count == 1 ? "Send" : "Send \(count) notes"
-    }
-
-    /// The images a note is being written for: up to three, fanned like a small stack.
-    ///
-    /// Photos still loading show as placeholders until they arrive.
-    private func attachmentPreview(_ pending: DebugSession.PendingAttachment) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
-        return HStack(spacing: -14) {
-            ForEach(0..<max(min(pending.count, 3), 1), id: \.self) { index in
-                Group {
-                    if pending.previews.indices.contains(index) {
-                        Image(uiImage: pending.previews[index]).resizable().scaledToFill()
-                    } else {
-                        Color(white: 0.16).overlay {
-                            if index == 0 { ProgressView().controlSize(.small).tint(Mono.text) }
-                        }
-                    }
-                }
-                .frame(width: 34, height: 56, alignment: .top)
-                .clipShape(shape)
-                .overlay(shape.strokeBorder(Color.white.opacity(0.4), lineWidth: 1))
-                // A screen just captured is still flying in; it lands here.
-                .opacity(index == 0 && session.captureFlight != nil ? 0 : 1)
-                .onGeometryChange(for: CGRect.self) {
-                    $0.frame(in: .global)
-                } action: { frame in
-                    if index == 0 { session.attachmentSlot = frame }
-                }
-                .zIndex(Double(3 - index))
-            }
-        }
-        .overlay(alignment: .topLeading) {
-            NumberBadge(number: session.nextNumber, size: 20).offset(x: -6, y: -6)
-        }
-        .accessibilityHidden(true)
-    }
-
-    /// True when the picked element sits under the keyboard or under the card itself, or the screen
-    /// has rotated since it was picked and its frame no longer lines up.
-    private func isElementHidden(cardTop: CGFloat, cardHeight height: CGFloat) -> Bool {
-        guard let frame = session.noteFrame else { return false }
-        guard session.screenReadIsCurrent else { return true }
-        let visibleBottom = min(session.noteKeyboardTop, session.screenSize.height)
-        let card = CGRect(x: panelLeading, y: cardTop, width: panelWidth, height: height)
-        let center = CGPoint(x: frame.midX, y: frame.midY)
-        return center.y >= visibleBottom || card.contains(center)
-    }
-
-    /// The height the card can reach while typing: three more lines than it opened with,
-    /// the text field's limit.
-    private var reservedCardHeight: CGFloat {
-        let opening = openingCardHeight == 0 ? Self.estimatedCardHeight : openingCardHeight
-        return opening + 3 * UIFont.preferredFont(forTextStyle: .body).lineHeight
     }
 
     // MARK: - Notes list

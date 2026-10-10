@@ -51,6 +51,17 @@ struct ElementHierarchy {
         return result
     }
 
+    /// Drag selection uses displayed row bounds, excluding clipped and collapsed rows.
+    func row(
+        at point: CGPoint,
+        frames: [Int: CGRect],
+        visibleBounds: CGRect,
+        collapsing collapsed: Set<Int> = []
+    ) -> Int? {
+        guard visibleBounds.contains(point) else { return nil }
+        return rows(collapsing: collapsed).first { frames[$0.id]?.contains(point) == true }?.id
+    }
+
     /// Only nodes owned by this root can become the note's target.
     func element(at index: Int) -> ElementSnapshot? {
         guard elements.indices.contains(index) else { return nil }

@@ -110,7 +110,10 @@ final class DebugSession {
     private(set) var annotations: [Annotation] = []
     /// The selected element followed by its captured ancestors, innermost first.
     private(set) var levels: [ElementSnapshot] = [] {
-        didSet { if levels.isEmpty { hierarchy = nil } }
+        didSet {
+            if levels.isEmpty { hierarchy = nil }
+            refreshSelectedLayout()
+        }
     }
     /// Frozen with the original pick, so browsing children cannot widen the tree.
     private(set) var hierarchy: ElementHierarchy? {
@@ -119,6 +122,23 @@ final class DebugSession {
     private(set) var hierarchySelectionIndex: Int?
     /// Numbered markers for annotations already made on the current screen.
     private(set) var markers: [Marker] = []
+    @ObservationIgnored private var layoutInspection = LayoutInspection()
+    /// Recomputed only when the captured screen or selected component changes.
+    private(set) var selectedLayout = LayoutInspection.Report(message: "Select a component to inspect its layout.")
+    @ObservationIgnored private var layoutPreview: UIImage?
+    var showsLayoutPrototype: Bool { SwiftUILayoutInspector.isEnabled }
+    var showsElementLayoutInspection: Bool {
+        showsLayoutPrototype && pending == nil && !isNotingDrawing && selected != nil
+    }
+    private(set) var selectedPadding: Set<LayoutInspection.Edge> = []
+
+    func togglePadding(_ edge: LayoutInspection.Edge) {
+        guard mode == .noting, showsLayoutPrototype, !isNotingDrawing,
+            selectedLayout.geometry?.paddingLabel(on: edge) != nil
+        else { return }
+        if !selectedPadding.insert(edge).inserted { selectedPadding.remove(edge) }
+        selectionFeedback.selectionChanged()
+    }
     var noteText = ""
     /// The note showing in the full-screen viewer.
     private(set) var viewerID: UUID?
@@ -557,6 +577,7 @@ final class DebugSession {
         else { return }
         levels = ElementSelection.levels(from: index, in: hierarchy.elements, screenSize: readSize)
         hierarchySelectionIndex = index
+        selectedPadding = []
         selectionFeedback.selectionChanged()
     }
 
@@ -616,7 +637,10 @@ final class DebugSession {
     // MARK: - Notes
 
     func saveNote() {
-        let note = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let note =
+            showsLayoutPrototype && pending == nil && !isNotingDrawing
+            ? selectedLayout.note(noteText, including: selectedPadding)
+            : noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         if let pending {
             guard !pending.isSaving else { return }
             guard let loading = pending.loading else {
@@ -1557,6 +1581,26 @@ final class DebugSession {
         return Self.crop(image, around: frame, isDrawing: isNotingDrawing)
     }
 
+    /// The cached component and its padding, excluding surrounding frame space.
+    func selectedLayoutPreview() -> UIImage? { layoutPreview }
+
+    private func refreshSelectedLayout() {
+        selectedLayout = layoutInspection.report(selected)
+        layoutPreview = nil
+        guard let bounds = selectedLayout.geometry?.bounds, let image = screenImage,
+            CGRect(origin: .zero, size: image.size).contains(bounds),
+            let source = image.cgImage
+        else { return }
+        let pixels = CGRect(
+            x: bounds.minX * image.scale,
+            y: bounds.minY * image.scale,
+            width: bounds.width * image.scale,
+            height: bounds.height * image.scale
+        ).integral
+        guard let cropped = source.cropping(to: pixels) else { return }
+        layoutPreview = UIImage(cgImage: cropped, scale: image.scale, orientation: .up)
+    }
+
     // MARK: - Thumbnails and previews
 
     /// The suggestion card's width in pixels: 96 points at 3x.
@@ -1688,22 +1732,37 @@ final class DebugSession {
         isAwaitingKeyboard ? screenSize.height - expectedKeyboardHeight : keyboardTop
     }
 
-    /// The note card's top edge.
-    func noteCardTop(height: CGFloat, reservedHeight: CGFloat) -> CGFloat {
-        NoteCardPlacement.top(
-            // After a rotation the picked frame points at the wrong place; the card shows
-            // a crop of the element instead.
-            element: screenReadIsCurrent ? noteFrame : nil,
+    /// Keep the form in a usable slot above or below the component.
+    ///
+    /// While browsing a local hierarchy, prefer a slot clear of its whole owner so selecting
+    /// children keeps the rows steady.
+    func noteCardSpace(height: CGFloat, minimumHeight: CGFloat, showsHierarchy: Bool)
+        -> (bounds: ClosedRange<CGFloat>, anchorsBottom: Bool)
+    {
+        let element = screenReadIsCurrent ? noteFrame : nil
+        if showsHierarchy, let element, let hierarchy {
+            let owner = hierarchy.elements[hierarchy.root].frame
+            let space = NoteCardPlacement.space(
+                element: owner,
+                minimumHeight: minimumHeight,
+                height: height,
+                top: safeAreaTop,
+                bottom: noteCardBottom
+            )
+            if owner.contains(element),
+                space.bounds.upperBound <= owner.minY - NoteCardPlacement.margin
+                    || space.bounds.lowerBound >= owner.maxY + NoteCardPlacement.margin
+            {
+                return space
+            }
+        }
+        return NoteCardPlacement.space(
+            element: element,
+            minimumHeight: minimumHeight,
             height: height,
-            reservedHeight: reservedHeight,
             top: safeAreaTop,
             bottom: noteCardBottom
         )
-    }
-
-    /// The tallest the note card can be and still fit whole above the keyboard.
-    var noteCardMaxHeight: CGFloat {
-        NoteCardPlacement.maxHeight(top: safeAreaTop, bottom: noteCardBottom)
     }
 
     /// The lowest the note card's bottom may go: the keyboard, or the home indicator without one.
@@ -1861,21 +1920,28 @@ final class DebugSession {
     // MARK: - Noting
 
     private func beginNoting() {
+        selectedPadding = []
         noteError = nil
-        isAwaitingKeyboard = keyboardTop == .infinity
+        isAwaitingKeyboard = !showsElementLayoutInspection && keyboardTop == .infinity
         noteBackground = pending == nil ? screenImage : nil
         setMode(.noting)
         // A hardware keyboard never shows the on-screen one; stop waiting for it. Only this card's
         // wait may end it, not one left from a card closed moments ago.
         keyboardWait?.cancel()
-        keyboardWait = Task {
-            try? await Task.sleep(for: .seconds(0.8))
-            guard !Task.isCancelled, isAwaitingKeyboard else { return }
-            withAnimation(.smooth(duration: 0.25)) { isAwaitingKeyboard = false }
+        keyboardWait = nil
+        if isAwaitingKeyboard {
+            keyboardWait = Task {
+                do {
+                    try await Task.sleep(for: .seconds(0.8))
+                } catch { return }
+                guard !Task.isCancelled, isAwaitingKeyboard else { return }
+                withAnimation(.smooth(duration: 0.25)) { isAwaitingKeyboard = false }
+            }
         }
     }
 
     private func endNoting(returningTo next: Mode) {
+        selectedPadding = []
         noteText = ""
         isNotingDrawing = false
         drawingBox = nil
@@ -2003,6 +2069,7 @@ final class DebugSession {
         let previousController = screenController
         let previousScreen = screen
         elements = AccessibilityTree.elements(under: roots, screenBounds: window.bounds)
+        layoutInspection = SwiftUILayoutInspector.capture(in: appWindows, elements: elements)
         screen = AccessibilityTree.screen(of: screenWindow, elements: elements)
         screenController = AccessibilityTree.topController(of: screenWindow)
         // The app can still move on by itself, after a timer or a network response. Notes
@@ -2011,6 +2078,7 @@ final class DebugSession {
             notesThisVisit = []
         }
         screenImage = AppWindows.screenshot(of: appWindows, bounds: window.bounds)
+        refreshSelectedLayout()
         scrollState = AppWindows.mainScrollState(under: roots, screenBounds: window.bounds)
         readSize = window.bounds.size
         refreshMarkers()

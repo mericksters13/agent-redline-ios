@@ -1,19 +1,41 @@
 import Redline
 import SwiftUI
 
-/// The demo's entry point: four tabs, with Redline on the root view.
 @main
 struct RedlineDemoApp: App {
+    init() {
+        #if REDLINE
+        let defaults = UserDefaults.standard
+        defaults.register(defaults: ["RedlineLayoutInspection": true])
+        let activation = defaults.string(forKey: "RedlineLayoutActivation") ?? "early"
+        if activation == "early" {
+            setenv("SWIFTUI_VIEW_DEBUG", "287", 1)
+        }
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {
-                if UserDefaults.standard.bool(forKey: "RedlineKeyboardLayoutDemo") {
-                    KeyboardLayoutScreen()
+                #if REDLINE
+                if UserDefaults.standard.bool(forKey: "RedlineLayoutPrototype") {
+                    LayoutPrototypeScreen()
                 } else {
-                    DemoTabs()
+                    regularDemo
                 }
+                #else
+                regularDemo
+                #endif
             }
-            .redline()  // Debug builds only: in Release, .redline() returns the view unchanged.
+            .redline()
+        }
+    }
+
+    @ViewBuilder private var regularDemo: some View {
+        if UserDefaults.standard.bool(forKey: "RedlineKeyboardLayoutDemo") {
+            KeyboardLayoutScreen()
+        } else {
+            DemoTabs()
         }
     }
 }

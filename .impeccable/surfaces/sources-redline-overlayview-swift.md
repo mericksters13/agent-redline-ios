@@ -23,6 +23,6 @@ STORY: The tester taps the button, touches the broken element, writes one line, 
 
 FIRST VIEWPORT: Pick mode. A black capsule under the status bar with close, the screen name, the note count and a white Send button; a white-on-black outline and a black name tag on the element under the finger. Nothing dims the app.
 
-FORM: User-pinned black and white system style, replacing Drawing Balloons (seed 74ea7de9).
+FORM: User-pinned black and white system style, replacing Drawing Balloons (seed 74ea7de9). The note header uses a larger layers icon without a visible container for hierarchy; the layout prototype uses a separate chevron to collapse its captured-component visualizer while keeping selected context and draft text visible.
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance

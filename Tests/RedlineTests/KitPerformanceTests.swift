@@ -32,6 +32,62 @@ final class KitPerformanceTests: XCTestCase {
         }
     }
 
+    /// Styled controls retain many runtime wrappers; matching must not rescan every label per control.
+    func testLayoutMatchingWith4000Nodes() {
+        var inspection = LayoutInspection()
+        for button in 0..<200 {
+            let bounds = CGRect(x: 20, y: button * 50, width: 100, height: 44)
+            var parent = inspection.nodes.count
+            inspection.nodes.append(
+                .init(
+                    type: "Button<Label<Text,Image>>",
+                    settings: [],
+                    parent: nil,
+                    childCount: 1,
+                    frame: bounds
+                )
+            )
+            for _ in 0..<16 {
+                let index = inspection.nodes.count
+                inspection.nodes.append(.init(type: "StyleWrapper", settings: [], parent: parent, childCount: 1))
+                parent = index
+            }
+            let branch = inspection.nodes.count
+            inspection.nodes.append(.init(type: "HStack<Text,Image>", settings: [], parent: parent, childCount: 2))
+            inspection.nodes.append(
+                .init(
+                    type: "Text",
+                    text: "Action \(button)",
+                    settings: [],
+                    parent: branch,
+                    childCount: 0,
+                    frame: CGRect(x: 40, y: button * 50 + 12, width: 60, height: 20)
+                )
+            )
+            inspection.nodes.append(
+                .init(
+                    type: "Image",
+                    settings: [],
+                    parent: branch,
+                    childCount: 0,
+                    frame: CGRect(x: 24, y: button * 50 + 12, width: 12, height: 20)
+                )
+            )
+        }
+        let selected = ElementSnapshot(
+            role: "Button",
+            label: "Action 199",
+            value: nil,
+            identifier: nil,
+            className: nil,
+            isContainer: false,
+            frame: CGRect(x: 20, y: 9950, width: 100, height: 44)
+        )
+        measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            XCTAssertNotNil(inspection.report(selected).geometry)
+        }
+    }
+
     func testLevelsWith400Elements() {
         let all = elements(count: 400)
         let points = (0..<50).map { CGPoint(x: CGFloat($0 * 7 % 400), y: CGFloat($0 * 17 % 874)) }
