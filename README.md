@@ -190,8 +190,8 @@ The first report sent from an iPhone triggers the one-time iOS local network pro
 
 - **Floating button.** Tap it to enter annotate mode. Drag it anywhere; it snaps to the nearest edge. Press and hold it to list the reports sent from this device.
 - **Annotate mode.** Routes taps to Redline instead of the build, and draws a light red border around the screen. Its controls sit in a black bar at the top.
-  - Tap an element to select it. The note card shows the path from the outermost element enclosing it to the one you tapped; tap a step to select that element instead. When nothing encloses it, the card says "Nothing larger to select". A card or section missing from the path needs an element of its own: see [Make containers pickable](#make-containers-pickable).
-  - Tap the down arrow beside the path to browse the nearest captured parent tree. A group you tapped is its own root. Indentation and vertical lines show which nodes own their children; arrows fold and unfold branches. Tap a row to move the outline and note target, then Done to return to your draft. Browsing keeps the same tree and excludes unrelated sections. Only children exposed in the captured accessibility tree appear.
+  - Tap an element to select it. The note card identifies that element and offers View hierarchy.
+  - Tap View hierarchy to browse the nearest captured tree for your selection. A group you tapped is its own root. Indentation and vertical lines show which nodes own their children; arrows fold and unfold branches. Tap a row to move the outline and note target, then Done to return to your draft. Browsing keeps the same tree and excludes unrelated sections. Only children exposed in the captured accessibility tree appear. To expose a card or section, see [Make containers pickable](#make-containers-pickable).
   - Write a note and tap Add note. Notes collect across screens until you send them.
   - Tap the pen in the bar to draw instead, for example to circle a gap or a group of elements. While you draw, the bar shows Undo and Done, and its close button discards the drawing. Tap Done to number the drawing and write its note. The note card lists the named elements inside the drawing; its Cancel returns to the drawing with your strokes kept.
   - Tap the close button in the bar to exit annotate mode. Unsent notes stay.
@@ -217,13 +217,13 @@ Redline picks from your build's accessibility tree. Buttons, text and controls a
 
 **Accessibility identifiers.** An `accessibilityIdentifier` is a string for code, not for people. VoiceOver never reads it, and it doesn't change when your copy or language does. UI tests use it to find elements. Redline puts it in each note, `Label (Role, identifier)`, so your agent searches your source for it instead of guessing from display text that can repeat or be localized.
 
-**What you can pick.** A tap selects the innermost element under your finger, and the note card's path lists every element enclosing it, outermost first. Tap a step to select it. A container with no element of its own isn't in the tree, so it isn't in the path.
+**What you can pick.** A tap selects the innermost element under your finger. View hierarchy opens its nearest captured group; tap a row in that tree to select it. A container with no element of its own isn't in the tree.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/redline-accessibility-tree-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/redline-accessibility-tree-light.svg">
-    <img src="docs/images/redline-accessibility-tree-light.svg" width="880" alt="Two columns. Left: a VStack holding two Text views; in the accessibility tree both texts sit directly under the screen, so tapping a text picks only that text, and the note card says Nothing larger to select. Right: the same VStack with .accessibilityElement(children: .contain) and .accessibilityIdentifier(&quot;detail.titles&quot;); in the tree it becomes a group named detail.titles holding the two texts, so after tapping a text, the path in the note card lists detail.titles, and tapping it picks the whole stack.">
+    <img src="docs/images/redline-accessibility-tree-light.svg" width="880" alt="Earlier compact-path UI illustrating container ownership. Without .contain, the two texts have no captured group. With .contain and identifier detail.titles, the group owns both texts.">
   </picture>
 </p>
 
@@ -238,15 +238,15 @@ VStack(alignment: .leading) {
 .accessibilityIdentifier("detail.titles")
 ```
 
-`.contain` makes the stack an element that keeps its children pickable, and the identifier names it. Tap a child, and the path lists `detail.titles`; tap that to select the whole stack.
+`.contain` makes the stack an element that keeps its children pickable, and the identifier names it. Tap a child, then View hierarchy to browse `detail.titles`; tap its group row to select the whole stack.
 
-With `.contain` alone, the stack is pickable but has no name of its own, so Redline names it after what it holds, such as `"Lemon Herb Chicken" and "Weeknight dinner…"`, and the report lists those names for your agent to search for. The identifier gives your agent something exact. In the [demo](Examples/RedlineDemo), with and without the two modifiers:
+With `.contain` alone, the stack is pickable but has no name of its own, so Redline names it after what it holds, such as `"Lemon Herb Chicken" and "Weeknight dinner…"`, and the report lists those names for your agent to search for. The identifier gives your agent something exact. The earlier compact-path UI in the [demo](Examples/RedlineDemo), with and without the two modifiers:
 
 <p align="center">
-  <img src="docs/images/redline-container-before-after.jpg" width="880" alt="Two screenshots of the demo's recipe title block in annotate mode. Left, without the modifiers: tapping the summary selects only the summary text, and the note card says Nothing larger to select. Right, with them: the note card's path reads detail.titles, then the summary; with detail.titles selected, the outline covers the title and the summary.">
+  <img src="docs/images/redline-container-before-after.jpg" width="880" alt="Earlier compact-path UI. Without the modifiers, only the summary is selected. With the named group selected, the outline covers the title and summary.">
 </p>
 
-**When `.contain` adds no element.** SwiftUI creates a new element when the container holds several elements, none, or one element with no children. When it wraps exactly one element that already has children, such as a single card that is already a container, SwiftUI changes that element instead, so the path gains no new step. Put the modifiers on that inner element.
+**When `.contain` adds no element.** SwiftUI creates a new element when the container holds several elements, none, or one element with no children. When it wraps exactly one element that already has children, such as a single card that is already a container, SwiftUI changes that element instead, so the hierarchy gains no new level. Put the modifiers on that inner element.
 
 **These modifiers ship in your Release build.** Redline is Debug-only, but the modifiers are part of your views. `.contain` makes VoiceOver move through the container's children together before the next element, so add it where the views form one group, such as a card or a form section, and check the order with VoiceOver. An identifier changes nothing VoiceOver reads.
 
