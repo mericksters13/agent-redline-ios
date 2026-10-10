@@ -67,12 +67,12 @@ struct LayoutInspectionTests {
         #expect(LayoutInspection(nodes: [node, node]).report(selected).message.contains("Multiple views"))
     }
 
-    @Test func syntheticLabelAndNonTextSelectionStayUnsupported() {
+    @Test func syntheticLabelsAndUnverifiedButtonsStayUnsupported() {
         let inspection = LayoutInspection(nodes: [
             .init(type: "Text", text: "Visible", settings: ["padding=9"], parent: nil, childCount: 0)
         ])
         #expect(inspection.report(element("Synthetic")).message.contains("No matching rendered view"))
-        #expect(inspection.report(element("Visible", role: "Button")).message.contains("supports text selections"))
+        #expect(inspection.report(element("Visible", role: "Button")).message.contains("No matching rendered view"))
         #expect(LayoutInspection().report(element("Visible")).message.contains("unavailable"))
     }
 
@@ -211,6 +211,144 @@ struct LayoutInspectionTests {
             padding: [.init(inner: content, outer: content.insetBy(dx: -16, dy: -16), isSystemDefault: true)]))
         #expect(system.context(for: [.top]) == "Top padding: 16 pt (measured; system default)")
         #expect(LayoutInspection.Report(message: "Unavailable").note("Keep this", including: [.left]) == "Keep this")
+    }
+
+    @Test func accessibilityWrappersSupplyDeclaredFrameBounds() {
+        let text = CGRect(x: 84, y: 253, width: 149.3, height: 18)
+        let frame = CGRect(x: 84, y: 253, width: 150, height: 18)
+        let inspection = LayoutInspection(nodes: [
+            .init(type: "VStack<Text>", settings: [], parent: nil, childCount: 2,
+                  layout: [.stack(axis: "Vertical", spacing: 2, alignment: "leading")]),
+            .init(type: "AccessibilityAttachmentModifier", settings: [], parent: 0, childCount: 1, frame: frame),
+            .init(type: "_FrameLayout", settings: [], parent: 1, childCount: 1,
+                  layout: [.frame(width: 150, height: nil, alignment: "leading")]),
+            .init(type: "Text", text: "Summary", settings: [], parent: 2, childCount: 0, frame: text)
+        ])
+        var selected = element("Summary")
+        selected.frame = text
+        let result = inspection.report(selected)
+        #expect(result.geometry?.frame == frame)
+        #expect(result.geometry?.bounds == text)
+        #expect(result.geometry?.padding.isEmpty == true)
+        #expect(result.summary.contains("Frame: Width 150 pt"))
+    }
+
+    @Test func textBackedButtonsAndHeadersUseTheirAccessibilityWrapper() {
+        let bounds = CGRect(x: 84, y: 187, width: 46, height: 64)
+        let inspection = LayoutInspection(nodes: [
+            .init(type: "AccessibilityAttachmentModifier", settings: [], parent: nil, childCount: 1, frame: bounds),
+            .init(type: "Text", text: "Recipe", settings: [], parent: 0, childCount: 0)
+        ])
+        for role in ["Button", "Header"] {
+            var selected = element("Recipe", role: role)
+            selected.frame = bounds
+            let result = inspection.report(selected)
+            #expect(result.geometry?.content == bounds)
+            #expect(result.geometry?.padding.isEmpty == true)
+            #expect(result.message.contains("text and bounds"))
+        }
+    }
+
+    @Test func selectedRowPaddingDoesNotIncludeListInsets() {
+        let row = CGRect(x: 32, y: 187, width: 338, height: 84)
+        let padded = row.insetBy(dx: 0, dy: -4)
+        let inspection = LayoutInspection(nodes: [
+            .init(type: "_PaddingLayout", settings: [], parent: nil, childCount: 1,
+                  frame: padded.insetBy(dx: -16, dy: -15),
+                  layout: [.padding(.init(top: 15, leading: 16, bottom: 15, trailing: 16))]),
+            .init(type: "AccessibilityContainerModifier", settings: [], parent: 0, childCount: 1),
+            .init(type: "_PaddingLayout", settings: [], parent: 1, childCount: 1,
+                  layout: [.padding(.init(top: 4, leading: 0, bottom: 4, trailing: 0))]),
+            .init(type: "HStack<Text>", settings: [], parent: 2, childCount: 2, frame: row,
+                  layout: [.stack(axis: "Horizontal", spacing: 12, alignment: "center")]),
+            .init(type: "Text", text: "Recipe", settings: [], parent: 3, childCount: 0,
+                  frame: CGRect(x: 84, y: 187, width: 80, height: 20))
+        ])
+        var selected = element("", role: "Group")
+        selected.isContainer = true
+        selected.frame = padded
+        let result = inspection.report(selected)
+        #expect(result.geometry?.content == row)
+        #expect(result.geometry?.bounds == padded)
+        #expect(result.context(for: [.top]) == "Top padding: 4 pt (measured)")
+        #expect(result.rows.contains(.init(title: "Stack", value: "Horizontal")))
+        #expect(result.rows.contains(.init(title: "Padding", value: "Vertical · 4 pt")))
+        #expect(!result.rows.contains(.init(title: "Padding", value: "Top 15 pt · Leading 16 pt · Bottom 15 pt · Trailing 16 pt")))
+        #expect(result.ancestors.contains(.init(title: "Padding", value: "Top 15 pt · Leading 16 pt · Bottom 15 pt · Trailing 16 pt")))
+        selected = element("Recipe")
+        selected.frame = inspection.nodes[4].frame!
+        #expect(inspection.report(selected).geometry?.padding.isEmpty == true)
+    }
+
+    @Test func styledButtonOwnsItsOuterPadding() {
+        let button = CGRect(x: 60, y: 708, width: 326, height: 50)
+        let inspection = LayoutInspection(nodes: [
+            .init(type: "VStack<Text>", settings: [], parent: nil, childCount: 2),
+            .init(type: "_PaddingLayout", settings: [], parent: 0, childCount: 1,
+                  layout: [.padding(.init(top: 0, leading: 44, bottom: 0, trailing: 0))]),
+            .init(type: "KeyboardShortcutBindingBehavior<Label>", settings: [], parent: 1, childCount: 1, frame: button),
+            .init(type: "HStack<Text>", settings: [], parent: 2, childCount: 2),
+            .init(type: "Text", text: "Start cooking", settings: [], parent: 3, childCount: 0,
+                  frame: CGRect(x: 160, y: 722, width: 102, height: 20))
+        ])
+        var selected = element("Start cooking", role: "Button")
+        selected.frame = button
+        let result = inspection.report(selected)
+        #expect(result.geometry?.content == button)
+        #expect(result.geometry?.bounds == CGRect(x: 16, y: 708, width: 370, height: 50))
+        #expect(result.context(for: [.left]) == "Left padding: 44 pt (measured)")
+        selected.label = "Different action"
+        #expect(inspection.report(selected).geometry == nil)
+    }
+
+    @Test func imageFrameUsesOnlyItsOwnBackgroundAndAccessibilityWrappers() {
+        let box = CGRect(x: 32, y: 209, width: 40, height: 40)
+        let inspection = LayoutInspection(nodes: [
+            .init(type: "AccessibilityAttachmentModifier", settings: [], parent: nil, childCount: 1, frame: box),
+            .init(type: "_InsettableBackgroundShapeModifier<Color, Rectangle>", settings: [], parent: 0, childCount: 1),
+            .init(type: "_FrameLayout", settings: [], parent: 1, childCount: 1,
+                  layout: [.frame(width: 40, height: 40, alignment: "center")]),
+            .init(type: "Image", settings: [], parent: 2, childCount: 0,
+                  frame: CGRect(x: 37, y: 215, width: 30, height: 28))
+        ])
+        var selected = element("Lunch", role: "Image")
+        selected.frame = box
+        let result = inspection.report(selected)
+        #expect(result.geometry?.frame == box)
+        #expect(result.geometry?.padding.isEmpty == true)
+        #expect(result.summary.contains("Frame: 40 × 40 pt"))
+        var ambiguous = inspection
+        ambiguous.nodes.append(inspection.nodes[3])
+        #expect(ambiguous.report(selected).geometry == nil)
+        #expect(ambiguous.report(selected).message.contains("Multiple views"))
+    }
+
+    @Test func missingDefaultPaddingBoundsDoNotTurnParentSpaceIntoPadding() {
+        let text = CGRect(x: 20, y: 20, width: 80, height: 20)
+        let inspection = LayoutInspection(nodes: [
+            .init(type: "VStack<Text>", settings: [], parent: nil, childCount: 2,
+                  frame: CGRect(x: 0, y: 0, width: 400, height: 800)),
+            .init(type: "_PaddingLayout", settings: [], parent: 0, childCount: 1,
+                  layout: [.padding(.init(top: nil, leading: nil, bottom: nil, trailing: nil))]),
+            .init(type: "Text", text: "Sample", settings: [], parent: 1, childCount: 0, frame: text)
+        ])
+        var selected = element("Sample")
+        selected.frame = text
+        let result = inspection.report(selected)
+        #expect(result.geometry?.padding.isEmpty == true)
+        #expect(result.geometry?.bounds == text)
+        #expect(result.rows.contains(.init(title: "Padding", value: "System default")))
+    }
+
+    @Test func capturedTranslationsIncludeNavigationAndScrollOffsets() {
+        #expect(LayoutInspection.debugTranslation(["positionAdjustment": [0.0, 0.0],
+            "items": [[:], ["translation": [0.0, 116.0]], [:]]]) == CGPoint(x: 0, y: 116))
+        #expect(LayoutInspection.debugTranslation(["positionAdjustment": [16.0, 41.0],
+            "items": [["translation": [16.0, 41.0]], ["translation": [16.0, 168.0]], ["translation": [0.0, -90.0]]]])
+            == CGPoint(x: 16, y: 78))
+        #expect(LayoutInspection.debugTranslation(["positionAdjustment": [0.0, 0.0],
+            "items": [["affineTransform": [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]]]]) == nil)
+        #expect(LayoutInspection.debugTranslation(["items": []]) == nil)
     }
 
 }

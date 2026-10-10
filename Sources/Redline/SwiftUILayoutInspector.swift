@@ -21,29 +21,49 @@ enum SwiftUILayoutInspector {
         guard isEnabled else { return LayoutInspection() }
         var result = LayoutInspection()
         var serialized: [Data] = []
-        func append(_ data: _ViewDebug.Data, parent: Int?, host: UIView, depth: Int) {
-            guard depth < 100 else { return }
+        func append(_ data: _ViewDebug.Data, description: [String: Any]?, parent: Int?, host: UIView, depth: Int,
+                    inheritedOffset: CGPoint? = nil, geometryIsValid: Bool = true) {
+            // Retain deeply nested styled labels while bounding recursion.
+            guard depth < 256 else { return }
             let mirror = Mirror(reflecting: data)
             let properties = mirror.children.first { $0.label == "data" }?.value
                 as? [_ViewDebug.Property: Any] ?? [:]
             let children = mirror.children.first { $0.label == "childData" }?.value
                 as? [_ViewDebug.Data] ?? []
+            let descriptions = description?["children"] as? [[String: Any]] ?? []
+            let transform = (description?["properties"] as? [[String: Any]])?.first {
+                $0["id"] as? Int == Int(_ViewDebug.Property.transform.rawValue)
+            }
+            let translation = ((transform?["attribute"] as? [String: Any])?["value"] as? [String: Any])
+                .flatMap(LayoutInspection.debugTranslation)
+            let offset = translation ?? inheritedOffset
+            let validGeometry = transform == nil ? geometryIsValid : translation != nil
             let value = properties[.value]
             let type = properties[.type].map { String(describing: $0) } ?? "unknown"
             let index = result.nodes.count
             result.nodes.append(LayoutInspection.Node(
                 type: type,
-                text: type == "Text" && (properties[.size] as? CGSize).map { $0.width > 0 && $0.height > 0 } == true
-                    ? value.flatMap { text(in: $0) } : nil,
+                text: type == "Text" && ((properties[.size] as? CGSize).map { $0.width > 0 && $0.height > 0 } == true
+                    || (properties[.size] == nil && parent.map {
+                        result.nodes[$0].type == "AccessibilityAttachmentModifier"
+                            && result.nodes[$0].frame.map { $0.width > 0 && $0.height > 0 } == true
+                    } == true)) ? value.flatMap { text(in: $0) } : nil,
                 settings: isLayoutNode(type) ? value.map { settings(in: $0) } ?? [] : [],
                 parent: parent,
                 childCount: children.count,
-                frame: (properties[.position] as? CGPoint).flatMap { position in
-                    (properties[.size] as? CGSize).map { host.convert(CGRect(origin: position, size: $0), to: nil) }
-                },
+                frame: validGeometry ? (properties[.position] as? CGPoint).flatMap { position in
+                    (properties[.size] as? CGSize).map { size in
+                        let box = CGRect(origin: position, size: size)
+                        // Serialized translations include the host and navigation/scroll coordinate spaces.
+                        return offset.map { box.offsetBy(dx: $0.x, dy: $0.y) } ?? host.convert(box, to: nil)
+                    }
+                } : nil,
                 layout: isLayoutNode(type) ? value.map { layout(in: $0) } ?? [] : []
             ))
-            for child in children { append(child, parent: index, host: host, depth: depth + 1) }
+            for (childIndex, child) in children.enumerated() {
+                append(child, description: descriptions.indices.contains(childIndex) ? descriptions[childIndex] : nil,
+                       parent: index, host: host, depth: depth + 1, inheritedOffset: offset, geometryIsValid: validGeometry)
+            }
         }
         @discardableResult
         func visit(_ view: UIView) -> Bool {
@@ -56,8 +76,13 @@ enum SwiftUILayoutInspector {
             if hasNestedHost { return true }
             guard let host = view as? any HostingLayoutDebugSource else { return false }
             let roots = host._viewDebugData()
-            if let data = _ViewDebug.serializedData(roots) { serialized.append(data) }
-            for root in roots { append(root, parent: nil, host: view, depth: 0) }
+            let data = _ViewDebug.serializedData(roots)
+            if let data { serialized.append(data) }
+            let descriptions = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [[String: Any]] ?? []
+            for (index, root) in roots.enumerated() {
+                append(root, description: descriptions.indices.contains(index) ? descriptions[index] : nil,
+                       parent: nil, host: view, depth: 0)
+            }
             return true
         }
         for window in windows { visit(window) }
@@ -67,7 +92,7 @@ enum SwiftUILayoutInspector {
                 try? data.write(to: folder.appendingPathComponent("layout-tree-\(index).json"))
             }
             let debugLines = result.nodes.enumerated().map { index, node in
-                "\(index) parent=\(String(describing: node.parent)) \(node.type) text=\(String(describing: node.text)) \(node.settings)"
+                "\(index) parent=\(String(describing: node.parent)) \(node.type) text=\(String(describing: node.text)) frame=\(String(describing: node.frame)) \(node.settings)"
             }
             try? debugLines.joined(separator: "\n").write(
                 to: folder.appendingPathComponent("layout-nodes.txt"), atomically: true, encoding: .utf8

@@ -65,7 +65,7 @@ This records the existing on-device system. The captured-component layout form i
 
 ## Demo wording
 
-The demo serves developers trying annotation, component selection, and layout inspection. Keep navigation labels literal and brief, using the existing Recipes, Tonight, Plan, and UIKit tabs as the pattern. Layout names the sample screen; Padding & frame names the inspector disclosure. Explain the next action in plain language, and keep experimental or unavailable results accurate. Preserve the existing sample instructions and physical edge names rather than adding setup terms to navigation.
+The demo serves developers trying annotation, component selection, and layout inspection. Keep navigation labels literal and brief, using the existing Recipes, Tonight, Plan, and UIKit tabs as the pattern. Layout names the sample screen; Padding & frame names the inspector disclosure when measured padding exists, and Frame names it otherwise. Explain the next action in plain language, and keep experimental or unavailable results accurate. Preserve the existing sample instructions and physical edge names rather than adding setup terms to navigation.
 
 This wording follows the app's current [demo screens and actions](Examples/RedlineDemo/README.md), the [layout inspector's supported behavior](Examples/RedlineDemo/LAYOUT-PROTOTYPE.md), and the native overlay conventions recorded here.
 
@@ -145,7 +145,7 @@ The opt-in Debug layout form crops only the selected component and its measured 
 
 Tappable red dimension lines have end ticks, with Top and Bottom above and below the crop and Left and Right close beside it. Each control shows its physical edge name and measured value. Selection thickens the red line, turns its value white and bold, shades the captured padding band red and adds visible context under Included in note. The visible lines have no tiles; their invisible rectangular touch areas remain at least 44 points in both dimensions.
 
-At accessibility text sizes, the crop stays above a two-column measurement grid. Unavailable measurements are disabled and explained. Layout and parent details remain disclosures. These are prototype behaviors, scoped to supported text matching and honest unavailable or ambiguous results.
+At accessibility text sizes, the crop stays above a two-column measurement grid. Without measured padding, omit the grid, edge labels, and unavailable-padding placeholder; keep the crop and available dimensions under Frame. Layout and parent details remain disclosures. These are prototype behaviors, scoped to verified text, control, image, and stack matching and honest unavailable or ambiguous results.
 
 ## Do's and Don'ts
 

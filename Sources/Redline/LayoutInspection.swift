@@ -151,34 +151,52 @@ struct LayoutInspection: Equatable, Sendable {
 
     func report(_ element: ElementSnapshot?) -> Report {
         guard !nodes.isEmpty else { return Report(message: "Layout unavailable. Enable layout inspection before the app opens.") }
-        guard let element, element.role == "Text", let label = element.label else {
-            return Report(message: "Layout inspection supports text selections in this prototype.")
+        guard let element else { return Report(message: "Select a component to inspect its layout.") }
+        let candidates = nodes.indices.filter { index in
+            let node = nodes[index]
+            switch element.role {
+            case "Text", "Header":
+                return node.type == "Text" && node.text != nil && node.text == element.label
+            case "Button":
+                return (node.type == "Text" && node.text != nil && node.text == element.label)
+                    || ((node.type.hasPrefix("Button<") || node.type.hasPrefix("KeyboardShortcutBindingBehavior<"))
+                        && descendantText(at: index).contains(element.label ?? ""))
+            case "Image": return node.type == "Image"
+            case "Group":
+                return element.isContainer && ["HStack<", "VStack<", "ZStack<", "Grid<"].contains { node.type.hasPrefix($0) }
+            default: return false
+            }
         }
-        let textMatches = nodes.indices.filter { nodes[$0].text == label }
-        let geometryMatches = textMatches.filter { index in
+        let geometryMatches = candidates.filter { index in
             path(from: index, componentOnly: true).contains { index in
-                guard let frame = nodes[index].frame else { return false }
+                guard let frame = renderedBounds(at: index) else { return false }
                 return abs(frame.minX - element.frame.minX) < 1 && abs(frame.minY - element.frame.minY) < 1
                     && abs(frame.width - element.frame.width) < 1 && abs(frame.height - element.frame.height) < 1
             }
         }
+        // Labels support an unverified text candidate. Other roles require a unique bounds match.
+        let textMatches = ["Text", "Header"].contains(element.role)
+            ? candidates.filter { nodes[$0].type == "Text" && nodes[$0].text == element.label } : []
         let matches = geometryMatches.isEmpty ? textMatches : geometryMatches
         guard matches.count == 1, let matched = matches.first else {
             return Report(message: matches.isEmpty ? "No matching rendered view. Measurements unavailable."
                           : "Multiple views match this selection. Measurements unavailable.")
         }
         let verified = geometryMatches.count == 1
-        var report = Report(message: verified ? "Matched by text and bounds · Experimental" : "Text match only · Position unverified")
-        var inner = nodes[matched].frame
+        let identity = nodes[matched].type == "Text" ? "text and bounds" : "component bounds"
+        var report = Report(message: verified ? "Matched by \(identity) · Experimental" : "Text match only · Position unverified")
+        var inner = renderedBounds(at: matched)
         var padding: [PaddingRegion] = []
         var frame: CGRect?
         var ancestor = false
         for index in path(from: matched) {
             let node = nodes[index]
-            if node.childCount > 1 { ancestor = true }
+            if index != matched && (node.childCount > 1 || node.type == "AccessibilityContainerModifier") { ancestor = true }
             for setting in node.layout {
                 if ancestor { report.ancestors.append(contentsOf: setting.rows); continue }
-                report.rows.append(contentsOf: setting.rows)
+                report.rows.append(contentsOf: setting.rows.map { row in
+                    Row(title: row.title == "Parent stack" ? "Stack" : row.title, value: row.value)
+                })
                 let bounds = renderedBounds(at: index)
                 switch setting {
                 case .padding(let insets):
@@ -199,7 +217,7 @@ struct LayoutInspection: Equatable, Sendable {
                 if let bounds { inner = bounds }
             }
         }
-        if verified, let content = nodes[matched].frame {
+        if verified, let content = renderedBounds(at: matched) {
             report.geometry = Geometry(content: content, frame: frame, padding: padding)
             if !report.rows.contains(where: { $0.title == "Frame" }) {
                 let bounds = frame ?? padding.last?.outer ?? content
@@ -215,19 +233,68 @@ struct LayoutInspection: Equatable, Sendable {
         var visited = Set<Int>()
         var result: [Int] = []
         while let index = current, nodes.indices.contains(index), visited.insert(index).inserted {
-            if componentOnly && nodes[index].childCount > 1 { break }
+            if componentOnly && index != start && (nodes[index].childCount > 1 || nodes[index].type == "AccessibilityContainerModifier") { break }
             result.append(index)
             current = nodes[index].parent
         }
         return result
     }
 
-    /// Some debug layout nodes omit bounds; their immediate background records the same rendered box.
+    /// The runtime can attach a component's box to its accessibility or background wrapper.
+    /// Stop before a layout owner so a child never borrows an ancestor stack's bounds.
     private func renderedBounds(at index: Int) -> CGRect? {
-        if let frame = nodes[index].frame { return frame }
-        guard let parent = nodes[index].parent, nodes.indices.contains(parent),
-              nodes[parent].type.hasPrefix("_BackgroundStyleModifier<") else { return nil }
-        return nodes[parent].frame
+        guard nodes.indices.contains(index) else { return nil }
+        if let frame = nodes[index].frame, frame.width > 0, frame.height > 0 { return frame }
+        var parent = nodes[index].parent
+        var visited: Set<Int> = [index]
+        while let current = parent, nodes.indices.contains(current), visited.insert(current).inserted {
+            let node = nodes[current]
+            guard node.childCount == 1,
+                  node.type == "AccessibilityAttachmentModifier"
+                    || node.type.hasPrefix("_BackgroundStyleModifier<")
+                    || node.type.hasPrefix("_InsettableBackgroundShapeModifier<") else { break }
+            if let frame = node.frame, frame.width > 0, frame.height > 0 { return frame }
+            parent = node.parent
+        }
+        // Explicit runtime insets establish the outer box even when that modifier omits it.
+        if case .padding(let insets) = nodes[index].layout.first,
+           let top = insets.top, let leading = insets.leading,
+           let bottom = insets.bottom, let trailing = insets.trailing,
+           [top, leading, bottom, trailing].allSatisfy({ $0.isFinite && $0 >= 0 }) {
+            var child = nodes.indices.first { nodes[$0].parent == index }
+            while let current = child, nodes.indices.contains(current), visited.insert(current).inserted {
+                let node = nodes[current]
+                if let inner = node.frame, inner.width > 0, inner.height > 0 {
+                    return CGRect(x: inner.minX - leading, y: inner.minY - top,
+                                  width: inner.width + leading + trailing, height: inner.height + top + bottom)
+                }
+                guard node.childCount == 1, node.layout.isEmpty else { break }
+                child = nodes.indices.first { nodes[$0].parent == current }
+            }
+        }
+        return nil
+    }
+
+    private func descendantText(at index: Int) -> Set<String> {
+        var result = Set<String>()
+        for candidate in nodes.indices where nodes[candidate].text != nil {
+            if path(from: candidate).contains(index), let text = nodes[candidate].text { result.insert(text) }
+        }
+        return result
+    }
+
+    /// Only translations have a verified mapping in this prototype. Other transforms stay unavailable.
+    static func debugTranslation(_ value: [String: Any]) -> CGPoint? {
+        guard let adjustment = value["positionAdjustment"] as? [Double], adjustment.count == 2,
+              let items = value["items"] as? [[String: Any]] else { return nil }
+        var offset = CGPoint(x: -adjustment[0], y: -adjustment[1])
+        for item in items {
+            if item.isEmpty { continue }
+            guard item.count == 1, let translation = item["translation"] as? [Double], translation.count == 2 else { return nil }
+            offset.x += translation[0]
+            offset.y += translation[1]
+        }
+        return offset.x.isFinite && offset.y.isFinite ? offset : nil
     }
 
     var nodes: [Node] = []

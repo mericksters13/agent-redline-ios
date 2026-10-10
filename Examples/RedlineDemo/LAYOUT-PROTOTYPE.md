@@ -1,6 +1,6 @@
 # SwiftUI layout prototype
 
-This DEV-45 experiment reads the hosted SwiftUI debug tree when Redline captures the screen. It is compiled only in Debug and available from the demo's Layout tab. The demo fixtures do not pass their layout constants to the inspector. Tapping through the normal Redline picker compares accessibility text and bounds with runtime text nodes and their wrappers.
+This DEV-45 experiment reads the hosted SwiftUI debug tree when Redline captures the screen. It is compiled only in Debug and enabled throughout RedlineDemo. The Layout tab provides isolated fixtures. The demo fixtures do not pass their layout constants to the inspector. Tapping through the normal Redline picker compares accessibility text, roles, and bounds with runtime text, image, control, and stack nodes and their wrappers.
 
 ## Run
 
@@ -20,6 +20,10 @@ Use the larger layers icon beside the component name to open its hierarchy. It h
 
 Tap a measurement line or its label to include that edge in the note; tap again to remove it. The thin line has an invisible touch area of at least 44 points. Selected edges highlight in the crop, and Included in note previews the context. Add note saves that context with the written note, so existing report and Mac readers receive it. Nothing is added automatically. A captured zero-distance edge can be selected; missing geometry stays unavailable.
 
+When a selection has no measured padding, the disclosure is named Frame and shows only the component and available dimensions. Padding lines, edge labels, and the unavailable-padding placeholder are omitted.
+
+On Recipes, select a summary for its 150-point frame, an icon for its 40 × 40 pt frame, or a row by tapping empty space in that row for its 4-point vertical padding. Select Start cooking on a recipe detail to inspect its 44-point leading padding. Padding on a row or parent is kept separate from a child text selection.
+
 Expand Layout details for readable Padding, Frame, Alignment, and flexible width and height rows, then Parent layout for stack spacing and surrounding settings. The card scrolls when needed and keeps its note buttons visible. It opens without the keyboard; selecting padding does not open one.
 
 Cancel returns to picking; close annotate mode returns to the normal screen. Pass `-RedlineLayoutPrototype NO` to return to the regular demo with its Layout tab.
@@ -34,16 +38,19 @@ A collapse regression review on 2026-10-10 reproduced the snapshot drawing over 
 
 Normal-launch integration on 2026-10-10 passed a simulator flow from Recipes to Layout, inspection of Fixed with runtime 180 × 44 pt frame and horizontal 16 pt padding, return to Recipes, and annotation of a recipe summary. Three repeated Flexible preview toggles passed with the updated hosting-view traversal. All 238 package tests, Debug and Release kit builds, and Debug and Release demo builds passed; the Release kit excluded the private activation symbol. A signed Debug build was installed on the iPhone 17 Pro. The normal-launch device UI test could not run because iOS rejected the test runner's developer certificate, so the new tab interaction is verified on the simulator only.
 
+Recipes integration on 2026-10-10 passed on an iPhone 16 Pro simulator running iOS 27.0. The normal-launch test inspected the summary's 150-point frame, title bounds, icon's 40 × 40 pt frame, row's 4-point vertical padding, and cooking button's 44-point leading padding. Native captures confirmed that the row and button crop include only their own padding, and that the cooking crop remains correct after a short scroll while the button stays below the navigation bar. Selections without measured padding showed Frame without padding controls or an unavailable placeholder. Row and button edge selection added the measured context. All five focused form tests passed, including large text, landscape, fixture states, the normal tab flow, and repeated Flexible toggles; the Recipes test passed again with the still-visible scroll gesture. All 245 Redline logic tests and 190 Mac tool tests passed. Generic simulator Debug and Release builds passed for both the kit and demo, and the Release kit excluded the private activation symbol. A signed Debug build was installed on the iPhone 17 Pro; the locked phone prevented automatic launch. These Recipes interactions remain simulator-verified.
+
 The prototype also writes `layout-tree-*.json`, `layout-nodes.txt`, and `layout-elements.json` to the app's Documents directory while enabled. These are local diagnostic captures and are not added to Redline reports.
 
 ## Interpretation
 
 - `_UIHostingView._viewDebugData()` provides live nodes through an underscored SDK API. The prototype reflects `_ViewDebug.Data` storage and layout implementation types. This is not a stable public API contract.
 - Text and bounds matching is experimental. Different-position duplicates can be distinguished; identical overlapping labels remain ambiguous. A unique text match without matching bounds is explicitly marked as an unverified candidate.
-- Default padding keeps its declaration as System default. When the tree supplies inner and outer bounds, Measured padding separately shows their distance. The form crop and measured frame size use captured geometry, including an immediate background node when its layout node omits bounds; missing bounds are not borrowed from arbitrary ancestors. An unspecified frame bound remains distinct from a declared value.
-- Only plain text selections are supported. Synthetic accessibility text without rendered geometry is excluded. Combined labels, custom layouts, localized or formatted text, transforms, scrolling, multiple windows, and other SDK versions require additional verification.
+- Default padding keeps its declaration as System default. When the tree supplies inner and outer bounds, Measured padding separately shows their distance. The form crop and measured frame size use captured geometry, including a nearby accessibility or background wrapper when its layout node omits bounds. Explicit runtime insets and a captured child box can establish a missing padding box; unspecified default insets are never guessed. Missing bounds are not borrowed from arbitrary ancestors. An unspecified frame bound remains distinct from a declared value.
+- Verified selections include text, text-backed buttons and headers, images, and uniquely matched stack containers. Styled controls use the captured control root and its rendered label; the traversal retains debug trees up to 256 nodes deep because the tested cooking label is deeper than 100. Synthetic accessibility text without rendered geometry is excluded. Combined accessibility labels, custom layouts, general localized or formatted text, multiple windows, and other SDK versions remain unverified.
 - Capture reads visible hosting views with no nested visible hosting view. This avoids traversing a tab container's transition graph, which trapped on the tested iOS 27 runtime; ancestor settings stop at the captured host boundary.
-- Wrapper order is innermost first. Ancestor layouts are shown separately. The branch boundary is a prototype heuristic, not a reconstruction of the original Swift source expression.
+- Translation-only debug transforms account for navigation and scroll offsets. Each serialized transform is cumulative; its position adjustment is removed before applying it to the node position. Unknown geometric transform entries disable measurements rather than assuming a translation. Rotation, scale, and perspective remain unverified.
+- Wrapper order is innermost first. Accessibility container boundaries and branch owners keep ancestor padding and stack layout separate from the selected component. Ancestor layouts are shown separately. The branch boundary is a prototype heuristic, not a reconstruction of the original Swift source expression.
 - Simulator evidence establishes behavior only on the tested simulator runtime. The iPhone 17 Pro check on iOS 27.0.1 establishes early activation and selected Flexible padding/collapse behavior on that device. Other physical-device configurations and selection types remain unverified.
 
 ## Research pointers

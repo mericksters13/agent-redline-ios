@@ -18,16 +18,17 @@ struct LayoutInspectorView: View {
                 DisclosureGroup(isExpanded: $isPreviewExpanded) {
                     LayoutSnapshotView(geometry: geometry, image: image, selected: selected, toggle: toggle)
                         .padding(.top, 8)
-                    Text(geometry.padding.isEmpty ? "Padding measurements unavailable."
-                         : geometry.padding.contains(where: \.isSystemDefault)
-                            ? "System default padding · Showing measured spacing"
-                            : "Tap a red measurement line to include padding in the note.")
-                        .font(.caption)
-                        .foregroundStyle(Mono.secondary)
-                        .padding(.top, 8)
+                    if !geometry.padding.isEmpty {
+                        Text(geometry.padding.contains(where: \.isSystemDefault)
+                             ? "System default padding · Showing measured spacing"
+                             : "Tap a red measurement line to include padding in the note.")
+                            .font(.caption)
+                            .foregroundStyle(Mono.secondary)
+                            .padding(.top, 8)
+                    }
                 } label: {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Padding & frame").font(.subheadline).foregroundStyle(Mono.text)
+                        Text(geometry.padding.isEmpty ? "Frame" : "Padding & frame").font(.subheadline).foregroundStyle(Mono.text)
                         Text(previewSummary(geometry)).font(.caption).foregroundStyle(Mono.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }

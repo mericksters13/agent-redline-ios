@@ -73,6 +73,83 @@ final class LayoutPrototypeTests: XCTestCase {
         app.terminate()
     }
 
+    func testRecipesLayoutInspection() {
+        let app = XCUIApplication()
+        app.launch()
+        let title = app.buttons["list.row.black-bean-tacos.title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        for (name, element) in [("Recipe summary", app.staticTexts["list.row.black-bean-tacos.summary"]),
+                                ("Recipe title", title),
+                                ("Recipe icon", app.images["list.row.black-bean-tacos.icon"]),
+                                ("Recipe row", app.otherElements["list.row.black-bean-tacos"])] {
+            let center = name == "Recipe row"
+                ? CGVector(dx: element.frame.minX + element.frame.width * 0.75, dy: element.frame.maxY - 8)
+                : CGVector(dx: element.frame.midX, dy: element.frame.midY)
+            app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+            app.coordinate(withNormalizedOffset: .zero).withOffset(center).tap()
+            let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
+            XCTAssertTrue(result.waitForExistence(timeout: 5))
+            XCTAssertTrue(result.label.contains("Matched by"), result.label)
+            XCTAssertTrue(app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.exists)
+            if name == "Recipe row" {
+                XCTAssertTrue(result.label.contains("Padding: Vertical · 4 pt"), result.label)
+                let top = app.buttons["RedlinePaddingTop"]
+                XCTAssertTrue(top.isHittable)
+                top.tap()
+                XCTAssertTrue(app.staticTexts["RedlineLayoutContext"].label.contains("Top padding: 4 pt (measured)"))
+            } else {
+                for edge in ["Top", "Right", "Bottom", "Left"] {
+                    XCTAssertFalse(app.buttons["RedlinePadding" + edge].exists)
+                }
+                XCTAssertFalse(app.staticTexts["Padding measurements unavailable."].exists)
+                XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Frame")).firstMatch.exists)
+                if name == "Recipe summary" {
+                    XCTAssertTrue(result.label.contains("Frame: Width 150 pt"), result.label)
+                } else if name == "Recipe icon" {
+                    XCTAssertTrue(result.label.contains("Frame: 40 × 40 pt"), result.label)
+                }
+            }
+            attach(name, in: app)
+            app.buttons["Cancel"].tap()
+            app.buttons["Close annotate mode"].tap()
+        }
+        title.tap()
+        let start = app.buttons["detail.start"]
+        for _ in 0..<3 where !start.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(start.isHittable)
+        let center = CGVector(dx: start.frame.midX, dy: start.frame.midY)
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.coordinate(withNormalizedOffset: .zero).withOffset(center).tap()
+        let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        XCTAssertTrue(result.label.contains("Padding: Leading 44 pt"), result.label)
+        let left = app.buttons["RedlinePaddingLeft"]
+        XCTAssertTrue(left.isHittable)
+        left.tap()
+        XCTAssertTrue(app.staticTexts["RedlineLayoutContext"].label.contains("Left padding: 44 pt (measured)"))
+        attach("Cooking button", in: app)
+        app.buttons["Cancel"].tap()
+        app.buttons["Close annotate mode"].tap()
+        // A fresh capture after scrolling must use the changed content offset.
+        let scroll = app.scrollViews.firstMatch
+        scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+            .press(forDuration: 0.1,
+                   thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45)),
+                   withVelocity: .slow, thenHoldForDuration: 0.3)
+        let scrolledCenter = CGVector(dx: start.frame.midX, dy: start.frame.midY)
+        XCTAssertTrue(start.isHittable)
+        XCTAssertGreaterThan(start.frame.minY, app.navigationBars.firstMatch.frame.maxY)
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.coordinate(withNormalizedOffset: .zero).withOffset(scrolledCenter).tap()
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        XCTAssertTrue(result.label.contains("Padding: Leading 44 pt"), result.label)
+        XCTAssertTrue(left.isHittable)
+        attach("Cooking button after scrolling", in: app)
+        app.buttons["Cancel"].tap()
+        app.buttons["Close annotate mode"].tap()
+        app.terminate()
+    }
+
     func testMeasuredOverlayStates() {
         let app = launch("early")
         for (label, expected) in [("Fixed", "Frame: 180 × 44 pt"), ("Nested", "Leading 5 pt"),

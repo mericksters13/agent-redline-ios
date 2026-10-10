@@ -12,7 +12,9 @@ struct LayoutSnapshotView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if dynamicTypeSize.isAccessibilitySize {
+            if geometry.padding.isEmpty {
+                preview.frame(height: 100)
+            } else if dynamicTypeSize.isAccessibilitySize {
                 preview.frame(height: 100)
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                     ForEach(LayoutInspection.Edge.allCases, id: \.self) { paddingConstraint($0) }
