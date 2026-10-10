@@ -7,7 +7,6 @@ struct ElementHierarchyView: View {
     let selectedIndex: Int?
     let availableWidth: CGFloat
     let select: (Int) -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var collapsed: Set<Int> = []
     @ScaledMetric(relativeTo: .footnote) private var indentation: CGFloat = 18
 
@@ -21,9 +20,7 @@ struct ElementHierarchyView: View {
                         Color.clear.frame(width: CGFloat(row.branches.count) * indentation)
                         if row.hasChildren {
                             Button {
-                                withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) {
-                                    if !collapsed.insert(row.id).inserted { collapsed.remove(row.id) }
-                                }
+                                if !collapsed.insert(row.id).inserted { collapsed.remove(row.id) }
                             } label: {
                                 Image(systemName: "chevron.right")
                                     .font(.caption.weight(.semibold))
@@ -89,11 +86,7 @@ struct ElementHierarchyView: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                     }
-                    .transition(
-                        reduceMotion
-                            ? .opacity.animation(.easeOut(duration: 0.15))
-                            : .opacity.combined(with: .offset(y: -8))
-                    )
+                    .transition(.identity)
                 }
             }
             .frame(minWidth: max(availableWidth, CGFloat(depth) * indentation + 180), alignment: .leading)
