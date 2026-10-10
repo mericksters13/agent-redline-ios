@@ -108,9 +108,15 @@ final class DebugSession {
 
     private(set) var mode = Mode.idle
     private(set) var annotations: [Annotation] = []
-    /// What's under the finger, innermost first. `levelIndex` picks one of them.
-    private(set) var levels: [ElementSnapshot] = []
-    private(set) var levelIndex = 0
+    /// The selected element followed by its captured ancestors, innermost first.
+    private(set) var levels: [ElementSnapshot] = [] {
+        didSet { if levels.isEmpty { hierarchy = nil } }
+    }
+    /// Frozen with the original pick, so browsing children cannot widen the tree.
+    private(set) var hierarchy: ElementHierarchy? {
+        didSet { hierarchySelectionIndex = selected.flatMap { hierarchy?.elements.lastIndex(of: $0) } }
+    }
+    private(set) var hierarchySelectionIndex: Int?
     /// Numbered markers for annotations already made on the current screen.
     private(set) var markers: [Marker] = []
     var noteText = ""
@@ -200,7 +206,7 @@ final class DebugSession {
     var safeAreaTop: CGFloat { safeAreaInsets.top }
 
     var selected: ElementSnapshot? {
-        levels.indices.contains(levelIndex) ? levels[levelIndex] : nil
+        levels.first
     }
 
     /// The area the note card is about: the picked element's frame, or the box around the drawing.
@@ -525,7 +531,6 @@ final class DebugSession {
         }
         // Called on every frame of a drag: publish only what changed.
         if found != levels { levels = found }
-        if levelIndex != 0 { levelIndex = 0 }
     }
 
     func finishHover(at point: CGPoint) {
@@ -535,20 +540,23 @@ final class DebugSession {
         }
         hover(at: point)
         isTouchDown = false
-        guard selected != nil else {
+        guard let selected else {
             nudge()
             return
         }
+        hierarchy = ElementHierarchy(touched: selected, in: elements, screenSize: readSize)
         noteText = ""
         pending = nil
         notingReturnMode = .picking
         beginNoting()
     }
 
-    /// Selects one of `levels`: the element under the finger, or one enclosing it.
-    func selectLevel(_ index: Int) {
-        guard levels.indices.contains(index), index != levelIndex else { return }
-        levelIndex = index
+    func selectHierarchyElement(_ index: Int) {
+        guard mode == .noting, screenReadIsCurrent, let hierarchy, hierarchy.element(at: index) != nil,
+            index != hierarchySelectionIndex
+        else { return }
+        levels = ElementSelection.levels(from: index, in: hierarchy.elements, screenSize: readSize)
+        hierarchySelectionIndex = index
         selectionFeedback.selectionChanged()
     }
 
@@ -661,7 +669,7 @@ final class DebugSession {
                 note: note,
                 kind: .element,
                 element: element,
-                ancestors: Array(levels.dropFirst(levelIndex + 1)),
+                ancestors: Array(levels.dropFirst()),
                 screen: screen,
                 attachments: [],
                 captureID: fileCapture(screenImage, element: element, frame: frame, strokes: [])

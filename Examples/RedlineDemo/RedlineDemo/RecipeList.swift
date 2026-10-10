@@ -12,15 +12,15 @@ struct RecipeList: View {
 
     @State private var query = ""
     @State private var order = Order.name
+    @State private var path: [Recipe] = []
 
     var body: some View {
         let recipes = shownRecipes()
-        NavigationStack {
+        NavigationStack(path: $path) {
             List(recipes) { recipe in
-                NavigationLink(value: recipe) {
-                    RecipeRow(recipe: recipe)
+                RecipeRow(recipe: recipe) {
+                    path.append(recipe)
                 }
-                .accessibilityIdentifier("list.row.\(recipe.id)")
             }
             .overlay {
                 if recipes.isEmpty {
@@ -68,6 +68,7 @@ struct RecipeList: View {
 /// One recipe in the list: its symbol, name, summary and total time.
 private struct RecipeRow: View {
     let recipe: Recipe
+    let open: () -> Void
 
     @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 40
 
@@ -78,23 +79,39 @@ private struct RecipeRow: View {
                 .foregroundStyle(.white)
                 .frame(width: iconSize, height: iconSize)
                 .background(recipe.course.tint.gradient, in: .rect(cornerRadius: 10))
-                .accessibilityHidden(true)
+                .accessibilityLabel(recipe.course.rawValue)
+                .accessibilityIdentifier("list.row.\(recipe.id).icon")
             VStack(alignment: .leading, spacing: 2) {
                 Text(recipe.name)
                     .font(.body)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { open() }
+                    .accessibilityIdentifier("list.row.\(recipe.id).title")
                 Text(recipe.summary)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     // Planted bug for the demo: a fixed width cuts the summary off even when the row has room.
                     .frame(width: 150, alignment: .leading)
+                    .accessibilityIdentifier("list.row.\(recipe.id).summary")
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("list.row.\(recipe.id).titles")
             Spacer(minLength: 8)
             Text(recipe.time, format: .units(allowed: [.hours, .minutes], width: .abbreviated))
                 .font(.subheadline)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("list.row.\(recipe.id).time")
+            Image(systemName: "chevron.forward")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
         .padding(.vertical, 4)
+        .contentShape(.rect)
+        .onTapGesture(perform: open)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("list.row.\(recipe.id)")
     }
 }

@@ -57,6 +57,8 @@ struct RecipeDetail: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("detail.titles")
     }
 
     // MARK: - Stats
