@@ -42,7 +42,10 @@ struct OverlayView: View {
 
     private var width: CGFloat { session.screenSize.width }
     private var panelWidth: CGFloat { min(width - 24, 420) }
-    private var panelLeading: CGFloat { (width - panelWidth) / 2 }
+    private var panelLeading: CGFloat {
+        if session.showsLayoutPrototype, width > session.screenSize.height { return width - panelWidth - 12 }
+        return (width - panelWidth) / 2
+    }
     private var islandWidth: CGFloat { min(width - 24, 380) }
     private var islandTop: CGFloat { session.safeAreaTop + 4 }
     private var islandBottom: CGFloat { islandTop + islandHeight }
@@ -81,7 +84,11 @@ struct OverlayView: View {
             if session.mode == .picking || session.mode == .noting, session.screenReadIsCurrent,
                 let element = session.selected
             {
-                outline(element.frame, weight: 2.5)
+                if session.showsLayoutPrototype, let geometry = session.selectedLayout.geometry {
+                    outline(geometry.content, weight: 2.5)
+                } else {
+                    outline(element.frame, weight: 2.5)
+                }
                 if session.mode == .picking {
                     nameTag(element)
                 }
@@ -504,6 +511,7 @@ struct OverlayView: View {
                     }
             }
             .scrollBounceBehavior(.basedOnSize)
+            .accessibilityIdentifier("RedlineNoteScroll")
             .animation(reduceMotion ? nil : .smooth(duration: 0.3)) { content in
                 content.frame(height: noteScrollHeight)
             }
@@ -533,7 +541,7 @@ struct OverlayView: View {
         .padding(.top, top)
         .onAppear { isNoteFocused = !session.showsLayoutPrototype }
         .onChange(of: isHierarchyExpanded) { _, expanded in
-            isNoteFocused = !expanded
+            isNoteFocused = !expanded && !session.showsLayoutPrototype
             openingCardHeight = 0
         }
         .onDisappear {
@@ -600,7 +608,7 @@ struct OverlayView: View {
             HStack(spacing: 12) {
                 if let pending {
                     attachmentPreview(pending)
-                } else if !isHierarchyExpanded, isElementHidden, let preview = session.selectedElementPreview() {
+                } else if !session.showsLayoutPrototype, !isHierarchyExpanded, isElementHidden, let preview = session.selectedElementPreview() {
                     // The element is behind the keyboard or this card, so show what was picked.
                     Image(uiImage: preview)
                         .resizable()
@@ -651,10 +659,8 @@ struct OverlayView: View {
             }
 
             if session.showsLayoutPrototype, pending == nil, !session.isNotingDrawing {
-                Text(session.layoutInspectionText)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(Mono.text)
-                    .accessibilityIdentifier("RedlineLayoutInspection")
+                LayoutInspectorView(report: session.selectedLayout, image: session.selectedLayoutPreview(),
+                                    selected: session.selectedPadding, toggle: session.togglePadding)
             }
 
             if !isHierarchyExpanded {
@@ -664,6 +670,7 @@ struct OverlayView: View {
                     .tint(Color.white)
                     .lineLimit(2...5)
                     .focused($isNoteFocused)
+                    .accessibilityIdentifier("RedlineNoteText")
                     .padding(12)
                     .background(Mono.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .transition(.identity)

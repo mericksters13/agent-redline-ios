@@ -37,7 +37,8 @@ enum SwiftUILayoutInspector {
                 childCount: children.count,
                 frame: (properties[.position] as? CGPoint).flatMap { position in
                     (properties[.size] as? CGSize).map { host.convert(CGRect(origin: position, size: $0), to: nil) }
-                }
+                },
+                layout: isLayoutNode(type) ? value.map { layout(in: $0) } ?? [] : []
             ))
             for child in children { append(child, parent: index, host: host, depth: depth + 1) }
         }
@@ -84,6 +85,47 @@ enum SwiftUILayoutInspector {
             if let string = text(in: child.value, depth: depth + 1) { return string }
         }
         return nil
+    }
+
+    private static func layout(in value: Any, depth: Int = 0) -> [LayoutInspection.Setting] {
+        guard depth < 8 else { return [] }
+        let type = String(describing: Swift.type(of: value))
+        let children = Array(Mirror(reflecting: value).children)
+        func field(_ name: String) -> Any? {
+            guard let value = children.first(where: { $0.label == name })?.value else { return nil }
+            let mirror = Mirror(reflecting: value)
+            return mirror.displayStyle == .optional ? mirror.children.first?.value : value
+        }
+        func scalar(_ name: String) -> CGFloat? {
+            if let value = field(name) as? CGFloat { return value }
+            if let value = field(name) as? Double { return CGFloat(value) }
+            return nil
+        }
+        let alignment = field("alignment").map(format) ?? "unspecified"
+        switch type {
+        case "_PaddingLayout":
+            guard let edges = field("edges") as? Edge.Set else { return [] }
+            let insets = field("insets") as? EdgeInsets
+            return [.padding(.init(top: edges.contains(.top) ? insets?.top : 0,
+                                  leading: edges.contains(.leading) ? insets?.leading : 0,
+                                  bottom: edges.contains(.bottom) ? insets?.bottom : 0,
+                                  trailing: edges.contains(.trailing) ? insets?.trailing : 0))]
+        case "_FrameLayout":
+            return [.frame(width: scalar("width"), height: scalar("height"), alignment: alignment)]
+        case "_FlexFrameLayout":
+            return [.flexibleFrame(minWidth: scalar("minWidth"), idealWidth: scalar("idealWidth"), maxWidth: scalar("maxWidth"),
+                                   minHeight: scalar("minHeight"), idealHeight: scalar("idealHeight"), maxHeight: scalar("maxHeight"), alignment: alignment)]
+        case "_HStackLayout", "_VStackLayout", "_ZStackLayout":
+            return [.stack(axis: type == "_HStackLayout" ? "Horizontal" : type == "_VStackLayout" ? "Vertical" : "Overlapping",
+                           spacing: scalar("spacing"), alignment: alignment)]
+        case "LayoutPriorityLayout":
+            return scalar("priority").map { [.priority(Double($0))] } ?? []
+        case "_TraitWritingModifier<LayoutPriorityTraitKey>":
+            return scalar("value").map { [.priority(Double($0))] } ?? []
+        default:
+            return children.filter { ["_tree", "root", "modifier", "layout"].contains($0.label ?? "") }
+                .flatMap { layout(in: $0.value, depth: depth + 1) }
+        }
     }
 
     private static func settings(in value: Any, depth: Int = 0) -> [String] {

@@ -12,11 +12,17 @@ Build the RedlineDemo scheme in Debug on an existing iOS simulator. Add these la
 
 The demo sets `SWIFTUI_VIEW_DEBUG=287` in its App initializer for this mode. For launch-time activation, use `RedlineLayoutActivation external` and supply the environment variable in the scheme. `none` and `late` are negative controls; the UI test explicitly supplies `SWIFTUI_VIEW_DEBUG=0` for those modes. Late activation runs one second after the screen appears.
 
-Tap the Redline button, then a sample. The note card shows runtime settings without opening the keyboard. Cancel returns to picking; close annotate mode returns to the normal screen. Pass `-RedlineLayoutPrototype NO` to return to the regular demo.
+Tap the Redline button, then a sample. The annotation form shows a captured crop of the component, with its padding shaded and any captured frame outlined. Top, right, bottom, and left controls show measured padding in points; nested padding can read `5 + 5 pt`. The crop may be scaled for display, but its labels keep the original measurements.
+
+Tap an edge to include it in the note; tap again to remove it. Selected edges highlight in the crop, and Included in note previews the context. Add note saves that context with the written note, so existing report and Mac readers receive it. Nothing is added automatically. A captured zero-distance edge can be selected; missing geometry stays unavailable.
+
+Expand Layout details for readable Padding, Frame, Alignment, and flexible width and height rows, then Parent layout for stack spacing and surrounding settings. The card scrolls when needed and keeps its note buttons visible. It opens without the keyboard; selecting padding does not open one.
+
+Cancel returns to picking; close annotate mode returns to the normal screen. Pass `-RedlineLayoutPrototype NO` to return to the regular demo.
 
 ## Verification
 
-Run the demo scheme's `LayoutPrototypeTests` on one existing simulator with parallel testing disabled. The test covers four fresh app launches, explicit horizontal and top padding, two identical nested padding modifiers, fixed and flexible frames, stack spacing and alignment, priority, both duplicate-label positions, identical overlapping labels, synthetic accessibility text, and a repeat selection. Screenshots remain in the test result bundle.
+Run the demo scheme's `LayoutPrototypeTests` on one existing simulator with parallel testing disabled. The test covers four fresh app launches, explicit horizontal and top padding, two identical nested padding modifiers, fixed and flexible frames, stack spacing and alignment, priority, both duplicate-label positions, identical overlapping labels, synthetic accessibility text, and a repeat selection. Additional UI checks cover padding selection and deselection, saved note context, large Dynamic Type, and a visible nested-frame sample in landscape. The fixture column is taller than the landscape viewport, so some other samples are offscreen. Screenshots remain in the test result bundle. Inspect captures in both simulator appearances; screenshots alone do not prove VoiceOver interaction.
 
 The prototype also writes `layout-tree-*.json`, `layout-nodes.txt`, and `layout-elements.json` to the app's Documents directory while enabled. These are local diagnostic captures and are not added to Redline reports.
 
@@ -24,7 +30,7 @@ The prototype also writes `layout-tree-*.json`, `layout-nodes.txt`, and `layout-
 
 - `_UIHostingView._viewDebugData()` provides live nodes through an underscored SDK API. The prototype reflects `_ViewDebug.Data` storage and layout implementation types. This is not a stable public API contract.
 - Text and bounds matching is experimental. Different-position duplicates can be distinguished; identical overlapping labels remain ambiguous. A unique text match without matching bounds is explicitly marked as an unverified candidate.
-- Default padding records an unspecified inset, not a numeric resolved value. An unspecified frame bound is also distinct from a declared value.
+- Default padding keeps its declaration as System default. When the tree supplies inner and outer bounds, Measured padding separately shows their distance. The form crop and frame outline use captured geometry, including an immediate background node when its layout node omits bounds; missing bounds are not borrowed from arbitrary ancestors. An unspecified frame bound remains distinct from a declared value.
 - Only plain text selections are supported. Synthetic accessibility text without rendered geometry is excluded. Combined labels, custom layouts, localized or formatted text, transforms, scrolling, multiple windows, and other SDK versions require additional verification.
 - Wrapper order is innermost first. Ancestor layouts are shown separately. The branch boundary is a prototype heuristic, not a reconstruction of the original Swift source expression.
 - Simulator evidence establishes behavior only on the tested simulator runtime. Physical-device behavior is unverified.

@@ -120,8 +120,16 @@ final class DebugSession {
     /// Numbered markers for annotations already made on the current screen.
     private(set) var markers: [Marker] = []
     private var layoutInspection = LayoutInspection()
-    var layoutInspectionText: String { layoutInspection.describe(selected) }
+    var selectedLayout: LayoutInspection.Report { layoutInspection.report(selected) }
     var showsLayoutPrototype: Bool { SwiftUILayoutInspector.isEnabled }
+    private(set) var selectedPadding: Set<LayoutInspection.Edge> = []
+
+    func togglePadding(_ edge: LayoutInspection.Edge) {
+        guard mode == .noting, showsLayoutPrototype, !isNotingDrawing,
+              selectedLayout.geometry?.paddingLabel(on: edge) != nil else { return }
+        if !selectedPadding.insert(edge).inserted { selectedPadding.remove(edge) }
+        selectionFeedback.selectionChanged()
+    }
     var noteText = ""
     /// The note showing in the full-screen viewer.
     private(set) var viewerID: UUID?
@@ -560,6 +568,7 @@ final class DebugSession {
         else { return }
         levels = ElementSelection.levels(from: index, in: hierarchy.elements, screenSize: readSize)
         hierarchySelectionIndex = index
+        selectedPadding = []
         selectionFeedback.selectionChanged()
     }
 
@@ -619,7 +628,9 @@ final class DebugSession {
     // MARK: - Notes
 
     func saveNote() {
-        let note = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let note = showsLayoutPrototype && pending == nil && !isNotingDrawing
+            ? selectedLayout.note(noteText, including: selectedPadding)
+            : noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         if let pending {
             guard !pending.isSaving else { return }
             guard let loading = pending.loading else {
@@ -1560,6 +1571,17 @@ final class DebugSession {
         return Self.crop(image, around: frame, isDrawing: isNotingDrawing)
     }
 
+    /// The captured component box, including its padding and any captured frame.
+    func selectedLayoutPreview() -> UIImage? {
+        guard let bounds = selectedLayout.geometry?.bounds, let image = screenImage,
+              CGRect(origin: .zero, size: image.size).contains(bounds),
+              let source = image.cgImage else { return nil }
+        let pixels = CGRect(x: bounds.minX * image.scale, y: bounds.minY * image.scale,
+                            width: bounds.width * image.scale, height: bounds.height * image.scale).integral
+        guard let cropped = source.cropping(to: pixels) else { return nil }
+        return UIImage(cgImage: cropped, scale: image.scale, orientation: .up)
+    }
+
     // MARK: - Thumbnails and previews
 
     /// The suggestion card's width in pixels: 96 points at 3x.
@@ -1864,6 +1886,7 @@ final class DebugSession {
     // MARK: - Noting
 
     private func beginNoting() {
+        selectedPadding = []
         noteError = nil
         isAwaitingKeyboard = keyboardTop == .infinity
         noteBackground = pending == nil ? screenImage : nil
@@ -1879,6 +1902,7 @@ final class DebugSession {
     }
 
     private func endNoting(returningTo next: Mode) {
+        selectedPadding = []
         noteText = ""
         isNotingDrawing = false
         drawingBox = nil

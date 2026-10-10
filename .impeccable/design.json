@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-10T05:23:49Z",
+  "title": "Design System: Redline",
+  "extensions": {
+    "colorMeta": {
+      "surface": {
+        "role": "neutral",
+        "displayName": "Black surface"
+      },
+      "text": {
+        "role": "primary",
+        "displayName": "White text and controls"
+      },
+      "secondary": {
+        "role": "neutral",
+        "displayName": "Secondary white"
+      },
+      "fill": {
+        "role": "neutral",
+        "displayName": "Inset white fill"
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "White hairline"
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Native title",
+        "purpose": "Subheadline with semibold weight for element names and primary actions; scales with Dynamic Type."
+      },
+      "body": {
+        "displayName": "Native body",
+        "purpose": "Native body style for multiline note entry; scales with Dynamic Type."
+      },
+      "label": {
+        "displayName": "Native label",
+        "purpose": "Caption for roles, measurements and context; measured values may be semibold with monospaced digits."
+      }
+    }
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Illustrative panel sample of the native white capsule action. Browser interaction states are preview affordances.",
+      "html": "<div class=\"ds-action-bed\"><button class=\"ds-primary\">Add note</button></div>",
+      "css": ".ds-action-bed{padding:16px;background:#000;border-radius:24px}.ds-primary{font:600 15px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:#000;background:#fff;border:0;border-radius:999px;min-height:44px;padding:8px 18px;cursor:pointer}.ds-primary:hover{background:#eee}.ds-primary:focus-visible{outline:2px solid #fff;outline-offset:4px}.ds-primary:active{opacity:.8}"
+    },
+    {
+      "name": "Secondary icon control",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Illustrative panel sample of a native circular control within a larger touch area. The inline icon approximates the SF Symbol.",
+      "html": "<div class=\"ds-icon-bed\"><button class=\"ds-icon-button\" aria-label=\"Close annotate mode\"><span class=\"ds-icon-circle\"><svg viewBox=\"0 0 20 20\" width=\"16\" height=\"16\" aria-hidden=\"true\"><path d=\"M5 5l10 10M15 5L5 15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\"/></svg></span></button></div>",
+      "css": ".ds-icon-bed{padding:12px;background:#000;border-radius:24px}.ds-icon-button{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border:0;background:transparent;color:#fff;border-radius:50%;cursor:pointer}.ds-icon-circle{display:flex;align-items:center;justify-content:center;width:32px;height:32px;background:rgb(255 255 255 / .12);border-radius:50%}.ds-icon-button:hover .ds-icon-circle{background:rgb(255 255 255 / .2)}.ds-icon-button:focus-visible{outline:2px solid #fff;outline-offset:2px}.ds-icon-button:active{opacity:.7}"
+    },
+    {
+      "name": "Note field",
+      "kind": "input",
+      "refersTo": "note-field",
+      "description": "Illustrative panel sample of the native multiline note field; browser sizing does not reproduce Dynamic Type or keyboard layout.",
+      "html": "<div class=\"ds-field-bed\"><textarea class=\"ds-note-field\" rows=\"2\" aria-label=\"What is wrong?\" placeholder=\"What&#39;s wrong?\"></textarea></div>",
+      "css": ".ds-field-bed{background:#000;padding:16px;border-radius:24px}.ds-note-field{display:block;width:calc(100% - 24px);padding:12px;background:rgb(255 255 255 / .12);color:#fff;caret-color:#fff;border:0;border-radius:12px;font:400 17px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;resize:vertical}.ds-note-field::placeholder{color:rgb(255 255 255 / .4)}.ds-note-field:hover{background:rgb(255 255 255 / .16)}.ds-note-field:focus-visible{outline:2px solid rgb(255 255 255 / .6);outline-offset:2px}"
+    },
+    {
+      "name": "Annotation panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Illustrative panel sample of the native black note card with hierarchy and a separate footer. Its text is example content.",
+      "html": "<section class=\"ds-note-panel\" aria-label=\"Example annotation\"><header class=\"ds-note-header\"><span class=\"ds-note-number\">1</span><div><strong class=\"ds-note-title\">Selected element</strong><span class=\"ds-note-role\">Text</span></div></header><p class=\"ds-note-context\">Captured component context appears here.</p><footer class=\"ds-note-footer\"><button class=\"ds-cancel\">Cancel</button><button class=\"ds-add\">Add note</button></footer></section>",
+      "css": ".ds-note-panel{padding:16px;background:#000;color:#fff;border:1px solid rgb(255 255 255 / .16);border-radius:24px;box-shadow:0 8px 18px rgb(0 0 0 / .3);font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif}.ds-note-header{display:flex;align-items:center;gap:12px}.ds-note-number{display:inline-flex;align-items:center;justify-content:center;min-width:26px;min-height:26px;color:#000;background:#fff;border-radius:50%;font-size:12px;font-weight:700}.ds-note-title{display:block;font-size:15px;font-weight:600}.ds-note-role{display:block;color:rgb(255 255 255 / .6);font-size:12px}.ds-note-context{color:rgb(255 255 255 / .6);font-size:12px;line-height:1.5;margin:20px 0}.ds-note-footer{display:flex;justify-content:space-between;align-items:center;gap:12px}.ds-cancel{min-height:44px;padding:0;background:transparent;border:0;color:rgb(255 255 255 / .6);font:500 15px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;cursor:pointer}.ds-add{min-height:44px;padding:8px 18px;background:#fff;color:#000;border:0;border-radius:999px;font:600 15px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;cursor:pointer}.ds-cancel:hover{color:#fff}.ds-add:hover{background:#eee}.ds-cancel:focus-visible,.ds-add:focus-visible{outline:2px solid #fff;outline-offset:3px}.ds-cancel:active,.ds-add:active{opacity:.8}"
+    },
+    {
+      "name": "Top control capsule",
+      "kind": "nav",
+      "description": "Illustrative panel sample of native screen context and a Send action. It does not deliver a report.",
+      "html": "<nav class=\"ds-island\" aria-label=\"Example annotation controls\"><button class=\"ds-island-close\" aria-label=\"Close annotate mode\"><svg viewBox=\"0 0 20 20\" width=\"14\" height=\"14\" aria-hidden=\"true\"><path d=\"M5 5l10 10M15 5L5 15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\"/></svg></button><div class=\"ds-island-context\"><strong>Screen</strong><span>1 note</span></div><button class=\"ds-island-send\">Send</button></nav>",
+      "css": ".ds-island{display:flex;align-items:center;gap:4px;padding:4px 9px 4px 4px;background:#000;color:#fff;border:1px solid rgb(255 255 255 / .16);border-radius:999px;box-shadow:0 6px 14px rgb(0 0 0 / .3);font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif}.ds-island-close{display:flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;color:#fff;background:rgb(255 255 255 / .12);border:0;border-radius:50%;cursor:pointer}.ds-island-context{flex:1;min-width:0;padding:0 4px}.ds-island-context strong{display:block;font-size:15px;font-weight:600}.ds-island-context span{display:block;color:rgb(255 255 255 / .6);font-size:12px}.ds-island-send{min-height:44px;padding:6px 12px;color:#000;background:#fff;border:0;border-radius:999px;font:600 15px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;cursor:pointer}.ds-island-close:hover{background:rgb(255 255 255 / .2)}.ds-island-send:hover{background:#eee}.ds-island-close:focus-visible,.ds-island-send:focus-visible{outline:2px solid #fff;outline-offset:2px}.ds-island-close:active,.ds-island-send:active{opacity:.8}"
+    },
+    {
+      "name": "Selected padding control",
+      "kind": "chip",
+      "refersTo": "padding-control-selected",
+      "description": "Illustrative panel sample of native edge selection and note context. Sample measurements are placeholders, not runtime evidence.",
+      "html": "<section class=\"ds-padding-bed\" aria-label=\"Illustrative padding selection\"><div class=\"ds-padding-row\"><button class=\"ds-edge ds-edge-selected\" aria-pressed=\"true\"><span>Left</span><strong>16 pt</strong></button><div class=\"ds-captured-sample\" aria-label=\"Illustrative captured component\"><span class=\"ds-selected-band\"></span><span class=\"ds-content-outline\">Sample</span></div><button class=\"ds-edge\" aria-pressed=\"false\"><span>Right</span><strong>16 pt</strong></button></div><p class=\"ds-padding-caption\">Included in note</p><p class=\"ds-padding-context\">Left padding: 16 pt (measured)</p></section>",
+      "css": ".ds-padding-bed{padding:16px;background:#000;color:#fff;border-radius:24px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif}.ds-padding-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ds-edge{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:56px;min-height:44px;padding:4px 6px;background:rgb(255 255 255 / .12);color:#fff;border:1px solid rgb(255 255 255 / .16);border-radius:8px;font:400 12px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;cursor:pointer}.ds-edge strong{font-weight:600;font-variant-numeric:tabular-nums}.ds-edge-selected{background:#fff;color:#000;border-color:#fff}.ds-captured-sample{position:relative;display:flex;align-items:center;justify-content:center;flex:1;min-width:100px;min-height:70px;background:#fff;color:#000;border:1px dashed #777;border-radius:8px}.ds-selected-band{position:absolute;inset:0 auto 0 0;width:16px;background:rgb(255 0 0 / .4);border-radius:8px 0 0 8px}.ds-content-outline{border:1.5px solid red;padding:2px;font-size:17px}.ds-padding-caption{margin:16px 0 4px;color:rgb(255 255 255 / .6);font-size:12px}.ds-padding-context{margin:0;font-size:12px}.ds-edge:hover{border-color:#fff}.ds-edge:focus-visible{outline:2px solid #fff;outline-offset:3px}.ds-edge:active{opacity:.8}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Black and white system style",
+    "overview": "Redline uses a compact native iOS overlay language: black panels, white controls and system typography. Its surfaces keep the same appearance over light and dark host apps, so the tool remains visually distinct from the screen being inspected.\n\nThis records the existing on-device system. The captured-component layout form inherits it as an opt-in Debug prototype; its experimental composition does not establish a new identity or promise general layout inspection.",
+    "keyCharacteristics": [
+      "Black surfaces and white type over any host app.",
+      "Native text styles, meaningful symbols and continuous corners.",
+      "Compact panels with reachable actions when content scrolls.",
+      "Red carries annotation and selection meaning."
+    ],
+    "rules": [
+      {
+        "name": "Overlay Identity",
+        "body": "Keep Redline's black and white surfaces consistent across host color schemes. Host content inside captures retains its own colors.",
+        "section": "colors"
+      },
+      {
+        "name": "Native Type",
+        "body": "Use native text styles and allow Dynamic Type to change the layout; do not replace them with fixed visual sizes.",
+        "section": "typography"
+      }
+    ],
+    "dos": [
+      "Do reuse the Mono colors and native text styles.",
+      "Do keep the host screen visible around compact overlay panels.",
+      "Do keep form actions reachable while long content scrolls.",
+      "Do pair selected padding with a white control, a shaded red edge and visible note context.",
+      "Do retain accessibility labels, selected values and adequate touch areas."
+    ],
+    "donts": [
+      "Don't introduce a custom brand palette or blue controls.",
+      "Don't add decorative metaphors or uppercase label rows.",
+      "Don't make host-capture colors part of Redline's palette.",
+      "Don't treat illustrative panel samples or the opt-in layout prototype as evidence of native runtime behavior."
+    ]
+  }
+}
