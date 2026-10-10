@@ -155,9 +155,11 @@ End with a short message that gives:
    - `claude auth login` (or `claude update`), when the `claude` command isn't signed in or is too old for the Claude app.
    - In Codex, open `/hooks` and trust "Report delivery".
    - Open a new terminal window, when the installer added `~/.local/bin` to `PATH`.
-2. Start a new Claude Code chat in the project, or restart this one: a chat loads Redline's MCP server when it starts. A Codex chat registers the next time the user sends it a message.
-3. Run the Debug build on a paired iPhone or a simulator. On an iPhone, allow the local network prompt the first time.
-4. Tap the floating Redline button, tap an element, write a note and tap Send. The first time, pick this chat in Send to.
+2. After the Mac installer finishes, open Redline and run `redline doctor --project <app-project-folder>` (or `~/.local/bin/redline doctor` if PATH is not ready). It checks the running Mac app, project access, report storage, Local Network access and a chat for the app, including chats in other checkouts. Follow the **Incomplete** actions you can resolve, then rerun doctor after each setup change. For a macOS permission prompt, tell the user which access Redline needs and let them approve it; an agent cannot grant that access. Exit `0` means the Mac checks passed; exit `1` means a step remains. Doctor uses a temporary storage probe without changing agent settings, contacting an iOS app or sending a report.
+3. Start a new Claude Code chat in the project, or restart this one: a chat loads Redline's MCP server when it starts. A Codex chat registers the next time the user sends it a message.
+4. Open Redline and allow Local Network and, when projects are there, Documents access. If Local Network was denied, enable Redline in System Settings > Privacy & Security > Local Network. Notifications are optional.
+5. Run the Debug build on a simulator or a physical iPhone. For an iPhone, pair it with Xcode, accept trust prompts, and enable Developer Mode in Settings > Privacy & Security; restart and confirm Enable. Keep it on the Mac's local network and allow the app's Local Network prompt. If denied, enable the app in Settings > Privacy & Security > Local Network. After the first install, quit and reopen Redline to rescan.
+6. Tap the floating Redline button, tap an element, write a note and tap Send. The first time, pick this chat in Send to. Confirm the note and snapshot arrive; neither the installer checklist nor doctor proves delivery.
 
 If the user hasn't run the installer yet, or it stopped, say that first, with the command or the fix.
 

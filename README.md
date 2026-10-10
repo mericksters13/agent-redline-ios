@@ -20,7 +20,7 @@ Redline is a SwiftUI annotation tool for agentic iOS development. Add `.redline(
   </picture>
 </p>
 
-Version 0.1.5, early development. Works with Claude Code and Codex only.
+Version 0.1.6, early development. Works with Claude Code and Codex only.
 
 ## How it works
 
@@ -133,6 +133,26 @@ The checklist names the steps only you can take, each with its command. The usua
 - **Open a new terminal** if the installer added `~/.local/bin` to your `PATH`.
 
 On first launch, macOS asks whether Redline may show notifications. If your projects live in `~/Documents`, macOS also asks for access to that folder. Allow it: Redline reads each session's project folder to learn which bundle IDs it builds. If macOS reports a new background item, that is Redline's login item.
+
+### Check what is still missing
+
+Run `redline doctor` from your app's project folder after installing, after an update, or when reports do not arrive. Use `--project <folder>` to select another project, and `--agent claude` or `--agent codex` to check a specific destination. By default, one working agent is enough. If this terminal cannot find `redline`, use `~/.local/bin/redline doctor` first.
+
+Doctor checks the Mac requirements for your first report:
+
+- The Redline Mac app is installed and running.
+- Redline can read the project's app targets, including their build-settings files.
+- Redline can write, read and remove a temporary file in its report inbox.
+- Redline can start its Bonjour discovery operation, which requires Local Network access.
+- A chat whose project builds the app is available through Codex's delivery handshake or a running Claude Code session's socket. A chat in another checkout of the same app counts too, just as it does in the report's chat picker. Connection failures are reported separately from a missing project chat.
+
+File and network checks run inside the Redline Mac app, using that app's access. They do not borrow Terminal's permissions. Doctor creates and removes a temporary storage probe; it does not contact an iOS app, submit a report, send a chat message, change agent settings, or install anything. macOS may show an access prompt during a check. Allow it and rerun doctor. If access is blocked, doctor gives the relevant setting or file-access fix. An unavailable check stays incomplete.
+
+Completed checks show a green check mark and **Done**; missing or incomplete steps show a red x and **Incomplete**, with an action. Notifications, login at startup and device connection are excluded.
+
+Piped output keeps the marks and labels without color codes. Set `NO_COLOR=1` to disable color in a terminal.
+
+Doctor exits with `1` when a Mac requirement is incomplete and `0` when its Mac checks pass. It checks Mac setup; it does not verify iOS app integration, iOS permissions or report delivery. Once the Mac checks pass, send a note from your Debug app.
 
 ## Try the demo
 
@@ -379,6 +399,7 @@ Install Xcode and select it: `sudo xcode-select -s /Applications/Xcode.app`.
 
 | Command | What it does |
 |---|---|
+| `redline doctor [--project <folder>] [--agent claude \| codex]` | Checks the Mac requirements for a first report and lists missing steps with actions. |
 | `redline status` | Shows whether Redline is running, the bundle IDs it accepts, the addresses and port builds connect to, each iPhone's state and the inbox. |
 | `redline check` | Prints the reports waiting for this project's bundle IDs. Printing claims them, so no other session receives them. |
 | `redline wait` | Waits for the next report for this project's bundle IDs, then prints it. |

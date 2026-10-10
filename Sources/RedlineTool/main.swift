@@ -8,7 +8,7 @@ import UserNotifications
 
 /// The tool's version, which the MCP server reports. scripts/build-hub-app.sh writes the same
 /// into the app bundle.
-let version = "0.1.5"
+let version = "0.1.6"
 
 /// The help text printed for `redline` with no or unknown arguments.
 let usage = """
@@ -23,6 +23,9 @@ let usage = """
           Waits for the next report for the project's apps, then prints it and takes it. Run in an
           agent's background, it wakes the chat when a report arrives. With several chats waiting,
           the one used most recently gets the report.
+      redline doctor [--project <folder>] [--agent claude | codex]
+          Checks Mac setup for the first report, using the running Redline Mac app.
+          Does not change agent settings or send a report. An access probe may show a system prompt.
       redline setup [--no-input]
           Checks that the claude command is installed, new enough and signed in, running claude
           update and claude auth login in this terminal when needed, and adds the Codex hook that
@@ -84,6 +87,21 @@ var arguments = Array(CommandLine.arguments.dropFirst())
 let paths = HubPaths.standard
 // Opened as an app bundle, it's the menu bar app.
 if arguments.isEmpty, Bundle.main.bundleURL.pathExtension == "app" { arguments = ["app"] }
+
+// Doctor runs before migration or startup and never changes agent settings.
+if arguments.first == "doctor" {
+    guard let options = Doctor.options(arguments.dropFirst()) else {
+        printError(usage)
+        exit(64)
+    }
+    let checks = Doctor.checks(project: options.project, agent: options.agent)
+    let color = Doctor.usesColor(
+        isTerminal: isatty(STDOUT_FILENO) != 0,
+        environment: ProcessInfo.processInfo.environment
+    )
+    print(Doctor.text(for: checks, version: version, color: color))
+    exit(Doctor.exitCode(for: checks))
+}
 
 // What the app and hub commands need is checked before the folder moves, which stops a hub of the
 // earlier version that works, so it's never stopped for one that can't start.
