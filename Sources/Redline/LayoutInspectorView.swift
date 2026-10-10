@@ -7,6 +7,7 @@ struct LayoutInspectorView: View {
     let image: UIImage?
     let selected: Set<LayoutInspection.Edge>
     let toggle: (LayoutInspection.Edge) -> Void
+    @Binding var isPreviewExpanded: Bool
     @State private var showsDetails = false
     @State private var showsParent = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -14,13 +15,25 @@ struct LayoutInspectorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let geometry = report.geometry, let image {
-                LayoutSnapshotView(geometry: geometry, image: image, selected: selected, toggle: toggle)
-                Text(geometry.padding.isEmpty ? "Padding measurements unavailable."
-                     : geometry.padding.contains(where: \.isSystemDefault)
-                        ? "System default padding · Showing measured spacing"
-                        : "Tap a red measurement line to include padding in the note.")
-                    .font(.caption)
-                    .foregroundStyle(Mono.secondary)
+                DisclosureGroup(isExpanded: $isPreviewExpanded) {
+                    LayoutSnapshotView(geometry: geometry, image: image, selected: selected, toggle: toggle)
+                        .padding(.top, 8)
+                    Text(geometry.padding.isEmpty ? "Padding measurements unavailable."
+                         : geometry.padding.contains(where: \.isSystemDefault)
+                            ? "System default padding · Showing measured spacing"
+                            : "Tap a red measurement line to include padding in the note.")
+                        .font(.caption)
+                        .foregroundStyle(Mono.secondary)
+                        .padding(.top, 8)
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Padding & frame").font(.subheadline).foregroundStyle(Mono.text)
+                        Text(previewSummary(geometry)).font(.caption).foregroundStyle(Mono.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(minHeight: 44, alignment: .leading)
+                }
+                .tint(Mono.secondary)
                 let context = report.context(for: selected)
                 if !context.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
@@ -58,6 +71,13 @@ struct LayoutInspectorView: View {
                 .accessibilityLabel(report.summary)
                 .accessibilityIdentifier("RedlineLayoutInspection")
         }
+    }
+
+    private func previewSummary(_ geometry: LayoutInspection.Geometry) -> String {
+        let padding = report.rows.filter { $0.title == "Padding" }.map(\.value).joined(separator: " + ")
+        let box = geometry.frame ?? geometry.bounds
+        let size = "\(geometry.frame == nil ? "Captured size" : "Frame") \(LayoutInspection.number(box.width)) × \(LayoutInspection.number(box.height)) pt"
+        return [padding, size].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private func disclosureTitle(_ text: String) -> some View {

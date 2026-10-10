@@ -151,6 +151,61 @@ final class LayoutPrototypeTests: XCTestCase {
     }
 
 
+    func testHierarchyAndCollapsiblePreview() {
+        let app = launch("early")
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.staticTexts["Fixed"].tap()
+        let left = app.buttons["RedlinePaddingLeft"]
+        XCTAssertTrue(left.waitForExistence(timeout: 5), app.debugDescription)
+        left.tap()
+        let context = app.staticTexts["RedlineLayoutContext"]
+        XCTAssertTrue(context.label.contains("Left padding: 16 pt (measured)"), context.label)
+        let preview = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Padding & frame")).firstMatch
+        XCTAssertTrue(preview.isHittable)
+        attach("Expanded padding preview", in: app)
+        preview.tap()
+        XCTAssertFalse(left.exists)
+        XCTAssertTrue(context.label.contains("Left padding: 16 pt (measured)"), context.label)
+        XCTAssertTrue(app.buttons["Add note"].isHittable)
+        attach("Collapsed padding preview", in: app)
+
+        let note = app.descendants(matching: .any)["RedlineNoteText"].firstMatch
+        note.tap()
+        note.typeText("Keep this draft")
+        let hierarchy = app.buttons["RedlineShowHierarchy"]
+        XCTAssertTrue(hierarchy.isHittable)
+        hierarchy.tap()
+        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Hierarchy"].exists)
+        XCTAssertFalse(left.exists)
+        attach("Layers icon opens hierarchy", in: app)
+        app.buttons["Done"].tap()
+        XCTAssertEqual(note.value as? String, "Keep this draft")
+        XCTAssertTrue(context.label.contains("Left padding: 16 pt (measured)"), context.label)
+        XCTAssertFalse(left.exists)
+        attach("Collapsed preview retains draft", in: app)
+
+        preview.tap()
+        XCTAssertTrue(left.waitForExistence(timeout: 5))
+        XCTAssertEqual(left.value as? String, "Included in note")
+        XCTAssertEqual(note.value as? String, "Keep this draft")
+        XCTAssertTrue(context.label.contains("Left padding: 16 pt (measured)"), context.label)
+        preview.tap()
+        app.buttons["Cancel"].tap()
+        app.buttons["Close annotate mode"].tap()
+        let nextFixture = app.staticTexts["Default padding"]
+        let nextCenter = CGVector(dx: nextFixture.frame.midX, dy: nextFixture.frame.midY)
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.coordinate(withNormalizedOffset: .zero).withOffset(nextCenter).tap()
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["RedlinePaddingTop"].exists)
+        preview.tap()
+        XCTAssertTrue(app.buttons["RedlinePaddingTop"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].tap()
+        app.buttons["Close annotate mode"].tap()
+        app.terminate()
+    }
+
     func testPaddingSelectionAndSavedContext() {
         let app = launch("early")
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()

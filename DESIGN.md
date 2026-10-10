@@ -131,6 +131,10 @@ The compact top capsule groups close, screen context, note count and annotation 
 
 ### Captured component and padding measurements
 
+The larger, unfilled layers symbol beside the component name opens the existing hierarchy flow. The control has no visible container. It is distinct from the chevrons that expand and collapse content.
+
+Padding & frame groups the component snapshot and red measurement lines under a native disclosure. A compact padding and size summary stays in its header. The preview starts expanded and remembers the choice during the session. Included in note and the written note stay outside this disclosure, so collapsing it preserves both the selected context and the draft.
+
 The opt-in Debug layout form crops only the selected component and its measured padding inside the note card. Surrounding container and frame space are excluded from the crop. Neutral shading marks measured padding, red outlines the content and red shading marks selected edges. Frame dimensions, or captured size when a frame is unavailable, remain text below the preview.
 
 Tappable red dimension lines have end ticks, with Top and Bottom above and below the crop and Left and Right close beside it. Each control shows its physical edge name and measured value. Selection thickens the red line, turns its value white and bold, shades the captured padding band red and adds visible context under Included in note. The visible lines have no tiles; their invisible rectangular touch areas remain at least 44 points in both dimensions.

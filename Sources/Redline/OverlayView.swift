@@ -23,6 +23,7 @@ struct OverlayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isNoteFocused: Bool
     @State private var isHierarchyExpanded = false
+    @State private var isLayoutPreviewExpanded = true
     @ScaledMetric(relativeTo: .caption) private var noteBadgeSize: CGFloat = 26
     @State private var cardHeight: CGFloat = 0
     /// The note card's element row and text field, which scroll when the card is capped.
@@ -544,6 +545,9 @@ struct OverlayView: View {
             isNoteFocused = !expanded && !session.showsLayoutPrototype
             openingCardHeight = 0
         }
+        .onChange(of: isLayoutPreviewExpanded) { _, _ in
+            openingCardHeight = 0
+        }
         .onDisappear {
             isHierarchyExpanded = false
             cardHeight = 0
@@ -632,14 +636,15 @@ struct OverlayView: View {
                     Button {
                         isHierarchyExpanded = true
                     } label: {
-                        noteCardName(pending: pending, showsDisclosure: true)
+                        noteCardName(pending: pending, showsHierarchyIcon: true)
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                             .contentShape(Rectangle())
                     }
                     .disabled(!session.screenReadIsCurrent)
-                    .accessibilityHint("View hierarchy")
+                    .accessibilityLabel("View hierarchy for \(noteCardTitle(pending: pending))")
+                    .accessibilityIdentifier("RedlineShowHierarchy")
                 } else {
-                    noteCardName(pending: pending, showsDisclosure: false)
+                    noteCardName(pending: pending, showsHierarchyIcon: false)
                 }
             }
 
@@ -660,7 +665,8 @@ struct OverlayView: View {
 
             if session.showsLayoutPrototype, pending == nil, !session.isNotingDrawing {
                 LayoutInspectorView(report: session.selectedLayout, image: session.selectedLayoutPreview(),
-                                    selected: session.selectedPadding, toggle: session.togglePadding)
+                                    selected: session.selectedPadding, toggle: session.togglePadding,
+                                    isPreviewExpanded: $isLayoutPreviewExpanded)
             }
 
             if !isHierarchyExpanded {
@@ -678,7 +684,7 @@ struct OverlayView: View {
         }
     }
 
-    private func noteCardName(pending: DebugSession.PendingAttachment?, showsDisclosure: Bool) -> some View {
+    private func noteCardName(pending: DebugSession.PendingAttachment?, showsHierarchyIcon: Bool) -> some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(isHierarchyExpanded ? "Hierarchy" : noteCardTitle(pending: pending))
@@ -691,9 +697,9 @@ struct OverlayView: View {
                 }
             }
             .lineLimit(1)
-            if showsDisclosure {
-                Image(systemName: "chevron.down")
-                    .font(.caption.weight(.semibold))
+            if showsHierarchyIcon {
+                Image(systemName: "square.3.layers.3d")
+                    .font(.title2.weight(.semibold))
                     .foregroundStyle(Mono.secondary)
                     .accessibilityHidden(true)
             }

@@ -115,7 +115,8 @@
       "Do keep the host screen visible around compact overlay panels.",
       "Do keep form actions reachable while long content scrolls.",
       "Do pair selected padding with a thicker red dimension line, a white value, a shaded red edge and visible note context.",
-      "Do retain accessibility labels, selected values and adequate touch areas."
+      "Do retain accessibility labels, selected values and adequate touch areas.",
+      "Do use the layers icon for hierarchy and a separate preview disclosure that preserves selected note context and draft text."
     ],
     "donts": [
       "Don't introduce a custom brand palette or blue controls.",

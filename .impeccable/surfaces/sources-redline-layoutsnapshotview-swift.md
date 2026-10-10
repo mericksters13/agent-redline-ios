@@ -2,7 +2,7 @@
 version: 1
 slug: "sources-redline-layoutsnapshotview-swift"
 primary_target: "Sources/Redline/LayoutSnapshotView.swift"
-related_targets: ["Sources/Redline/LayoutInspectorView.swift"]
+related_targets: ["Sources/Redline/LayoutInspectorView.swift", "Sources/Redline/OverlayView.swift"]
 ---
 
 # Captured component layout form
@@ -19,7 +19,7 @@ OWN-WORLD: Preserve Redline's black form, white native system text, and red anno
 
 STORY: The tester taps a measurement line, sees its padding highlighted, and saves that value with the note. Another tap removes it.
 
-FIRST VIEWPORT: Crop only the component and its padding. Left and Right dimensions sit close beside the crop; Top and Bottom remain above and below. Frame size and included context appear below; form actions remain reachable.
+FIRST VIEWPORT: A larger layers icon without a visible container beside the component name opens hierarchy. A separate Padding & frame chevron expands or collapses the snapshot and dimensions, keeping its summary, selected note context, and draft visible. The preview starts expanded and remembers the chosen state during the session. Crop only the component and its padding. Left and Right dimensions sit close beside the crop; Top and Bottom remain above and below. Frame size and included context appear below; form actions remain reachable.
 
 FORM: User-pinned storyboard-style dimension lines replace the prototype's edge tiles. This precisely specified refinement preserves the existing system style; no concept roll or generated comp applies.
 
