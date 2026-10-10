@@ -20,7 +20,7 @@ Redline is a SwiftUI annotation tool for agentic iOS development. Add `.redline(
   </picture>
 </p>
 
-Version 0.1.6, early development. Works with Claude Code and Codex only.
+Version 0.1.7, early development. Works with Claude Code and Codex only.
 
 ## How it works
 

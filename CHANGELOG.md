@@ -4,6 +4,19 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-11
+
+### Added
+
+- Experimental SwiftUI layout inspection in Debug builds. Supported selections show readable padding, frame, alignment, and parent layout settings. RedlineDemo enables inspection before its first render on Recipes and the Layout samples; other apps remain opt-in. Inspection uses underscored runtime APIs, and ambiguous or unsupported selections keep measurements unavailable.
+- A component snapshot inside the annotation form, cropped to the component and its own padding. Tap a red padding measurement to include that edge and its value in the note. Padding measurements stay hidden when their geometry cannot be verified.
+
+### Changed
+
+- The component snapshot starts collapsed and remembers its disclosure state during the session. Expanding or collapsing preserves the draft and selected padding, and keeps the snapshot and measurement lines inside the disclosure region throughout the animation.
+- A larger layers icon opens the component hierarchy. Briefly hold a row, then drag across visible rows to select components with live outline feedback. Tapping, branch folding, and scrolling remain available.
+- The annotation form fits above or below the selected component, scrolling excess content while keeping its footer visible. Collapsed forms keep their natural height without extra blank space. The form overlaps the component only when neither side has enough room.
+
 ## [0.1.6] - 2026-10-10
 
 ### Added
@@ -73,7 +86,8 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 First public release.
 
-[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.6...HEAD
+[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.7...HEAD
+[0.1.7]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.6...0.1.7
 [0.1.6]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.5...0.1.6
 [0.1.5]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.4...0.1.5
 [0.1.4]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.3...0.1.4
