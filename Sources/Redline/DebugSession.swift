@@ -1571,7 +1571,7 @@ final class DebugSession {
         return Self.crop(image, around: frame, isDrawing: isNotingDrawing)
     }
 
-    /// The captured component box, including its padding and any captured frame.
+    /// The captured component and its padding, excluding surrounding frame space.
     func selectedLayoutPreview() -> UIImage? {
         guard let bounds = selectedLayout.geometry?.bounds, let image = screenImage,
               CGRect(origin: .zero, size: image.size).contains(bounds),

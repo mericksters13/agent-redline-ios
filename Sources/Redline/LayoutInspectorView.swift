@@ -18,7 +18,7 @@ struct LayoutInspectorView: View {
                 Text(geometry.padding.isEmpty ? "Padding measurements unavailable."
                      : geometry.padding.contains(where: \.isSystemDefault)
                         ? "System default padding · Showing measured spacing"
-                        : "Tap padding to include it in the note.")
+                        : "Tap a red measurement line to include padding in the note.")
                     .font(.caption)
                     .foregroundStyle(Mono.secondary)
                 let context = report.context(for: selected)

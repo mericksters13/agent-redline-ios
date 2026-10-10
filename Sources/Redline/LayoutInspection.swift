@@ -106,8 +106,9 @@ struct LayoutInspection: Equatable, Sendable {
             return values.isEmpty ? "0 pt" : values.map(LayoutInspection.number).joined(separator: " + ") + " pt"
         }
 
+        /// The component and its padding; frame space is reported separately.
         var bounds: CGRect {
-            padding.reduce(frame ?? content) { $0.union($1.outer) }.union(content)
+            padding.reduce(content) { $0.union($1.outer) }
         }
     }
 

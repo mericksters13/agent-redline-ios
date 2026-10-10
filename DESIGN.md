@@ -40,15 +40,10 @@ components:
     textColor: "{colors.text}"
     rounded: "{rounded.panel}"
   padding-control:
-    backgroundColor: "{colors.fill}"
+    typography: "{typography.label}"
+  padding-control-selected:
     textColor: "{colors.text}"
     typography: "{typography.label}"
-    rounded: "{rounded.compact}"
-  padding-control-selected:
-    backgroundColor: "{colors.text}"
-    textColor: "{colors.surface}"
-    typography: "{typography.label}"
-    rounded: "{rounded.compact}"
 ---
 
 # Design System: Redline
@@ -74,8 +69,8 @@ The palette belongs to the overlay, while captured host content keeps its origin
 
 ### Primary
 
-- White controls identify primary actions and selected padding. Their labels turn black.
-- Red is semantic markup: element outlines, drawing strokes, saved markers and selected padding bands. Destructive actions also use red. Use the native semantic color in its existing context rather than creating a brand accent.
+- White controls identify primary actions. Their labels turn black. Selected padding values turn white while their dimension lines remain red.
+- Red is semantic markup: element outlines, drawing strokes, saved markers, tappable padding dimension lines and selected padding bands. Destructive actions also use red. Use the native semantic color in its existing context rather than creating a brand accent.
 
 ### Neutral
 
@@ -93,7 +88,7 @@ San Francisco is supplied by native system fonts. Frontmatter records the recurr
 
 - **Title:** subheadline with semibold weight for element names and primary actions.
 - **Body:** body for the multiline note field.
-- **Label:** caption for roles, measurements and supporting context; measured values may use semibold weight and monospaced digits.
+- **Label:** caption for roles, measurements and supporting context; measured values use semibold weight, bold when selected, and monospaced digits.
 - Footnote supports brief hints and inline errors. SF Symbols communicate actions with accessible labels.
 
 **The Native Type Rule.** Use native text styles and allow Dynamic Type to change the layout; do not replace them with fixed visual sizes.
@@ -102,7 +97,7 @@ San Francisco is supplied by native system fonts. Frontmatter records the recurr
 
 Panels use content-driven vertical stacks with left-aligned text and compact groups. The host screen remains visible around them. The top control capsule sits below the safe area; annotation panels are positioned within available screen and keyboard space.
 
-The annotation form separates scrolling content from its action footer. Constrained height, landscape and larger text must keep Cancel and the primary action reachable. Accessibility text sizes change measurement rows to vertical stacks and arrange padding controls in a two-column grid. Physical edge names remain Top, Right, Bottom and Left.
+The annotation form separates scrolling content from its action footer. Constrained height, landscape and larger text must keep Cancel and the primary action reachable. Accessibility text sizes change measurement rows to vertical stacks and arrange padding dimension controls in a two-column grid. Physical edge names remain Top, Right, Bottom and Left.
 
 There is no shared spacing scale or breakpoint system in these sources. Reuse the native component's measured layout instead of deriving global tokens from individual dimensions.
 
@@ -112,7 +107,7 @@ Opaque black surfaces, faint white boundaries and inset fills distinguish contro
 
 ## Shapes
 
-Panels use broad continuous rounded corners; note fields use smaller continuous corners. Compact preview beds, edge controls and element outlines share the compact radius. Capsules hold primary text actions and the top control group; circles hold icon controls and note numbers. Preserve these native shapes rather than substituting a single radius for every component.
+Panels use broad continuous rounded corners; note fields use smaller continuous corners. Compact preview beds and element outlines share the compact radius. The prototype's padding dimension controls use lines with end ticks and invisible rectangular touch areas, without tile fills or rounded control surfaces. Capsules hold primary text actions and the top control group; circles hold icon controls and note numbers. Preserve these native shapes rather than substituting a single radius for every component.
 
 Frontmatter radius values are portable representations of the recurring native point values, not a scale for host-app layout measurements.
 
@@ -134,11 +129,13 @@ The note card and notes list share black surfaces, broad corners, a faint bounda
 
 The compact top capsule groups close, screen context, note count and annotation actions. The available primary Send action uses the white capsule treatment. Labels and SF Symbols retain the same native hierarchy as the form.
 
-### Captured component and padding controls
+### Captured component and padding measurements
 
-The opt-in Debug layout form shows a captured component inside the note card. Neutral shading marks measured padding, red outlines the content and red shading marks selected edges. A dashed black-and-white frame remains visible over different captured colors.
+The opt-in Debug layout form crops only the selected component and its measured padding inside the note card. Surrounding container and frame space are excluded from the crop. Neutral shading marks measured padding, red outlines the content and red shading marks selected edges. Frame dimensions, or captured size when a frame is unavailable, remain text below the preview.
 
-Each physical edge control shows its name and measured value. Selection turns the control white with black text and adds visible context under Included in note. Unavailable measurements are disabled and explained. Layout and parent details remain disclosures. These are prototype behaviors, scoped to supported text matching and honest unavailable or ambiguous results.
+Tappable red dimension lines have end ticks, with Top and Bottom above and below the crop and Left and Right close beside it. Each control shows its physical edge name and measured value. Selection thickens the red line, turns its value white and bold, shades the captured padding band red and adds visible context under Included in note. The visible lines have no tiles; their invisible rectangular touch areas remain at least 44 points in both dimensions.
+
+At accessibility text sizes, the crop stays above a two-column measurement grid. Unavailable measurements are disabled and explained. Layout and parent details remain disclosures. These are prototype behaviors, scoped to supported text matching and honest unavailable or ambiguous results.
 
 ## Do's and Don'ts
 
@@ -147,7 +144,7 @@ Each physical edge control shows its name and measured value. Selection turns th
 - Do reuse the Mono colors and native text styles.
 - Do keep the host screen visible around compact overlay panels.
 - Do keep form actions reachable while long content scrolls.
-- Do pair selected padding with a white control, a shaded red edge and visible note context.
+- Do pair selected padding with a thicker red dimension line, a white value, a shaded red edge and visible note context.
 - Do retain accessibility labels, selected values and adequate touch areas.
 
 ### Don't:

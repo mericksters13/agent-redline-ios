@@ -93,6 +93,7 @@ struct LayoutInspectionTests {
         let result = inspection.report(selected)
         #expect(result.geometry?.content == text)
         #expect(result.geometry?.frame == box)
+        #expect(result.geometry?.bounds == padded)
         #expect(result.geometry?.padding == [.init(inner: text, outer: padded, isSystemDefault: false)])
         #expect(result.summary.contains("Padding: Horizontal · 16 pt"))
         #expect(result.summary.contains("Frame: 180 × 44 pt"))
@@ -131,6 +132,7 @@ struct LayoutInspectionTests {
         selected.frame = text
         let result = inspection.report(selected)
         #expect(result.geometry?.padding.map(\.outer) == [inner, outer])
+        #expect(result.geometry?.bounds == outer)
         #expect(result.rows.filter { $0.title == "Padding" }.count == 2)
     }
 

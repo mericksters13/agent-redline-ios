@@ -142,6 +142,8 @@ final class LayoutPrototypeTests: XCTestCase {
         XCTAssertTrue(result.label.contains("Frame: 180 × 44 pt"), result.label)
         app.buttons["RedlinePaddingLeft"].tap()
         XCTAssertTrue(app.staticTexts["RedlineLayoutContext"].label.contains("Left padding: 16 pt (measured)"))
+        // Allow the native pressed appearance to settle before capturing.
+        Thread.sleep(forTimeInterval: 0.35)
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = "Visual inspector ready"
         attachment.lifetime = .keepAlways
@@ -152,13 +154,26 @@ final class LayoutPrototypeTests: XCTestCase {
     func testPaddingSelectionAndSavedContext() {
         let app = launch("early")
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.staticTexts["Default padding"].tap()
+        let top = app.buttons["RedlinePaddingTop"]
+        let bottom = app.buttons["RedlinePaddingBottom"]
+        XCTAssertTrue(top.waitForExistence(timeout: 5))
+        top.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
+        bottom.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
+        let verticalContext = app.staticTexts["RedlineLayoutContext"]
+        XCTAssertTrue(verticalContext.label.contains("Top padding: 16 pt (measured; system default)"), verticalContext.label)
+        XCTAssertTrue(verticalContext.label.contains("Bottom padding: 16 pt (measured; system default)"), verticalContext.label)
+        app.buttons["Cancel"].tap()
+        app.buttons["Close annotate mode"].tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
         app.staticTexts["Fixed"].tap()
         let left = app.buttons["RedlinePaddingLeft"]
         let right = app.buttons["RedlinePaddingRight"]
         XCTAssertTrue(left.waitForExistence(timeout: 5))
-        left.tap()
-        right.tap()
-        right.tap()
+        // Tap the line near its end tick, away from the numeric label.
+        left.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.65)).tap()
+        right.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.65)).tap()
+        right.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.65)).tap()
         let context = app.staticTexts["RedlineLayoutContext"]
         XCTAssertTrue(context.label.contains("Left padding: 16 pt (measured)"), context.label)
         XCTAssertFalse(context.label.contains("Right padding"), context.label)
