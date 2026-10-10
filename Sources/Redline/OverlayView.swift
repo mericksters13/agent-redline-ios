@@ -620,25 +620,33 @@ struct OverlayView: View {
                 } else {
                     NumberBadge(number: session.nextNumber, size: noteBadgeSize)
                 }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(isHierarchyExpanded ? "Hierarchy" : noteCardTitle(pending: pending))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Mono.text)
-                    if !isHierarchyExpanded {
-                        Text(noteCardSubtitle(pending: pending))
-                            .font(.caption)
-                            .foregroundStyle(Mono.secondary)
+                if pending == nil, !session.isNotingDrawing, session.hierarchy != nil, !isHierarchyExpanded {
+                    Button {
+                        isHierarchyExpanded = true
+                    } label: {
+                        noteCardName(pending: pending, showsDisclosure: true)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
                     }
+                    .disabled(!session.screenReadIsCurrent)
+                    .accessibilityHint("View hierarchy")
+                } else {
+                    noteCardName(pending: pending, showsDisclosure: false)
                 }
-                .lineLimit(1)
-                Spacer(minLength: 0)
             }
 
             if pending == nil {
                 if session.isNotingDrawing {
                     enclosedLine
-                } else {
-                    ElementPathView(session: session, isExpanded: $isHierarchyExpanded, availableWidth: panelWidth - 32)
+                } else if isHierarchyExpanded, let hierarchy = session.hierarchy {
+                    ElementHierarchyView(
+                        hierarchy: hierarchy,
+                        selectedIndex: session.hierarchySelectionIndex,
+                        availableWidth: panelWidth - 32,
+                        select: session.selectHierarchyElement
+                    )
+                    .disabled(!session.screenReadIsCurrent)
+                    .transition(.identity)
                 }
             }
 
@@ -653,6 +661,29 @@ struct OverlayView: View {
                     .background(Mono.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .transition(.identity)
             }
+        }
+    }
+
+    private func noteCardName(pending: DebugSession.PendingAttachment?, showsDisclosure: Bool) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(isHierarchyExpanded ? "Hierarchy" : noteCardTitle(pending: pending))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Mono.text)
+                if !isHierarchyExpanded {
+                    Text(noteCardSubtitle(pending: pending))
+                        .font(.caption)
+                        .foregroundStyle(Mono.secondary)
+                }
+            }
+            .lineLimit(1)
+            if showsDisclosure {
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Mono.secondary)
+                    .accessibilityHidden(true)
+            }
+            Spacer(minLength: 0)
         }
     }
 
