@@ -4,9 +4,17 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-10
+
 ### Added
 
-- `redline doctor` checks the Mac requirements for a first report: the running app, project-file access, report storage, Local Network access and a chat that builds the app, including chats in other checkouts. Access checks run in the Redline Mac app, without contacting an iOS app. Completed checks have a green check mark; incomplete steps have a red x and an action that distinguishes a missing chat from a failed connection. Use `--project` and `--agent` to select the project and destination.
+- Browse the selected element's nearby accessibility hierarchy. Tap the downward chevron beside its name to see the owning component and its children, with the selected element highlighted. Indented rows and vertical lines show ownership, and branch arrows expand or collapse children.
+- `redline doctor` checks Mac setup for your first report: the running app, project access, report storage, Local Network access and a chat for the app. Access checks run in the Redline Mac app without contacting an iOS app. Completed checks have a green check mark; incomplete steps have a red x and a next action. Use `--project` and `--agent` to select the project and destination. Chats in another checkout of the same app count, and connection failures are distinguished from a missing chat.
+
+### Changed
+
+- The hierarchy replaces the note card's ancestor path and "Nothing larger to select" message. It stays anchored to the component originally touched while you browse, and Done restores the note editor without losing its draft or selected target.
+- Opening, closing and folding the hierarchy animate only the container height. Reduce Motion disables the animation.
 
 ## [0.1.5] - 2026-10-10
 
@@ -65,7 +73,8 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 First public release.
 
-[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.5...HEAD
+[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.6...HEAD
+[0.1.6]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.5...0.1.6
 [0.1.5]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.4...0.1.5
 [0.1.4]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.3...0.1.4
 [0.1.3]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.2...0.1.3
