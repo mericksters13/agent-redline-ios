@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The demo's root view: a list, a detail view, a form and a UIKit screen, one tab each.
+/// Sample screens for annotation, with layout inspection samples in Debug builds.
 struct DemoTabs: View {
     var body: some View {
         TabView {
@@ -18,6 +18,11 @@ struct DemoTabs: View {
             Tab("UIKit", systemImage: "switch.2") {
                 UIKitScreen()
             }
+            #if REDLINE
+            Tab("Layout", systemImage: "ruler") {
+                LayoutPrototypeScreen()
+            }
+            #endif
         }
     }
 }

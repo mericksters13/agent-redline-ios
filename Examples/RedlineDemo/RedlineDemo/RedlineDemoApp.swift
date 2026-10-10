@@ -5,8 +5,10 @@ import SwiftUI
 struct RedlineDemoApp: App {
     init() {
         #if REDLINE
-        if UserDefaults.standard.bool(forKey: "RedlineLayoutPrototype"),
-           UserDefaults.standard.string(forKey: "RedlineLayoutActivation") == "early" {
+        let defaults = UserDefaults.standard
+        defaults.register(defaults: ["RedlineLayoutInspection": true])
+        let activation = defaults.string(forKey: "RedlineLayoutActivation") ?? "early"
+        if activation == "early" {
             setenv("SWIFTUI_VIEW_DEBUG", "287", 1)
         }
         #endif

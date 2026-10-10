@@ -12,7 +12,10 @@ extension _UIHostingView: HostingLayoutDebugSource {}
 /// Uses an underscored debug API and reflected storage. Both may change between OS versions.
 @MainActor
 enum SwiftUILayoutInspector {
-    static var isEnabled: Bool { UserDefaults.standard.bool(forKey: "RedlineLayoutPrototype") }
+    static var isEnabled: Bool {
+        let defaults = UserDefaults.standard
+        return defaults.bool(forKey: "RedlineLayoutInspection") || defaults.bool(forKey: "RedlineLayoutPrototype")
+    }
 
     static func capture(in windows: [UIWindow]) -> LayoutInspection {
         guard isEnabled else { return LayoutInspection() }
@@ -42,14 +45,20 @@ enum SwiftUILayoutInspector {
             ))
             for child in children { append(child, parent: index, host: host, depth: depth + 1) }
         }
-        func visit(_ view: UIView) {
-            if let host = view as? any HostingLayoutDebugSource {
-                let roots = host._viewDebugData()
-                if let data = _ViewDebug.serializedData(roots) { serialized.append(data) }
-                for root in roots { append(root, parent: nil, host: view, depth: 0) }
-                return
+        @discardableResult
+        func visit(_ view: UIView) -> Bool {
+            guard !view.isHidden, view.alpha > 0.01 else { return false }
+            var hasNestedHost = false
+            for child in view.subviews {
+                if visit(child) { hasNestedHost = true }
             }
-            for child in view.subviews { visit(child) }
+            // Read the visible content hosts; a tab container's transition graph can trap.
+            if hasNestedHost { return true }
+            guard let host = view as? any HostingLayoutDebugSource else { return false }
+            let roots = host._viewDebugData()
+            if let data = _ViewDebug.serializedData(roots) { serialized.append(data) }
+            for root in roots { append(root, parent: nil, host: view, depth: 0) }
+            return true
         }
         for window in windows { visit(window) }
         // Opt-in local evidence only; this data never enters a Redline report.

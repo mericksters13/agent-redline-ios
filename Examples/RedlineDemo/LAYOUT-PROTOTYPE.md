@@ -1,16 +1,18 @@
 # SwiftUI layout prototype
 
-This DEV-45 experiment reads the hosted SwiftUI debug tree when Redline captures the screen. It is opt-in and compiled only in Debug. The demo fixtures do not pass their layout constants to the inspector. Tapping through the normal Redline picker compares accessibility text and bounds with runtime text nodes and their wrappers.
+This DEV-45 experiment reads the hosted SwiftUI debug tree when Redline captures the screen. It is compiled only in Debug and available from the demo's Layout tab. The demo fixtures do not pass their layout constants to the inspector. Tapping through the normal Redline picker compares accessibility text and bounds with runtime text nodes and their wrappers.
 
 ## Run
 
-Build the RedlineDemo scheme in Debug on an existing iOS simulator. Add these launch arguments:
+Build the RedlineDemo scheme in Debug and open the app normally on a device or existing simulator. Open Layout, tap Redline, then a sample. Runtime inspection activates in the App initializer before the first render. The Debug demo registers `RedlineLayoutInspection` as enabled without persisting that choice. This flag enables inspection independently of `RedlineLayoutPrototype`, which still opens the standalone fixture screen. Other host apps remain opt-in.
+
+For a standalone fixture screen and explicit activation experiments, add these launch arguments:
 
 ```text
 -RedlineLayoutPrototype YES -RedlineLayoutActivation early
 ```
 
-The demo sets `SWIFTUI_VIEW_DEBUG=287` in its App initializer for this mode. For launch-time activation, use `RedlineLayoutActivation external` and supply the environment variable in the scheme. `none` and `late` are negative controls; the UI test explicitly supplies `SWIFTUI_VIEW_DEBUG=0` for those modes. Late activation runs one second after the screen appears.
+The demo defaults to early activation and sets `SWIFTUI_VIEW_DEBUG=287` in its App initializer. An explicit activation mode overrides this default, preserving the negative controls. For launch-time activation, use `RedlineLayoutActivation external` and supply the environment variable in the scheme. `none` and `late` are negative controls; the UI test explicitly supplies `SWIFTUI_VIEW_DEBUG=0` for those modes. Late activation runs one second after the screen appears.
 
 Tap the Redline button, then a sample. The annotation form shows a captured crop of only the component and its padding, with measured padding shaded. Surrounding frame space is excluded from the crop; frame dimensions remain below it. Red lines with end ticks on the top, right, bottom, and left show measured padding in points; nested padding can read `5 + 5 pt`. Side labels sit beside the cropped padding. The crop may be scaled for display, but its labels keep the original measurements.
 
@@ -20,7 +22,7 @@ Tap a measurement line or its label to include that edge in the note; tap again 
 
 Expand Layout details for readable Padding, Frame, Alignment, and flexible width and height rows, then Parent layout for stack spacing and surrounding settings. The card scrolls when needed and keeps its note buttons visible. It opens without the keyboard; selecting padding does not open one.
 
-Cancel returns to picking; close annotate mode returns to the normal screen. Pass `-RedlineLayoutPrototype NO` to return to the regular demo.
+Cancel returns to picking; close annotate mode returns to the normal screen. Pass `-RedlineLayoutPrototype NO` to return to the regular demo with its Layout tab.
 
 ## Verification
 
@@ -30,6 +32,8 @@ Simulator review on 2026-10-10 passed four focused form tests, including the ind
 
 A collapse regression review on 2026-10-10 reproduced the snapshot drawing over the note context and details during the native disclosure transition. Clipping the disclosure confines the outgoing content to its shrinking area. Native simulator recordings and transition captures show three Flexible collapse/expand cycles with the lower rows unobscured. Both focused simulator tests passed. The repeated Flexible transition test also passed on an iPhone 17 Pro running iOS 27.0.1, retaining selected Top 7 pt context through all three cycles.
 
+Normal-launch integration on 2026-10-10 passed a simulator flow from Recipes to Layout, inspection of Fixed with runtime 180 × 44 pt frame and horizontal 16 pt padding, return to Recipes, and annotation of a recipe summary. Three repeated Flexible preview toggles passed with the updated hosting-view traversal. All 238 package tests, Debug and Release kit builds, and Debug and Release demo builds passed; the Release kit excluded the private activation symbol. A signed Debug build was installed on the iPhone 17 Pro. The normal-launch device UI test could not run because iOS rejected the test runner's developer certificate, so the new tab interaction is verified on the simulator only.
+
 The prototype also writes `layout-tree-*.json`, `layout-nodes.txt`, and `layout-elements.json` to the app's Documents directory while enabled. These are local diagnostic captures and are not added to Redline reports.
 
 ## Interpretation
@@ -38,6 +42,7 @@ The prototype also writes `layout-tree-*.json`, `layout-nodes.txt`, and `layout-
 - Text and bounds matching is experimental. Different-position duplicates can be distinguished; identical overlapping labels remain ambiguous. A unique text match without matching bounds is explicitly marked as an unverified candidate.
 - Default padding keeps its declaration as System default. When the tree supplies inner and outer bounds, Measured padding separately shows their distance. The form crop and measured frame size use captured geometry, including an immediate background node when its layout node omits bounds; missing bounds are not borrowed from arbitrary ancestors. An unspecified frame bound remains distinct from a declared value.
 - Only plain text selections are supported. Synthetic accessibility text without rendered geometry is excluded. Combined labels, custom layouts, localized or formatted text, transforms, scrolling, multiple windows, and other SDK versions require additional verification.
+- Capture reads visible hosting views with no nested visible hosting view. This avoids traversing a tab container's transition graph, which trapped on the tested iOS 27 runtime; ancestor settings stop at the captured host boundary.
 - Wrapper order is innermost first. Ancestor layouts are shown separately. The branch boundary is a prototype heuristic, not a reconstruction of the original Swift source expression.
 - Simulator evidence establishes behavior only on the tested simulator runtime. The iPhone 17 Pro check on iOS 27.0.1 establishes early activation and selected Flexible padding/collapse behavior on that device. Other physical-device configurations and selection types remain unverified.
 

@@ -54,6 +54,25 @@ final class LayoutPrototypeTests: XCTestCase {
         add(attachment)
     }
 
+    func testLayoutTabOnNormalLaunch() {
+        let app = XCUIApplication()
+        app.launchEnvironment["SWIFTUI_VIEW_DEBUG"] = "0"
+        app.launch()
+        let tabs = app.tabBars
+        XCTAssertTrue(tabs.buttons["Recipes"].waitForExistence(timeout: 10))
+        tabs.buttons["Layout"].tap()
+        XCTAssertTrue(app.staticTexts["Fixed"].waitForExistence(timeout: 5))
+        attach("Layout samples in the demo tab", in: app)
+        let result = inspect("Fixed", in: app)
+        XCTAssertTrue(result.contains("Frame: 180 × 44 pt"), result)
+        XCTAssertTrue(result.contains("Padding: Horizontal · 16 pt"), result)
+        tabs.buttons["Recipes"].tap()
+        XCTAssertTrue(app.navigationBars["Recipes"].exists)
+        let recipe = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "list.row.", ".summary")).firstMatch
+        _ = inspect(recipe.label, in: app)
+        app.terminate()
+    }
+
     func testMeasuredOverlayStates() {
         let app = launch("early")
         for (label, expected) in [("Fixed", "Frame: 180 × 44 pt"), ("Nested", "Leading 5 pt"),

@@ -63,6 +63,12 @@ This records the existing on-device system. The captured-component layout form i
 - Compact panels with reachable actions when content scrolls.
 - Red carries annotation and selection meaning.
 
+## Demo wording
+
+The demo serves developers trying annotation, component selection, and layout inspection. Keep navigation labels literal and brief, using the existing Recipes, Tonight, Plan, and UIKit tabs as the pattern. Layout names the sample screen; Padding & frame names the inspector disclosure. Explain the next action in plain language, and keep experimental or unavailable results accurate. Preserve the existing sample instructions and physical edge names rather than adding setup terms to navigation.
+
+This wording follows the app's current [demo screens and actions](Examples/RedlineDemo/README.md), the [layout inspector's supported behavior](Examples/RedlineDemo/LAYOUT-PROTOTYPE.md), and the native overlay conventions recorded here.
+
 ## Colors
 
 The palette belongs to the overlay, while captured host content keeps its original appearance. The frontmatter records the shared colors from `Mono.swift`.
