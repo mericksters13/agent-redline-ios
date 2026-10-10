@@ -153,8 +153,10 @@ final class LayoutPrototypeTests: XCTestCase {
 
     func testHierarchyAndCollapsiblePreview() {
         let app = launch("early")
+        let fixture = app.staticTexts["Fixed"]
+        let center = CGVector(dx: fixture.frame.midX, dy: fixture.frame.midY)
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
-        app.staticTexts["Fixed"].tap()
+        app.coordinate(withNormalizedOffset: .zero).withOffset(center).tap()
         let left = app.buttons["RedlinePaddingLeft"]
         XCTAssertTrue(left.waitForExistence(timeout: 5), app.debugDescription)
         left.tap()
@@ -201,6 +203,38 @@ final class LayoutPrototypeTests: XCTestCase {
         XCTAssertFalse(app.buttons["RedlinePaddingTop"].exists)
         preview.tap()
         XCTAssertTrue(app.buttons["RedlinePaddingTop"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].tap()
+        app.buttons["Close annotate mode"].tap()
+        app.terminate()
+    }
+
+    func testRepeatedFlexiblePreviewToggles() {
+        let app = launch("early")
+        let fixture = app.staticTexts["Flexible"]
+        let center = CGVector(dx: fixture.frame.midX, dy: fixture.frame.midY)
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.coordinate(withNormalizedOffset: .zero).withOffset(center).tap()
+        let top = app.buttons["RedlinePaddingTop"]
+        XCTAssertTrue(top.waitForExistence(timeout: 5))
+        top.tap()
+        let context = app.staticTexts["RedlineLayoutContext"]
+        XCTAssertTrue(context.label.contains("Top padding: 7 pt (measured)"), context.label)
+        let preview = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Padding & frame")).firstMatch
+        attach("Flexible preview expanded", in: app)
+        for cycle in 1...3 {
+            preview.tap()
+            XCTAssertFalse(top.exists)
+            XCTAssertTrue(app.buttons["Layout details"].isHittable)
+            XCTAssertTrue(app.buttons["Add note"].isHittable)
+            XCTAssertTrue(context.label.contains("Top padding: 7 pt (measured)"), context.label)
+            attach("Flexible preview collapsing \(cycle)", in: app)
+            Thread.sleep(forTimeInterval: 0.5)
+            attach("Flexible preview collapsed \(cycle)", in: app)
+            preview.tap()
+            XCTAssertTrue(top.waitForExistence(timeout: 5))
+            XCTAssertEqual(top.value as? String, "Included in note")
+            attach("Flexible preview expanding \(cycle)", in: app)
+        }
         app.buttons["Cancel"].tap()
         app.buttons["Close annotate mode"].tap()
         app.terminate()

@@ -34,6 +34,8 @@ struct LayoutInspectorView: View {
                     .frame(minHeight: 44, alignment: .leading)
                 }
                 .tint(Mono.secondary)
+                // Keep the outgoing snapshot inside the disclosure as its height contracts.
+                .clipped()
                 let context = report.context(for: selected)
                 if !context.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {

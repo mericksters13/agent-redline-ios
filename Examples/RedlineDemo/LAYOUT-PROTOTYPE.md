@@ -14,7 +14,7 @@ The demo sets `SWIFTUI_VIEW_DEBUG=287` in its App initializer for this mode. For
 
 Tap the Redline button, then a sample. The annotation form shows a captured crop of only the component and its padding, with measured padding shaded. Surrounding frame space is excluded from the crop; frame dimensions remain below it. Red lines with end ticks on the top, right, bottom, and left show measured padding in points; nested padding can read `5 + 5 pt`. Side labels sit beside the cropped padding. The crop may be scaled for display, but its labels keep the original measurements.
 
-Use the larger layers icon beside the component name to open its hierarchy. It has no visible container. Padding & frame has a separate chevron: collapse it to hide the captured component and measurement lines, or expand it to inspect them again. Selected padding stays under Included in note, and the written note is preserved. The preview starts expanded and remembers the chosen state during the session, including when another component is selected.
+Use the larger layers icon beside the component name to open its hierarchy. It has no visible container. Padding & frame has a separate chevron: collapse it to hide the captured component and measurement lines, or expand it to inspect them again. The snapshot and lines stay clipped to the disclosure while its height changes, so they cannot draw over the rows below it. Selected padding stays under Included in note, and the written note is preserved. The preview starts expanded and remembers the chosen state during the session, including when another component is selected.
 
 Tap a measurement line or its label to include that edge in the note; tap again to remove it. The thin line has an invisible touch area of at least 44 points. Selected edges highlight in the crop, and Included in note previews the context. Add note saves that context with the written note, so existing report and Mac readers receive it. Nothing is added automatically. A captured zero-distance edge can be selected; missing geometry stays unavailable.
 
@@ -28,6 +28,8 @@ Run the demo scheme's `LayoutPrototypeTests` on one existing simulator with para
 
 Simulator review on 2026-10-10 passed four focused form tests, including the independent hierarchy and preview controls, draft and selection retention, large text, and landscape. Native captures show the larger unfilled icon and the compact collapsed form with retained context. The package suite passed all 238 tests; generic simulator Debug and Release kit builds and the Debug demo build passed, and the Release kit excluded the private activation symbol.
 
+A collapse regression review on 2026-10-10 reproduced the snapshot drawing over the note context and details during the native disclosure transition. Clipping the disclosure confines the outgoing content to its shrinking area. Native simulator recordings and transition captures show three Flexible collapse/expand cycles with the lower rows unobscured. Both focused simulator tests passed. The repeated Flexible transition test also passed on an iPhone 17 Pro running iOS 27.0.1, retaining selected Top 7 pt context through all three cycles.
+
 The prototype also writes `layout-tree-*.json`, `layout-nodes.txt`, and `layout-elements.json` to the app's Documents directory while enabled. These are local diagnostic captures and are not added to Redline reports.
 
 ## Interpretation
@@ -37,7 +39,7 @@ The prototype also writes `layout-tree-*.json`, `layout-nodes.txt`, and `layout-
 - Default padding keeps its declaration as System default. When the tree supplies inner and outer bounds, Measured padding separately shows their distance. The form crop and measured frame size use captured geometry, including an immediate background node when its layout node omits bounds; missing bounds are not borrowed from arbitrary ancestors. An unspecified frame bound remains distinct from a declared value.
 - Only plain text selections are supported. Synthetic accessibility text without rendered geometry is excluded. Combined labels, custom layouts, localized or formatted text, transforms, scrolling, multiple windows, and other SDK versions require additional verification.
 - Wrapper order is innermost first. Ancestor layouts are shown separately. The branch boundary is a prototype heuristic, not a reconstruction of the original Swift source expression.
-- Simulator evidence establishes behavior only on the tested simulator runtime. Physical-device behavior is unverified.
+- Simulator evidence establishes behavior only on the tested simulator runtime. The iPhone 17 Pro check on iOS 27.0.1 establishes early activation and selected Flexible padding/collapse behavior on that device. Other physical-device configurations and selection types remain unverified.
 
 ## Research pointers
 
