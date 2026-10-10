@@ -40,6 +40,7 @@ final class Hub: @unchecked Sendable {
     private let claudeChats: @Sendable () -> [ClaudeSessions.Session]
     private var simulators: SimulatorWatcher?
     private var listener: HubListener?
+    private var doctor: DoctorConnection?
     private var handoff: Handoff?
     private var discovery: DispatchSourceTimer?
     /// The descriptor that holds the lock on `hub.pid` while the hub runs.
@@ -183,6 +184,9 @@ final class Hub: @unchecked Sendable {
         listener?.start()
         // A listener that failed at once has stopped the hub, and `whenListenerFails` says so.
         guard !isStopped else { return true }
+        doctor = DoctorConnection.start(paths: paths) { [weak self] request in
+            self?.doctorReply(request) ?? DoctorConnection.Reply(id: request.id, pid: 0, isMacApp: false, checks: [])
+        }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: Self.discoveryInterval, leeway: .seconds(60))
         timer.setEventHandler { [weak self] in self?.discover(includingNewApps: true) }
@@ -216,6 +220,7 @@ final class Hub: @unchecked Sendable {
                 watchers = nil
             }
             network.cancel()
+            doctor?.stop()
             listener?.stop()
             // Before the simulator watcher: stopping it waits for a rescan under way, and hand-overs
             // queued meanwhile, or reports that rescan finds, must not start new chats.
@@ -742,6 +747,25 @@ final class Hub: @unchecked Sendable {
     }
 
     // MARK: - Status
+
+    /// File reads and network access happen in the Mac app that receives reports.
+    private func doctorReply(_ request: DoctorConnection.Request) -> DoctorConnection.Reply {
+        let isMacApp =
+            Bundle.main.bundleURL.pathExtension == "app" && Bundle.main.bundleIdentifier == HubProcess.appBundleID
+        guard isMacApp else {
+            return DoctorConnection.Reply(id: request.id, pid: getpid(), isMacApp: false, checks: [])
+        }
+        let project = URL(filePath: request.project).standardizedFileURL
+        var error: Error?
+        let ids = ProjectApps.bundleIDs(in: project, onReadError: { if error == nil { error = $0 } })
+        var checks = [DoctorRuntime.projectCheck(project, bundleIDs: ids, error: error)]
+        checks.append(DoctorRuntime.storageCheck(paths: paths))
+        checks.append(DoctorRuntime.networkCheck())
+        if !ids.isEmpty, error == nil {
+            checks.append(DoctorRuntime.destinationCheck(project: project, agent: request.agent))
+        }
+        return DoctorConnection.Reply(id: request.id, pid: getpid(), isMacApp: true, checks: checks)
+    }
 
     /// Records where a phone stands, for the panel and `redline status`.
     func phoneDidChange(_ phone: Devicectl.Phone, state phoneState: PhoneState) {

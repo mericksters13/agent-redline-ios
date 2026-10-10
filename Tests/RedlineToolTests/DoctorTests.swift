@@ -1,76 +1,37 @@
 #if os(macOS)
 import Darwin
 import Foundation
+import Network
 import Testing
 @testable import RedlineTool
 
 struct DoctorTests {
     private let temporary = TemporaryFolder("DoctorTests")
 
-    private func write(_ contents: String, to file: URL, executable: Bool = false) throws {
+    private func write(_ contents: String, to file: URL) throws {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(contents.utf8).write(to: file)
-        if executable { try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path) }
     }
 
-    @Test func toolchainFailuresGiveFixesWithoutRunningThem() {
-        var calls: [[String]] = []
-        let checks = Doctor.toolchainChecks(
-            macOS: OperatingSystemVersion(majorVersion: 14, minorVersion: 0, patchVersion: 0)
-        ) { url, arguments in
-            calls.append([url.path] + arguments)
-            return nil
-        }
-        #expect(checks.allSatisfy { $0.status == .needsYou })
-        #expect(checks.first?.detail.contains("Software Update") == true)
-        #expect(checks.first { $0.name == "Xcode" }?.detail.contains("sudo xcode-select") == true)
-        #expect(
-            calls == [
-                ["/usr/bin/xcodebuild", "-version"],
-                ["/usr/bin/xcrun", "--find", "devicectl"],
-                ["/usr/bin/xcrun", "swift", "--version"],
-            ]
-        )
+    @Test func optionsSelectOneProjectAndAgent() throws {
+        let options = try #require(Doctor.options(["--project", "/tmp/App", "--agent", "codex"][...]))
+        #expect(options.project.path == "/tmp/App")
+        #expect(options.agent == "codex")
+        #expect(Doctor.options([])?.agent == "auto")
+        #expect(Doctor.options(["--agent", "other"][...]) == nil)
+        #expect(Doctor.options(["--project"][...]) == nil)
+        #expect(Doctor.options(["--device", "phone"][...]) == nil)
     }
 
-    @Test func theOldestToolchainPassesAndUnfinishedComponentsNeedAction() {
-        let checks = Doctor.toolchainChecks { url, arguments in
-            switch arguments {
-            case ["-version"]: "Xcode 26.0.1\nBuild version 17A400"
-            case ["-license", "check"]: ""
-            case ["-checkFirstLaunchStatus"]: nil
-            case ["--find", "devicectl"]: "/tool/devicectl"
-            case ["swift", "--version"]: "Apple Swift version 6.2 (swiftlang)"
-            default: nil
-            }
-        }
-        #expect(checks.first { $0.name == "Xcode" }?.status == .done)
-        #expect(checks.first { $0.name == "Swift" }?.status == .done)
-        #expect(
-            checks.first { $0.name == "Xcode components" }?.detail.contains("sudo xcodebuild -runFirstLaunch") == true
-        )
-        #expect(Doctor.exitCode(for: checks) == 1)
-    }
-
-    @Test func aShadowedCommandAndStoppedHubAreNotReportedAsReady() throws {
+    @Test func missingOrStoppedAppGivesAnActionWithoutInstallingOrStartingIt() {
         let home = temporary.url
-        let command = home.appending(path: ".local/bin/redline")
-        let other = home.appending(path: "other/redline")
-        try write("#!/bin/sh\nexit 0", to: command, executable: true)
-        try write("#!/bin/sh\nexit 0", to: other, executable: true)
-        let checks = Doctor.installationChecks(
-            home: home,
-            environment: [
-                "PATH": "\(other.deletingLastPathComponent().path):\(command.deletingLastPathComponent().path)"
-            ],
-            app: nil
-        )
-        #expect(checks.first { $0.name == "Redline command" }?.status == .done)
-        #expect(checks.first { $0.name == "Terminal PATH" }?.status == .needsYou)
-        #expect(checks.first { $0.name == "Redline hub" }?.detail.contains("open -b com.agentredline.hub") == true)
-        #expect(
-            !FileManager.default.fileExists(atPath: home.appending(path: "Library/Application Support/Redline").path)
-        )
+        let missing = Doctor.installationChecks(home: home, app: nil)
+        #expect(missing.count == 1)
+        #expect(missing.first?.status == .needsYou)
+        #expect(missing.first?.detail.contains("npx agent-redline-ios") == true)
+        let stopped = Doctor.installationChecks(home: home, app: home.appending(path: "Redline.app"))
+        #expect(stopped.first?.detail.contains("open -b com.agentredline.hub") == true)
+        #expect(!FileManager.default.fileExists(atPath: home.appending(path: "Library").path))
     }
 
     @Test func aLockedHubWithStaleStatusNeedsAttentionAndStaysRunning() throws {
@@ -79,109 +40,140 @@ struct DoctorTests {
         try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
         let lock = try #require(HubProcess.lock(paths))
         defer { close(lock) }
-        let stale = HubStatus(
-            pid: -1,
-            startedAt: .now,
-            apps: [],
-            hosts: ["127.0.0.1"],
-            port: 47361,
-            phones: [],
-            simulatorContainers: 0
-        )
-        try HubPaths.encoder.encode(stale).write(to: paths.status)
+        try saveStatus(pid: -1, paths: paths)
         let before = try Data(contentsOf: paths.status)
-        let checks = Doctor.installationChecks(home: home, environment: [:], app: nil)
-        #expect(checks.first { $0.name == "Redline hub" }?.status == .needsYou)
+        let checks = Doctor.installationChecks(home: home, app: nil)
+        #expect(checks.first?.status == .needsYou)
         #expect(HubProcess.running(paths) == getpid())
         #expect(try Data(contentsOf: paths.status) == before)
     }
 
-    @Test func codexRequiresTheCurrentPromptCommandRatherThanAnOldHookOrDisplayName() throws {
-        let file = temporary.url.appending(path: "hooks.json")
-        let command = temporary.url.appending(path: "redline")
-        var settings = AgentSettings.adding(.codex, to: [:], executable: command.path)
-        try write(try sortedJSON(settings), to: file)
-        let before = try Data(contentsOf: file)
-        #expect(Doctor.codexHookCheck(file: file, command: command).status == .done)
-        #expect(try Data(contentsOf: file) == before)
-        settings = AgentSettings.adding(
-            .codex,
-            to: [:],
-            executable: command.deletingLastPathComponent().appending(path: "agentic-debugging").path
+    private func saveStatus(pid: Int32, paths: HubPaths) throws {
+        let status = HubStatus(
+            pid: pid,
+            startedAt: .now,
+            apps: [],
+            hosts: [],
+            port: 47361,
+            phones: [],
+            simulatorContainers: 0
         )
-        try write(try sortedJSON(settings), to: file)
-        #expect(Doctor.codexHookCheck(file: file, command: command).status == .needsYou)
-        try write("{\"hooks\":{\"Stop\":[{\"hooks\":[{\"statusMessage\":\"Report delivery\"}]}]}}", to: file)
-        #expect(Doctor.codexHookCheck(file: file, command: command).status == .needsYou)
+        try HubPaths.encoder.encode(status).write(to: paths.status)
     }
 
-    @Test func malformedSettingsAreNotTreatedAsMissingAndDoNotLeakTheirContents() throws {
-        let file = temporary.url.appending(path: "settings.json")
-        let secret = "secret-value-that-must-not-be-printed"
-        try write("{broken \(secret)", to: file)
-        let before = try Data(contentsOf: file)
-        let checks = [Doctor.mcpCheck(file: file, command: file), Doctor.codexHookCheck(file: file, command: file)]
-        #expect(checks.allSatisfy { $0.status == .needsYou })
-        #expect(checks.allSatisfy { $0.detail.contains("JSON object") })
-        #expect(!Doctor.text(for: checks, version: "test").contains(secret))
-        #expect(try Data(contentsOf: file) == before)
-    }
-
-    @Test func mcpChecksItsCommandAndArgumentsAndNeverReplacesAConflict() throws {
-        let file = temporary.url.appending(path: ".claude.json")
-        let command = temporary.url.appending(path: "redline")
-        #expect(Doctor.mcpCheck(file: file, command: command).status == .needsYou)
-        try write(try sortedJSON(["mcpServers": ["redline": ["command": command.path, "args": ["mcp"]]]]), to: file)
-        #expect(Doctor.mcpCheck(file: file, command: command).status == .done)
-        try write(try sortedJSON(["mcpServers": ["redline": ["command": command.path, "args": ["remove"]]]]), to: file)
-        let before = try Data(contentsOf: file)
-        #expect(Doctor.mcpCheck(file: file, command: command).status == .needsYou)
-        #expect(try Data(contentsOf: file) == before)
-    }
-
-    @Test func agentSignInFailuresGiveCommandsAndNoAuthOutput() {
-        #expect(Doctor.claudeCheck(.needs(.signIn)).detail.contains("claude auth login"))
-        var calls: [[String]] = []
-        let check = Doctor.codexCommandCheck(command: URL(filePath: "/codex")) { _, arguments in
-            calls.append(arguments)
-            return arguments == ["--version"] ? "codex-cli test" : nil
-        }
-        #expect(check.status == .needsYou)
-        #expect(check.detail.contains("codex login"))
-        #expect(calls == [["--version"], ["login", "status"]])
-    }
-
-    @Test func passingAutomaticChecksStillRequireManualDeliveryVerification() {
-        let checks = [Doctor.Check(status: .done, name: "Setup", detail: "Ready.")] + Doctor.manualChecks
-        #expect(Doctor.exitCode(for: checks) == 0)
+    @Test(arguments: ["stale request", "wrong process", "terminal hub", "old app", "passed"])
+    func runtimeRepliesMustComeFromThisRequestAndTheRunningMacApp(_ scenario: String) async throws {
+        // Short enough for Darwin's Unix socket path limit.
+        let home = URL(filePath: "/tmp/rld-" + UUID().uuidString.prefix(8))
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = HubPaths(root: home.appending(path: "Library/Application Support/Redline"))
+        try FileManager.default.createDirectory(at: paths.hub, withIntermediateDirectories: true)
+        let lock = try #require(HubProcess.lock(paths))
+        defer { close(lock) }
+        try saveStatus(pid: getpid(), paths: paths)
+        let server = try #require(
+            DoctorConnection.start(paths: paths) { request in
+                DoctorConnection.Reply(
+                    id: scenario == "stale request" ? UUID() : request.id,
+                    pid: scenario == "wrong process" ? -1 : getpid(),
+                    isMacApp: scenario != "terminal hub",
+                    checks: scenario == "old app"
+                        ? [] : [Doctor.Check(status: .done, name: "Project access", detail: "Read.")]
+                )
+            }
+        )
+        defer { server.stop() }
+        let checks = await offPool { Doctor.checks(project: home, home: home, app: nil) }
+        #expect(Doctor.exitCode(for: checks) == (scenario == "passed" ? 0 : 1))
+        #expect(checks.contains { $0.name == "Project access" } == (scenario == "passed"))
         let text = Doctor.text(for: checks, version: "test")
-        #expect(text.contains("Check yourself"))
-        #expect(text.contains("Developer Mode, restart, and confirm Enable"))
-        #expect(text.contains("does not request or verify"))
-        #expect(text.contains("confirm your first report arrives"))
+        #expect(!text.contains("Check yourself"))
+        #expect(!text.contains("Developer Mode"))
+        #expect(!text.contains("pair"))
+        let permissions = try FileManager.default.attributesOfItem(
+            atPath: paths.hub.appending(path: "doctor/socket").path
+        )
+        #expect((permissions[.posixPermissions] as? NSNumber)?.intValue == 0o600)
     }
 
-    @Test func plainOutputKeepsStatusMarksAndDoesNotColorUnverifiedChecks() {
+    @Test func unknownNetworkStateIsIncompleteAndNotCalledDenied() {
+        for state: NWBrowser.State? in [
+            nil, .setup, .cancelled, .failed(.posix(.ENETDOWN)), .waiting(.posix(.ENETDOWN)),
+        ] {
+            let check = DoctorRuntime.networkCheck(state: state)
+            #expect(check.status == .needsYou)
+            #expect(check.detail.contains("does not establish a permission denial"))
+        }
+        let denied = DoctorRuntime.networkCheck(state: .waiting(.dns(-65570)))
+        #expect(denied.status == .needsYou)
+        #expect(denied.detail.contains("System Settings > Privacy & Security > Local Network"))
+        #expect(DoctorRuntime.networkCheck(state: .ready).status == .done)
+    }
+
+    @Test func unreadableProjectIsIncompleteEvenWhenSomeTargetsWereFound() {
+        let denied = CocoaError(.fileReadNoPermission)
+        let check = DoctorRuntime.projectCheck(temporary.url, bundleIDs: ["com.example.app"], error: denied)
+        #expect(check.status == .needsYou)
+        #expect(check.detail.contains("Files & Folders"))
+        #expect(DoctorRuntime.projectCheck(temporary.url, bundleIDs: [], error: nil).status == .needsYou)
+        #expect(DoctorRuntime.projectCheck(temporary.url, bundleIDs: ["com.example.app"], error: nil).status == .done)
+    }
+
+    @Test func missingBuildSettingsAreReportedWithoutChangingTheFiles() throws {
+        let file = temporary.url.appending(path: "App.xcconfig")
+        try write("#include \"Required.xcconfig\"\nPRODUCT_BUNDLE_IDENTIFIER = com.example.app", to: file)
+        var errors: [Error] = []
+        let settings = ProjectApps.xcconfigSettings(at: file, onReadError: { errors.append($0) })
+        #expect(settings["PRODUCT_BUNDLE_IDENTIFIER"] == "com.example.app")
+        #expect(errors.count == 1)
+        try write("#include? \"Optional.xcconfig\"", to: file)
+        errors.removeAll()
+        _ = ProjectApps.xcconfigSettings(at: file, onReadError: { errors.append($0) })
+        #expect(errors.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: temporary.url.appending(path: "Required.xcconfig").path))
+    }
+
+    @Test func storageProbeCleansUpAndPreservesReports() throws {
+        let paths = HubPaths(root: temporary.url)
+        let report = paths.inbox.appending(path: "com.example.app/report/marker")
+        try write("existing report", to: report)
+        #expect(DoctorRuntime.storageCheck(paths: paths).status == .done)
+        #expect(try String(contentsOf: report, encoding: .utf8) == "existing report")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: paths.inbox.path) == ["com.example.app"])
+    }
+
+    @Test func storageFailureDoesNotCreateAReportOrOverwriteTheBlockingFile() throws {
+        let paths = HubPaths(root: temporary.url)
+        try write("keep", to: paths.inbox)
+        let check = DoctorRuntime.storageCheck(paths: paths)
+        #expect(check.status == .needsYou)
+        #expect(try String(contentsOf: paths.inbox, encoding: .utf8) == "keep")
+    }
+
+    @Test func outputColorsOnlyCheckedStatesAndDescribesMacScope() {
         let checks = [
-            Doctor.Check(status: .done, name: "Xcode", detail: "Ready."),
-            Doctor.Check(status: .needsYou, name: "Hub", detail: "Open Redline."),
-            Doctor.Check(status: .skipped, name: "Optional agent", detail: "Not needed."),
-            Doctor.Check(status: .check, name: "Permission", detail: "Not verified."),
+            Doctor.Check(status: .done, name: "Project access", detail: "Read."),
+            Doctor.Check(status: .needsYou, name: "Local Network access", detail: "Allow Redline."),
         ]
         let plain = Doctor.text(for: checks, version: "test")
-        #expect(plain.contains("✓ [Done] Xcode"))
-        #expect(plain.contains("✗ [Incomplete] Hub"))
+        #expect(plain.contains("✓ [Done] Project access"))
+        #expect(plain.contains("✗ [Incomplete] Local Network access"))
+        #expect(plain.contains("1 step remains on the Mac"))
         #expect(!plain.contains("\u{1B}"))
-
         let colored = Doctor.text(for: checks, version: "test", color: true)
-        #expect(colored.contains("\u{1B}[32m✓ [Done] Xcode\u{1B}[0m\n  Ready."))
-        #expect(colored.contains("\u{1B}[31m✗ [Incomplete] Hub\u{1B}[0m\n  Open Redline."))
-        #expect(!colored.contains("\u{1B}[32m[Skipped]"))
-        #expect(!colored.contains("\u{1B}[31m[Check yourself]"))
-        #expect(
-            colored.replacing("\u{1B}[32m", with: "").replacing("\u{1B}[31m", with: "")
-                .replacing("\u{1B}[0m", with: "") == plain
-        )
+        #expect(colored.contains("\u{1B}[32m✓ [Done] Project access\u{1B}[0m"))
+        #expect(colored.contains("\u{1B}[31m✗ [Incomplete] Local Network access\u{1B}[0m"))
+        #expect(Doctor.text(for: [checks[0]], version: "test").contains("Mac checks passed"))
+        #expect(!plain.contains("Check yourself"))
+    }
+
+    @Test func aMissingSelectedAgentDoesNotPassBecauseAnotherAgentIsInstalled() {
+        let check = DoctorRuntime.destinationCheck(project: temporary.url, agent: "claude", available: [.codex])
+        #expect(check.status == .needsYou)
+        #expect(check.detail.contains("Install Claude Code"))
+        let neither = DoctorRuntime.destinationCheck(project: temporary.url, agent: "auto", available: [])
+        #expect(neither.status == .needsYou)
+        #expect(neither.detail.contains("Install Codex or Claude Code"))
     }
 
     @Test func colorRespectsRedirectionAndTerminalPreferences() {
@@ -192,7 +184,7 @@ struct DoctorTests {
         #expect(Doctor.usesColor(isTerminal: true, environment: ["NO_COLOR": ""]))
     }
 
-    @Test func doctorRunsBeforeOldDataMigrationAndLeavesSettingsUntouched() async throws {
+    @Test func doctorRunsBeforeMigrationAndLeavesAgentSettingsUntouched() async throws {
         let home = temporary.url
         let old = home.appending(path: "Library/Application Support/Agentic Debugging/marker")
         try write("old data", to: old)
@@ -202,7 +194,6 @@ struct DoctorTests {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
         let executable = root.appending(path: ".build/debug/redline")
-        // Use the test build's executable, never the user's installed Redline.
         var environment = ProcessInfo.processInfo.environment
         environment["HOME"] = home.path
         environment["CLAUDE_CONFIG_DIR"] = home.path
@@ -214,13 +205,15 @@ struct DoctorTests {
                     "-c", "\"$1\" doctor; result=$?; printf '\\nDoctor exit: %s\\n' \"$result\"", "doctor-test",
                     executable.path,
                 ],
-                timeout: 90,
+                timeout: 15,
                 environment: fixtureEnvironment
             )
         }
         #expect(output?.contains("Redline doctor") == true)
         #expect(output?.contains("Doctor exit: 1") == true)
         #expect(output?.contains("\u{1B}") == false)
+        #expect(output?.contains("Check yourself") == false)
+        #expect(output?.contains("Developer Mode") == false)
         #expect(try String(contentsOf: old, encoding: .utf8) == "old data")
         #expect(try Data(contentsOf: hooks) == before)
         #expect(

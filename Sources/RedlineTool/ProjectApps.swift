@@ -13,20 +13,32 @@ enum ProjectApps {
     ///
     /// Extensions, watch apps and test bundles are left out; the kit runs only in iOS apps. Without
     /// an Xcode project, the literal IDs in an XcodeGen `project.yml`, less test bundles.
-    static func bundleIDs(in folder: URL, depth: Int = 4) -> [String] {
-        let files = settingsFiles(in: folder, depth: depth)
+    static func bundleIDs(in folder: URL, depth: Int = 4, onReadError: ((Error) -> Void)? = nil) -> [String] {
+        let files = settingsFiles(in: folder, depth: depth, onReadError: onReadError)
         let projects = files.filter { $0.lastPathComponent == "project.pbxproj" }
         var found = Set<String>()
         if projects.isEmpty {
             for file in files {
-                guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+                let text: String
+                do { text = try String(contentsOf: file, encoding: .utf8) } catch {
+                    onReadError?(error)
+                    continue
+                }
                 found.formUnion(bundleIDs(inSettings: text).filter { !$0.hasSuffix("Tests") })
             }
         } else {
             for project in projects {
-                guard let data = try? Data(contentsOf: project) else { continue }
+                let data: Data
+                do { data = try Data(contentsOf: project) } catch {
+                    onReadError?(error)
+                    continue
+                }
                 found.formUnion(
-                    appBundleIDs(inProject: data, root: project.deletingLastPathComponent().deletingLastPathComponent())
+                    appBundleIDs(
+                        inProject: data,
+                        root: project.deletingLastPathComponent().deletingLastPathComponent(),
+                        onReadError: onReadError
+                    )
                 )
             }
         }
@@ -40,7 +52,9 @@ enum ProjectApps {
     /// settings such as `$(APP_BUNDLE_ID)` or `$(PRODUCT_NAME:rfc1034identifier)` filled in. `root` is
     /// the folder holding the `.xcodeproj`, where the project's file paths start; without it,
     /// `.xcconfig` files aren't read.
-    static func appBundleIDs(inProject data: Data, root: URL? = nil) -> Set<String> {
+    static func appBundleIDs(inProject data: Data, root: URL? = nil, onReadError: ((Error) -> Void)? = nil) -> Set<
+        String
+    > {
         guard let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
             let objects = plist["objects"] as? [String: [String: Any]]
         else { return [] }
@@ -48,7 +62,7 @@ enum ProjectApps {
         for (id, object) in objects {
             for child in object["children"] as? [String] ?? [] { parents[child] = id }
         }
-        let project = PBXProject(objects: objects, parents: parents, root: root)
+        let project = PBXProject(objects: objects, parents: parents, root: root, onReadError: onReadError)
         let rootList = (plist["rootObject"] as? String).flatMap { objects[$0]?["buildConfigurationList"] as? String }
         let projectSettings = Dictionary(
             project.configurations(of: rootList).map { ($0["name"] as? String ?? "", project.settings(of: $0)) },
@@ -89,6 +103,7 @@ enum ProjectApps {
         /// Each file and group's group.
         let parents: [String: String]
         let root: URL?
+        let onReadError: ((Error) -> Void)?
 
         func configurations(of list: String?) -> [[String: Any]] {
             let ids = list.flatMap { objects[$0]?["buildConfigurations"] as? [String] } ?? []
@@ -106,7 +121,7 @@ enum ProjectApps {
             {
                 file = folder.appending(path: relative)
             }
-            if let file { settings = ProjectApps.xcconfigSettings(at: file) }
+            if let file { settings = ProjectApps.xcconfigSettings(at: file, onReadError: onReadError) }
             var own: [String: String] = [:]
             for case (let key, let value as String) in configuration["buildSettings"] as? [String: Any] ?? [:] {
                 own[key] = value
@@ -136,8 +151,15 @@ enum ProjectApps {
     ///
     /// Settings for one SDK, configuration or architecture only, such as `KEY[sdk=iphoneos*]`, keep
     /// their condition in the key for `settings(_:sdk:configuration:)` to apply.
-    static func xcconfigSettings(at file: URL, depth: Int = 0) -> [String: String] {
-        guard depth < 8, let text = try? String(contentsOf: file, encoding: .utf8) else { return [:] }
+    static func xcconfigSettings(at file: URL, depth: Int = 0, onReadError: ((Error) -> Void)? = nil) -> [String:
+        String]
+    {
+        guard depth < 8 else { return [:] }
+        let text: String
+        do { text = try String(contentsOf: file, encoding: .utf8) } catch {
+            onReadError?(error)
+            return [:]
+        }
         var settings: [String: String] = [:]
         for raw in text.split(whereSeparator: \.isNewline) {
             let line = (raw.range(of: "//").map { raw[..<$0.lowerBound] } ?? raw).trimmingCharacters(in: .whitespaces)
@@ -148,7 +170,16 @@ enum ProjectApps {
                 let included =
                     path.hasPrefix("/") ? URL(filePath: path) : file.deletingLastPathComponent().appending(path: path)
                 settings = Self.settings(
-                    xcconfigSettings(at: included, depth: depth + 1),
+                    xcconfigSettings(
+                        at: included,
+                        depth: depth + 1,
+                        onReadError: { error in
+                            let missing =
+                                (error as NSError).domain == NSCocoaErrorDomain
+                                && (error as NSError).code == NSFileReadNoSuchFileError
+                            if !line.hasPrefix("#include?") || !missing { onReadError?(error) }
+                        }
+                    ),
                     over: settings,
                     isSameLevel: true
                 )
@@ -297,8 +328,11 @@ enum ProjectApps {
         !id.isEmpty && id.allSatisfy { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" }
     }
 
-    private static func settingsFiles(in folder: URL, depth: Int) -> [URL] {
-        guard depth >= 0, let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else {
+    private static func settingsFiles(in folder: URL, depth: Int, onReadError: ((Error) -> Void)? = nil) -> [URL] {
+        guard depth >= 0 else { return [] }
+        let names: [String]
+        do { names = try FileManager.default.contentsOfDirectory(atPath: folder.path) } catch {
+            onReadError?(error)
             return []
         }
         var files: [URL] = []
@@ -309,7 +343,7 @@ enum ProjectApps {
             } else if name == "project.yml" || name == "project.yaml" {
                 files.append(url)
             } else if !name.hasPrefix("."), (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
-                files += settingsFiles(in: url, depth: depth - 1)
+                files += settingsFiles(in: url, depth: depth - 1, onReadError: onReadError)
             }
         }
         return files
