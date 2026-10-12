@@ -116,11 +116,49 @@ struct LayoutInspection: Equatable, Sendable {
                 return [Row(title: "Layout priority", value: LayoutInspection.number(CGFloat(value)))]
             }
         }
+
+        /// The setting as one line a note can include: the component's own, or its parent's.
+        ///
+        /// A component's own padding is chosen edge by edge in the snapshot, so it has no line here.
+        func detail(inParent: Bool) -> Row? {
+            let own: Row
+            switch self {
+            case .padding(let insets):
+                guard inParent else { return nil }
+                own = Row(title: "Padding", value: insets.summary)
+            case .frame, .flexibleFrame:
+                let parts = rows.map {
+                    ["Frame", "Alignment"].contains($0.title) ? $0.value : "\($0.title) \($0.value)"
+                }
+                own = Row(title: "Frame", value: parts.joined(separator: " · "))
+            case .stack(let axis, let spacing, let alignment):
+                // Overlapping children have no spacing to report.
+                let parts = [
+                    inParent ? "\(axis) stack" : axis,
+                    axis == "Overlapping" ? nil : "Spacing \(spacing.map(LayoutInspection.points) ?? "System default")",
+                    LayoutInspection.readableAlignment(alignment),
+                ]
+                let value = parts.compactMap { $0 }.joined(separator: " · ")
+                return Row(title: inParent ? "Parent" : "Stack", value: value)
+            case .priority:
+                own = rows[0]
+            }
+            return inParent ? Row(title: "Parent", value: "\(own.title) · \(own.value)") : own
+        }
     }
 
-    struct Row: Equatable, Sendable {
+    struct Row: Codable, Equatable, Sendable {
         var title: String
         var value: String
+    }
+
+    /// A line the Layout panel offers, with the measured box it describes when it has one.
+    struct Detail: Equatable, Sendable {
+        var row: Row
+        /// The component's own frame or size as measured.
+        ///
+        /// Nil for a parent's line, and for a frame declared without measured bounds.
+        var box: CGRect? = nil
     }
 
     struct PaddingRegion: Equatable, Sendable {
@@ -128,6 +166,22 @@ struct LayoutInspection: Equatable, Sendable {
         var outer: CGRect
         var systemDefaultEdges: Set<Edge> = []
         var isSystemDefault: Bool { !systemDefaultEdges.isEmpty }
+
+        /// The strip this padding adds on `edge`.
+        ///
+        /// Top and bottom span the outer width, so the corners belong to them.
+        func band(on edge: Edge) -> CGRect {
+            switch edge {
+            case .top:
+                CGRect(x: outer.minX, y: outer.minY, width: outer.width, height: max(inner.minY - outer.minY, 0))
+            case .right:
+                CGRect(x: inner.maxX, y: inner.minY, width: max(outer.maxX - inner.maxX, 0), height: inner.height)
+            case .bottom:
+                CGRect(x: outer.minX, y: inner.maxY, width: outer.width, height: max(outer.maxY - inner.maxY, 0))
+            case .left:
+                CGRect(x: outer.minX, y: inner.minY, width: max(inner.minX - outer.minX, 0), height: inner.height)
+            }
+        }
     }
 
     enum Edge: String, CaseIterable, Sendable {
@@ -161,35 +215,80 @@ struct LayoutInspection: Equatable, Sendable {
         var bounds: CGRect {
             padding.reduce(content) { $0.union($1.outer) }
         }
+
+        /// The measured frame, or the component with its padding when no frame was read.
+        var box: CGRect { frame ?? bounds }
+
+        var size: String { LayoutInspection.size(box) }
     }
 
     struct Report: Equatable, Sendable {
+        /// Why the selection has measurements or not.
+        ///
+        /// Logged, never shown.
         var message: String
         var rows: [Row] = []
-        var ancestors: [Row] = []
+        /// The lines a note can include besides padding: the component's own settings, then its
+        /// parents', innermost first.
+        var details: [Detail] = []
         var geometry: Geometry?
 
-        func context(for edges: Set<Edge>) -> String {
-            guard let geometry, !geometry.padding.isEmpty else { return "" }
-            return Edge.allCases.filter(edges.contains).compactMap { edge in
-                let provenance =
-                    geometry.padding.contains { $0.systemDefaultEdges.contains(edge) }
-                    ? "measured; system default" : "measured"
-                return geometry.paddingLabel(on: edge).map { "\(edge.title) padding: \($0) (\(provenance))" }
-            }.joined(separator: "\n")
+        /// What the person chose to send with the note: padding edges, then layout lines.
+        ///
+        /// Nothing without verified geometry, since nothing was offered.
+        func included(edges: Set<Edge>, details chosen: Set<Int>) -> [Row] {
+            guard let geometry else { return [] }
+            let padding: [Row] =
+                geometry.padding.isEmpty
+                ? []
+                : Edge.allCases.filter(edges.contains).compactMap { edge in
+                    let provenance =
+                        geometry.padding.contains { $0.systemDefaultEdges.contains(edge) }
+                        ? "measured; system default" : "measured"
+                    return geometry.paddingLabel(on: edge).map {
+                        Row(title: "\(edge.title) padding", value: "\($0) (\(provenance))")
+                    }
+                }
+            return padding + details.indices.filter(chosen.contains).map { details[$0].row }
         }
 
-        func note(_ text: String, including edges: Set<Edge>) -> String {
-            let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let context = context(for: edges)
-            guard !context.isEmpty else { return text }
-            return [text, "Layout context:\n" + context].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        /// The measured boxes of the chosen lines, which the overlay outlines.
+        ///
+        /// Each line brings its own box, so with nested frames the inner line outlines the inner
+        /// frame. A frame declared without measured bounds has none: the note still carries the
+        /// line, and nothing unmeasured is drawn for it.
+        func markedFrames(_ chosen: Set<Int>) -> [CGRect] {
+            guard geometry != nil else { return [] }
+            return details.indices.filter(chosen.contains).compactMap { details[$0].box }
         }
 
+        /// The component's own settings, one per line, as VoiceOver reads the measured header.
         var summary: String {
-            ([message] + rows.map { "\($0.title): \($0.value)" })
-                .joined(separator: "\n")
+            rows.map { "\($0.title): \($0.value)" }.joined(separator: "\n")
         }
+    }
+
+    /// The note as it is sent: the person's words, then the layout they chose to include.
+    static func note(_ text: String, layout: [Row]) -> String {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !layout.isEmpty else { return text }
+        let context = layout.map { "\($0.title): \($0.value)" }.joined(separator: "\n")
+        return [text, "Layout context:\n" + context].filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
+    /// What a note includes, in a few words: "left padding and frame".
+    static func phrase(for layout: [Row]) -> String? {
+        var names: [String] = []
+        for row in layout {
+            let name = row.title == "Parent" ? "parent layout" : row.title.lowercased()
+            if !names.contains(name) { names.append(name) }
+        }
+        let edges = names.filter { $0.hasSuffix(" padding") }
+        if edges.count == Edge.allCases.count {
+            names = ["padding"] + names.filter { !edges.contains($0) }
+        }
+        guard let last = names.last else { return nil }
+        return names.count == 1 ? last : names.dropLast().joined(separator: ", ") + " and " + last
     }
 
     static func number(_ value: CGFloat) -> String {
@@ -197,6 +296,8 @@ struct LayoutInspection: Equatable, Sendable {
     }
 
     static func points(_ value: CGFloat) -> String { number(value) + " pt" }
+
+    static func size(_ box: CGRect) -> String { "\(number(box.width)) × \(number(box.height)) pt" }
 
     private static func readableAlignment(_ value: String) -> String {
         value.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression).capitalized
@@ -262,10 +363,16 @@ struct LayoutInspection: Equatable, Sendable {
                 ancestor = true
             }
             for setting in node.layout {
-                if ancestor {
-                    report.ancestors.append(contentsOf: setting.rows)
-                    continue
+                if let row = setting.detail(inParent: ancestor) {
+                    // Only the component's own frame lines have a box of their own to outline.
+                    var box: CGRect?
+                    switch setting {
+                    case .frame, .flexibleFrame: box = ancestor ? nil : renderedBounds(at: index)
+                    default: break
+                    }
+                    report.details.append(Detail(row: row, box: box))
                 }
+                if ancestor { continue }
                 report.rows.append(
                     contentsOf: setting.rows.map { row in
                         Row(title: row.title == "Parent stack" ? "Stack" : row.title, value: row.value)
@@ -308,13 +415,12 @@ struct LayoutInspection: Equatable, Sendable {
             report.geometry = Geometry(content: content, frame: frame, padding: padding)
             if !report.rows.contains(where: { $0.title == "Frame" }) {
                 let bounds = frame ?? padding.last?.outer ?? content
-                report.rows.insert(
-                    Row(
-                        title: frame == nil ? "Rendered size" : "Measured frame",
-                        value: "\(Self.number(bounds.width)) × \(Self.number(bounds.height)) pt"
-                    ),
-                    at: 0
+                let measured = Row(
+                    title: frame == nil ? "Rendered size" : "Measured frame",
+                    value: "\(Self.number(bounds.width)) × \(Self.number(bounds.height)) pt"
                 )
+                report.rows.insert(measured, at: 0)
+                report.details.insert(Detail(row: measured, box: bounds), at: 0)
             }
         }
         return report

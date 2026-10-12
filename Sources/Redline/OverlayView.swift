@@ -21,7 +21,9 @@ private enum Markup {
 struct OverlayView: View {
     @Bindable var session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isLayoutPreviewExpanded = false
+    /// Where the note card is, so the measurement tag goes on the element's other side.
+    @State private var noteCardFrame: CGRect = .zero
+    @State private var measurementTagSize = CGSize(width: 140, height: 30)
     @State private var islandHeight: CGFloat = 52
     @State private var tagWidth: CGFloat = 140
     @State private var listContentHeight: CGFloat = 0
@@ -71,6 +73,10 @@ struct OverlayView: View {
                     .transition(.opacity)
             }
 
+            if session.mode == .noting, session.screenReadIsCurrent, let geometry = session.measuredGeometry {
+                includedBands(geometry)
+            }
+
             if session.mode == .picking || session.mode == .noting, session.screenReadIsCurrent,
                 let element = session.selected
             {
@@ -84,12 +90,17 @@ struct OverlayView: View {
                 }
             }
 
+            // Over the outline, so a dashed frame is never hidden under its solid line.
+            if session.mode == .noting, session.screenReadIsCurrent, let geometry = session.measuredGeometry {
+                includedFrames(geometry)
+            }
+
             if session.mode == .noting {
                 AnnotationFormView(
                     session: session,
                     panelWidth: panelWidth,
                     panelLeading: panelLeading,
-                    isLayoutPreviewExpanded: $isLayoutPreviewExpanded
+                    cardFrame: $noteCardFrame
                 )
             }
 
@@ -270,6 +281,78 @@ struct OverlayView: View {
         }
         .offset(x: x, y: above ? element.frame.minY - 36 : element.frame.maxY + 8)
         .allowsHitTesting(false)
+    }
+
+    /// The padding the note includes, shaded on the captured screen under the element's outline.
+    ///
+    /// It stays while the panel it was chosen in is closed, so the choice is never out of sight.
+    private func includedBands(_ geometry: LayoutInspection.Geometry) -> some View {
+        let edges = LayoutInspection.Edge.allCases.filter(session.selectedPadding.contains)
+        let bands = edges.flatMap { edge in geometry.padding.map { $0.band(on: edge) } }.filter { !$0.isEmpty }
+        return ForEach(Array(bands.enumerated()), id: \.offset) { _, band in
+            Rectangle()
+                .fill(Markup.red.opacity(0.45))
+                .frame(width: band.width, height: band.height)
+                .offset(x: band.minX, y: band.minY)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// The frames the note includes, dashed where their bounds were measured, and one tag with the
+    /// values of everything marked.
+    @ViewBuilder
+    private func includedFrames(_ geometry: LayoutInspection.Geometry) -> some View {
+        let edges = LayoutInspection.Edge.allCases.filter(session.selectedPadding.contains)
+        let frames = session.selectedLayout.markedFrames(session.selectedDetails)
+        let values =
+            edges.compactMap { edge in geometry.paddingLabel(on: edge).map { "\(edge.title) \($0)" } }
+            + frames.map(LayoutInspection.size)
+        ForEach(Array(frames.enumerated()), id: \.offset) { _, frame in
+            Rectangle()
+                .strokeBorder(Markup.red, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                .frame(width: frame.width, height: frame.height)
+                .offset(x: frame.minX, y: frame.minY)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+        if !values.isEmpty {
+            measurementTag(values.joined(separator: " · "), by: frames.reduce(geometry.bounds) { $0.union($1) })
+        }
+    }
+
+    /// The values of what is marked, on the side of the element away from the note card.
+    ///
+    /// Many values, or large text, wrap inside the screen's width instead of running off it.
+    private func measurementTag(_ text: String, by marked: CGRect) -> some View {
+        let origin = NoteCardPlacement.tagOrigin(
+            marked: marked,
+            tag: measurementTagSize,
+            cardMidY: noteCardFrame.midY,
+            screenWidth: width,
+            top: session.safeAreaTop,
+            bottom: session.noteCardBottom
+        )
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        return Text(text)
+            .font(.footnote.weight(.semibold))
+            .monospacedDigit()
+            .foregroundStyle(Mono.text)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Mono.surface, in: shape)
+            .overlay(shape.strokeBorder(Mono.hairline, lineWidth: 1))
+            .onGeometryChange(for: CGSize.self) {
+                $0.size
+            } action: {
+                measurementTagSize = $0
+            }
+            .frame(width: NoteCardPlacement.tagMaxWidth(screenWidth: width), alignment: .leading)
+            .offset(x: origin.x, y: origin.y)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     /// A note already made on this screen: its outline or drawing, and its number.

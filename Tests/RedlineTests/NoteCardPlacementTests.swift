@@ -25,6 +25,60 @@ struct NoteCardPlacementTests {
         CGRect(x: 20, y: y, width: 360, height: height)
     }
 
+    @Test func theMeasurementTagStaysOnScreenAndAwayFromTheCard() {
+        func origin(_ marked: CGRect, _ tag: CGSize, cardMidY: CGFloat, bottom: CGFloat = 840) -> CGPoint {
+            NoteCardPlacement.tagOrigin(
+                marked: marked,
+                tag: tag,
+                cardMidY: cardMidY,
+                screenWidth: 402,
+                top: statusBar,
+                bottom: bottom
+            )
+        }
+        let marked = CGRect(x: 20, y: 182, width: 180, height: 44)
+        let small = CGSize(width: 120, height: 28)
+        // The card is below, so the tag sits above the marked area, by its leading edge.
+        #expect(origin(marked, small, cardMidY: 400) == CGPoint(x: 17, y: 146))
+        // The card is above, so the tag sits below.
+        #expect(origin(marked, small, cardMidY: 100) == CGPoint(x: 17, y: 234))
+        // A tag as wide as it may get, naming every edge and the frame, starts at the margin
+        // instead of running off the leading edge.
+        let widest = CGSize(width: NoteCardPlacement.tagMaxWidth(screenWidth: 402), height: 46)
+        let wide = origin(CGRect(x: 300, y: 182, width: 80, height: 44), widest, cardMidY: 400)
+        #expect(wide.x == 8)
+        #expect(wide.x + widest.width <= 402 - 8)
+        #expect(wide.y == 128)
+        // Near the top, a tall tag stops under the status bar.
+        #expect(origin(CGRect(x: 20, y: 80, width: 80, height: 20), widest, cardMidY: 400).y == 66)
+        // Under an element at the bottom of the screen, the tag stays above the bottom edge,
+        // and above the keyboard when it is up.
+        let low = CGRect(x: 20, y: 790, width: 200, height: 44)
+        #expect(origin(low, small, cardMidY: 500).y == homeIndicatorTop - 8 - 28)
+        #expect(origin(low, widest, cardMidY: 500, bottom: keyboardTop).y == keyboardTop - 8 - 46)
+    }
+
+    @Test func theCardStaysClearOfAWiderMeasuredBoxOnlyWhileASideCanHoldIt() {
+        func clear(_ box: CGRect, bottom: CGFloat = 840) -> ClosedRange<CGFloat>? {
+            NoteCardPlacement.clearSpace(
+                of: box,
+                minimumHeight: minimum,
+                height: 200,
+                top: statusBar,
+                bottom: bottom
+            )?.bounds
+        }
+        // A label 20 points tall at the top of a 200-point frame: the card goes under the frame,
+        // not 8 points under the label where it would cover the frame and its mark.
+        let frame = CGRect(x: 20, y: 100, width: 200, height: 200)
+        #expect(clear(frame) == 308...832)
+        // With the keyboard up there is no room under the frame, and above it is too small.
+        #expect(clear(frame, bottom: keyboardTop) == 308...530)
+        #expect(clear(CGRect(x: 20, y: 100, width: 200, height: 330), bottom: keyboardTop) == nil)
+        // A frame filling the screen leaves no clear side, so the caller places by the element.
+        #expect(clear(CGRect(x: 0, y: 62, width: 402, height: 778)) == nil)
+    }
+
     @Test func anElementNearTheTopGetsTheSpaceBelowIt() {
         let slot = space(element(y: 100))
         #expect(slot.bounds == 168...530)

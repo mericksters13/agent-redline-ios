@@ -15,6 +15,8 @@ final class LayoutPrototypeTests: XCTestCase {
         return app
     }
 
+    /// Picks a sample and returns what its note card says was measured: the settings behind the
+    /// size beside the role, or nothing when the card offers no layout.
     private func inspect(_ label: String, in app: XCUIApplication, occurrence: Int = 0) -> String {
         let report = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch
         XCTAssertTrue(report.waitForExistence(timeout: 10))
@@ -22,29 +24,38 @@ final class LayoutPrototypeTests: XCTestCase {
         let center = CGPoint(x: fixture.frame.midX, y: fixture.frame.midY)
         report.tap()
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: center.x, dy: center.y)).tap()
+        XCTAssertTrue(app.descendants(matching: .any)["RedlineNoteCard"].firstMatch.waitForExistence(timeout: 5))
         let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
-        XCTAssertTrue(result.waitForExistence(timeout: 5))
-        var text = result.label
+        var text = result.waitForExistence(timeout: 2) ? result.label : ""
         XCTAssertFalse(text.contains("_PaddingLayout"), text)
         XCTAssertTrue(app.buttons["Add note"].isHittable)
+        if text.isEmpty {
+            // An element that could not be measured gets the plain card: no controls, no status.
+            XCTAssertFalse(app.buttons["RedlineShowPadding"].exists)
+            XCTAssertFalse(app.buttons["RedlineShowLayout"].exists)
+        }
         attach("Layout \(label)", in: app)
         if label == "Left" {
-            app.buttons["Layout details"].tap()
-            let scroll = app.scrollViews["RedlineNoteScroll"]
-            scroll.swipeUp()
-            let parent = app.buttons["Parent layout"]
-            XCTAssertTrue(parent.exists)
-            parent.tap()
-            let values = app.descendants(matching: .any)["RedlineParentLayout"].firstMatch
-            XCTAssertTrue(values.waitForExistence(timeout: 5))
-            text += "\n" + values.label
-            XCTAssertTrue(values.label.contains("Spacing: 12 pt"), values.label)
-            scroll.swipeUp()
+            let parents = layoutRows(in: app).filter { $0.hasPrefix("Parent") }
+            XCTAssertTrue(parents.contains { $0.contains("Spacing 12 pt") }, "\(parents)")
+            text += "\n" + parents.joined(separator: "\n")
             attach("Parent layout Left", in: app)
         }
         app.buttons["Cancel"].tap()
         app.buttons["Close annotate mode"].tap()
         return text
+    }
+
+    /// Opens the Layout panel and returns its rows, each as "Title: value".
+    private func layoutRows(in app: XCUIApplication) -> [String] {
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "RedlineLayoutRow"))
+        if !rows.firstMatch.exists {
+            let button = app.buttons["RedlineShowLayout"]
+            XCTAssertTrue(button.waitForExistence(timeout: 5))
+            button.tap()
+        }
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5))
+        return (0..<rows.count).map { rows.element(boundBy: $0).label }
     }
 
     private func attach(_ name: String, in app: XCUIApplication) {
@@ -54,16 +65,14 @@ final class LayoutPrototypeTests: XCTestCase {
         add(attachment)
     }
 
-    private func expandPreview(in app: XCUIApplication) {
-        guard !app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.exists else { return }
-        let disclosure = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "Padding & frame", "Frame")
-        ).firstMatch
-        XCTAssertTrue(disclosure.waitForExistence(timeout: 5))
-        disclosure.tap()
-        XCTAssertTrue(
-            app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.waitForExistence(timeout: 5)
-        )
+    /// Opens the Padding panel under the note, unless it is already open.
+    private func openPadding(in app: XCUIApplication) {
+        let preview = app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch
+        guard !preview.exists else { return }
+        let button = app.buttons["RedlineShowPadding"]
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        button.tap()
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
     }
 
     func testLandscapeNonLayoutNotesStayCentered() {
@@ -107,9 +116,10 @@ final class LayoutPrototypeTests: XCTestCase {
         XCTAssertGreaterThan(box.height, app.frame.height * 0.8)
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: box.midX, dy: box.midY)).tap()
-        let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
-        XCTAssertTrue(result.waitForExistence(timeout: 5))
-        XCTAssertTrue(result.label.contains("No matching rendered view"), result.label)
+        XCTAssertTrue(app.otherElements["RedlineNoteCard"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["RedlineShowPadding"].exists)
+        XCTAssertFalse(app.buttons["RedlineShowLayout"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.exists)
         XCTAssertTrue(app.otherElements["RedlineNoteCard"].frame.contains(CGPoint(x: box.midX, y: box.midY)))
         // The decorative thumbnail is accessibility-hidden; inspect it in this captured header.
@@ -137,9 +147,8 @@ final class LayoutPrototypeTests: XCTestCase {
             app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: box.midX, dy: box.midY)).tap()
             let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
             XCTAssertTrue(result.waitForExistence(timeout: 5))
-            XCTAssertTrue(result.label.contains("Matched by"), result.label)
             XCTAssertTrue(result.label.contains("Padding: Horizontal · 8 pt"), result.label)
-            expandPreview(in: app)
+            openPadding(in: app)
             let left = app.buttons["RedlinePaddingLeft"]
             XCTAssertTrue(left.label.contains("8 pt"), left.label)
             left.tap()
@@ -158,7 +167,6 @@ final class LayoutPrototypeTests: XCTestCase {
         app.launchEnvironment["SWIFTUI_VIEW_DEBUG"] = "0"
         app.launch()
         let result = inspect("Only child", in: app)
-        XCTAssertTrue(result.contains("Matched by"), result)
         XCTAssertTrue(result.contains("Padding: All sides · 3 pt"), result)
         XCTAssertFalse(result.contains("All sides · 12 pt"), result)
         XCTAssertFalse(result.contains("Frame: 180 × 60 pt"), result)
@@ -206,10 +214,8 @@ final class LayoutPrototypeTests: XCTestCase {
             .withOffset(CGVector(dx: target.midX, dy: target.midY)).tap()
         let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
         XCTAssertTrue(result.waitForExistence(timeout: 5))
-        XCTAssertTrue(result.label.contains("Matched by"), result.label)
-        XCTAssertFalse(result.label.contains("Multiple views"), result.label)
         XCTAssertTrue(result.label.contains("160"), result.label)
-        expandPreview(in: app)
+        openPadding(in: app)
         let left = app.buttons["RedlinePaddingLeft"]
         XCTAssertTrue(left.waitForExistence(timeout: 5))
         XCTAssertTrue(left.label.contains("8 pt"), left.label)
@@ -260,25 +266,24 @@ final class LayoutPrototypeTests: XCTestCase {
             app.coordinate(withNormalizedOffset: .zero).withOffset(center).tap()
             let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
             XCTAssertTrue(result.waitForExistence(timeout: 5))
-            XCTAssertTrue(result.label.contains("Matched by"), result.label)
-            expandPreview(in: app)
-            XCTAssertTrue(app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.exists)
             if name == "Recipe row" {
                 XCTAssertTrue(result.label.contains("Padding: Vertical · 4 pt"), result.label)
+                openPadding(in: app)
                 let top = app.buttons["RedlinePaddingTop"]
                 XCTAssertTrue(top.isHittable)
                 top.tap()
                 XCTAssertTrue(app.staticTexts["RedlineLayoutContext"].label.contains("Top padding: 4 pt (measured)"))
             } else {
-                for edge in ["Top", "Right", "Bottom", "Left"] {
-                    XCTAssertFalse(app.buttons["RedlinePadding" + edge].exists)
-                }
-                XCTAssertFalse(app.staticTexts["Padding measurements unavailable."].exists)
-                XCTAssertTrue(
-                    app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Frame")).firstMatch.exists
-                )
+                // Without measured padding there is nothing to tap, so the Padding control is absent.
+                XCTAssertFalse(app.buttons["RedlineShowPadding"].exists)
                 if name == "Recipe summary" {
                     XCTAssertTrue(result.label.contains("Frame: Width 150 pt"), result.label)
+                    // The frame that cuts the summary off can be sent, once its row is chosen.
+                    let rows = layoutRows(in: app)
+                    XCTAssertEqual(rows.first, "Frame: Width 150 pt · Natural height · Leading")
+                    app.buttons["RedlineLayoutRow0"].tap()
+                    let context = app.staticTexts["RedlineLayoutContext"]
+                    XCTAssertTrue(context.label.contains("Frame: Width 150 pt"), context.label)
                 } else if name == "Recipe icon" {
                     XCTAssertTrue(result.label.contains("Frame: 40 × 40 pt"), result.label)
                 }
@@ -297,6 +302,7 @@ final class LayoutPrototypeTests: XCTestCase {
         let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
         XCTAssertTrue(result.waitForExistence(timeout: 5))
         XCTAssertTrue(result.label.contains("Padding: Leading 44 pt"), result.label)
+        openPadding(in: app)
         let left = app.buttons["RedlinePaddingLeft"]
         XCTAssertTrue(left.isHittable)
         left.tap()
@@ -320,6 +326,7 @@ final class LayoutPrototypeTests: XCTestCase {
         app.coordinate(withNormalizedOffset: .zero).withOffset(scrolledCenter).tap()
         XCTAssertTrue(result.waitForExistence(timeout: 5))
         XCTAssertTrue(result.label.contains("Padding: Leading 44 pt"), result.label)
+        openPadding(in: app)
         XCTAssertTrue(left.isHittable)
         attach("Cooking button after scrolling", in: app)
         app.buttons["Cancel"].tap()
@@ -332,10 +339,13 @@ final class LayoutPrototypeTests: XCTestCase {
         for (label, expected) in [
             ("Fixed", "Frame: 180 × 44 pt"), ("Nested", "Leading 5 pt"),
             ("Flexible", "Measured frame"), ("Default padding", "Padding: System default"),
-            ("Left", "Layout priority: 3"), ("Overlap", "Multiple views"),
-            ("Synthetic selection", "No matching rendered view"),
+            ("Left", "Layout priority: 3"),
         ] {
             XCTAssertTrue(inspect(label, in: app).contains(expected))
+        }
+        // Ambiguous and synthetic selections get the plain card.
+        for label in ["Overlap", "Synthetic selection"] {
+            XCTAssertEqual(inspect(label, in: app), "")
         }
         app.terminate()
     }
@@ -347,12 +357,11 @@ final class LayoutPrototypeTests: XCTestCase {
             let fixed = inspect("Fixed", in: app)
             print("LAYOUT_RESULT activation=\(activation) Fixed: \(fixed)")
             if ["none", "late"].contains(activation) {
-                XCTAssertTrue(fixed.contains("unavailable"), fixed)
+                XCTAssertEqual(fixed, "")
             } else {
                 XCTAssertTrue(fixed.contains("Frame: 180 × 44 pt"), fixed)
                 XCTAssertTrue(fixed.contains("Padding: Horizontal · 16 pt"), fixed)
                 XCTAssertTrue(fixed.contains("Alignment: Leading"), fixed)
-                XCTAssertTrue(fixed.contains("Matched by text and bounds"), fixed)
                 XCTAssertFalse(fixed.contains("_FrameLayout"), fixed)
                 XCTAssertFalse(fixed.contains("SwiftUI"), fixed)
                 for label in [
@@ -374,27 +383,23 @@ final class LayoutPrototypeTests: XCTestCase {
                         }
                     }
                     if label == "Duplicate" {
-                        XCTAssertTrue(text.contains("Matched by text and bounds"), text)
                         XCTAssertTrue(text.contains("All sides · 4 pt"), text)
                         let second = inspect(label, in: app, occurrence: 1)
                         XCTAssertTrue(second.contains("All sides · 20 pt"), second)
                         XCTAssertFalse(second.contains("All sides · 4 pt"), second)
                         print("LAYOUT_RESULT activation=\(activation) Duplicate second: \(second)")
                     }
-                    if label == "Overlap" { XCTAssertTrue(text.contains("Multiple views"), text) }
+                    if label == "Overlap" { XCTAssertEqual(text, "") }
                     if label == "Default padding" {
                         XCTAssertTrue(text.contains("Padding: System default"), text)
                         XCTAssertTrue(text.contains("Measured padding: All sides · 16 pt"), text)
                     }
                     if label == "Left" {
-                        XCTAssertTrue(text.contains("Spacing: 12 pt"), text)
-                        XCTAssertTrue(text.contains("Alignment: Top"), text)
+                        XCTAssertTrue(text.contains("Parent: Horizontal stack · Spacing 12 pt · Top"), text)
                         XCTAssertTrue(text.contains("Layout priority: 3"), text)
                     }
                     if label == "Right" { XCTAssertFalse(text.contains("Layout priority: 3"), text) }
-                    if label == "Synthetic selection" {
-                        XCTAssertTrue(text.contains("No matching rendered view"), text)
-                    }
+                    if label == "Synthetic selection" { XCTAssertEqual(text, "") }
                 }
                 // Repeat a previously selected sample to catch stale selection data.
                 XCTAssertEqual(inspect("Fixed", in: app), fixed)
@@ -423,7 +428,7 @@ final class LayoutPrototypeTests: XCTestCase {
         let result = app.descendants(matching: .any)["RedlineLayoutInspection"].firstMatch
         XCTAssertTrue(result.waitForExistence(timeout: 5))
         XCTAssertTrue(result.label.contains("Frame: 180 × 44 pt"), result.label)
-        expandPreview(in: app)
+        openPadding(in: app)
         app.buttons["RedlinePaddingLeft"].tap()
         XCTAssertTrue(app.staticTexts["RedlineLayoutContext"].label.contains("Left padding: 16 pt (measured)"))
         // Allow the native pressed appearance to settle before capturing.
@@ -434,63 +439,117 @@ final class LayoutPrototypeTests: XCTestCase {
         add(attachment)
     }
 
-    func testHierarchyAndCollapsiblePreview() {
+    func testElementNoteOpensWithTheKeyboardAndOnePanelAtATime() {
         let app = launch("early")
         let fixture = app.staticTexts["Fixed"]
         let center = CGVector(dx: fixture.frame.midX, dy: fixture.frame.midY)
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
         app.coordinate(withNormalizedOffset: .zero).withOffset(center).tap()
+        let note = app.descendants(matching: .any)["RedlineNoteText"].firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let preview = app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch
+        XCTAssertFalse(preview.exists)
+        attach("Element note opens with the keyboard", in: app)
+
+        // A panel takes the keyboard's place, under the note.
+        openPadding(in: app)
+        XCTAssertGreaterThan(preview.frame.minY, note.frame.maxY)
+        XCTAssertTrue(app.buttons["Cancel"].isHittable)
+        XCTAssertTrue(app.buttons["Add note"].isHittable)
+        attach("Padding panel under the note", in: app)
+
+        // Another panel replaces it.
+        XCTAssertFalse(layoutRows(in: app).isEmpty)
+        XCTAssertFalse(preview.exists)
+        attach("Layout panel under the note", in: app)
+
+        // Going back to the note closes the panel.
+        note.tap()
+        XCTAssertFalse(app.buttons["RedlineLayoutRow0"].waitForExistence(timeout: 1))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.buttons["Cancel"].tap()
+        app.buttons["Close annotate mode"].tap()
+        app.terminate()
+    }
+
+    func testPanelsKeepTheSelectionAndTheDraft() {
+        let app = launch("early")
+        let fixture = app.staticTexts["Fixed"]
+        let center = CGVector(dx: fixture.frame.midX, dy: fixture.frame.midY)
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.coordinate(withNormalizedOffset: .zero).withOffset(center).tap()
+        let padding = app.buttons["RedlineShowPadding"]
+        XCTAssertTrue(padding.waitForExistence(timeout: 5))
         XCTAssertFalse(app.descendants(matching: .any)["RedlineComponentPreview"].firstMatch.exists)
         XCTAssertFalse(app.buttons["RedlinePaddingLeft"].exists)
+        XCTAssertEqual(padding.value as? String ?? "", "")
         XCTAssertTrue(app.buttons["Add note"].isHittable)
-        attach("Snapshot collapsed by default", in: app)
-        expandPreview(in: app)
+
+        let note = app.descendants(matching: .any)["RedlineNoteText"].firstMatch
+        note.typeText("Keep this draft")
+        openPadding(in: app)
         let left = app.buttons["RedlinePaddingLeft"]
         XCTAssertTrue(left.waitForExistence(timeout: 5), app.debugDescription)
         left.tap()
         let context = app.staticTexts["RedlineLayoutContext"]
         XCTAssertTrue(context.label.contains("Left padding: 16 pt (measured)"), context.label)
-        let preview = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Padding & frame")).firstMatch
-        XCTAssertTrue(preview.isHittable)
-        attach("Expanded padding preview", in: app)
-        preview.tap()
-        XCTAssertFalse(left.exists)
-        XCTAssertTrue(context.label.contains("Left padding: 16 pt (measured)"), context.label)
-        XCTAssertTrue(app.buttons["Add note"].isHittable)
-        attach("Collapsed padding preview", in: app)
+        attach("Left padding included", in: app)
 
-        let note = app.descendants(matching: .any)["RedlineNoteText"].firstMatch
-        note.tap()
-        note.typeText("Keep this draft")
+        // Closed, the control still says what is included.
+        padding.tap()
+        XCTAssertFalse(left.exists)
+        XCTAssertEqual(padding.value as? String, "left padding included")
+        XCTAssertEqual(note.value as? String, "Keep this draft")
+        XCTAssertTrue(app.buttons["Add note"].isHittable)
+        attach("Padding closed with its mark", in: app)
+
+        // The hierarchy opens under the same name, note and buttons.
         let hierarchy = app.buttons["RedlineShowHierarchy"]
         XCTAssertTrue(hierarchy.isHittable)
         hierarchy.tap()
-        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Hierarchy"].exists)
-        XCTAssertFalse(left.exists)
-        attach("Layers icon opens hierarchy", in: app)
-        app.buttons["Done"].tap()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "RedlineHierarchyRow"))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Done"].exists)
+        XCTAssertFalse(app.staticTexts["Hierarchy"].exists)
+        let card = app.descendants(matching: .any)["RedlineNoteCard"].firstMatch
+        XCTAssertTrue(card.staticTexts.matching(identifier: "Fixed").firstMatch.exists)
         XCTAssertEqual(note.value as? String, "Keep this draft")
-        XCTAssertTrue(context.label.contains("Left padding: 16 pt (measured)"), context.label)
-        XCTAssertFalse(left.exists)
-        attach("Collapsed preview retains draft", in: app)
+        XCTAssertTrue(app.buttons["Cancel"].isHittable)
+        XCTAssertTrue(app.buttons["Add note"].isHittable)
+        attach("Hierarchy under the note", in: app)
+        hierarchy.tap()
+        XCTAssertFalse(rows.firstMatch.exists)
+        XCTAssertEqual(padding.value as? String, "left padding included")
 
-        preview.tap()
-        XCTAssertTrue(left.waitForExistence(timeout: 5))
-        XCTAssertEqual(left.value as? String, "Included in note")
-        XCTAssertEqual(note.value as? String, "Keep this draft")
+        // A layout row joins what is included.
+        XCTAssertEqual(layoutRows(in: app).first, "Frame: 180 × 44 pt · Leading")
+        let frame = app.buttons["RedlineLayoutRow0"]
+        frame.tap()
+        XCTAssertEqual(frame.value as? String, "Included in note")
         XCTAssertTrue(context.label.contains("Left padding: 16 pt (measured)"), context.label)
-        preview.tap()
+        XCTAssertTrue(context.label.contains("Frame: 180 × 44 pt · Leading"), context.label)
+        attach("Frame included", in: app)
+
+        openPadding(in: app)
+        XCTAssertEqual(left.value as? String, "Included in note")
+        XCTAssertEqual(app.buttons["RedlineShowLayout"].value as? String, "frame included")
+        XCTAssertEqual(note.value as? String, "Keep this draft")
+        // The card is still resizing from one panel to the other; let the footer come to rest.
+        Thread.sleep(forTimeInterval: 0.5)
         app.buttons["Cancel"].tap()
         app.buttons["Close annotate mode"].tap()
+
+        // The next note starts with nothing included and no panel open.
         let nextFixture = app.staticTexts["Default padding"]
         let nextCenter = CGVector(dx: nextFixture.frame.midX, dy: nextFixture.frame.midY)
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
         app.coordinate(withNormalizedOffset: .zero).withOffset(nextCenter).tap()
-        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertTrue(padding.waitForExistence(timeout: 5))
+        XCTAssertEqual(padding.value as? String ?? "", "")
         XCTAssertFalse(app.buttons["RedlinePaddingTop"].exists)
-        preview.tap()
-        XCTAssertTrue(app.buttons["RedlinePaddingTop"].waitForExistence(timeout: 5))
+        openPadding(in: app)
+        XCTAssertEqual(app.buttons["RedlinePaddingTop"].value as? String, "Not included")
         app.buttons["Cancel"].tap()
         app.buttons["Close annotate mode"].tap()
         app.terminate()
@@ -529,14 +588,9 @@ final class LayoutPrototypeTests: XCTestCase {
                 28,
                 "Extra space between the note and footer"
             )
-            expandPreview(in: app)
+            openPadding(in: app)
             check("expanded")
-            let disclosure = app.buttons.matching(
-                NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "Padding & frame", "Frame")
-            ).firstMatch
-            let scroll = app.scrollViews["RedlineNoteScroll"]
-            for _ in 0..<3 where !disclosure.isHittable { scroll.swipeDown() }
-            disclosure.tap()
+            app.buttons["RedlineShowPadding"].tap()
             check("collapsed again")
             XCTAssertEqual(card.frame.height, collapsedHeight, accuracy: 1)
             app.buttons["Cancel"].tap()
@@ -627,15 +681,59 @@ final class LayoutPrototypeTests: XCTestCase {
         XCTAssertEqual(last.value as? String, "Selected")
         first.tap()
         XCTAssertEqual(first.value as? String, "Selected")
-        expandPreview(in: app)
-        let beforeScroll = first.frame.minY
+        // An ordinary swipe is a scroll, never a traversal: the selection stays.
         app.scrollViews["RedlineHierarchy"].swipeUp(velocity: .fast)
-        XCTAssertLessThan(first.frame.minY, beforeScroll - 20)
         XCTAssertEqual(first.value as? String, "Selected")
-        attach("Hierarchy ordinary swipe scrolls", in: app)
-        app.buttons["Done"].tap()
-        XCTAssertTrue(app.buttons["RedlineShowHierarchy"].exists)
+        XCTAssertNotEqual(last.value as? String, "Selected")
+        attach("Hierarchy ordinary swipe keeps the selection", in: app)
+        XCTAssertFalse(app.buttons["Done"].exists)
         XCTAssertTrue(app.buttons["Add note"].isHittable)
+        app.buttons["RedlineShowHierarchy"].tap()
+        XCTAssertFalse(rows.firstMatch.exists)
+        XCTAssertTrue(app.buttons["Add note"].isHittable)
+        app.buttons["Cancel"].tap()
+        app.buttons["Close annotate mode"].tap()
+        app.terminate()
+    }
+
+    func testHierarchyWidensWithoutLeavingTheNote() {
+        let app = XCUIApplication()
+        app.launch()
+        let summary = app.staticTexts["list.row.black-bean-tacos.summary"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 10))
+        let point = CGVector(dx: summary.frame.midX, dy: summary.frame.midY)
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
+        app.coordinate(withNormalizedOffset: .zero).withOffset(point).tap()
+        let hierarchy = app.buttons["RedlineShowHierarchy"]
+        XCTAssertTrue(hierarchy.waitForExistence(timeout: 5))
+        hierarchy.tap()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "RedlineHierarchyRow"))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5))
+        // The summary's owner holds the title and the summary.
+        let local = rows.count
+        XCTAssertEqual(local, 3)
+        attach("Hierarchy of the titles", in: app)
+        let up = app.buttons["RedlineHierarchyUp"]
+        XCTAssertTrue(up.isHittable)
+        XCTAssertTrue(up.label.contains("list.row.black-bean-tacos"), up.label)
+        up.tap()
+        // One element out: the row, with its icon and time beside the titles.
+        XCTAssertGreaterThan(rows.count, local)
+        // The name in the header is still the summary's, shortened as the card shortens names.
+        let card = app.descendants(matching: .any)["RedlineNoteCard"].firstMatch
+        func names(_ start: String) -> XCUIElement {
+            card.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", start)).firstMatch
+        }
+        XCTAssertTrue(names(String(summary.label.prefix(12))).exists)
+        XCTAssertTrue(app.buttons["Cancel"].isHittable)
+        XCTAssertTrue(app.buttons["Add note"].isHittable)
+        attach("Hierarchy widened to the row", in: app)
+        // Choosing the row names it in the header, with the tree still open.
+        let row = rows.element(boundBy: 0)
+        row.tap()
+        XCTAssertEqual(row.value as? String, "Selected")
+        XCTAssertTrue(names("list.row.black-bean").waitForExistence(timeout: 5))
+        attach("Row chosen from the widened hierarchy", in: app)
         app.buttons["Cancel"].tap()
         app.buttons["Close annotate mode"].tap()
         app.terminate()
@@ -647,27 +745,27 @@ final class LayoutPrototypeTests: XCTestCase {
         let center = CGVector(dx: fixture.frame.midX, dy: fixture.frame.midY)
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
         app.coordinate(withNormalizedOffset: .zero).withOffset(center).tap()
-        expandPreview(in: app)
+        openPadding(in: app)
         let top = app.buttons["RedlinePaddingTop"]
         XCTAssertTrue(top.waitForExistence(timeout: 5))
         top.tap()
         let context = app.staticTexts["RedlineLayoutContext"]
         XCTAssertTrue(context.label.contains("Top padding: 7 pt (measured)"), context.label)
-        let preview = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Padding & frame")).firstMatch
-        attach("Flexible preview expanded", in: app)
+        let padding = app.buttons["RedlineShowPadding"]
+        attach("Flexible padding open", in: app)
         for cycle in 1...3 {
-            preview.tap()
+            padding.tap()
             XCTAssertFalse(top.exists)
-            XCTAssertTrue(app.buttons["Layout details"].isHittable)
+            XCTAssertTrue(app.buttons["RedlineShowLayout"].isHittable)
             XCTAssertTrue(app.buttons["Add note"].isHittable)
-            XCTAssertTrue(context.label.contains("Top padding: 7 pt (measured)"), context.label)
-            attach("Flexible preview collapsing \(cycle)", in: app)
+            XCTAssertEqual(padding.value as? String, "top padding included")
+            attach("Flexible padding closing \(cycle)", in: app)
             Thread.sleep(forTimeInterval: 0.5)
-            attach("Flexible preview collapsed \(cycle)", in: app)
-            preview.tap()
+            attach("Flexible padding closed \(cycle)", in: app)
+            padding.tap()
             XCTAssertTrue(top.waitForExistence(timeout: 5))
             XCTAssertEqual(top.value as? String, "Included in note")
-            attach("Flexible preview expanding \(cycle)", in: app)
+            attach("Flexible padding opening \(cycle)", in: app)
         }
         app.buttons["Cancel"].tap()
         app.buttons["Close annotate mode"].tap()
@@ -678,7 +776,7 @@ final class LayoutPrototypeTests: XCTestCase {
         let app = launch("early")
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
         app.staticTexts["Default padding"].tap()
-        expandPreview(in: app)
+        openPadding(in: app)
         let top = app.buttons["RedlinePaddingTop"]
         let bottom = app.buttons["RedlinePaddingBottom"]
         XCTAssertTrue(top.waitForExistence(timeout: 5))
@@ -697,10 +795,11 @@ final class LayoutPrototypeTests: XCTestCase {
         app.buttons["Close annotate mode"].tap()
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Report a UI issue")).firstMatch.tap()
         app.staticTexts["Fixed"].tap()
+        openPadding(in: app)
         let left = app.buttons["RedlinePaddingLeft"]
         let right = app.buttons["RedlinePaddingRight"]
         XCTAssertTrue(left.waitForExistence(timeout: 5))
-        // Tap the line near its end tick, away from the numeric label.
+        // Tap near the control's edge, away from its value.
         left.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.65)).tap()
         right.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.65)).tap()
         right.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.65)).tap()
@@ -709,7 +808,17 @@ final class LayoutPrototypeTests: XCTestCase {
         XCTAssertFalse(context.label.contains("Right padding"), context.label)
         attach("Selected left padding", in: app)
         app.buttons["Add note"].tap()
+        // The saved note is empty, since nothing was typed; the list names what it includes.
+        let notes = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Show ")).firstMatch
+        XCTAssertTrue(notes.waitForExistence(timeout: 5))
+        notes.tap()
+        XCTAssertTrue(app.staticTexts["No note"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", "with left padding")).firstMatch.exists
+        )
+        attach("Saved note names what it includes", in: app)
         // The Mac-side verification reads the saved draft after this real tap.
+        app.buttons["Hide notes"].tap()
         app.buttons["Close annotate mode"].tap()
         app.terminate()
     }

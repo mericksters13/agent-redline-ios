@@ -7,20 +7,20 @@ related_targets: ["Sources/Redline/LayoutInspectorView.swift", "Sources/Redline/
 
 # Captured component layout form
 
-Scope: DEV-45's opt-in Debug layout prototype inside the annotation form. Mode: Operate.
+Scope: DEV-45's opt-in Debug layout prototype inside the annotation form, as DEV-47 arranged it. Mode: Operate.
 
-Audience and job: a tester selects a supported text component, inspects its captured padding and frame, and includes selected measurements in a note. Preserve runtime provenance, unavailable states, the existing note workflow, Dynamic Type, and reachable form actions.
+Audience and job: a tester selects a supported component, writes a note, and includes the padding edges and layout rows they choose. Preserve runtime provenance, unavailable states, the existing note workflow, Dynamic Type, and reachable form actions.
 
 ## Direction contract
 
-THESIS: Turn measured padding into tappable red dimension lines beside a captured component.
+THESIS: Let the tester choose what a note includes, on a captured component large enough to tap.
 
-OWN-WORLD: Preserve Redline's black form, white native system text, and red annotation meaning. End ticks distinguish measurement spans from the content outline.
+OWN-WORLD: Preserve Redline's black form, white native system text, and red annotation meaning. White marks what is chosen in the card; red marks it on the capture.
 
-STORY: The tester taps a measurement line, sees its padding highlighted, and saves that value with the note. Another tap removes it.
+STORY: The tester opens Padding, taps a side, sees its band turn red in the crop and on the screen, and saves that value with the note. Another tap removes it.
 
-FIRST VIEWPORT: A larger layers icon without a visible container beside the component name opens hierarchy. A separate Padding & frame chevron expands or collapses the snapshot and dimensions, keeping its summary, selected note context, and draft visible. The preview starts expanded and remembers the chosen state during the session. Crop only the component and its padding. Left and Right dimensions sit close beside the crop; Top and Bottom remain above and below. Frame size and included context appear below; form actions remain reachable.
+FIRST VIEWPORT: The note card with its note field focused. Round header controls open Padding, Layout and Hierarchy one at a time under the note. Padding crops only the component and its padding, with one capsule control per side: Left and Right beside the crop, Top and Bottom above and below. Layout lists the frame and parent settings as rows to include. A caption names what is included; form actions remain reachable.
 
-FORM: User-pinned storyboard-style dimension lines replace the prototype's edge tiles. This precisely specified refinement preserves the existing system style; no concept roll or generated comp applies.
+FORM: User-approved capsule edge controls and header controls (DEV-47) replace the storyboard-style dimension lines and the disclosure rows, which had replaced the prototype's edge tiles. They stay inside the existing system style; no concept roll or generated comp applies.
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance

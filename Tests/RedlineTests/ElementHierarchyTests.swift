@@ -34,6 +34,28 @@ struct ElementHierarchyTests {
         #expect(tree.root == 1)
     }
 
+    @Test func wideningMovesTheRootOneUsableOwnerOutAndStopsAtTheScreen() throws {
+        var screen = node("Screen", group: true)
+        screen.frame = CGRect(origin: .zero, size: screenSize)
+        let elements = [
+            screen, node("Row", parent: 0, group: true), node("Icon", parent: 1),
+            node("Titles", parent: 1, group: true), node("Title", parent: 3), node("Summary", parent: 3),
+        ]
+        let tree = try #require(ElementHierarchy(touched: elements[5], in: elements, screenSize: screenSize))
+        #expect(tree.root == 3)
+        #expect(tree.owner(screenSize: screenSize) == 1)
+        let wider = try #require(tree.widened(screenSize: screenSize))
+        #expect(wider.root == 1)
+        #expect(wider.rows().map(\.id) == [1, 2, 3, 4, 5])
+        // The touched element and its siblings are still there, and the icon can now be chosen.
+        #expect(wider.element(at: 5) == elements[5])
+        #expect(wider.element(at: 2) == elements[2])
+        #expect(tree.element(at: 2) == nil)
+        // The whole screen is not something to point at, so there is nothing further out.
+        #expect(wider.owner(screenSize: screenSize) == nil)
+        #expect(wider.widened(screenSize: screenSize) == nil)
+    }
+
     @Test func touchingAGroupIncludesItsImmediateOwnerAndKeepsTheSelectedGroupNested() throws {
         let elements = [
             node("List", group: true), node("Row", parent: 0, group: true),

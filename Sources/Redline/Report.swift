@@ -203,7 +203,9 @@ extension Report.Item {
         self.init(
             number: number,
             kind: annotation.kind,
-            note: annotation.note,
+            // The layout the person chose to include follows their words, where every reader of a
+            // note already looks.
+            note: LayoutInspection.note(annotation.note, layout: annotation.layout),
             createdAt: annotation.createdAt,
             // The element's whole name: the agent searches the code for it, so nothing is cut short.
             // A drawing's title names what it encloses, for Macs that don't list it.

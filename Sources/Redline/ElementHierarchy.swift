@@ -3,7 +3,7 @@ import Foundation
 
 /// The captured subtree of the nearest local owner of a touch.
 ///
-/// Choosing another node does not change its root.
+/// Choosing another node does not change its root; only widening moves it one owner out.
 struct ElementHierarchy {
     struct Row: Identifiable, Equatable {
         let id: Int
@@ -34,6 +34,25 @@ struct ElementHierarchy {
             }
         }
         self.children = children
+    }
+
+    private init(elements: [ElementSnapshot], root: Int, children: [[Int]]) {
+        self.elements = elements
+        self.root = root
+        self.children = children
+    }
+
+    /// The usable element one step out from the root; nil at the outermost.
+    func owner(screenSize: CGSize) -> Int? {
+        guard let parent = elements[root].parent, parent >= 0, parent < root,
+            ElementSelection.isUsable(elements[parent], screenSize: screenSize)
+        else { return nil }
+        return parent
+    }
+
+    /// The same capture rooted one owner further out; nil when there is none to widen to.
+    func widened(screenSize: CGSize) -> ElementHierarchy? {
+        owner(screenSize: screenSize).map { ElementHierarchy(elements: elements, root: $0, children: children) }
     }
 
     func rows(collapsing collapsed: Set<Int> = []) -> [Row] {

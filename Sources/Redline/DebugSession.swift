@@ -115,7 +115,8 @@ final class DebugSession {
             refreshSelectedLayout()
         }
     }
-    /// Frozen with the original pick, so browsing children cannot widen the tree.
+    /// Rooted at the original pick's owner, so browsing children cannot widen the tree; only
+    /// `widenHierarchy()` moves the root out.
     private(set) var hierarchy: ElementHierarchy? {
         didSet { hierarchySelectionIndex = selected.flatMap { hierarchy?.elements.lastIndex(of: $0) } }
     }
@@ -138,6 +139,26 @@ final class DebugSession {
         else { return }
         if !selectedPadding.insert(edge).inserted { selectedPadding.remove(edge) }
         selectionFeedback.selectionChanged()
+    }
+
+    /// The layout lines chosen for the note, as indexes into `selectedLayout.details`.
+    private(set) var selectedDetails: Set<Int> = []
+
+    func toggleDetail(_ index: Int) {
+        guard mode == .noting, measuredGeometry != nil, selectedLayout.details.indices.contains(index) else { return }
+        if !selectedDetails.insert(index).inserted { selectedDetails.remove(index) }
+        selectionFeedback.selectionChanged()
+    }
+
+    /// The selected element's verified measurements; nil when inspection is off or found no match,
+    /// so the note card offers no layout controls.
+    var measuredGeometry: LayoutInspection.Geometry? {
+        showsElementLayoutInspection ? selectedLayout.geometry : nil
+    }
+
+    /// What the note will carry besides the person's words: only what they chose.
+    var includedLayout: [LayoutInspection.Row] {
+        measuredGeometry == nil ? [] : selectedLayout.included(edges: selectedPadding, details: selectedDetails)
     }
     var noteText = ""
     /// The note showing in the full-screen viewer.
@@ -578,6 +599,30 @@ final class DebugSession {
         levels = ElementSelection.levels(from: index, in: hierarchy.elements, screenSize: readSize)
         hierarchySelectionIndex = index
         selectedPadding = []
+        selectedDetails = []
+        logUnmeasuredLayout()
+        selectionFeedback.selectionChanged()
+    }
+
+    /// The card shows nothing for an element it could not measure, so the reason goes to the log:
+    /// when a note starts, and again when the hierarchy moves the note to another element.
+    private func logUnmeasuredLayout() {
+        guard showsElementLayoutInspection, selectedLayout.geometry == nil else { return }
+        Log.session.info("Layout: \(self.selectedLayout.message, privacy: .public)")
+    }
+
+    /// The element the hierarchy's up row leads to; nil at the outermost usable one.
+    var hierarchyOwner: ElementSnapshot? {
+        guard let hierarchy, let owner = hierarchy.owner(screenSize: readSize) else { return nil }
+        return hierarchy.elements[owner]
+    }
+
+    /// Shows one more enclosing element and what it holds.
+    ///
+    /// The selection stays where it was.
+    func widenHierarchy() {
+        guard mode == .noting, screenReadIsCurrent, let wider = hierarchy?.widened(screenSize: readSize) else { return }
+        hierarchy = wider
         selectionFeedback.selectionChanged()
     }
 
@@ -637,10 +682,7 @@ final class DebugSession {
     // MARK: - Notes
 
     func saveNote() {
-        let note =
-            showsLayoutPrototype && pending == nil && !isNotingDrawing
-            ? selectedLayout.note(noteText, including: selectedPadding)
-            : noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let note = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         if let pending {
             guard !pending.isSaving else { return }
             guard let loading = pending.loading else {
@@ -696,7 +738,8 @@ final class DebugSession {
                 ancestors: Array(levels.dropFirst()),
                 screen: screen,
                 attachments: [],
-                captureID: fileCapture(screenImage, element: element, frame: frame, strokes: [])
+                captureID: fileCapture(screenImage, element: element, frame: frame, strokes: []),
+                layout: includedLayout
             )
         }
         // A failed save keeps the card open with the text for another try: a note missing from
@@ -1742,19 +1785,30 @@ final class DebugSession {
         let element = screenReadIsCurrent ? noteFrame : nil
         if showsHierarchy, let element, let hierarchy {
             let owner = hierarchy.elements[hierarchy.root].frame
-            let space = NoteCardPlacement.space(
-                element: owner,
+            if owner.contains(element),
+                let space = NoteCardPlacement.clearSpace(
+                    of: owner,
+                    minimumHeight: minimumHeight,
+                    height: height,
+                    top: safeAreaTop,
+                    bottom: noteCardBottom
+                )
+            {
+                return space
+            }
+        }
+        // Stay clear of the element's measured padding and frames as well, whether or not they
+        // are included yet, so including one never moves the card or leaves its mark under it.
+        if let element, let measured = measuredExtent, measured != element,
+            let space = NoteCardPlacement.clearSpace(
+                of: measured,
                 minimumHeight: minimumHeight,
                 height: height,
                 top: safeAreaTop,
                 bottom: noteCardBottom
             )
-            if owner.contains(element),
-                space.bounds.upperBound <= owner.minY - NoteCardPlacement.margin
-                    || space.bounds.lowerBound >= owner.maxY + NoteCardPlacement.margin
-            {
-                return space
-            }
+        {
+            return space
         }
         return NoteCardPlacement.space(
             element: element,
@@ -1765,8 +1819,16 @@ final class DebugSession {
         )
     }
 
-    /// The lowest the note card's bottom may go: the keyboard, or the home indicator without one.
-    private var noteCardBottom: CGFloat {
+    /// The selected element together with everything measured around it that a note can include
+    /// and the overlay then marks: its padding and its own frames.
+    private var measuredExtent: CGRect? {
+        guard let frame = noteFrame, let geometry = measuredGeometry else { return nil }
+        return selectedLayout.details.compactMap(\.box).reduce(frame.union(geometry.bounds)) { $0.union($1) }
+    }
+
+    /// The lowest the note card's bottom may go, and the measurement tag with it: the keyboard, or
+    /// the home indicator without one.
+    var noteCardBottom: CGFloat {
         min(noteKeyboardTop, screenSize.height - safeAreaInsets.bottom)
     }
 
@@ -1921,8 +1983,10 @@ final class DebugSession {
 
     private func beginNoting() {
         selectedPadding = []
+        selectedDetails = []
         noteError = nil
-        isAwaitingKeyboard = !showsElementLayoutInspection && keyboardTop == .infinity
+        isAwaitingKeyboard = keyboardTop == .infinity
+        logUnmeasuredLayout()
         noteBackground = pending == nil ? screenImage : nil
         setMode(.noting)
         // A hardware keyboard never shows the on-screen one; stop waiting for it. Only this card's
@@ -1942,6 +2006,7 @@ final class DebugSession {
 
     private func endNoting(returningTo next: Mode) {
         selectedPadding = []
+        selectedDetails = []
         noteText = ""
         isNotingDrawing = false
         drawingBox = nil
