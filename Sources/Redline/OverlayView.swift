@@ -21,7 +21,8 @@ private enum Markup {
 struct OverlayView: View {
     @Bindable var session: DebugSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isLayoutPreviewExpanded = false
+    /// Where the note card is, so the measurement tag goes on the element's other side.
+    @State private var noteCardFrame: CGRect = .zero
     @State private var islandHeight: CGFloat = 52
     @State private var tagWidth: CGFloat = 140
     @State private var listContentHeight: CGFloat = 0
@@ -71,6 +72,10 @@ struct OverlayView: View {
                     .transition(.opacity)
             }
 
+            if session.mode == .noting, session.screenReadIsCurrent, let geometry = session.measuredGeometry {
+                includedMarks(geometry)
+            }
+
             if session.mode == .picking || session.mode == .noting, session.screenReadIsCurrent,
                 let element = session.selected
             {
@@ -89,7 +94,7 @@ struct OverlayView: View {
                     session: session,
                     panelWidth: panelWidth,
                     panelLeading: panelLeading,
-                    isLayoutPreviewExpanded: $isLayoutPreviewExpanded
+                    cardFrame: $noteCardFrame
                 )
             }
 
@@ -270,6 +275,64 @@ struct OverlayView: View {
         }
         .offset(x: x, y: above ? element.frame.minY - 36 : element.frame.maxY + 8)
         .allowsHitTesting(false)
+    }
+
+    /// What the note includes, marked on the captured screen: chosen padding shaded, a chosen frame
+    /// dashed, and one tag with their values.
+    ///
+    /// It stays while the panel it was chosen in is closed, so the choice is never out of sight.
+    @ViewBuilder
+    private func includedMarks(_ geometry: LayoutInspection.Geometry) -> some View {
+        let edges = LayoutInspection.Edge.allCases.filter(session.selectedPadding.contains)
+        let bands = edges.flatMap { edge in geometry.padding.map { $0.band(on: edge) } }.filter { !$0.isEmpty }
+        let frame = session.selectedLayout.marksFrame(session.selectedDetails) ? geometry.box : nil
+        let values =
+            edges.compactMap { edge in geometry.paddingLabel(on: edge).map { "\(edge.title) \($0)" } }
+            + (frame == nil ? [] : [geometry.size])
+        if !values.isEmpty {
+            ForEach(Array(bands.enumerated()), id: \.offset) { _, band in
+                Rectangle()
+                    .fill(Markup.red.opacity(0.45))
+                    .frame(width: band.width, height: band.height)
+                    .offset(x: band.minX, y: band.minY)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            if let frame {
+                Rectangle()
+                    .strokeBorder(Markup.red, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                    .frame(width: frame.width, height: frame.height)
+                    .offset(x: frame.minX, y: frame.minY)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            measurementTag(values.joined(separator: " · "), by: geometry.bounds.union(frame ?? geometry.bounds))
+        }
+    }
+
+    /// The values of what is marked, on the side of the element away from the note card.
+    private func measurementTag(_ text: String, by marked: CGRect) -> some View {
+        let above = noteCardFrame.midY > marked.midY
+        let x = min(max(marked.minX - 3, 8), width - tagWidth - 8)
+        let y = above ? max(marked.minY - 36, session.safeAreaTop + 4) : marked.maxY + 8
+        return Text(text)
+            .font(.footnote.weight(.semibold))
+            .monospacedDigit()
+            .foregroundStyle(Mono.text)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Mono.surface, in: Capsule(style: .continuous))
+            .overlay(Capsule(style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
+            .onGeometryChange(for: CGFloat.self) {
+                $0.size.width
+            } action: {
+                tagWidth = $0
+            }
+            .offset(x: x, y: y)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     /// A note already made on this screen: its outline or drawing, and its number.

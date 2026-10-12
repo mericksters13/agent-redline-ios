@@ -7,7 +7,10 @@ struct ElementHierarchyView: View {
     let selectedIndex: Int?
     let availableWidth: CGFloat
     let visibleBounds: CGRect
+    /// The element one step out from the root, which the up row widens to; nil at the outermost.
+    let owner: ElementSnapshot?
     let select: (Int) -> Void
+    let widen: () -> Void
     let traversingChanged: (Bool) -> Void
     @State private var collapsed: Set<Int> = []
     @State private var rowFrames: [Int: CGRect] = [:]
@@ -17,6 +20,31 @@ struct ElementHierarchyView: View {
     var body: some View {
         let rows = hierarchy.rows(collapsing: collapsed)
         let depth = rows.map { $0.branches.count }.max() ?? 0
+        VStack(alignment: .leading, spacing: 0) {
+            if let owner {
+                Button(action: widen) {
+                    HStack(spacing: 0) {
+                        Image(systemName: "arrow.up")
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                        Text(owner.fullName ?? owner.role)
+                            .font(.footnote)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                    }
+                    .foregroundStyle(Mono.secondary)
+                    .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Show \(owner.fullName ?? owner.role)")
+                .accessibilityHint("Widens the hierarchy by one enclosing element.")
+                .accessibilityIdentifier("RedlineHierarchyUp")
+            }
+            tree(rows: rows, depth: depth)
+        }
+        .onDisappear { traversingChanged(false) }
+    }
+
+    private func tree(rows: [ElementHierarchy.Row], depth: Int) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             VStack(spacing: 0) {
                 ForEach(rows) { row in
@@ -43,18 +71,29 @@ struct ElementHierarchyView: View {
                         Button {
                             select(row.id)
                         } label: {
-                            Text(row.element.fullName ?? row.element.role)
-                                .font(.footnote.weight(row.id == selectedIndex ? .semibold : .regular))
-                                .foregroundStyle(row.id == selectedIndex ? Color.black : Mono.text)
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                .padding(.horizontal, 10)
-                                .background(
-                                    row.id == selectedIndex ? Color.white : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                )
-                                .contentShape(Rectangle())
+                            HStack(spacing: 8) {
+                                Text(row.element.fullName ?? row.element.role)
+                                    .font(.footnote.weight(row.id == selectedIndex ? .semibold : .regular))
+                                    .foregroundStyle(row.id == selectedIndex ? Color.black : Mono.text)
+                                // The role tells apart elements that share a name.
+                                if row.element.fullName != nil {
+                                    Text(row.element.role)
+                                        .font(.caption)
+                                        .foregroundStyle(
+                                            row.id == selectedIndex ? Color.black.opacity(0.6) : Mono.secondary
+                                        )
+                                }
+                            }
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .background(
+                                row.id == selectedIndex ? Color.white : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            )
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                         }
                         .accessibilityLabel(
                             "\(row.element.fullName ?? row.element.role), \(row.element.role), level \(row.branches.count + 1)"
@@ -82,7 +121,8 @@ struct ElementHierarchyView: View {
                                         path.move(to: CGPoint(x: x, y: geometry.size.height / 2))
                                         path.addLine(
                                             to: CGPoint(
-                                                x: x + indentation - (row.hasChildren ? 8 : 0),
+                                                // Up to the branch arrow, or to a leaf's name.
+                                                x: x + (row.hasChildren ? indentation - 8 : indentation * 2),
                                                 y: geometry.size.height / 2
                                             )
                                         )
@@ -127,7 +167,6 @@ struct ElementHierarchyView: View {
         } action: {
             viewport = $0
         }
-        .onDisappear { traversingChanged(false) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Hierarchy of \(hierarchy.elements[hierarchy.root].fullName ?? "the selected element")")
     }

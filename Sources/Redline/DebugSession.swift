@@ -115,7 +115,8 @@ final class DebugSession {
             refreshSelectedLayout()
         }
     }
-    /// Frozen with the original pick, so browsing children cannot widen the tree.
+    /// Rooted at the original pick's owner, so browsing children cannot widen the tree; only
+    /// `widenHierarchy()` moves the root out.
     private(set) var hierarchy: ElementHierarchy? {
         didSet { hierarchySelectionIndex = selected.flatMap { hierarchy?.elements.lastIndex(of: $0) } }
     }
@@ -138,6 +139,26 @@ final class DebugSession {
         else { return }
         if !selectedPadding.insert(edge).inserted { selectedPadding.remove(edge) }
         selectionFeedback.selectionChanged()
+    }
+
+    /// The layout lines chosen for the note, as indexes into `selectedLayout.details`.
+    private(set) var selectedDetails: Set<Int> = []
+
+    func toggleDetail(_ index: Int) {
+        guard mode == .noting, measuredGeometry != nil, selectedLayout.details.indices.contains(index) else { return }
+        if !selectedDetails.insert(index).inserted { selectedDetails.remove(index) }
+        selectionFeedback.selectionChanged()
+    }
+
+    /// The selected element's verified measurements; nil when inspection is off or found no match,
+    /// so the note card offers no layout controls.
+    var measuredGeometry: LayoutInspection.Geometry? {
+        showsElementLayoutInspection ? selectedLayout.geometry : nil
+    }
+
+    /// What the note will carry besides the person's words: only what they chose.
+    var includedLayout: [LayoutInspection.Row] {
+        measuredGeometry == nil ? [] : selectedLayout.included(edges: selectedPadding, details: selectedDetails)
     }
     var noteText = ""
     /// The note showing in the full-screen viewer.
@@ -578,6 +599,22 @@ final class DebugSession {
         levels = ElementSelection.levels(from: index, in: hierarchy.elements, screenSize: readSize)
         hierarchySelectionIndex = index
         selectedPadding = []
+        selectedDetails = []
+        selectionFeedback.selectionChanged()
+    }
+
+    /// The element the hierarchy's up row leads to; nil at the outermost usable one.
+    var hierarchyOwner: ElementSnapshot? {
+        guard let hierarchy, let owner = hierarchy.owner(screenSize: readSize) else { return nil }
+        return hierarchy.elements[owner]
+    }
+
+    /// Shows one more enclosing element and what it holds.
+    ///
+    /// The selection stays where it was.
+    func widenHierarchy() {
+        guard mode == .noting, screenReadIsCurrent, let wider = hierarchy?.widened(screenSize: readSize) else { return }
+        hierarchy = wider
         selectionFeedback.selectionChanged()
     }
 
@@ -637,10 +674,7 @@ final class DebugSession {
     // MARK: - Notes
 
     func saveNote() {
-        let note =
-            showsLayoutPrototype && pending == nil && !isNotingDrawing
-            ? selectedLayout.note(noteText, including: selectedPadding)
-            : noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let note = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         if let pending {
             guard !pending.isSaving else { return }
             guard let loading = pending.loading else {
@@ -696,7 +730,8 @@ final class DebugSession {
                 ancestors: Array(levels.dropFirst()),
                 screen: screen,
                 attachments: [],
-                captureID: fileCapture(screenImage, element: element, frame: frame, strokes: [])
+                captureID: fileCapture(screenImage, element: element, frame: frame, strokes: []),
+                layout: includedLayout
             )
         }
         // A failed save keeps the card open with the text for another try: a note missing from
@@ -1921,8 +1956,13 @@ final class DebugSession {
 
     private func beginNoting() {
         selectedPadding = []
+        selectedDetails = []
         noteError = nil
-        isAwaitingKeyboard = !showsElementLayoutInspection && keyboardTop == .infinity
+        isAwaitingKeyboard = keyboardTop == .infinity
+        if showsElementLayoutInspection, selectedLayout.geometry == nil {
+            // The card shows nothing for an element it could not measure; the reason goes here.
+            Log.session.info("Layout: \(self.selectedLayout.message, privacy: .public)")
+        }
         noteBackground = pending == nil ? screenImage : nil
         setMode(.noting)
         // A hardware keyboard never shows the on-screen one; stop waiting for it. Only this card's
@@ -1942,6 +1982,7 @@ final class DebugSession {
 
     private func endNoting(returningTo next: Mode) {
         selectedPadding = []
+        selectedDetails = []
         noteText = ""
         isNotingDrawing = false
         drawingBox = nil

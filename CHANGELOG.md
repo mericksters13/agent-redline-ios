@@ -4,6 +4,20 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Added
+
+- Layout rows can be included in a note. The note card's Layout panel lists the selected component's frame, stack and priority settings and its parents' settings; tap a row to send it with the note. Until now these could be read on the phone but never sent.
+- The hierarchy can widen. An up row above the tree shows one more enclosing element and what it holds, so a row or card can be selected after touching something inside it.
+- What a note includes is drawn on the captured screen behind the card: included padding shaded red, an included frame as a dashed box, and a tag with their values.
+
+### Changed
+
+- The note card opens with the note field under the element's name and the keyboard up, for layout-inspected elements too. Round controls in the header open one panel at a time under the note field: Padding, Layout and Hierarchy. The name, the note field, Cancel and Add note stay in place whatever is open.
+- Padding edges are chosen with one control per side around the component snapshot, replacing the red dimension lines.
+- A note keeps only what you typed. Included padding and layout rows are stored beside it, and the report puts them after the note under "Layout context", so the notes list no longer shows them as the note. The list ends a note's caption with what it includes, such as "with left padding".
+- An element whose layout could not be verified shows the plain note card, without layout controls or a status line. The reason is logged.
+- The hierarchy opens without replacing the element's name or the footer, and its rows show each element's role.
+
 ## [0.1.7] - 2026-10-11
 
 ### Added

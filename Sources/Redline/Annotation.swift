@@ -50,6 +50,10 @@ struct Annotation: Codable, Equatable, Identifiable, Sendable {
     var encloses: [ElementSnapshot] = []
     /// For a drawing, how many named elements it encloses, of which `encloses` lists the first.
     var enclosedCount = 0
+    /// For an element note, the measured padding and layout lines the person chose to include.
+    ///
+    /// Kept apart from `note`, which holds only their own words; the report puts these after it.
+    var layout: [LayoutInspection.Row] = []
 
     /// How many snapshots the note shows in the viewer.
     var snapshotCount: Int { captureID != nil ? 1 : attachments.count }
@@ -160,6 +164,7 @@ struct Annotation: Codable, Equatable, Identifiable, Sendable {
 extension Annotation {
     private enum CodingKeys: String, CodingKey {
         case id, createdAt, note, kind, element, ancestors, screen, captureID, strokes, encloses, enclosedCount
+        case layout
         /// The draft's name for `attachments`, kept so drafts stay readable.
         case attachments = "screenshots"
         /// The single snapshot of drafts saved before attachments existed.
@@ -187,6 +192,7 @@ extension Annotation {
         strokes = try container.decodeIfPresent([[CGPoint]].self, forKey: .strokes) ?? []
         encloses = try container.decodeIfPresent([ElementSnapshot].self, forKey: .encloses) ?? []
         enclosedCount = try container.decodeIfPresent(Int.self, forKey: .enclosedCount) ?? encloses.count
+        layout = try container.decodeIfPresent([LayoutInspection.Row].self, forKey: .layout) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -204,6 +210,8 @@ extension Annotation {
         if !strokes.isEmpty { try container.encode(strokes, forKey: .strokes) }
         if !encloses.isEmpty { try container.encode(encloses, forKey: .encloses) }
         if enclosedCount != encloses.count { try container.encode(enclosedCount, forKey: .enclosedCount) }
+        // Only notes with included layout have it, so other notes are written as before.
+        if !layout.isEmpty { try container.encode(layout, forKey: .layout) }
     }
 
     /// What the item shows as its name in Redline.
@@ -256,6 +264,13 @@ extension Annotation {
             enclosedCount: enclosedCount
         )
     }
-    var subtitle: String { Self.subtitle(kind: kind, element: element, screen: screen) }
+    /// The line under the name, ending with what the note includes, such as "with left padding".
+    var subtitle: String {
+        [
+            Self.subtitle(kind: kind, element: element, screen: screen),
+            LayoutInspection.phrase(for: layout).map { "with \($0)" },
+        ]
+        .compactMap { $0 }.joined(separator: " · ")
+    }
 }
 #endif
