@@ -58,6 +58,27 @@ struct NoteCardPlacementTests {
         #expect(origin(low, widest, cardMidY: 500, bottom: keyboardTop).y == keyboardTop - 8 - 46)
     }
 
+    @Test func theCardStaysClearOfAWiderMeasuredBoxOnlyWhileASideCanHoldIt() {
+        func clear(_ box: CGRect, bottom: CGFloat = 840) -> ClosedRange<CGFloat>? {
+            NoteCardPlacement.clearSpace(
+                of: box,
+                minimumHeight: minimum,
+                height: 200,
+                top: statusBar,
+                bottom: bottom
+            )?.bounds
+        }
+        // A label 20 points tall at the top of a 200-point frame: the card goes under the frame,
+        // not 8 points under the label where it would cover the frame and its mark.
+        let frame = CGRect(x: 20, y: 100, width: 200, height: 200)
+        #expect(clear(frame) == 308...832)
+        // With the keyboard up there is no room under the frame, and above it is too small.
+        #expect(clear(frame, bottom: keyboardTop) == 308...530)
+        #expect(clear(CGRect(x: 20, y: 100, width: 200, height: 330), bottom: keyboardTop) == nil)
+        // A frame filling the screen leaves no clear side, so the caller places by the element.
+        #expect(clear(CGRect(x: 0, y: 62, width: 402, height: 778)) == nil)
+    }
+
     @Test func anElementNearTheTopGetsTheSpaceBelowIt() {
         let slot = space(element(y: 100))
         #expect(slot.bounds == 168...530)

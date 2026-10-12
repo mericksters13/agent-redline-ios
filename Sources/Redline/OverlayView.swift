@@ -331,7 +331,7 @@ struct OverlayView: View {
             cardMidY: noteCardFrame.midY,
             screenWidth: width,
             top: session.safeAreaTop,
-            bottom: min(session.noteKeyboardTop, session.screenSize.height)
+            bottom: session.noteCardBottom
         )
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         return Text(text)

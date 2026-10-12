@@ -1785,19 +1785,30 @@ final class DebugSession {
         let element = screenReadIsCurrent ? noteFrame : nil
         if showsHierarchy, let element, let hierarchy {
             let owner = hierarchy.elements[hierarchy.root].frame
-            let space = NoteCardPlacement.space(
-                element: owner,
+            if owner.contains(element),
+                let space = NoteCardPlacement.clearSpace(
+                    of: owner,
+                    minimumHeight: minimumHeight,
+                    height: height,
+                    top: safeAreaTop,
+                    bottom: noteCardBottom
+                )
+            {
+                return space
+            }
+        }
+        // Stay clear of the element's measured padding and frames as well, whether or not they
+        // are included yet, so including one never moves the card or leaves its mark under it.
+        if let element, let measured = measuredExtent, measured != element,
+            let space = NoteCardPlacement.clearSpace(
+                of: measured,
                 minimumHeight: minimumHeight,
                 height: height,
                 top: safeAreaTop,
                 bottom: noteCardBottom
             )
-            if owner.contains(element),
-                space.bounds.upperBound <= owner.minY - NoteCardPlacement.margin
-                    || space.bounds.lowerBound >= owner.maxY + NoteCardPlacement.margin
-            {
-                return space
-            }
+        {
+            return space
         }
         return NoteCardPlacement.space(
             element: element,
@@ -1808,8 +1819,16 @@ final class DebugSession {
         )
     }
 
-    /// The lowest the note card's bottom may go: the keyboard, or the home indicator without one.
-    private var noteCardBottom: CGFloat {
+    /// The selected element together with everything measured around it that a note can include
+    /// and the overlay then marks: its padding and its own frames.
+    private var measuredExtent: CGRect? {
+        guard let frame = noteFrame, let geometry = measuredGeometry else { return nil }
+        return selectedLayout.details.compactMap(\.box).reduce(frame.union(geometry.bounds)) { $0.union($1) }
+    }
+
+    /// The lowest the note card's bottom may go, and the measurement tag with it: the keyboard, or
+    /// the home indicator without one.
+    var noteCardBottom: CGFloat {
         min(noteKeyboardTop, screenSize.height - safeAreaInsets.bottom)
     }
 

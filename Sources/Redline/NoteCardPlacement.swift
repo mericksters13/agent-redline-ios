@@ -37,6 +37,23 @@ enum NoteCardPlacement {
         return (start...end, overlap(end - cappedHeight) <= overlap(start))
     }
 
+    /// The space clear of `box`, when a side of it can still hold the card; nil when the card
+    /// would have to overlap it.
+    ///
+    /// For a box wider than the element itself, such as a hierarchy's owner or the element's
+    /// measured frame: worth staying clear of, but never at the cost of covering the element.
+    static func clearSpace(
+        of box: CGRect,
+        minimumHeight: CGFloat,
+        height: CGFloat,
+        top: CGFloat,
+        bottom: CGFloat
+    ) -> (bounds: ClosedRange<CGFloat>, anchorsBottom: Bool)? {
+        let space = space(element: box, minimumHeight: minimumHeight, height: height, top: top, bottom: bottom)
+        let isClear = space.bounds.upperBound <= box.minY - margin || space.bounds.lowerBound >= box.maxY + margin
+        return isClear ? space : nil
+    }
+
     /// The widest the tag naming what is marked may be; longer text wraps.
     static func tagMaxWidth(screenWidth: CGFloat) -> CGFloat {
         max(screenWidth - 2 * margin, 0)

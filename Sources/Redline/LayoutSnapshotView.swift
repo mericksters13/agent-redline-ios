@@ -26,7 +26,8 @@ struct LayoutSnapshotView: View {
                 edgeControl(.top)
                 HStack(spacing: 8) {
                     edgeControl(.left)
-                    preview.frame(height: 72)
+                    // The crop keeps a useful width however long the values beside it are.
+                    preview.frame(minWidth: 96).frame(height: 72)
                     edgeControl(.right)
                 }
                 edgeControl(.bottom)
@@ -40,25 +41,27 @@ struct LayoutSnapshotView: View {
         let value = geometry.paddingLabel(on: edge)
         let isSelected = selected.contains(edge)
         let isZero = geometry.paddingValues(on: edge).isEmpty
+        // One text, so a long nested value such as "5 + 5 + 5 pt" wraps inside the control's
+        // column instead of running out of the card.
+        let name = Text(edge.title).foregroundStyle(isSelected ? Color.black : Mono.secondary)
+        let amount = Text(value ?? "")
+            .fontWeight(.semibold)
+            .foregroundStyle(isSelected ? Color.black : isZero ? Mono.secondary : Mono.text)
+        let shape = RoundedRectangle(cornerRadius: 15, style: .continuous)
         return Button {
             toggle(edge)
         } label: {
-            HStack(spacing: 5) {
-                Text(edge.title)
-                    .foregroundStyle(isSelected ? Color.black : Mono.secondary)
-                Text(value ?? "")
-                    .fontWeight(.semibold)
-                    .foregroundStyle(isSelected ? Color.black : isZero ? Mono.secondary : Mono.text)
-            }
-            .font(.caption)
-            .monospacedDigit()
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 12)
-            .frame(minHeight: 30)
-            .background(isSelected ? Color.white : Mono.fill, in: Capsule(style: .continuous))
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Rectangle())
+            Text("\(name) \(amount)")
+                .font(.caption)
+                .monospacedDigit()
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .frame(minHeight: 30)
+                .background(isSelected ? Color.white : Mono.fill, in: shape)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(value == nil)
