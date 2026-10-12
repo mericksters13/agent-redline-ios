@@ -4,6 +4,8 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-12
+
 ### Added
 
 - Layout rows can be included in a note. The note card's Layout panel lists the selected component's frame, stack and priority settings and its parents' settings; tap a row to send it with the note. Until now these could be read on the phone but never sent.
@@ -100,7 +102,8 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 First public release.
 
-[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.7...HEAD
+[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.8...HEAD
+[0.1.8]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.7...0.1.8
 [0.1.7]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.6...0.1.7
 [0.1.6]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.5...0.1.6
 [0.1.5]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.4...0.1.5
