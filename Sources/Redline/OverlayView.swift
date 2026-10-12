@@ -23,6 +23,7 @@ struct OverlayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Where the note card is, so the measurement tag goes on the element's other side.
     @State private var noteCardFrame: CGRect = .zero
+    @State private var measurementTagSize = CGSize(width: 140, height: 30)
     @State private var islandHeight: CGFloat = 52
     @State private var tagWidth: CGFloat = 140
     @State private var listContentHeight: CGFloat = 0
@@ -285,10 +286,11 @@ struct OverlayView: View {
     private func includedMarks(_ geometry: LayoutInspection.Geometry) -> some View {
         let edges = LayoutInspection.Edge.allCases.filter(session.selectedPadding.contains)
         let bands = edges.flatMap { edge in geometry.padding.map { $0.band(on: edge) } }.filter { !$0.isEmpty }
-        let frame = session.selectedLayout.marksFrame(session.selectedDetails) ? geometry.box : nil
+        // A frame is outlined only where its bounds were measured.
+        let frame = session.selectedLayout.markedFrame(session.selectedDetails)
         let values =
             edges.compactMap { edge in geometry.paddingLabel(on: edge).map { "\(edge.title) \($0)" } }
-            + (frame == nil ? [] : [geometry.size])
+            + (frame.map { [LayoutInspection.size($0)] } ?? [])
         if !values.isEmpty {
             ForEach(Array(bands.enumerated()), id: \.offset) { _, band in
                 Rectangle()
@@ -311,26 +313,34 @@ struct OverlayView: View {
     }
 
     /// The values of what is marked, on the side of the element away from the note card.
+    ///
+    /// Many values, or large text, wrap inside the screen's width instead of running off it.
     private func measurementTag(_ text: String, by marked: CGRect) -> some View {
-        let above = noteCardFrame.midY > marked.midY
-        let x = min(max(marked.minX - 3, 8), width - tagWidth - 8)
-        let y = above ? max(marked.minY - 36, session.safeAreaTop + 4) : marked.maxY + 8
+        let origin = NoteCardPlacement.tagOrigin(
+            marked: marked,
+            tag: measurementTagSize,
+            cardMidY: noteCardFrame.midY,
+            screenWidth: width,
+            top: session.safeAreaTop
+        )
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         return Text(text)
             .font(.footnote.weight(.semibold))
             .monospacedDigit()
             .foregroundStyle(Mono.text)
-            .lineLimit(1)
-            .fixedSize()
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Mono.surface, in: Capsule(style: .continuous))
-            .overlay(Capsule(style: .continuous).strokeBorder(Mono.hairline, lineWidth: 1))
-            .onGeometryChange(for: CGFloat.self) {
-                $0.size.width
+            .background(Mono.surface, in: shape)
+            .overlay(shape.strokeBorder(Mono.hairline, lineWidth: 1))
+            .onGeometryChange(for: CGSize.self) {
+                $0.size
             } action: {
-                tagWidth = $0
+                measurementTagSize = $0
             }
-            .offset(x: x, y: y)
+            .frame(width: NoteCardPlacement.tagMaxWidth(screenWidth: width), alignment: .leading)
+            .offset(x: origin.x, y: origin.y)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }

@@ -600,7 +600,15 @@ final class DebugSession {
         hierarchySelectionIndex = index
         selectedPadding = []
         selectedDetails = []
+        logUnmeasuredLayout()
         selectionFeedback.selectionChanged()
+    }
+
+    /// The card shows nothing for an element it could not measure, so the reason goes to the log:
+    /// when a note starts, and again when the hierarchy moves the note to another element.
+    private func logUnmeasuredLayout() {
+        guard showsElementLayoutInspection, selectedLayout.geometry == nil else { return }
+        Log.session.info("Layout: \(self.selectedLayout.message, privacy: .public)")
     }
 
     /// The element the hierarchy's up row leads to; nil at the outermost usable one.
@@ -1959,10 +1967,7 @@ final class DebugSession {
         selectedDetails = []
         noteError = nil
         isAwaitingKeyboard = keyboardTop == .infinity
-        if showsElementLayoutInspection, selectedLayout.geometry == nil {
-            // The card shows nothing for an element it could not measure; the reason goes here.
-            Log.session.info("Layout: \(self.selectedLayout.message, privacy: .public)")
-        }
+        logUnmeasuredLayout()
         noteBackground = pending == nil ? screenImage : nil
         setMode(.noting)
         // A hardware keyboard never shows the on-screen one; stop waiting for it. Only this card's

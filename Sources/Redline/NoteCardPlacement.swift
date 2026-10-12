@@ -36,5 +36,20 @@ enum NoteCardPlacement {
         }
         return (start...end, overlap(end - cappedHeight) <= overlap(start))
     }
+
+    /// The widest the tag naming what is marked may be; longer text wraps.
+    static func tagMaxWidth(screenWidth: CGFloat) -> CGFloat {
+        max(screenWidth - 2 * margin, 0)
+    }
+
+    /// Where that tag goes: by the marked area's leading edge, on the side away from the card, and
+    /// inside the screen however wide the tag is.
+    static func tagOrigin(marked: CGRect, tag: CGSize, cardMidY: CGFloat, screenWidth: CGFloat, top: CGFloat)
+        -> CGPoint
+    {
+        let x = max(min(marked.minX - 3, screenWidth - tag.width - margin), margin)
+        let above = cardMidY > marked.midY
+        return CGPoint(x: x, y: above ? max(marked.minY - margin - tag.height, top + 4) : marked.maxY + margin)
+    }
 }
 #endif

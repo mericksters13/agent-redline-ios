@@ -210,9 +210,7 @@ struct LayoutInspection: Equatable, Sendable {
         /// The measured frame, or the component with its padding when no frame was read.
         var box: CGRect { frame ?? bounds }
 
-        var size: String {
-            "\(LayoutInspection.number(box.width)) × \(LayoutInspection.number(box.height)) pt"
-        }
+        var size: String { LayoutInspection.size(box) }
     }
 
     struct Report: Equatable, Sendable {
@@ -245,11 +243,24 @@ struct LayoutInspection: Equatable, Sendable {
             return padding + details.indices.filter(chosen.contains).map { details[$0] }
         }
 
-        /// True when a chosen line is the component's own frame or size, which the overlay outlines.
-        func marksFrame(_ chosen: Set<Int>) -> Bool {
-            details.indices.contains {
-                chosen.contains($0) && ["Frame", "Measured frame", "Rendered size"].contains(details[$0].title)
+        /// The measured box behind a chosen line for the component's own frame or size, which the
+        /// overlay outlines.
+        ///
+        /// Nil when no such line is chosen, or when the frame was declared but its bounds were not
+        /// measured: the note still carries the declared line, and nothing unmeasured is drawn.
+        func markedFrame(_ chosen: Set<Int>) -> CGRect? {
+            guard let geometry else { return nil }
+            for index in details.indices where chosen.contains(index) {
+                switch details[index].title {
+                case "Frame", "Measured frame":
+                    if let frame = geometry.frame { return frame }
+                case "Rendered size":
+                    return geometry.bounds
+                default:
+                    continue
+                }
             }
+            return nil
         }
 
         /// The component's own settings, one per line, as VoiceOver reads the measured header.
@@ -286,6 +297,8 @@ struct LayoutInspection: Equatable, Sendable {
     }
 
     static func points(_ value: CGFloat) -> String { number(value) + " pt" }
+
+    static func size(_ box: CGRect) -> String { "\(number(box.width)) × \(number(box.height)) pt" }
 
     private static func readableAlignment(_ value: String) -> String {
         value.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression).capitalized

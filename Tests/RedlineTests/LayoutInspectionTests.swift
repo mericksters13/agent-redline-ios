@@ -180,8 +180,9 @@ struct LayoutInspectionTests {
             ]
         )
         #expect(result.included(edges: [], details: [7]).isEmpty)
-        #expect(result.marksFrame([0]))
-        #expect(!result.marksFrame([]))
+        // The frame's measured box is what the overlay outlines.
+        #expect(result.markedFrame([0]) == box)
+        #expect(result.markedFrame([]) == nil)
     }
 
     @Test func settingsBecomeOneLineEachForTheComponentAndItsParents() {
@@ -332,6 +333,19 @@ struct LayoutInspectionTests {
         #expect(result.geometry?.frame == nil)
         #expect(result.geometry?.bounds == text)
         #expect(result.details.contains { $0.title == "Parent" && $0.value.contains("Spacing 18 pt") })
+        // The declared frame can be sent, but with no measured bounds nothing is outlined for it:
+        // the component's own box would show a different size than the note reports.
+        #expect(result.details.first == .init(title: "Frame", value: "180 × 44 pt · Top Leading"))
+        #expect(result.included(edges: [], details: [0]) == [.init(title: "Frame", value: "180 × 44 pt · Top Leading")])
+        #expect(result.markedFrame([0]) == nil)
+        // A rendered size is the component's own measured box.
+        let rendered = LayoutInspection.Report(
+            message: "Matched",
+            details: [.init(title: "Rendered size", value: "80 × 20 pt")],
+            geometry: .init(content: text, frame: nil, padding: [])
+        )
+        #expect(rendered.markedFrame([0]) == text)
+        #expect(LayoutInspection.size(text) == "80 × 20 pt")
         #expect(result.rows.contains(.init(title: "Alignment", value: "Top Leading")))
     }
 
