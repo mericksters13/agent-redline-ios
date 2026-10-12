@@ -152,6 +152,15 @@ struct LayoutInspection: Equatable, Sendable {
         var value: String
     }
 
+    /// A line the Layout panel offers, with the measured box it describes when it has one.
+    struct Detail: Equatable, Sendable {
+        var row: Row
+        /// The component's own frame or size as measured.
+        ///
+        /// Nil for a parent's line, and for a frame declared without measured bounds.
+        var box: CGRect? = nil
+    }
+
     struct PaddingRegion: Equatable, Sendable {
         var inner: CGRect
         var outer: CGRect
@@ -221,7 +230,7 @@ struct LayoutInspection: Equatable, Sendable {
         var rows: [Row] = []
         /// The lines a note can include besides padding: the component's own settings, then its
         /// parents', innermost first.
-        var details: [Row] = []
+        var details: [Detail] = []
         var geometry: Geometry?
 
         /// What the person chose to send with the note: padding edges, then layout lines.
@@ -240,27 +249,17 @@ struct LayoutInspection: Equatable, Sendable {
                         Row(title: "\(edge.title) padding", value: "\($0) (\(provenance))")
                     }
                 }
-            return padding + details.indices.filter(chosen.contains).map { details[$0] }
+            return padding + details.indices.filter(chosen.contains).map { details[$0].row }
         }
 
-        /// The measured box behind a chosen line for the component's own frame or size, which the
-        /// overlay outlines.
+        /// The measured boxes of the chosen lines, which the overlay outlines.
         ///
-        /// Nil when no such line is chosen, or when the frame was declared but its bounds were not
-        /// measured: the note still carries the declared line, and nothing unmeasured is drawn.
-        func markedFrame(_ chosen: Set<Int>) -> CGRect? {
-            guard let geometry else { return nil }
-            for index in details.indices where chosen.contains(index) {
-                switch details[index].title {
-                case "Frame", "Measured frame":
-                    if let frame = geometry.frame { return frame }
-                case "Rendered size":
-                    return geometry.bounds
-                default:
-                    continue
-                }
-            }
-            return nil
+        /// Each line brings its own box, so with nested frames the inner line outlines the inner
+        /// frame. A frame declared without measured bounds has none: the note still carries the
+        /// line, and nothing unmeasured is drawn for it.
+        func markedFrames(_ chosen: Set<Int>) -> [CGRect] {
+            guard geometry != nil else { return [] }
+            return details.indices.filter(chosen.contains).compactMap { details[$0].box }
         }
 
         /// The component's own settings, one per line, as VoiceOver reads the measured header.
@@ -364,7 +363,15 @@ struct LayoutInspection: Equatable, Sendable {
                 ancestor = true
             }
             for setting in node.layout {
-                if let detail = setting.detail(inParent: ancestor) { report.details.append(detail) }
+                if let row = setting.detail(inParent: ancestor) {
+                    // Only the component's own frame lines have a box of their own to outline.
+                    var box: CGRect?
+                    switch setting {
+                    case .frame, .flexibleFrame: box = ancestor ? nil : renderedBounds(at: index)
+                    default: break
+                    }
+                    report.details.append(Detail(row: row, box: box))
+                }
                 if ancestor { continue }
                 report.rows.append(
                     contentsOf: setting.rows.map { row in
@@ -413,7 +420,7 @@ struct LayoutInspection: Equatable, Sendable {
                     value: "\(Self.number(bounds.width)) × \(Self.number(bounds.height)) pt"
                 )
                 report.rows.insert(measured, at: 0)
-                report.details.insert(measured, at: 0)
+                report.details.insert(Detail(row: measured, box: bounds), at: 0)
             }
         }
         return report

@@ -406,7 +406,7 @@ struct AnnotationFormView: View {
         case .layout:
             VStack(alignment: .leading, spacing: 8) {
                 LayoutInspectorView(
-                    details: session.selectedLayout.details,
+                    details: session.selectedLayout.details.map(\.row),
                     selected: session.selectedDetails,
                     toggle: session.toggleDetail
                 )

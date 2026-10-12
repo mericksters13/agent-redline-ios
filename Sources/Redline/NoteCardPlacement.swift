@@ -43,13 +43,23 @@ enum NoteCardPlacement {
     }
 
     /// Where that tag goes: by the marked area's leading edge, on the side away from the card, and
-    /// inside the screen however wide the tag is.
-    static func tagOrigin(marked: CGRect, tag: CGSize, cardMidY: CGFloat, screenWidth: CGFloat, top: CGFloat)
-        -> CGPoint
-    {
+    /// inside the visible screen however wide or tall the tag is.
+    ///
+    /// Under an element at the bottom of the screen there is no room, so the tag moves up over the
+    /// element's lower edge rather than off the screen.
+    static func tagOrigin(
+        marked: CGRect,
+        tag: CGSize,
+        cardMidY: CGFloat,
+        screenWidth: CGFloat,
+        top: CGFloat,
+        bottom: CGFloat
+    ) -> CGPoint {
         let x = max(min(marked.minX - 3, screenWidth - tag.width - margin), margin)
-        let above = cardMidY > marked.midY
-        return CGPoint(x: x, y: above ? max(marked.minY - margin - tag.height, top + 4) : marked.maxY + margin)
+        let highest = top + 4
+        let lowest = max(bottom - margin - tag.height, highest)
+        let y = cardMidY > marked.midY ? marked.minY - margin - tag.height : marked.maxY + margin
+        return CGPoint(x: x, y: min(max(y, highest), lowest))
     }
 }
 #endif

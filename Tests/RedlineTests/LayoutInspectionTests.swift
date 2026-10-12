@@ -54,7 +54,9 @@ struct LayoutInspectionTests {
         ])
         let result = inspection.report(element("Sample"))
         #expect(result.rows == [.init(title: "Padding", value: "System default")])
-        #expect(result.details.contains(.init(title: "Parent", value: "Horizontal stack · Spacing 12 pt · Top")))
+        #expect(
+            result.details.map(\.row).contains(.init(title: "Parent", value: "Horizontal stack · Spacing 12 pt · Top"))
+        )
         #expect(result.message.contains("unverified"))
     }
 
@@ -169,7 +171,7 @@ struct LayoutInspectionTests {
         #expect(result.summary.contains("Frame: 180 × 44 pt"))
         #expect(!result.summary.contains("_FrameLayout"))
         // The component's own padding is chosen in the snapshot, so only its frame is a line.
-        #expect(result.details == [.init(title: "Frame", value: "180 × 44 pt · Leading")])
+        #expect(result.details == [.init(row: .init(title: "Frame", value: "180 × 44 pt · Leading"), box: box)])
         #expect(result.geometry?.size == "180 × 44 pt")
         // Nothing is sent until it is chosen, and then only what was chosen.
         #expect(result.included(edges: [], details: []).isEmpty)
@@ -181,8 +183,8 @@ struct LayoutInspectionTests {
         )
         #expect(result.included(edges: [], details: [7]).isEmpty)
         // The frame's measured box is what the overlay outlines.
-        #expect(result.markedFrame([0]) == box)
-        #expect(result.markedFrame([]) == nil)
+        #expect(result.markedFrames([0]) == [box])
+        #expect(result.markedFrames([]).isEmpty)
     }
 
     @Test func settingsBecomeOneLineEachForTheComponentAndItsParents() {
@@ -332,21 +334,61 @@ struct LayoutInspectionTests {
         let result = inspection.report(selected)
         #expect(result.geometry?.frame == nil)
         #expect(result.geometry?.bounds == text)
-        #expect(result.details.contains { $0.title == "Parent" && $0.value.contains("Spacing 18 pt") })
+        #expect(result.details.contains { $0.row.title == "Parent" && $0.row.value.contains("Spacing 18 pt") })
         // The declared frame can be sent, but with no measured bounds nothing is outlined for it:
         // the component's own box would show a different size than the note reports.
-        #expect(result.details.first == .init(title: "Frame", value: "180 × 44 pt · Top Leading"))
+        #expect(result.details.first == .init(row: .init(title: "Frame", value: "180 × 44 pt · Top Leading")))
         #expect(result.included(edges: [], details: [0]) == [.init(title: "Frame", value: "180 × 44 pt · Top Leading")])
-        #expect(result.markedFrame([0]) == nil)
-        // A rendered size is the component's own measured box.
-        let rendered = LayoutInspection.Report(
-            message: "Matched",
-            details: [.init(title: "Rendered size", value: "80 × 20 pt")],
-            geometry: .init(content: text, frame: nil, padding: [])
-        )
-        #expect(rendered.markedFrame([0]) == text)
+        #expect(result.markedFrames([0]).isEmpty)
         #expect(LayoutInspection.size(text) == "80 × 20 pt")
         #expect(result.rows.contains(.init(title: "Alignment", value: "Top Leading")))
+    }
+
+    @Test func eachFrameLineOutlinesItsOwnMeasuredBox() {
+        let text = CGRect(x: 40, y: 110, width: 60, height: 20)
+        let inner = CGRect(x: 30, y: 100, width: 120, height: 40)
+        let outer = CGRect(x: 20, y: 90, width: 200, height: 60)
+        let inspection = LayoutInspection(nodes: [
+            .init(
+                type: "_FrameLayout",
+                settings: [],
+                parent: nil,
+                childCount: 1,
+                frame: outer,
+                layout: [.frame(width: 200, height: 60, alignment: "center")]
+            ),
+            .init(
+                type: "_FrameLayout",
+                settings: [],
+                parent: 0,
+                childCount: 1,
+                frame: inner,
+                layout: [.frame(width: 120, height: 40, alignment: "leading")]
+            ),
+            .init(type: "Text", text: "Nested frames", settings: [], parent: 1, childCount: 0, frame: text),
+        ])
+        var selected = element("Nested frames")
+        selected.frame = text
+        let result = inspection.report(selected)
+        #expect(
+            result.details == [
+                .init(row: .init(title: "Frame", value: "120 × 40 pt · Leading"), box: inner),
+                .init(row: .init(title: "Frame", value: "200 × 60 pt · Center"), box: outer),
+            ]
+        )
+        // Choosing the inner line outlines the inner frame, not the outermost one.
+        #expect(result.markedFrames([0]) == [inner])
+        #expect(result.markedFrames([1]) == [outer])
+        #expect(result.markedFrames([0, 1]) == [inner, outer])
+        // A component with neither padding nor a frame offers its rendered size, with its own box.
+        let plain = LayoutInspection(nodes: [
+            .init(type: "Text", text: "Plain", settings: [], parent: nil, childCount: 0, frame: text)
+        ])
+        var bare = element("Plain")
+        bare.frame = text
+        let rendered = plain.report(bare)
+        #expect(rendered.details == [.init(row: .init(title: "Rendered size", value: "60 × 20 pt"), box: text)])
+        #expect(rendered.markedFrames([0]) == [text])
     }
 
     @Test func flexibleBoundsUsePlainLanguageAndDistinguishMeasuredSize() {
@@ -453,7 +495,7 @@ struct LayoutInspectionTests {
         // Without verified geometry nothing was offered, so nothing is sent.
         let unavailable = LayoutInspection.Report(
             message: "Unavailable",
-            details: [.init(title: "Frame", value: "1 × 1 pt")]
+            details: [.init(row: .init(title: "Frame", value: "1 × 1 pt"))]
         )
         #expect(unavailable.included(edges: [.left], details: [0]).isEmpty)
     }
@@ -556,7 +598,7 @@ struct LayoutInspectionTests {
             )
         )
         #expect(
-            result.details.contains(
+            result.details.map(\.row).contains(
                 .init(title: "Parent", value: "Padding · Top 15 pt · Leading 16 pt · Bottom 15 pt · Trailing 16 pt")
             )
         )
@@ -787,7 +829,7 @@ struct LayoutInspectionTests {
         #expect(report.geometry?.bounds == content.insetBy(dx: -3, dy: -3))
         #expect(context(report, [.left]) == "Left padding: 3 pt (measured)")
         #expect(!report.rows.contains(.init(title: "Padding", value: "All sides · 12 pt")))
-        #expect(report.details.contains(.init(title: "Parent", value: "Padding · All sides · 12 pt")))
+        #expect(report.details.map(\.row).contains(.init(title: "Parent", value: "Padding · All sides · 12 pt")))
         selected.frame = container
         #expect(inspection.report(selected).geometry == nil)
         selected.role = "Group"

@@ -535,6 +535,8 @@ final class LayoutPrototypeTests: XCTestCase {
         XCTAssertEqual(left.value as? String, "Included in note")
         XCTAssertEqual(app.buttons["RedlineShowLayout"].value as? String, "frame included")
         XCTAssertEqual(note.value as? String, "Keep this draft")
+        // The card is still resizing from one panel to the other; let the footer come to rest.
+        Thread.sleep(forTimeInterval: 0.5)
         app.buttons["Cancel"].tap()
         app.buttons["Close annotate mode"].tap()
 

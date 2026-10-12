@@ -74,7 +74,7 @@ struct OverlayView: View {
             }
 
             if session.mode == .noting, session.screenReadIsCurrent, let geometry = session.measuredGeometry {
-                includedMarks(geometry)
+                includedBands(geometry)
             }
 
             if session.mode == .picking || session.mode == .noting, session.screenReadIsCurrent,
@@ -88,6 +88,11 @@ struct OverlayView: View {
                 if session.mode == .picking {
                     nameTag(element)
                 }
+            }
+
+            // Over the outline, so a dashed frame is never hidden under its solid line.
+            if session.mode == .noting, session.screenReadIsCurrent, let geometry = session.measuredGeometry {
+                includedFrames(geometry)
             }
 
             if session.mode == .noting {
@@ -278,37 +283,41 @@ struct OverlayView: View {
         .allowsHitTesting(false)
     }
 
-    /// What the note includes, marked on the captured screen: chosen padding shaded, a chosen frame
-    /// dashed, and one tag with their values.
+    /// The padding the note includes, shaded on the captured screen under the element's outline.
     ///
     /// It stays while the panel it was chosen in is closed, so the choice is never out of sight.
-    @ViewBuilder
-    private func includedMarks(_ geometry: LayoutInspection.Geometry) -> some View {
+    private func includedBands(_ geometry: LayoutInspection.Geometry) -> some View {
         let edges = LayoutInspection.Edge.allCases.filter(session.selectedPadding.contains)
         let bands = edges.flatMap { edge in geometry.padding.map { $0.band(on: edge) } }.filter { !$0.isEmpty }
-        // A frame is outlined only where its bounds were measured.
-        let frame = session.selectedLayout.markedFrame(session.selectedDetails)
+        return ForEach(Array(bands.enumerated()), id: \.offset) { _, band in
+            Rectangle()
+                .fill(Markup.red.opacity(0.45))
+                .frame(width: band.width, height: band.height)
+                .offset(x: band.minX, y: band.minY)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// The frames the note includes, dashed where their bounds were measured, and one tag with the
+    /// values of everything marked.
+    @ViewBuilder
+    private func includedFrames(_ geometry: LayoutInspection.Geometry) -> some View {
+        let edges = LayoutInspection.Edge.allCases.filter(session.selectedPadding.contains)
+        let frames = session.selectedLayout.markedFrames(session.selectedDetails)
         let values =
             edges.compactMap { edge in geometry.paddingLabel(on: edge).map { "\(edge.title) \($0)" } }
-            + (frame.map { [LayoutInspection.size($0)] } ?? [])
+            + frames.map(LayoutInspection.size)
+        ForEach(Array(frames.enumerated()), id: \.offset) { _, frame in
+            Rectangle()
+                .strokeBorder(Markup.red, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                .frame(width: frame.width, height: frame.height)
+                .offset(x: frame.minX, y: frame.minY)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         if !values.isEmpty {
-            ForEach(Array(bands.enumerated()), id: \.offset) { _, band in
-                Rectangle()
-                    .fill(Markup.red.opacity(0.45))
-                    .frame(width: band.width, height: band.height)
-                    .offset(x: band.minX, y: band.minY)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-            if let frame {
-                Rectangle()
-                    .strokeBorder(Markup.red, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-                    .frame(width: frame.width, height: frame.height)
-                    .offset(x: frame.minX, y: frame.minY)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-            measurementTag(values.joined(separator: " · "), by: geometry.bounds.union(frame ?? geometry.bounds))
+            measurementTag(values.joined(separator: " · "), by: frames.reduce(geometry.bounds) { $0.union($1) })
         }
     }
 
@@ -321,7 +330,8 @@ struct OverlayView: View {
             tag: measurementTagSize,
             cardMidY: noteCardFrame.midY,
             screenWidth: width,
-            top: session.safeAreaTop
+            top: session.safeAreaTop,
+            bottom: min(session.noteKeyboardTop, session.screenSize.height)
         )
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         return Text(text)

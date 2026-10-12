@@ -26,36 +26,36 @@ struct NoteCardPlacementTests {
     }
 
     @Test func theMeasurementTagStaysOnScreenAndAwayFromTheCard() {
+        func origin(_ marked: CGRect, _ tag: CGSize, cardMidY: CGFloat, bottom: CGFloat = 840) -> CGPoint {
+            NoteCardPlacement.tagOrigin(
+                marked: marked,
+                tag: tag,
+                cardMidY: cardMidY,
+                screenWidth: 402,
+                top: statusBar,
+                bottom: bottom
+            )
+        }
         let marked = CGRect(x: 20, y: 182, width: 180, height: 44)
         let small = CGSize(width: 120, height: 28)
         // The card is below, so the tag sits above the marked area, by its leading edge.
-        let above = NoteCardPlacement.tagOrigin(marked: marked, tag: small, cardMidY: 400, screenWidth: 402, top: 62)
-        #expect(above == CGPoint(x: 17, y: 146))
+        #expect(origin(marked, small, cardMidY: 400) == CGPoint(x: 17, y: 146))
         // The card is above, so the tag sits below.
-        let below = NoteCardPlacement.tagOrigin(marked: marked, tag: small, cardMidY: 100, screenWidth: 402, top: 62)
-        #expect(below == CGPoint(x: 17, y: 234))
+        #expect(origin(marked, small, cardMidY: 100) == CGPoint(x: 17, y: 234))
         // A tag as wide as it may get, naming every edge and the frame, starts at the margin
         // instead of running off the leading edge.
         let widest = CGSize(width: NoteCardPlacement.tagMaxWidth(screenWidth: 402), height: 46)
-        let wide = NoteCardPlacement.tagOrigin(
-            marked: CGRect(x: 300, y: 182, width: 80, height: 44),
-            tag: widest,
-            cardMidY: 400,
-            screenWidth: 402,
-            top: 62
-        )
+        let wide = origin(CGRect(x: 300, y: 182, width: 80, height: 44), widest, cardMidY: 400)
         #expect(wide.x == 8)
         #expect(wide.x + widest.width <= 402 - 8)
         #expect(wide.y == 128)
         // Near the top, a tall tag stops under the status bar.
-        let top = NoteCardPlacement.tagOrigin(
-            marked: CGRect(x: 20, y: 80, width: 80, height: 20),
-            tag: widest,
-            cardMidY: 400,
-            screenWidth: 402,
-            top: 62
-        )
-        #expect(top.y == 66)
+        #expect(origin(CGRect(x: 20, y: 80, width: 80, height: 20), widest, cardMidY: 400).y == 66)
+        // Under an element at the bottom of the screen, the tag stays above the bottom edge,
+        // and above the keyboard when it is up.
+        let low = CGRect(x: 20, y: 790, width: 200, height: 44)
+        #expect(origin(low, small, cardMidY: 500).y == homeIndicatorTop - 8 - 28)
+        #expect(origin(low, widest, cardMidY: 500, bottom: keyboardTop).y == keyboardTop - 8 - 46)
     }
 
     @Test func anElementNearTheTopGetsTheSpaceBelowIt() {
