@@ -4,6 +4,10 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Code shows as Ready once the `claude` command is signed in. Since 0.1.6, Redline checked the sign-in without passing on its environment, so the menu bar panel and `redline setup` said "Not signed in" after a successful `claude auth login`, and reports for new or closed chats waited in the inbox.
+
 ## [0.1.8] - 2026-10-12
 
 ### Added
