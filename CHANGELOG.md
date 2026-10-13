@@ -4,6 +4,8 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-14
+
 ### Fixed
 
 - Claude Code shows as Ready once the `claude` command is signed in. Since 0.1.6, Redline checked the sign-in without passing on its environment, so the menu bar panel and `redline setup` said "Not signed in" after a successful `claude auth login`, and reports for new or closed chats waited in the inbox.
@@ -106,7 +108,8 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 First public release.
 
-[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.8...HEAD
+[Unreleased]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.9...HEAD
+[0.1.9]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.8...0.1.9
 [0.1.8]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.7...0.1.8
 [0.1.7]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.6...0.1.7
 [0.1.6]: https://github.com/mericksters13/agent-redline-ios/compare/0.1.5...0.1.6
