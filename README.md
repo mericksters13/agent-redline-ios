@@ -209,7 +209,7 @@ The first report sent from an iPhone triggers the one-time iOS local network pro
 ### In the build
 
 - **Floating button.** Tap it to enter annotate mode. Drag it anywhere; it snaps to the nearest edge. Press and hold it to list the reports sent from this device.
-- **Annotate mode.** Routes taps to Redline instead of the build, and draws a light red border around the screen. Its controls sit in a black bar at the top.
+- **Annotate mode.** Routes taps to Redline instead of the build, and draws a light red border around the screen. Its controls sit in a black bar at the top. The bar hides while your finger is on the screen, so you can see what is under it: touch anywhere and slide onto the element.
   - Tap an element to select it. The note card identifies that element and offers View hierarchy.
   - Tap View hierarchy to browse the nearest captured owner and its children, with your selected component highlighted inside it. This includes the owner of a group you tapped. The tree stops at that owner; when none is captured or it covers almost the whole screen, the selected element is the root. Indentation and vertical lines show which nodes own their children; arrows fold and unfold branches. Tap a row to move the outline and note target, then Done to return to your draft. Browsing keeps the same tree and excludes unrelated sections. Only children exposed in the captured accessibility tree appear. To expose a card or section, see [Make containers pickable](#make-containers-pickable).
   - Write a note and tap Add note. Notes collect across screens until you send them.

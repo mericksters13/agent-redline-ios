@@ -6,6 +6,10 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 
 ## [0.1.9] - 2026-10-14
 
+### Changed
+
+- In annotate mode the bar hides while your finger is on the screen, picking or drawing, and returns when you lift it. What the bar covers can now be seen and picked: touch anywhere and slide onto it. Until now an element under the bar could be neither seen nor circled, since the build does not scroll in annotate mode.
+
 ### Fixed
 
 - Claude Code shows as Ready once the `claude` command is signed in. Since 0.1.6, Redline checked the sign-in without passing on its environment, so the menu bar panel and `redline setup` said "Not signed in" after a successful `claude auth login`, and reports for new or closed chats waited in the inbox.
