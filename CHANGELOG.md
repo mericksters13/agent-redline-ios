@@ -9,6 +9,7 @@ Notable changes to Redline. The format follows [Keep a Changelog](https://keepac
 ### Changed
 
 - In annotate mode the bar hides while your finger is on the screen, picking or drawing, and returns when you lift it. What the bar covers can now be seen and picked: touch anywhere and slide onto it. Until now an element under the bar could be neither seen nor circled, since the build does not scroll in annotate mode.
+- After a system screenshot, the thumbnail switches to the screenshot you saved once it reaches Photos, so a crop or markup from the system's editor is what you send. This needs Photos access; without it Redline offers its own capture, as before. The saved screenshot is the system's, so it shows Redline's button or bar where they were on screen. Until now the saved copy was never offered.
 
 ### Fixed
 

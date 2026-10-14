@@ -80,6 +80,9 @@ final class DebugSession {
         var preview: UIImage
         var kind: Annotation.Kind
         var screen: ScreenInfo?
+        /// When the system screenshot was taken that this capture by the app stands in for, until
+        /// the system's copy reaches Photos; nil for a screenshot from Photos.
+        var standsInForScreenshotAt: Date?
     }
 
     /// A note already made on the screen being picked on, where its element or drawing is now.
@@ -314,6 +317,9 @@ final class DebugSession {
     @ObservationIgnored private var keyboardWait: Task<Void, Never>?
     @ObservationIgnored private var keyboardAnimationDuration = 0.25
     @ObservationIgnored private var suggestionTimer: Task<Void, Never>?
+    /// When a screenshot was taken in the app whose copy hasn't been seen in Photos yet.
+    @ObservationIgnored private var awaitedScreenshotAt: Date?
+    @ObservationIgnored private var savedScreenshotWatch: Task<Void, Never>?
     /// True while a finger is down in pick mode.
     @ObservationIgnored private var isTouchDown = false
     /// Waits for scrolling or keyboard dismissal to settle, then reads the screen; nil once read.
@@ -1065,6 +1071,7 @@ final class DebugSession {
     func sendSuggestion() {
         guard let suggestion, mode == .idle || mode == .picking else { return }
         suggestionTimer?.cancel()
+        stopAwaitingSavedCopy(of: suggestion)
         self.suggestion = nil
         let attachment = PendingAttachment(
             kind: suggestion.kind,
@@ -1076,9 +1083,24 @@ final class DebugSession {
         beginAttachmentNote(attachment, returningTo: mode)
     }
 
+    /// The person closed the offer.
     func dismissSuggestion() {
+        if let suggestion { stopAwaitingSavedCopy(of: suggestion) }
+        hideSuggestion()
+    }
+
+    private func hideSuggestion() {
         suggestionTimer?.cancel()
         withAnimation(.smooth(duration: 0.3)) { suggestion = nil }
+    }
+
+    /// The person sent or closed the app's own capture of a screenshot, so the system's copy of it
+    /// isn't offered as well.
+    private func stopAwaitingSavedCopy(of suggestion: Suggestion) {
+        guard let takenAt = suggestion.standsInForScreenshotAt else { return }
+        rememberHandledCapture(at: takenAt)
+        awaitedScreenshotAt = nil
+        savedScreenshotWatch?.cancel()
     }
 
     private func observeScreenshots() {
@@ -1095,6 +1117,8 @@ final class DebugSession {
                 MainActor.assumeIsolated {
                     self?.refreshHubAddress()
                     self?.offerRecentScreenshot()
+                    // Back from the system's screenshot editor, whose save may land a moment later.
+                    self?.watchForSavedScreenshot()
                     self?.offerUndeliveredReports()
                 }
             }
@@ -1103,24 +1127,59 @@ final class DebugSession {
 
     /// A screenshot was just taken in the app.
     ///
-    /// The system's screenshot includes Redline, so the app's own windows are captured instead, at the
-    /// same moment, without it.
+    /// The system's screenshot includes Redline, and reaches Photos only when its thumbnail goes
+    /// away or its editor closes, so the app's own windows are captured at the same moment and
+    /// offered at once. With Photos access, the system's copy takes this capture's place when it
+    /// arrives, with any crop or markup from the editor.
     private func offerInAppScreenshot() {
         guard window != nil, mode == .idle || mode == .picking else { return }
         let capture = captureScreen()
-        rememberInAppCapture(at: .now)
+        let now = Date.now
         offer(
             Suggestion(
                 image: capture.image,
                 preview: Self.cardPreview(of: capture.image),
                 kind: .screen,
-                screen: capture.screen
+                screen: capture.screen,
+                standsInForScreenshotAt: now
             )
         )
+        awaitedScreenshotAt = now
+        watchForSavedScreenshot()
     }
 
-    /// The newest screenshot taken in another app in the last 10 minutes, offered once,
-    /// only when the app already has Photos access.
+    /// Looks in Photos once a second, for 20 seconds, for the copy of the screenshot taken in the
+    /// app.
+    ///
+    /// Nothing tells the app when the system saves it: the app stays active while the thumbnail
+    /// goes away on its own.
+    private func watchForSavedScreenshot() {
+        savedScreenshotWatch?.cancel()
+        guard let awaited = awaitedScreenshotAt, PhotoLibrary.canRead else { return }
+        guard Date.now.timeIntervalSince(awaited) <= ScreenshotSuggestion.maxAge else {
+            awaitedScreenshotAt = nil
+            return
+        }
+        savedScreenshotWatch = Task {
+            for _ in 0..<20 {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, awaitedScreenshotAt != nil else { return }
+                offerRecentScreenshot()
+            }
+        }
+    }
+
+    /// True when a screenshot from Photos can be offered now: nothing is offered, or what is
+    /// offered is the app's own capture that `candidate` replaces.
+    private func canOffer(_ candidate: ScreenshotSuggestion.Candidate) -> Bool {
+        guard mode == .idle || mode == .picking else { return false }
+        guard let suggestion else { return true }
+        guard let takenAt = suggestion.standsInForScreenshotAt else { return false }
+        return ScreenshotSuggestion.replaces(captureAt: takenAt, candidate)
+    }
+
+    /// The newest screenshot in Photos from the last 10 minutes, offered once, only when the app
+    /// already has Photos access: one taken in another app, or the system's copy of one taken here.
     private func offerRecentScreenshot() {
         guard window != nil, PhotoLibrary.canRead else { return }
         let assets = PhotoLibrary.newestScreenshots(limit: 1)
@@ -1132,7 +1191,7 @@ final class DebugSession {
                 among: candidates,
                 now: .now,
                 offered: offeredPhotoIDs,
-                inAppCaptures: inAppCaptureDates
+                handledCaptures: handledCaptureDates
             ),
             pick.id != loadingPhotoID,
             let asset = assets.first(where: { $0.localIdentifier == pick.id })
@@ -1142,27 +1201,35 @@ final class DebugSession {
         loadingPhotoID = pick.id
         Task {
             defer { if loadingPhotoID == pick.id { loadingPhotoID = nil } }
-            // Another screenshot may have been offered while this one loaded; it stays.
-            guard let image = await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels),
-                mode == .idle || mode == .picking, suggestion == nil
+            // Another screenshot may have been offered while this one loaded; it stays, unless it
+            // is the app's own capture of this one.
+            guard let image = await PhotoLibrary.image(for: asset, pixels: PhotoLibrary.maxPixels), canOffer(pick)
             else { return }
             let preview = await image.byPreparingThumbnail(ofSize: Self.cardPreviewSize(of: image)) ?? image
-            guard mode == .idle || mode == .picking, suggestion == nil else { return }
+            guard canOffer(pick) else { return }
             markOffered(pick.id)
+            if let awaited = awaitedScreenshotAt, ScreenshotSuggestion.replaces(captureAt: awaited, pick) {
+                awaitedScreenshotAt = nil
+                savedScreenshotWatch?.cancel()
+            }
             offer(Suggestion(image: image, preview: preview, kind: .photo, screen: nil))
         }
     }
 
     private func offer(_ suggestion: Suggestion) {
+        // The system's copy taking the place of the app's capture is the same offer, so it isn't
+        // announced twice.
+        let replacesItsCapture =
+            self.suggestion?.standsInForScreenshotAt != nil && suggestion.standsInForScreenshotAt == nil
         withAnimation(.spring(duration: 0.4, bounce: 0.2)) { self.suggestion = suggestion }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if !replacesItsCapture { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
         let id = suggestion.id
         // A screenshot nobody acts on steps aside on its own.
         suggestionTimer?.cancel()
         suggestionTimer = Task {
             try? await Task.sleep(for: .seconds(20))
             guard !Task.isCancelled, self.suggestion?.id == id else { return }
-            dismissSuggestion()
+            hideSuggestion()
         }
     }
 
@@ -1194,15 +1261,15 @@ final class DebugSession {
         UserDefaults.standard.set(Array(ids.suffix(20)), forKey: Self.offeredPhotosKey)
     }
 
-    /// When screenshots were taken in the app, so the same screenshot isn't offered
-    /// again once it shows up in Photos.
-    private var inAppCaptureDates: [Date] {
+    /// When screenshots were taken in the app whose capture the person sent or closed, so the
+    /// same screenshot isn't offered again once it shows up in Photos.
+    private var handledCaptureDates: [Date] {
         (UserDefaults.standard.array(forKey: Self.inAppCapturesKey) as? [Double] ?? []).map(
             Date.init(timeIntervalSince1970:)
         )
     }
 
-    private func rememberInAppCapture(at date: Date) {
+    private func rememberHandledCapture(at date: Date) {
         let dates =
             (UserDefaults.standard.array(forKey: Self.inAppCapturesKey) as? [Double] ?? []) + [
                 date.timeIntervalSince1970
