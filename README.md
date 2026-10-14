@@ -20,7 +20,7 @@ Redline is a SwiftUI annotation tool for agentic iOS development. Add `.redline(
   </picture>
 </p>
 
-Version 0.1.8, early development. Works with Claude Code and Codex only.
+Version 0.1.9, early development. Works with Claude Code and Codex only.
 
 ## How it works
 
@@ -209,7 +209,7 @@ The first report sent from an iPhone triggers the one-time iOS local network pro
 ### In the build
 
 - **Floating button.** Tap it to enter annotate mode. Drag it anywhere; it snaps to the nearest edge. Press and hold it to list the reports sent from this device.
-- **Annotate mode.** Routes taps to Redline instead of the build, and draws a light red border around the screen. Its controls sit in a black bar at the top.
+- **Annotate mode.** Routes taps to Redline instead of the build, and draws a light red border around the screen. Its controls sit in a black bar at the top. The bar hides while your finger is on the screen, so you can see what is under it: touch anywhere and slide onto the element.
   - Tap an element to select it. The note card identifies that element and offers View hierarchy.
   - Tap View hierarchy to browse the nearest captured owner and its children, with your selected component highlighted inside it. This includes the owner of a group you tapped. The tree stops at that owner; when none is captured or it covers almost the whole screen, the selected element is the root. Indentation and vertical lines show which nodes own their children; arrows fold and unfold branches. Tap a row to move the outline and note target, then Done to return to your draft. Browsing keeps the same tree and excludes unrelated sections. Only children exposed in the captured accessibility tree appear. To expose a card or section, see [Make containers pickable](#make-containers-pickable).
   - Write a note and tap Add note. Notes collect across screens until you send them.
@@ -217,9 +217,9 @@ The first report sent from an iPhone triggers the one-time iOS local network pro
   - Tap the close button in the bar to exit annotate mode. Unsent notes stay.
 - **Notes tray.** Lists unsent notes; tap the screen name in the bar to open it. Tap a note to view it full screen with its snapshot, or tap its trash button to delete it. Unsent notes persist on the device, across a killed process and a reinstall from a rebuild.
 - **Screenshots and photos.**
-  - Take a screenshot. A thumbnail appears beside the floating button; tap it to add a note and send. Redline captures the build's own windows at that moment, so its overlay never appears in the snapshot.
+  - Take a screenshot. A thumbnail appears beside the floating button; tap it to add a note and send. Redline captures the build's own windows at that moment, so its overlay never appears in the snapshot. With Photos access, the thumbnail switches to the screenshot you saved once it reaches Photos, so a crop or markup from the system's editor is what you send. That one is the system's screenshot, with Redline's button or bar where they were on screen.
   - In annotate mode, the capture button attaches a snapshot of the whole screen, and the paperclip opens a photo panel. Without Photos access, the panel offers `PhotosPicker`, which needs no permission.
-  - If your Info.plist has `NSPhotoLibraryUsageDescription`, the panel can show recent photos: tap Show recent photos to request access. With access, Redline also offers screenshots you took in other apps when you return to the build.
+  - If your Info.plist has `NSPhotoLibraryUsageDescription`, the panel can show recent photos: tap Show recent photos to request access. With access, Redline also offers screenshots you took in other apps when you return to the build, and the saved copy of one you took in the build.
   - Element notes and attachments go out together in one report.
 - **Send to.** The Send to row in the notes tray sets where reports go. Tap it, choose an agent, then one of its sessions that work on this bundle ID, or New chat. The picker lists open Claude Code sessions and Codex sessions used in the last 14 days. The session in the build's worktree comes first, tagged "This build", and is selected. The first Send from a worktree asks you to pick; later builds from it keep the pick. [Where reports go](#where-reports-go) explains each choice.
 - **Delivery.** After Send, a toast says whether the report reached the Mac. Undelivered reports stay on the device, and the build retries them on launch, on each return to the foreground, and with the next Send. The sent reports list marks each report "On the Mac" or gives the reason it isn't there yet.

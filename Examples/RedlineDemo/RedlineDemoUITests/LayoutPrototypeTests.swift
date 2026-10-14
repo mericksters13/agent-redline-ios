@@ -42,7 +42,10 @@ final class LayoutPrototypeTests: XCTestCase {
             attach("Parent layout Left", in: app)
         }
         app.buttons["Cancel"].tap()
+        // The bar hides while a finger picks; it must be back once the pick is over.
+        XCTAssertTrue(app.buttons["Close annotate mode"].isHittable)
         app.buttons["Close annotate mode"].tap()
+        XCTAssertTrue(report.waitForExistence(timeout: 5))
         return text
     }
 

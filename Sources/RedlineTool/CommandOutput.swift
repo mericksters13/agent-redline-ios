@@ -9,6 +9,7 @@ enum CommandOutput {
     /// Captures at most 64 KiB while the child runs.
     ///
     /// A failed or timed-out probe returns nil.
+    /// The child gets this process's environment unless `environment` replaces it.
     /// Blocking: used from synchronous CLI commands or the existing Claude readiness check queue.
     static func run(
         _ executable: URL,
@@ -19,7 +20,9 @@ enum CommandOutput {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
-        process.environment = environment
+        // Assigning nil would start the child with no environment at all, and `claude auth status`
+        // finds its sign-in through HOME and USER.
+        if let environment { process.environment = environment }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice

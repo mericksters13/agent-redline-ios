@@ -29,6 +29,16 @@ struct OverlayView: View {
     @State private var listContentHeight: CGFloat = 0
     /// The finger on the floating button, from touch down to lift.
     @State private var press: ButtonPress?
+    /// True while a finger picks.
+    @State private var isPicking = false
+    /// Tells a picking touch that was cancelled, as when a system gesture takes the finger, from
+    /// one still down: SwiftUI resets it then, and `onEnded` is never called.
+    ///
+    /// Not what hides the island: it isn't reset when the pick that ends the touch also removes
+    /// the touch surface, which would leave the island hidden.
+    @GestureState private var pickingTouch = false
+    /// True while a finger draws a stroke.
+    @State private var isStroking = false
 
     private var width: CGFloat { session.screenSize.width }
     private var panelWidth: CGFloat { min(width - 24, 420) }
@@ -41,6 +51,11 @@ struct OverlayView: View {
     private var islandWidth: CGFloat { min(width - 24, 380) }
     private var islandTop: CGFloat { session.safeAreaTop + 4 }
     private var islandBottom: CGFloat { islandTop + islandHeight }
+    /// The island hides while a finger picks or draws, so what it covers can be seen and reached:
+    /// the app doesn't scroll in annotate mode, and nothing else would bring it out from under.
+    private var islandStepsAside: Bool {
+        (session.mode == .picking && isPicking) || (session.mode == .drawing && isStroking)
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -110,6 +125,9 @@ struct OverlayView: View {
 
             if session.mode.showsIsland {
                 island
+                    .opacity(islandStepsAside ? 0 : 1)
+                    .allowsHitTesting(!islandStepsAside)
+                    .animation(.easeOut(duration: 0.15), value: islandStepsAside)
                     .modifier(Shake(phase: reduceMotion ? 0 : CGFloat(session.nudges)))
                     // Placed by layout, not offset: views moved with offset can keep taking
                     // touches at their original position when they contain UIKit-backed views.
@@ -187,15 +205,27 @@ struct OverlayView: View {
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                        .onChanged { session.hover(at: $0.location) }
-                        .onEnded { session.finishHover(at: $0.location) }
+                        .updating($pickingTouch) { _, pickingTouch, _ in pickingTouch = true }
+                        .onChanged {
+                            isPicking = true
+                            session.hover(at: $0.location)
+                        }
+                        .onEnded {
+                            isPicking = false
+                            session.finishHover(at: $0.location)
+                        }
                 )
+                .onChange(of: pickingTouch) {
+                    if !pickingTouch { isPicking = false }
+                }
+                // Leaving pick mode mid-touch must not leave the island hidden the next time.
+                .onDisappear { isPicking = false }
         case .tray:
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture { session.toggleTray() }
         case .drawing:
-            DrawingCanvas(session: session)
+            DrawingCanvas(session: session, isStroking: $isStroking)
         case .noting, .idle, .viewer, .attaching, .reports, .destination:
             Color.clear.contentShape(Rectangle())
         }
@@ -257,7 +287,9 @@ struct OverlayView: View {
 
     /// The element under the finger: its name, then what kind of element it is.
     private func nameTag(_ element: ElementSnapshot) -> some View {
-        let above = element.frame.minY - 40 > islandBottom + 4
+        // The island is out of the way while a finger picks, so the tag can use its place.
+        let ceiling = islandStepsAside ? session.safeAreaTop : islandBottom
+        let above = element.frame.minY - 40 > ceiling + 4
         let x = min(max(element.frame.minX - 3, 8), width - tagWidth - 8)
         return HStack(spacing: 6) {
             Text(element.shortName ?? element.role)
@@ -1013,6 +1045,8 @@ private struct StrokeLines: View {
 /// overlay draws the strokes already made.
 private struct DrawingCanvas: View {
     let session: DebugSession
+    /// Tells the overlay a stroke is being drawn, so the island hides for it.
+    @Binding var isStroking: Bool
     @State private var stroke: [CGPoint] = []
     /// True while a finger draws.
     ///
@@ -1039,10 +1073,13 @@ private struct DrawingCanvas: View {
                     }
             )
             .onChange(of: isDrawing) {
+                isStroking = isDrawing
                 guard !isDrawing else { return }
                 session.addStroke(stroke)
                 stroke = []
             }
+            // Leaving drawing mid-stroke must not leave the island hidden the next time.
+            .onDisappear { isStroking = false }
             .onChange(of: session.screenSize) { stroke = [] }
             // Drawing is by touch only; VoiceOver users pick elements instead.
             .accessibilityHidden(true)

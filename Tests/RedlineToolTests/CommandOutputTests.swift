@@ -15,6 +15,16 @@ struct CommandOutputTests {
         #expect(long?.utf8.count == 65_536)
     }
 
+    @Test func aCommandGetsThisProcessEnvironmentUnlessGivenAnother() async throws {
+        let path = try #require(ProcessInfo.processInfo.environment["PATH"])
+        let inherited = await offPool { CommandOutput.run(URL(filePath: "/usr/bin/env"), []) }
+        #expect(inherited?.split(separator: "\n").contains("PATH=\(path)") == true)
+        let given = await offPool {
+            CommandOutput.run(URL(filePath: "/usr/bin/env"), [], environment: ["REDLINE_TEST": "1"])
+        }
+        #expect(given == "REDLINE_TEST=1\n")
+    }
+
     @Test func aChildIgnoringTerminationIsKilledWithinTheTimeoutGracePeriod() async {
         let started = ContinuousClock.now
         let output = await offPool {

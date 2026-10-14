@@ -15,7 +15,7 @@ struct ScreenshotSuggestionTests {
             among: [shot("a", minutesAgo: 2)],
             now: now,
             offered: [],
-            inAppCaptures: []
+            handledCaptures: []
         )
         #expect(picked?.id == "a")
     }
@@ -23,11 +23,11 @@ struct ScreenshotSuggestionTests {
     @Test func onlyTheNewestCounts() {
         let shots = [shot("old", minutesAgo: 5), shot("new", minutesAgo: 1)]
         #expect(
-            ScreenshotSuggestion.candidateToOffer(among: shots, now: now, offered: [], inAppCaptures: [])?.id == "new"
+            ScreenshotSuggestion.candidateToOffer(among: shots, now: now, offered: [], handledCaptures: [])?.id == "new"
         )
         // Once the newest has been offered, an older one never turns up.
         #expect(
-            ScreenshotSuggestion.candidateToOffer(among: shots, now: now, offered: ["new"], inAppCaptures: []) == nil
+            ScreenshotSuggestion.candidateToOffer(among: shots, now: now, offered: ["new"], handledCaptures: []) == nil
         )
     }
 
@@ -37,27 +37,37 @@ struct ScreenshotSuggestionTests {
                 among: [shot("a", minutesAgo: 11)],
                 now: now,
                 offered: [],
-                inAppCaptures: []
+                handledCaptures: []
             ) == nil
         )
     }
 
-    @Test func aScreenshotTheAppAlreadyCapturedIsNotOfferedTwice() {
+    @Test func theCopyOfACaptureAlreadySentOrClosedIsNotOffered() {
         let taken = shot("a", minutesAgo: 1)
         let captured = taken.createdAt.addingTimeInterval(0.8)
         #expect(
-            ScreenshotSuggestion.candidateToOffer(among: [taken], now: now, offered: [], inAppCaptures: [captured])
+            ScreenshotSuggestion.candidateToOffer(among: [taken], now: now, offered: [], handledCaptures: [captured])
                 == nil
         )
         let earlier = taken.createdAt.addingTimeInterval(-60)
         #expect(
-            ScreenshotSuggestion.candidateToOffer(among: [taken], now: now, offered: [], inAppCaptures: [earlier])?.id
-                == "a"
+            ScreenshotSuggestion.candidateToOffer(among: [taken], now: now, offered: [], handledCaptures: [earlier])?
+                .id == "a"
         )
     }
 
+    @Test func theSavedCopyTakesTheAppsOwnCapturesPlace() {
+        let captured = now.addingTimeInterval(-60)
+        // The system dates its copy at the screenshot, a moment before the app's capture.
+        #expect(ScreenshotSuggestion.replaces(captureAt: captured, .init(id: "a", createdAt: captured - 0.8)))
+        // Saved after a long edit, or a newer screenshot altogether.
+        #expect(ScreenshotSuggestion.replaces(captureAt: captured, .init(id: "b", createdAt: captured + 45)))
+        // One from before the capture is some other screenshot.
+        #expect(!ScreenshotSuggestion.replaces(captureAt: captured, .init(id: "c", createdAt: captured - 30)))
+    }
+
     @Test func nothingToOfferWhenThereAreNoScreenshots() {
-        #expect(ScreenshotSuggestion.candidateToOffer(among: [], now: now, offered: [], inAppCaptures: []) == nil)
+        #expect(ScreenshotSuggestion.candidateToOffer(among: [], now: now, offered: [], handledCaptures: []) == nil)
     }
 }
 #endif
